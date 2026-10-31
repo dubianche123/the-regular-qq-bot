@@ -5,6 +5,7 @@
   · 切了模式只带一点风味就回去了（旧语气还在会话窗口里）
 """
 
+import json
 import os
 import sys
 import unittest
@@ -13,6 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from storage import SessionStore          # noqa: E402
 from digest import GroupDigest            # noqa: E402
+import bot                                # noqa: E402
+import runtime                            # noqa: E402
 
 GROUP = "GROUP_A"
 OTHER_GROUP = "GROUP_B"
@@ -76,6 +79,50 @@ class RenameInMemoryTest(unittest.TestCase):
     def test_no_summary_is_safe(self):
         d = GroupDigest()
         self.assertEqual(d.rename_in_memory(GROUP, "阿龙", "小满"), 0)
+
+
+class RenameEvidenceTest(unittest.TestCase):
+    """嵌套 evidence 是本地留存的原始出处：改名只改展示层，出处逐字节不动。"""
+
+    GID = "GROUP_EVIDENCE_RENAME"
+    OID = "OPENID_EVIDENCE_CASE"
+
+    def tearDown(self):
+        runtime.RELATIONS.records.pop(f"{self.GID}|{self.OID}", None)
+        runtime.RENAMES.groups.pop(self.GID, None)
+
+    def test_nested_evidence_survives_rename_byte_for_byte(self):
+        quote = "阿龙爱喝咖啡，不加糖"
+        evidence = {"group": self.GID, "sender": self.OID,
+                    "message_id": "message-one", "ts": 1000.0, "quote": quote}
+        d = GroupDigest()
+        d.touch(self.GID)
+        d.groups[self.GID]["summary"] = {"brief": "", "data": {"people": [
+            {"who": "阿龙", "note": quote, "quote": quote,
+             "keywords": ["咖啡"], "ts": 1000.0,
+             "evidence": dict(evidence)}]}}
+
+        hits = d.rename_in_memory(self.GID, "阿龙", "小满")
+        row = d.get(self.GID)["data"]["people"][0]
+        self.assertGreaterEqual(hits, 2, "who 与 note 里的旧名要照常改写")
+        self.assertEqual(row["who"], "小满")
+        self.assertEqual(row["note"], "小满爱喝咖啡，不加糖")
+        self.assertEqual(row["evidence"], evidence, "出处（发言人/标识/原话）不许跟着改")
+
+        # 展示时经 bot.refresh_names 刷成当前称呼；来源本身照旧是当时的原话
+        runtime.RELATIONS.set_nick(self.GID, self.OID, "小满", source="claim")
+        runtime.RENAMES.note(self.GID, "阿龙", self.OID)
+        rendered = bot.refresh_names(self.GID, f"- 说过：{row['evidence']['quote']}")
+        self.assertNotIn("阿龙", rendered)
+        self.assertIn("小满爱喝咖啡，不加糖", rendered)
+
+        # 落盘再读回来，出处原样保留
+        data = {}
+        d.dump_into(data)
+        restored = GroupDigest()
+        restored.hydrate(json.loads(json.dumps(data["digests"])))
+        self.assertEqual(restored.get(self.GID)["data"]["people"][0]["evidence"],
+                         evidence)
 
 
 if __name__ == "__main__":

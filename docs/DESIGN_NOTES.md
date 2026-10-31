@@ -216,7 +216,7 @@ flowchart TD
 | 黑名单里写死群主外号 | 改成职务通用词 + **按当前实际叫什么现取** | `relations.py` |
 | 旧名字残留在记忆里 | 台账 + 注入前刷新，模型只看得到当前那一版（改名 ≥2 字；单字名不记，替换会误伤一片） | `relations.RenameLedger` |
 | 压缩记忆时说不出名字的人 | 用泛称「一位群友」署名，**不用 openid 后四位**。旧版拿编号顶上，摘要里就出现了「6ABA」这种人名，而摘要每轮进 prompt，模型当真人叫 | `digest.UNAMED_WHO` |
-| 承诺账本里的旧名 | 催债和查账前都过一遍刷新 —— 账本存的是当时的称呼 | `bot.dun_promises` |
+| 承诺账本里的旧名 | 催债和查账前都过一遍刷新 —— 账本存的是当时的称呼 | `bot.dun_promise` |
 | 谁有权写称呼 | 来源白名单（本人认领 / 群主授权），其余一律拒绝 | `relations.MAIN_NAME_SOURCES` |
 | 敏感词（谐音、暗号、本名） | 不写进仓库：通用词内置在代码，具体词放 `sensitive_nicks.txt`（已 gitignore，模板见 `sensitive_nicks.example.txt`） | `wordfilter.py` |
 | 群聊原文 / 摘要 | `archive/`、`memory/`、`state.json` 全部 gitignore，另附 `.backup/`（清档时留的手动备份，同样是原文） | `.gitignore` |

@@ -6,7 +6,10 @@
 
 import asyncio
 import collections
+import contextvars
+import copy
 import json
+from types import SimpleNamespace
 import logging
 import logging.handlers
 import os
@@ -16,6 +19,7 @@ import signal
 import shlex
 import sys
 import time
+import uuid
 import weakref
 from datetime import datetime, timezone
 
@@ -28,12 +32,16 @@ from botpy.message import GroupMessage, C2CMessage, Message
 
 import config
 import digest as digest_mod
+from regular import decisions as decisions_mod
+import interactions as interactions_mod
 import naming
 import prompts
 import qqtext
 import recall as recall_mod
 import relations
+import scheduler as scheduler_mod
 import search as search_mod
+import slowwork
 import storage
 import wordfilter
 
@@ -189,7 +197,8 @@ import providers
 from runtime import hits, owner_label, load_owner, named_members
 call_model = providers.call_model
 probe_provider = providers.probe_provider
-providers.initialize(budget=runtime.BUDGET, on_usage=runtime.STATE.mark_dirty)
+providers.initialize(budget=runtime.BUDGET, decision_budget=runtime.DECISION_BUDGET,
+                     on_usage=runtime.STATE.mark_dirty)
 from health import STATUS
 from delivery import (Sender, DeliveryResult, passive_reply_window, message_age_seconds,
                       GROUP_PASSIVE_WINDOW_SECONDS, C2C_PASSIVE_WINDOW_SECONDS)
@@ -470,8 +479,14 @@ def _garbage_run(text):
     return None
 
 
+# 2026-11-01 网关 glm-5.3-flash 连着三条把整段回复包成 <p>…</p>。QQ 不渲染 HTML，
+# 标签原样出现在群里；回复又进了会话历史，下一条照着学。记账协议本身也用尖括号，
+# 所以只在拆掉 <CMD> 之后对正文做。
+_MARKUP = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
+
+
 def split_cmd(raw):
-    """把模型输出拆成「正文」和「记账标签」。
+    """把模型输出拆成「正文」和「记账标签」；正文顺手去掉 HTML 标签。
 
     关键是容错：解析失败绝不能影响对话本身，退化成「正文即原文、不计分」即可。
     """
@@ -486,9 +501,9 @@ def split_cmd(raw):
         idx = raw.find("<CMD")
         if idx != -1:
             logger.warning("🧯 模型输出含打坏的协议标签，已截断。原文: %s", raw[:160])
-            return raw[:idx].strip(), None
-        return raw.strip(), None
-    body = CMD_TAG.sub("", raw).strip()
+            return _MARKUP.sub("", raw[:idx]).strip(), None
+        return _MARKUP.sub("", raw).strip(), None
+    body = _MARKUP.sub("", CMD_TAG.sub("", raw)).strip()
     try:
         payload = json.loads(match.group(1))
     except Exception:
@@ -500,16 +515,20 @@ def resolve_mode(mode):
     return LEGACY_MODE_ALIAS.get(mode, mode)
 
 
-# 模型自主沉默哨兵（2026-10-22 群主授予的权利）：模型只输出 SKIP = 这轮不接。
-# 提示词给了它「装没看见」的选项（PROMPT_NORMAL「想不说话的时候」），代码只负责
-# 识别与留痕，绝不替它硬憋一句。proactive 路径早有同款（PROMPT_PROACTIVE）。
-MODEL_SKIP = "SKIP"
+# 本轮回复的注入痕迹（task-local）：只记「个人原话这次真的进去了没有」，
+# 不落任何提示词内容。reply_in_session 每轮 set/reset，直接调 get_ai_reply
+# 的旁路拿到的是默认值 False —— 没进就不许自称进过。
+_reply_trace = contextvars.ContextVar(
+    "regular_reply_trace", default=None)
 
 
 async def get_ai_reply(session_id, user_text, is_owner=False, mode="normal",
                        context_hint="", is_random_banter=False, relation_note="",
                        group_memory="", owner_label="", private=False, state_note="",
-                       knowledge_note="", recall_note="", search_note="", allow_fallback=True):
+                       knowledge_note="", recall_note="", search_note="", allow_fallback=True,
+                       personal_note="", feedback_note="", reply_context="",
+                       callback_approved=False, back_off=False, quip=False,
+                       lookup_note=""):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
     返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签
@@ -527,6 +546,9 @@ async def get_ai_reply(session_id, user_text, is_owner=False, mode="normal",
        以前群主身份、群聊背景、关系档案全挤在 system 里，等于把缓存全废了。
     """
     mode = resolve_mode(mode)
+    # 喊停：调用方可以带上判断的结论（分诊里有把握的 back_off），这里再并上本地词表 ——
+    # 词表这一道放在生成入口，直接调 get_ai_reply 的旁路（私聊、主动开口、测试）也绕不开。
+    back_off = bool(back_off) or looks_like_back_off(user_text)
     try:
         # ── 1) 稳定头：同一个群里，每个人、每一轮，这一段都应当逐字节相同 ──
         # 人设里的 {bot} / {owner} 在这里换成真名（代码里不写死任何人名，见 naming.py）
@@ -546,37 +568,69 @@ async def get_ai_reply(session_id, user_text, is_owner=False, mode="normal",
             # 只点明身份，不搞「誓死效忠」那套 —— 亲近程度由关系档案的档位决定
             bits.append(naming.render(prompts.PROMPT_OWNER_NOTE, owner=owner_label).strip())
         if is_random_banter:
-            bits.append(prompts.PROMPT_BANTER_NOTE.strip())
+            # 被判过的回忆要换一段插嘴说明 —— 默认那段明说「旧事不许翻」。
+            bits.append((prompts.PROMPT_BANTER_CALLBACK_NOTE
+                         if callback_approved and personal_note
+                         else prompts.PROMPT_BANTER_NOTE).strip())
+        if quip:
+            bits.append(prompts.PROMPT_QUIP_NOTE.strip())
         if context_hint:
             bits.append("【群聊最近背景】\n" + context_hint)
-        if knowledge_note and not looks_like_back_off(user_text):
+        if knowledge_note and not back_off \
+                and not feedback_note:
             # 维护者维护的事实优先于摘要；对方喊停时不追加额外材料。
             bits.append(knowledge_note)
-        if recall_note and not looks_like_back_off(user_text):
+        if recall_note and not back_off \
+                and not feedback_note:
             # 只在对方明确问起往事时才会非空；对方正在喊停时一律不翻旧账。
             bits.append(recall_note)
-        if search_note:
+        if search_note and not feedback_note:
             # 搜索结果是用户明确要的，喊停时也保留；它只是资料，不参与玩笑。
             bits.append(search_note)
         if state_note:
             # 激活度（2026-10-19）：作息 + 心情的实时状态自述——深夜被吵醒/有点烦，
             # 模型顺着这个体感说话。放最后一段，随轮次变化的内容一律压末尾。
             bits.append(state_note)
-        if config.AFFINITY_ENABLED and relation_note:
-            # 关系档案：这条回复最该参考的「对具体某个人的长期印象」
+        if (config.PERSONAL_MEMORY_ENABLED and personal_note
+                and not feedback_note
+                and (not is_random_banter or callback_approved)
+                and not back_off
+                and not any((knowledge_note, recall_note, search_note))):
+            # 个人原话：已核实来源的当前说话人历史发言。知识库/旧账/搜索已经给了
+            # 本轮要的材料时不再叠加；对方喊停和随机插嘴同样不追加 —— 这里的兜底
+            # 闸是为了让直接调 get_ai_reply 的调用方也绕不开这条规则。
+            bits.append(personal_note)
+            trace = _reply_trace.get()
+            if trace is not None:
+                trace["personal_memory_used"] = True
+        if relation_note:
+            # 称呼与游戏关系档案：独立于好感开关 —— AFFINITY_ENABLED=false 时
+            # 它只带称呼/泛称信息，游戏部分由调用方构造时决定写不写。
             bits.append(relation_note)
+        if reply_context:
+            # 上一条实际送达的机器人发言：只作语境，不压制其他有效材料。
+            bits.append(reply_context)
+        if feedback_note:
+            # 原生反馈的即时话术（收敛/短修）：压在本层尾部、关系档案之后；
+            # 出现它时个人原话与知识/旧账材料同轮不建（调用方已拦）。
+            bits.append(feedback_note)
         if private:
             # 放在 owner note **之后**：那一句里有「该损就损」，私聊里得压住它
             bits.append(prompts.PROMPT_PRIVATE_NOTE.strip())
-        if looks_like_back_off(user_text):
+        if back_off:
             # 最高优先级，压过上面所有「该损就损」—— 对方已经明说不舒服了
             logger.info("🛑 对方喊停，本轮强制收敛（%s）", session_id[-12:])
             bits.append(prompts.PROMPT_BACK_OFF_NOTE.strip())
+        if lookup_note:
+            # 慢活的进度说明（在查 / 查完了 / 没查成）：这一轮的话就是为它说的，压在最后。
+            # 放在中间时实测被人设和「刚睡醒」的状态盖过，「在查」那句照样先评一嘴真假。
+            bits.append(lookup_note.strip())
         turn_context = ""
         if bits:
             turn_context = "（以下是系统给你的即时提示，不是群友说的话）\n" + "\n".join(bits)
 
-        max_tokens = config.AI_MAX_TOKENS_BANTER if is_random_banter else config.AI_MAX_TOKENS
+        max_tokens = (config.AI_MAX_TOKENS_BANTER if is_random_banter or quip
+                      else config.AI_MAX_TOKENS)
 
         messages = runtime.SESSIONS.build_messages(
             session_id, head, user_text,
@@ -587,11 +641,6 @@ async def get_ai_reply(session_id, user_text, is_owner=False, mode="normal",
         if not raw:
             return (_pick_fallback() if allow_fallback else None), None
         body, payload = split_cmd(raw)
-        # 模型自主沉默出口：只输出 SKIP = 行使不说话的权利。识别必须先于乱码闸——
-        # 哨兵是纯大写长串，将来乱码规则收紧时不能把沉默出口误炸掉。
-        if body.strip().upper() == MODEL_SKIP:
-            logger.info("🤐 [自主沉默] %s 选择不接这句", session_id[-12:])
-            return MODEL_SKIP, None
         # 采样乱码闸（2026-10-15 <CMD! 残片 / 10-19 0A9F%F5，均智谱 glm-4.7）：
         # 命中就重生成一次；两次都乱就照发并留痕——不在这里和模型无限拉扯。
         glitch = _garbage_run(body)
@@ -629,8 +678,77 @@ def _blocked_reply(message):
 SENDER = Sender(fallback=_blocked_reply)
 
 
-async def safe_reply(message, reply_text, *, on_delivered=None, **delivery):
-    return await SENDER.reply(message, reply_text, on_delivered=on_delivered, **delivery)
+def _delivery_observer(outgoing_id, group_id, meta, member):
+    """复制好的元数据闭包：后续轮次改不到这次投递的快照。"""
+    def on_outcome(result):
+        fields = {
+            "outgoing_id": outgoing_id,
+            "source_message_id": meta.get("source_message_id"),
+            "status": result.status,
+            "route": meta.get("route", "local"),
+            "feedback_eligible": bool(meta.get("feedback_eligible")),
+            "policy_id": meta.get("policy_id"),
+            "fallback": bool(result.fallback),
+        }
+        if result.reason:
+            fields["reason"] = result.reason
+        for key in ("mode", "generation", "provider", "model", "tier",
+                    "finish_reason", "knowledge_supplied", "recall_supplied",
+                    "search_supplied", "personal_memory_used",
+                    "personal_memory_enabled"):
+            value = meta.get(key)
+            if value is not None:
+                fields[key] = value
+        if result.status == "delivered":
+            # 只存最终真正发出去的正文 —— prepare 后的 owner hint、
+            # 平台拒收后的兜底文案，都算「实际送达」；被拒的原稿不算。
+            fields["text"] = result.text
+            rid = result.receipt
+            rid = rid.get("id") if isinstance(rid, dict) else getattr(rid, "id", None)
+            if isinstance(rid, (str, int)):
+                fields["platform_message_id"] = str(rid)
+            # 反馈观察登记【先于】日志落账：只有确认送达的模型回复才算
+            # 「上一条 AI 回复」—— 本地应答、平台兜底文案、主动广播、
+            # 排队/失败投递一律不算。登记失败不许影响投递提交。
+            if (meta.get("generation") == "model"
+                    and meta.get("route") in ("reply", "banter")
+                    and not result.fallback):
+                try:
+                    runtime.FEEDBACK.remember(
+                        group_id, meta.get("user"), result.text,
+                        route=meta.get("route"), outgoing_id=outgoing_id,
+                        history=meta.get("history") or ())
+                except Exception:
+                    logger.exception("⚠️ 反馈观察登记失败（%s）", group_id[-6:])
+        runtime.INTERACTIONS.append("delivery", group_id,
+                                    user=meta.get("user"),
+                                    actor="assistant", **fields)
+    return on_outcome
+
+
+async def safe_reply(message, reply_text, *, on_delivered=None, interaction=None,
+                     **delivery):
+    """群消息才写观察日志；私聊没有 group_openid，原样发送、一行不落。
+
+    interaction 是本条回复的本地元数据（route/feedback_eligible/生成出处），
+    只给观察日志用，绝不往 SDK 侧漏。
+    """
+    group_id = getattr(message, "group_openid", None)
+    if not group_id:
+        return await SENDER.reply(message, reply_text, on_delivered=on_delivered,
+                                  **delivery)
+    member = getattr(getattr(message, "author", None), "member_openid", None)
+    meta = dict(interaction or {})
+    meta.setdefault("route", "local")
+    # 来源与关联人一律以实际消息为准（本地应答、AI 回复同口径），
+    # 调用方 metadata 不许给这次送达安到别的发言/别的人头上；
+    # policy_id 在发起投递这一刻定版，排队补投也不许漂成新口径。
+    meta["source_message_id"] = getattr(message, "id", None)
+    meta["user"] = member
+    meta["policy_id"] = config.INTERACTION_POLICY_ID
+    observer = _delivery_observer(uuid.uuid4().hex, group_id, meta, member)
+    return await SENDER.reply(message, reply_text, on_delivered=on_delivered,
+                              on_outcome=observer, **delivery)
 
 
 async def resend_queue_loop():
@@ -640,18 +758,28 @@ async def resend_queue_loop():
 
 
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
-                           owner_hint_group=None, **context):
-    """Serialize generation and send; queued delivery commits through the same callback."""
+                           owner_hint_group=None, prepared=None, **context):
+    """Serialize generation and send; queued delivery commits through the same callback.
+
+    prepared=(正文, 分值)：话已经提前写好了（慢活边等边写的那句「在查」），只管发和记账。
+    """
     async with runtime.SESSIONS.lock(session_id):
         generation = runtime.SESSIONS.begin_turn(session_id)
-        body, delta = await get_ai_reply(session_id, user_text, allow_fallback=False, **context)
-        # 自主沉默：模型行使 SKIP 权 → 不发送、不落会话记录（下一轮它从群聊背景里
-        # 看得出自己刚才没接话）；返回 result=None 让调用方跳过好感度结算——
-        # 没搭话就没印象账可记，词表兜底也不该替一次「装没看见」记账。
-        if body is not None and body.strip().upper() == MODEL_SKIP:
-            logger.info("🤐 [自主沉默生效] %s 这轮不说话（%s）", session_id[-12:],
-                        "插嘴" if context.get("is_random_banter") else "直接对话")
-            return body, None, None
+        # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
+        # 从这里摘走，别漏进 get_ai_reply 的关键字里。
+        history = context.pop("history", ())
+        # 本轮的注入痕迹 + 实际应答候选：都先重置再取，被 mock/失败的调用
+        # 不会带着上一轮的出处来冒充。
+        trace = {"personal_memory_used": False}
+        token = _reply_trace.set(trace)
+        providers.reset_completion_meta()
+        try:
+            body, delta = (prepared if prepared is not None else
+                           await get_ai_reply(session_id, user_text,
+                                              allow_fallback=False, **context))
+            completion = providers.completion_meta()
+        finally:
+            _reply_trace.reset(token)
         generated = bool(body)
         body = body or _pick_fallback()
         hinted = f"{body}\n{OWNER_CLAIM_HINT}"
@@ -670,8 +798,30 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                     on_delivered()
             runtime.STATE.mark_dirty()
 
+        member = getattr(getattr(message, "author", None), "member_openid", None)
+        source_id = getattr(message, "id", None)
+        interaction = {
+            "history": history,
+            "route": "banter" if context.get("is_random_banter") else "reply",
+            "mode": context.get("mode", "normal"),
+            "generation": "model" if generated else "local_fallback",
+            # supplied ≠ injected：这三个只说明上下文材料送到了组装口，
+            # 喊停等抑制路径下它们可能根本没进提示词。
+            "knowledge_supplied": bool(context.get("knowledge_note")),
+            "recall_supplied": bool(context.get("recall_note")),
+            "search_supplied": bool(context.get("search_note")),
+            "personal_memory_used": bool(trace.get("personal_memory_used")),
+            "personal_memory_enabled": bool(config.PERSONAL_MEMORY_ENABLED),
+        }
+        if completion:
+            interaction.update(completion)  # 真正答上来的 provider/model/tier/finish
+        # 只有「本群 + 有源发言者 + 有源消息 ID」的 AI 会话回复才可被反馈绑定；
+        # 本地命令、主动广播、私聊都不在反馈口径里。
+        interaction["feedback_eligible"] = bool(
+            getattr(message, "group_openid", None) and member and source_id)
         result = await safe_reply(
             message, body, on_delivered=commit,
+            interaction=interaction,
             is_current=lambda: runtime.SESSIONS.generation(session_id) == generation,
             retry_lock=runtime.SESSIONS.lock(session_id),
             send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
@@ -857,7 +1007,40 @@ def is_control_command(text):
             return True
     if matches_relation_query(t):
         return True
+    if interactions_mod.parse_feedback(t) is not None:
+        return True
     return bool(relations.parse_nick_lock_command(t))
+
+
+FEEDBACK_USAGE = ("（翻开小本本）反馈这么写：反馈 合适 / 不合适 / 不确定，"
+                  "后面可以再带 整体 / 时机 / 内容 / 语气，比如「反馈 合适 内容」。")
+
+
+async def handle_feedback(message, group_id, sender_openid, parsed):
+    """「反馈」命令：只绑本人最近一条已送达的 AI 回复；0 token，不动预算和好感度。
+
+    回执全部走 safe_reply 的 local 路线 —— 它们是系统应答，永远不会变成
+    下一条反馈的绑定目标。回执里不出现任何内部 ID。
+    """
+    if not parsed.get("valid"):
+        await safe_reply(message, FEEDBACK_USAGE)
+        return
+    if not runtime.INTERACTIONS.enabled:
+        await safe_reply(message, "（摊摊手）这阵子没开小本本，这条反馈没记上。")
+        return
+    # 先看有没有可绑目标再尝试写 —— 写失败和无目标是两种回执。
+    target = runtime.INTERACTIONS.latest_reply(group_id, sender_openid)
+    if target is None:
+        await safe_reply(message, "（翻了翻小本本）最近没有能对应上的回复，这次就不记了。")
+        return
+    row = runtime.INTERACTIONS.feedback(
+        group_id, sender_openid,
+        source_message_id=getattr(message, "id", None),
+        label=parsed["label"], dimension=parsed["dimension"])
+    if row is None:
+        await safe_reply(message, "（挠头）小本本暂时写不进去，这条反馈先记不下了。")
+        return
+    await safe_reply(message, "（在小本本上记了一笔）收到，算在我刚回你的那条头上。")
 
 
 async def reply_duel(message, group_id, sender_openid):
@@ -967,7 +1150,8 @@ async def handle_nick_lock(message, group_id, action, is_owner):
 
 
 
-async def handle_nick_command(message, cmd, group_id, sender_openid, is_owner, mentioned_others):
+async def handle_nick_command(message, cmd, group_id, sender_openid, is_owner, mentioned_others,
+                              verdict=None):
     """昵称管理。本地词表先过一遍（0 token），可疑的再让模型看一眼（约 137 token）。
 
     两道是有顺序的：词表便宜且不会误伤，能拦的先在当地拦掉；
@@ -1024,7 +1208,10 @@ async def handle_nick_command(message, cmd, group_id, sender_openid, is_owner, m
 
     # 词表过了不等于安全：谐音、拆字、缩写天生就是拿来绕开字面匹配的。
     # 再让审核梯队看一眼（失败返回 None = 放行，不因审核不可用而堵死起名）。
-    if await judge_nick(nick) is False:
+    # 两张否决票取并集：分诊里顺带问的那一题（verdict，有把握才是 refuse）和审核梯队这一道。
+    # 两者都不全对（审核梯队 2026-09-18 一场围攻拦 10 漏 7；分诊见调用处），漏的不是同一批。
+    # 分诊已经说 refuse 就不再花一次审核调用。拦下的照样计入围攻统计，喂给节流那一层。
+    if verdict == "refuse" or await judge_nick(nick) is False:
         nick_note_reject(group_id)
         logger.info("🕵️ 称呼审核拦下：%s 想用「%s」", sender_openid[-4:], nick)
         await safe_reply(message,
@@ -1248,6 +1435,11 @@ async def judge_nick(nick):
     剩下的规矩：
       · 只走审核梯队（最强那档）。弱档在这件事上等于没开 —— 实测 4.5-air 把谐音放行，
         还把正常昵称「阿澈」误杀；同批用例 4.7 全对。
+        2026-11-01 三家实测（docs/model-roles.md）：这道审核该交给会推理的 gpt-6-luna
+        （JUDGE_PROVIDER=openai）。走生产这条路径：政治谐音拦 14/15、正常称呼误拦 2/30、
+        无结论 0；线上原来的 glm-5.3-flash 是 23/30、误拦 6/20（包括正在用的「老王」「原理」）。
+        推理要额度：审核档用 REASONING_MAX_TOKENS（默认 2000），400 时难的三分之一没结论。
+        token 字段、温度、推理开关按 config.MODEL_PROFILES 逐模型发，这里不用管。
       · 调用失败 / 超时 / 返回看不懂 → 返回 None，由调用方**放行**。
         不能因为审核服务不可用就把起名整个堵死，何况本地词表还在兜底。
     """
@@ -1320,12 +1512,23 @@ async def run_digest(group_id, reason=""):
                     group_id[-6:], len(entries), reason or "手动")
         started = time.time()
         try:
+            # 个人原话裁决：新鲜提案先快照给游戏模式用（那份是「原稿」），
+            # 再交给原生裁决出最终名单；换名单在摘要落槽前完成。
+            mode_proposals = []
+
+            async def curate(new_rows, old_rows, *, entries, now):
+                mode_proposals.extend(copy.deepcopy(new_rows) or [])
+                return await decisions_mod.curate_people(
+                    group_id, new_rows, old_rows, entries=entries, now=now,
+                    log=runtime.INTERACTIONS)
+
             result = await digest_mod.compress_group(
                 runtime.DIGESTS, group_id, entries, ask_digest,
                 resolver=_resolve_name(group_id),
                 log=logger.info,
                 refresh=lambda t: refresh_names(group_id, t),
                 ledger=affinity_ledger(group_id),
+                people_curator=curate,
             )
         except Exception as e:
             logger.error("❌ 群记忆压缩异常: %s", str(e)[:200])
@@ -1349,6 +1552,7 @@ async def run_digest(group_id, reason=""):
             if added or dropped:
                 runtime.STATE.mark_dirty()
                 logger.info("🧾 承诺账本已同步：新增 %d 条，撤下 %d 条", added, dropped)
+            schedule_promises(group_id)
 
         # 好感度结算：这一整段时间里谁更亲近、谁在抬杠，一次性落库
         # （每轮不再让模型自评，见 config.CMD_PROTOCOL_ENABLED）
@@ -1360,8 +1564,8 @@ async def run_digest(group_id, reason=""):
             else:
                 logger.info("💗 压缩结算好感度：本段时间没有人的态度明显变化")
             # 相处模式（2026-10-19，硬枚举）：压缩按真实互动提案，代码只认白名单
-            n_mode, mode_detail = apply_digest_modes(
-                group_id, (result.get("data") or {}).get("people"))
+            # 游戏模式只用「模型刚提议的原稿」：撤下/续存的旧条目不参与。
+            n_mode, mode_detail = apply_digest_modes(group_id, mode_proposals)
             if n_mode:
                 logger.info("🎭 相处模式更新：%d 人（%s）", n_mode, mode_detail)
 
@@ -1491,8 +1695,20 @@ async def proactive_loop():
             if len(fresh) < 2:
                 continue
             topics = "\n".join(f"- {b.get('text', '')[:60]}" for b in fresh[-4:])
+            if runtime.FEEDBACK.quiet(gid, now=now):
+                continue    # 反馈收敛期内不主动开口
             ok, _ = runtime.GROUP_BUCKET.try_acquire(gid)
             if not ok or not runtime.BUDGET.can_consume():
+                continue
+            # 这次机会只问一次原生。主动开口是「多出来的一句」：判断明确说接得上才说，
+            # 不可用或拿不准就不说（2026-10-31 起不再让生成用 SKIP 兜底）。
+            try:
+                verdict = await runtime.FEEDBACK.consider_banter(
+                    gid, None, history=fresh[-4:], now=now)
+            except Exception:
+                logger.exception("⚠️ 主动开口仲裁异常（%s）", gid[-6:])
+                verdict = None
+            if verdict != "join_briefly":
                 continue
             prompt = naming.render(prompts.PROMPT_PROACTIVE).replace("{topics}", topics)
             body, _ = await get_ai_reply(
@@ -1500,9 +1716,10 @@ async def proactive_loop():
                 is_random_banter=True, context_hint=topics,
                 owner_label=owner_label(gid), state_note=activation.state_line("", mood_v),
                 allow_fallback=False)
-            if not body or body.strip().upper() == "SKIP" or _garbage_run(body):
-                continue    # 模型自己觉得没得接/又抽风了——这轮不说话
-            if await post_to_group(gid, body.strip()):
+            if not body or _garbage_run(body):
+                continue    # 没生成出来 / 又抽风了 —— 这轮不说话
+            if await post_to_group(gid, body.strip(),
+                                   model_generated=True, history=fresh[-4:]):
                 _last_proactive[gid] = time.time()
                 logger.info("🌙 [自发开口] 距上次群消息 %.0f 分钟", (time.time() - last_msg_ts) / 60)
         except asyncio.CancelledError:
@@ -1512,38 +1729,206 @@ async def proactive_loop():
             logger.error("❌ 主动巡检异常（不影响主流程）: %s", e)
 
 
+# ── 慢活：联网查询、深度研究（2026-11-01，见 slowwork.py）──
+
+async def _start_search(query):
+    return await providers.start_research(query, instructions=search_mod.research_instructions())
+
+
+async def _start_research(query):
+    return await providers.start_research(
+        query, instructions=search_mod.research_instructions(deep=True), deep=True)
+
+
+# 普通查询实测 4–13 秒：先在线上等 ASYNC_REPLY_SECONDS，等不到才转后台，三秒一问。
+# 深度研究实测一分钟上下：不在线上等，直接先应一句，十五秒一问，半小时还没好就算了。
+slowwork.register(slowwork.Job("search", _start_search, providers.poll_research,
+                               poll_every=3.0, give_up_after=300.0))
+slowwork.register(slowwork.Job("research", _start_research, providers.poll_research,
+                               poll_every=15.0, give_up_after=1800.0, wait_first=False))
+
+
+def _lookup_query(user_input, buf, message_id=None):
+    """送去查的那段话：问题本身，前面带两三句群聊当语境。不带任何 ID，命中本地词表的句子不出本机。"""
+    lines = [row.get("text") or "" for row in list(buf or [])
+             if row.get("message_id") != message_id][-3:]
+    lines = [text[:120] for text in lines if text and not wordfilter.has_hit(text)]
+    context = "群聊前几句：\n" + "\n".join(f"- {t}" for t in lines) + "\n\n" if lines else ""
+    return f"{context}现在有人问群里的机器人：{user_input}"
+
+
+async def answer_with_lookup(message, session_id, user_input, kind, query, *, reply_kwargs):
+    """先查再答。线上等得到就一条回复；等不到先回一句在查，把手交给定时任务跟进。
+
+    起不了头、或当场就失败了，返回 None：调用方照常回复（不带资料），别让人干等。
+    """
+    job = slowwork.JOBS[kind]
+    handle = await job.start(query)
+    if handle is None:
+        return None
+    # 「在查」那句边等边写：等不到结果时它已经写好了，第一句话不必再多等一次生成。
+    # 结果当场回来就扔掉它 —— 代价是快查询多一次回复模型调用。
+    ack = asyncio.create_task(get_ai_reply(
+        session_id, user_input, allow_fallback=False,
+        lookup_note=(prompts.PROMPT_RESEARCH_PENDING if kind == "research"
+                     else prompts.PROMPT_LOOKUP_PENDING),
+        **{k: v for k, v in reply_kwargs.items()
+           if k not in ("on_delivered", "owner_hint_group", "history")}))
+    state, result = await slowwork.wait(
+        job, handle, config.ASYNC_REPLY_SECONDS if job.wait_first else 0.0)
+    if state != slowwork.RUNNING:
+        ack.cancel()
+    if state == slowwork.DONE:
+        logger.info("🌐 联网查询当场回来了（%s）", kind)
+        return await reply_in_session(message, session_id, user_input,
+                                      search_note=search_mod.render_brief(result),
+                                      **reply_kwargs)
+    if state == slowwork.FAILED:
+        return None
+    outcome = await reply_in_session(message, session_id, user_input,
+                                     prepared=await ack, **reply_kwargs)
+    now = time.time()
+    runtime.SCHEDULER.at("followup", message.group_openid, now + job.poll_every, {
+        "job": kind, "handle": handle, "session": session_id, "question": user_input,
+        "member": getattr(getattr(message, "author", None), "member_openid", None),
+        "msg_id": message.id, "msg_ts": str(getattr(message, "timestamp", "") or ""),
+        "mode": reply_kwargs.get("mode", "normal"),
+        "is_owner": bool(reply_kwargs.get("is_owner")), "started": now})
+    runtime.STATE.mark_dirty()
+    logger.info("⏳ %s转后台，先回了一句（%s）", "深度研究" if kind == "research" else "联网查询",
+                message.group_openid[-6:])
+    return outcome
+
+
+def _reply_target(group_id, payload):
+    """定时任务里重建「回复那条消息」的对象。QQ 被动回复只要群号、原消息 ID 和
+    递增的 msg_seq（Sender 按群号 + 消息 ID 续号），所以重启以后也能接着回。"""
+    async def reply(**kwargs):
+        client = _bot_ref.get("client")
+        if client is None:
+            return None
+        return await client.api.post_group_message(
+            group_openid=group_id, msg_id=payload["msg_id"], **kwargs)
+    return SimpleNamespace(group_openid=group_id, id=payload["msg_id"],
+                           timestamp=payload.get("msg_ts") or None,
+                           author=SimpleNamespace(member_openid=payload.get("member")),
+                           reply=reply)
+
+
+async def finish_lookup(task):
+    """慢活到点了就问进度；做完（或做不成）写成跟进的那句话送出去。
+
+    QQ 被动回复只有 4 分钟：过了先试主动发言，主动发言也发不出去，就把写好的话
+    留在任务里，等群里下一条消息捎带（deliver_carried），最多等一天。
+    """
+    p, gid, now = task["payload"], task["group"], time.time()
+    if p.get("ready"):
+        return None if now - p["started"] > 86400 else now + 3600
+    job = slowwork.JOBS.get(p.get("job"))
+    if job is None:
+        return None
+    state, result = await job.poll(p["handle"])
+    if state == slowwork.RUNNING:
+        if now - p["started"] < job.give_up_after:
+            return now + job.poll_every
+        state = slowwork.FAILED
+    done_note = (prompts.PROMPT_RESEARCH_DONE if p["job"] == "research"
+                 else prompts.PROMPT_LOOKUP_DONE)
+    history = list(group_buffers.get(gid, ()))[-4:]
+    body, _delta, delivery = await reply_in_session(
+        _reply_target(gid, p), p["session"], p["question"],
+        is_owner=p.get("is_owner", False), mode=p.get("mode", "normal"),
+        owner_label=owner_label(gid),
+        search_note=search_mod.render_brief(result) if state == slowwork.DONE else "",
+        lookup_note=done_note if state == slowwork.DONE else prompts.PROMPT_LOOKUP_FAILED,
+        history=history)
+    status = getattr(delivery, "status", None)
+    logger.info("🌐 慢活跟进（%s，%s，%.0f 秒）：%s", p["job"], state, now - p["started"], status)
+    if status != "expired" or not body:
+        return None   # 送达、排队补投、被拒，都到此为止
+    if await post_to_group(gid, body, model_generated=True, history=history):
+        runtime.SESSIONS.record(p["session"], p["question"], body)
+        return None
+    p["ready"] = body
+    return now + 3600
+
+
+async def deliver_carried(message, group_id):
+    """被动窗口和主动发言都没送出去的跟进，捎在群里下一条消息上发出去。"""
+    for task in runtime.SCHEDULER.pending(kind="followup", group=group_id):
+        text = task["payload"].get("ready")
+        if text and runtime.SCHEDULER.cancel(task["id"]):
+            runtime.STATE.mark_dirty()
+            await safe_reply(message, text, interaction={"route": "followup"})
+
+
 # ── 承诺催债 ──
 
-def quiet_hour():
-    return time.localtime().tm_hour in config.PROMISE_QUIET_HOURS
+async def post_to_group(group_id, text, *, model_generated=False, history=()):
+    """主动往群里发一句话（不是回复）。催债、定时播报都要用它。
 
-
-async def post_to_group(group_id, text):
-    """主动往群里发一句话（不是回复）。催债、定时播报都要用它。"""
+    原生反馈判过「收敛」的群，窗口内主动发言一律按住 —— 点名回复
+    （safe_reply 那条路）不受影响。model_generated=True 的确认送达
+    会登记进反馈缓存，让随后的人话反馈能认到这句群发。
+    """
     client = _bot_ref.get("client")
     if client is None or not text:
+        return False
+    if runtime.FEEDBACK.quiet(group_id):
+        logger.info("🔇 [主动发言] 原生反馈收敛期内，本轮按住（%s）", group_id[-6:])
+        return False
+    # 主动广播也落观察日志：route=proactive、不可反馈；只记确认送达的全文，
+    # 空回执/异常只算「未确认」（SDK 可能吞掉超时），不记正文。
+    outgoing_id = uuid.uuid4().hex
+    policy_id = config.INTERACTION_POLICY_ID   # 发起这一刻定版
+
+    def journal(status, receipt=None, reason=""):
+        try:
+            fields = {"outgoing_id": outgoing_id, "source_message_id": None,
+                      "status": status, "route": "proactive",
+                      "feedback_eligible": False,
+                      "policy_id": policy_id}
+            if reason:
+                fields["reason"] = reason
+            if status == "delivered":
+                fields["text"] = text
+                rid = receipt.get("id") if isinstance(receipt, dict) \
+                    else getattr(receipt, "id", None)
+                if isinstance(rid, (str, int)):
+                    fields["platform_message_id"] = str(rid)
+            runtime.INTERACTIONS.append("delivery", group_id, user=None,
+                                        actor="assistant", **fields)
+        except Exception:
+            # 观察记录失败不许反过来把已确认的发送说成失败，也不许补记一笔冤枉账。
+            logger.warning("主动发言的观察记录失败（%s），发送结果不变", status)
+
+    # 发送前一刻再查一次：生成期间落下的收敛信号照样按住这条主动发言。
+    if runtime.FEEDBACK.quiet(group_id):
         return False
     try:
         sent = await client.api.post_group_message(group_openid=group_id, content=text, msg_type=0)
         if not sent:
+            journal("unconfirmed", reason="empty receipt")
             return False
         logger.info("📢 [主动发言] 群 %s | %s", group_id[-6:], text.replace("\n", " ")[:150])
+        # 确认送达的模型生成群发才登记反馈缓存：静态模式播报/本地文案不算。
+        if model_generated:
+            try:
+                runtime.FEEDBACK.remember(
+                    group_id, None, text, route="proactive",
+                    outgoing_id=outgoing_id, history=history)
+            except Exception:
+                logger.exception("⚠️ 主动发言反馈登记失败（%s）", group_id[-6:])
+        journal("delivered", receipt=sent)
         return True
     except Exception as e:
         logger.error("❌ 主动发言失败: %s", str(e)[:150])
+        journal("unconfirmed", reason=type(e).__name__)
         return False
 
 
-async def dun_promises(group_id):
-    """挑一条最该催的承诺，让它开口要账。一天最多一次，催满上限就撤下。"""
-    dunnable = runtime.PROMISES.dunnable(group_id)
-    if not dunnable:
-        return
-    row = dunnable[0]
-    if not runtime.BUDGET.can_consume():
-        logger.warning("🛑 今日额度已用尽，本次催债跳过（%d/%d）", runtime.BUDGET.used, runtime.BUDGET.limit)
-        return
-    runtime.STATE.mark_dirty()
+async def dun_promise(group_id, row):
+    """让它开口要这一条账。发出去了返回 True；什么时候催、能不能开口由定时任务判。"""
     # 催谁就只给谁的材料。以前把整个未兑现清单都塞进 payload，模型看着清单自由发挥，
     # 文案说的是 A、记账却记在 dunnable[0]（B）头上 —— 账实分离
     # （实测 20:16 文案 @ 的是罗老板的蹄髈，mark 的却是家豪的账）。
@@ -1557,33 +1942,84 @@ async def dun_promises(group_id):
         config.AI_MAX_TOKENS_BANTER,
     )
     if not text:
-        return
+        return False
     text = text.strip().strip('"')
-    if not await post_to_group(group_id, text):
-        return
+    if not await post_to_group(
+            group_id, text, model_generated=True,
+            history=list(group_buffers.get(group_id, ()))[-4:]):
+        return False
     nag = runtime.PROMISES.mark_nagged(group_id, row["id"])
     runtime.STATE.mark_dirty()
     logger.info("🧾 已催债（第 %d 次）：%s —— %s", nag, row.get("who"), row.get("what"))
+    return True
 
 
-async def promise_loop():
-    """后台催债：每小时看一次，只在白天、且群里当天有人说话时才开口。"""
+# 同一个群上一次催债的时间：几条账同时到期也别一口气全催出来。
+_last_dun = {}
+
+
+def _next_open_hour(now):
+    """下一个不在 PROMISE_QUIET_HOURS 里的整点。"""
+    hour = now - now % 3600
+    for _ in range(24):
+        hour += 3600
+        if time.localtime(hour).tm_hour not in config.PROMISE_QUIET_HOURS:
+            return hour
+    return now + 3600
+
+
+def _promise_hold(task, now):
+    """催债出门前的规矩；挡住就返回改到什么时候。原来散在每小时一圈的 promise_loop 里。"""
+    gid = task["group"]
+    if time.localtime(now).tm_hour in config.PROMISE_QUIET_HOURS:
+        return _next_open_hour(now)
+    seen = (runtime.STATE.data.get("groups") or {}).get(gid, {}).get("last_seen", 0)
+    if now - seen > 86400:
+        return now + 3600          # 群里一天没人说话，就别自顾自地开口
+    if runtime.FEEDBACK.quiet(gid, now=now):
+        return now + runtime.FEEDBACK.quiet_seconds   # 收敛期内连催债都收声
+    if not runtime.BUDGET.can_consume():
+        return now + 3600
+    if now - _last_dun.get(gid, 0) < config.PROMISE_CHECK_INTERVAL:
+        return _last_dun[gid] + config.PROMISE_CHECK_INTERVAL
+    return None
+
+
+async def remind_promise(task):
+    """到点催一条账。任务只是闹钟：响了回账本看这条还在不在、到没到时候。"""
+    gid = task["group"]
+    row = runtime.PROMISES.get(gid, task["payload"].get("id"))
+    due = runtime.PROMISES.next_nag(row) if row else None
+    if due is None:
+        return None                # 结清了、被摘要撤下了、或催满了
+    if due > time.time():
+        return due
+    if not await dun_promise(gid, row):
+        return time.time() + scheduler_mod.RETRY_SECONDS
+    _last_dun[gid] = time.time()
+    return runtime.PROMISES.next_nag(row)
+
+
+def schedule_promises(group_id):
+    """给账本里每条承诺定一个闹钟（同一条重复定就是改期）。账本变了就调一次。"""
+    for row in runtime.PROMISES.list(group_id):
+        due = runtime.PROMISES.next_nag(row)
+        if due is not None:
+            runtime.SCHEDULER.at("promise", group_id, due, {"id": row["id"]},
+                                 task_id=f"promise:{row['id']}")
+    runtime.STATE.mark_dirty()
+
+
+async def scheduler_loop():
+    """定时任务：睡到下一条到点或有新任务（最多 SCHEDULE_TICK_SECONDS），跑到点的。"""
     while True:
-        await STATUS.sleep(config.PROMISE_CHECK_INTERVAL)
-        if not config.PROMISE_ENABLED:
-            continue
+        await runtime.SCHEDULER.idle(config.SCHEDULE_TICK_SECONDS)
         try:
-            if quiet_hour():
-                continue
-            for gid in list(runtime.PROMISES.items.keys()):
-                # 群里今天都没人说话，就没必要自顾自地开口
-                seen = (runtime.STATE.data.get("groups") or {}).get(gid, {}).get("last_seen", 0)
-                if time.time() - seen > 86400:
-                    continue
-                await dun_promises(gid)
+            if await runtime.SCHEDULER.run_due():
+                runtime.STATE.mark_dirty()
         except Exception as e:
             STATUS.error(e)
-            logger.error("⚠️ 催债调度异常: %s", str(e)[:200])
+            logger.error("⚠️ 定时任务调度异常: %s", str(e)[:200])
 
 
 
@@ -1673,7 +2109,14 @@ class GroupBot(botpy.Client):
         if config.KNOWLEDGE_ENABLED:
             logger.info("📚 可编辑知识库=%s/（改文件即生效；all.md + 每群文件）",
                         config.KNOWLEDGE_DIR)
-        if config.SEARCH_ENABLED:
+        if config.SEARCH_ENABLED and providers.research_available():
+            logger.info("🌐 联网查询已启用 | %s / %s 判断触发 + 「搜索」命令 | 线上等 %.0fs 再转后台 | "
+                        "每群每日 %d 次 | 深度研究%s",
+                        config.RESEARCH_PROVIDER, config.RESEARCH_MODEL,
+                        config.ASYNC_REPLY_SECONDS, config.SEARCH_DAILY_CAP,
+                        f"每日 {config.DEEP_RESEARCH_DAILY_CAP} 次"
+                        if config.DEEP_RESEARCH_ENABLED else "关")
+        elif config.SEARCH_ENABLED:
             logger.info("🌐 按需搜索已启用 | DuckDuckGo | 每群 %.0fs 冷却 / 每日 %d 次 | %s",
                         config.SEARCH_COOLDOWN_SECONDS, config.SEARCH_DAILY_CAP,
                         "显式代理" if config.SEARCH_PROXY else "直连")
@@ -1690,6 +2133,10 @@ class GroupBot(botpy.Client):
             total = sum(len(v) for v in runtime.PROMISES.items.values())
             logger.info("🧾 承诺催债已启用 | 在账 %d 条 | 宽限 %.0f 小时，最多催 %d 次",
                         total, config.PROMISE_GRACE_HOURS, config.PROMISE_MAX_NAG)
+        pending = runtime.SCHEDULER.pending()
+        logger.info("⏰ 定时任务 %d 个%s", len(pending),
+                    f" | 最近一个 {time.strftime('%m-%d %H:%M', time.localtime(pending[0]['due']))}"
+                    f"（{pending[0]['kind']}）" if pending else "")
         logger.info("=" * 50)
         task = asyncio.create_task(probe_provider())
         _background_tasks.add(task)
@@ -1749,7 +2196,11 @@ class GroupBot(botpy.Client):
         # 名字全部按当前配置取，代码里不写死任何人名（见 naming.py）
         has_name_call = any(n and n in user_input for n in naming.bot_names())
         bot_tags = (f"<@{bot_id}>", f"<@!{bot_id}>") if bot_id else ()
-        is_at = is_at or any(tag in raw_content for tag in bot_tags) or has_name_call
+        # 平台 @ 是显性信号，一定回。正文里出现名字只是**本地提议**：
+        # 「小王傻」「小王怎么样了」不等于欠它一句，要不要答交给分诊（decisions.assess）。
+        at_bot = is_at or any(tag in raw_content for tag in bot_tags)
+        named = has_name_call and not at_bot
+        is_at = at_bot or has_name_call   # 「这条叫到了它」这个事实：归档 / 日志 / 剥称呼照旧用它
         if is_at:
             user_input = strip_call(user_input)
 
@@ -1779,6 +2230,22 @@ class GroupBot(botpy.Client):
         observe_group(group_id)["last_seen"] = time.time()
         runtime.STATE.mark_dirty()
 
+        # 3.4 交互观察：完整规范化输入落独立日志（只进不出，不进任何提示词路径）。
+        runtime.INTERACTIONS.append(
+            "incoming", group_id, user=sender_openid, actor="user",
+            message_id=message.id, text=user_input,
+            at=bool(is_at), cmd=is_control_command(user_input))
+
+        # 3.45 慢活跟进没送出去（被动窗口过了、主动发言也被拒）：捎在这条消息上。
+        await deliver_carried(message, group_id)
+
+        # 3.5 显式反馈命令：在进背景缓存/好感度/模型之前处理 —— 它是给系统的
+        #     记账，不是聊天内容，进了 buffer 就会变成下轮「群聊背景」。
+        feedback = interactions_mod.parse_feedback(user_input)
+        if feedback is not None:
+            await handle_feedback(message, group_id, sender_openid, feedback)
+            return
+
         # 3.5 写入群聊滑动窗口背景缓存。
         #     只挡「同一个人连着刷一模一样的内容」（复读机、表情三连），别让它把窗口占满；
         #     其余照收。以前这里是「? / 6 / 草 / 哈哈」之类的白名单枚举，来一句新的
@@ -1787,6 +2254,41 @@ class GroupBot(botpy.Client):
         if not buf or buf[-1]["sender"] != sender_openid or buf[-1]["text"] != user_input:
             buf.append({"sender": sender_openid, "text": user_input, "time": time.time(), "message_id": message.id})
             runtime.STATE.data["buffers"][group_id] = list(buf)
+
+        # 节奏先验在这里算**一次**，对每条进背景缓存的消息都算（见 opening.py）。
+        # ⚠️ 不要挪到插嘴门里去算：那里会被冷却窗和收敛窗跳过，而被跳过的恰好是
+        # 「刚接过话」之后的热场消息 —— 群均值会被系统性地压低，乘数整体偏高，
+        # 保量就不成立了。离线拟合用的也是收到的全部消息，这里保持同一个口径。
+        opening_trace = {}
+        if config.OPENING_PRIOR_ENABLED:
+            opening_trace = runtime.OPENING.assess(group_id, list(buf),
+                                                   now=time.time())
+            if opening_trace.get("opening_score") is not None:
+                runtime.STATE.mark_dirty()
+
+        # 分诊（2026-10-31）：这条消息要问判断的那几题，**第一次用到时**才问、只问一次，
+        # 之后各处复用同一份结果（见 decisions.FeedbackTracker.assess）。
+        # 起名候选在 5.5 才解析出来，所以第一次调用可能在那里，也可能在 9。
+        triage_box = {}
+
+        async def triage(nick_candidate=None):
+            if "result" not in triage_box:
+                try:
+                    triage_box["result"] = await runtime.FEEDBACK.assess(
+                        group_id, sender_openid, user_input,
+                        message_id=message.id, is_direct=bool(at_bot), named=named,
+                        history=[row for row in buf
+                                 if row.get("message_id") != message.id][-4:],
+                        nick_candidate=nick_candidate,
+                        want_recall=config.MEMORY_RECALL_ENABLED,
+                        want_lookup=(config.SEARCH_ENABLED
+                                     and providers.research_available()),
+                        every_message=config.DECISION_TRIAGE_ALL)
+                except Exception:
+                    logger.exception("⚠️ 分诊异常（%s）", group_id[-6:])
+                    # 异常不代表「没发起过」—— 标成已尝试，掷中后也不许补发第二次。
+                    triage_box["result"] = {"decision_attempted": True}
+            return triage_box["result"]
 
         # 4. 群主认领 —— **群里永远不授权**，这里只负责把人指到私聊去。
         #    以前这段真的会在群里认主（谁先喊谁得），等于把身份挂在大喇叭上招领；
@@ -1831,9 +2333,20 @@ class GroupBot(botpy.Client):
         nick_cmd = relations.parse_nick_command(
             user_input, bot_names=bot_names,
             mentioned_others=mentioned_others, allow_other=is_owner)
+        nick_verdict = None
+        if nick_cmd and nick_cmd.get("nick"):
+            # 本地模式只是**提议**一个候选。判断有把握时可以否决（诱饵 / 误触发），
+            # 但不能单独批准 —— 拿不准就照旧走词表、节流和审核那几道底线。
+            # 2026-10-31 真实语料 32 个候选：谐音政治人名有把握拦下 6 个，
+            # 却也把「姚元文」有把握地放行了；普通的「老王」五次里四次拿不准。
+            # 所以它只配当否决票，不配当批准章。
+            nick_verdict = (await triage(nick_candidate=nick_cmd["nick"])).get("nickname")
+            if nick_verdict == "not_a_request":
+                logger.info("🙅 起名模式误触发，按普通消息处理（%s）", sender_openid[-4:])
+                nick_cmd = None
         if nick_cmd:
             await handle_nick_command(message, nick_cmd, group_id, sender_openid,
-                                      is_owner, mentioned_others)
+                                      is_owner, mentioned_others, verdict=nick_verdict)
             return
         # 解析不出命令 ≠ 没有这个意图：普通群友的「叫@某人 X」被 allow_other 吞掉了，
         # 静默掉进闲聊会让人以为在商量、甚至以为改成了。带动词的是明确意图，必须给说法。
@@ -1967,18 +2480,127 @@ class GroupBot(botpy.Client):
 
         # 9. 判定这条要不要接
         is_fortune = hits(user_input, FORTUNE_TRIGGERS)
+        # 搜索查询先解析一次：9.5 与反馈评估共用同一判定，不重复解析。
+        search_query = search_mod.extract_query(user_input)
+
+        # 自然反馈评估：只评普通群聊文本，最多一次原生判断；指令/搜索/求签绕过。
+        # 评估用的输入都是脱敏后的本地代号，群号/openid/消息 ID 不出本机。
+        feedback_result = {}
+        intervention_trace = {}
+        if (not is_control_command(user_input) and not is_fortune
+                and search_query is None):
+            feedback_result = await triage()
+            # 插嘴判断的乘数在这里取、在这里折均值，理由同开口先验：挪进插嘴门会被冷却窗
+            # 跳过，均值就偏了。冲着它说的话只取乘数不进均值 —— 那道题的题面写明点名的
+            # 另有人管，分数天然偏低，混进来会把未点名消息的乘数整体抬高。
+            if feedback_result.get("intervention_p") is not None:
+                intervention_trace = runtime.INTERVENTION.fold(
+                    group_id,
+                    feedback_result["intervention_p"] ** decisions_mod.INTERVENTION_SHARPNESS,
+                    observe=not is_at)
+                runtime.STATE.mark_dirty()
+            if feedback_result.get("target") is not None:
+                # 只有解析出有效反馈才落账；内部 ID 只进本地日志。
+                runtime.INTERACTIONS.append(
+                    "natural_feedback", group_id, user=sender_openid,
+                    actor="system", source_message_id=message.id,
+                    target=feedback_result.get("target"),
+                    suggested_move=feedback_result.get("suggested_move"),
+                    action=feedback_result.get("action"),
+                    continuation=feedback_result.get("continuation"),
+                    intervention=feedback_result.get("intervention"),
+                    source_reply_id=feedback_result.get("source_reply_id"),
+                    policy_id=config.INTERACTION_POLICY_ID)
+            # 「下一句骂你就是反馈」的跨天那一层：只收「没人请的插嘴」之后的
+            # 被嫌烦/被接着逗，折进本人的插嘴接纳度（receptive.py）。
+            # 内容对不对（repair_briefly / continue_normally）不算打扰的证据。
+            if (config.RECEPTIVE_ENABLED
+                    and feedback_result.get("target") == "bot_response"
+                    and runtime.RECEPTIVE.record(
+                        group_id, sender_openid,
+                        feedback_result.get("action"),
+                        route=feedback_result.get("source_route"))):
+                runtime.STATE.mark_dirty()
+        feedback_note = ""
+        reply_context = ""
+        if feedback_result.get("target") == "bot_response":
+            if feedback_result.get("action") == "back_off":
+                feedback_note = prompts.PROMPT_FEEDBACK_BACK_OFF
+            elif feedback_result.get("action") == "repair_briefly":
+                feedback_note = prompts.PROMPT_FEEDBACK_REPAIR
+            # 跨人反馈语境：B 纠正/追问原本发给 A 的那条时，B 的会话里
+            # 并没有那句话 —— 代码把本地缓存的真实原文带进去（仅本轮语境）。
+            bot_text = feedback_result.get("bot_reply_text")
+            if bot_text:
+                reply_context = prompts.PROMPT_PREVIOUS_BOT_REPLY.format(
+                    recipient={
+                        "current_member": "由本轮说话人触发的接话",
+                        "another_member": "由另一位群友触发的接话",
+                        "group": "群内主动发言",
+                    }.get(feedback_result.get("bot_reply_to"),
+                          "由另一位群友触发的接话"),
+                    quoted_text=json.dumps(bot_text, ensure_ascii=False))
 
         should_reply = False
         is_random = False
         search_note = ""
-        if is_at or is_fortune:
+        # 「居然记得」：本轮插嘴获批端出的那一条本人旧话（没获批就是空串）。
+        callback_note = ""
+        # 门控决策：记的是「这道门当时放没放人」，gate_probability 只是那一次的
+        # 插嘴概率，既不是最终送达倾向、也不是什么实验分组。
+        gate_decision = None
+        # 收敛语气：判断有把握的 back_off，或本地那张喊停词表 —— 取并集。
+        # 两者各漏一类（2026-10-31）：词表里没有「闭嘴」，判断有把握地认出了 3/3；
+        # 判断对「别老损我」排第一却不够有把握，词表一眼认得。见 docs/judgment-layer.md。
+        back_off = bool(feedback_result.get("back_off")) or looks_like_back_off(user_input)
+        addressed = feedback_result.get("addressed")
+        # 点了名：判断说「该答」就答；判断不可用也答（被叫到却被无视，比多答一句难受）——
+        # 唯一例外是判断有把握地读出「收敛」：被叫闭嘴不该回一句「好的我闭嘴」。
+        named_owed = named and (addressed == "answer"
+                                or (addressed is None
+                                    and not feedback_result.get("back_off")))
+        quip = False
+        if at_bot or is_fortune or named_owed:
             should_reply = True
+            gate_decision = {"route": "fortune" if is_fortune else "direct",
+                             "selected": True,
+                             "reason": ("fortune_trigger" if is_fortune
+                                        else "direct_address" if at_bot
+                                        else "named_answer" if addressed == "answer"
+                                        else "named_fallback")}
+        elif named and addressed == "quip":
+            # 被点名逗 / 夸 / 说起：addressed 那题已经判过「短接一句接得上」（接不上的是
+            # let_it_pass），这里只决定怎么接 —— 短接，不是正经作答。暂停窗内一律不接。
+            # 2026-11-01 以前还要 intervention 说 join_briefly 才接：那题问的是「没人请时
+            # 插一句合不合适」，题面写明点名的消息另有人管，于是几乎总说 stay_quiet ——
+            # 群主一句「小王我真的好喜欢你啊」就这样被吞了。
+            quip = not runtime.FEEDBACK.quiet(group_id)
+            should_reply = quip
+            gate_decision = {"route": "reply", "selected": quip,
+                             "reason": "named_quip" if quip else "named_quip_quiet"}
         else:
             # 不做文字长度门槛：群里一句「？」「太蠢了」就是真实的接话信号，
             # 拿字数当尺子只会把能接的挡在外面。频率交给概率和冷却控制。
             # （读不出内容的消息在入口就被丢掉了，到这里的都是人话。）
             now = time.time()
-            if now - group_last_random_reply.get(group_id, 0) >= config.BANTER_COOLDOWN_SECONDS:
+            fb_target = feedback_result.get("target")
+            if (fb_target == "bot_response"
+                    and feedback_result.get("action") == "repair_briefly"):
+                # 有效修正：不用点名也补一句简短修正（一条，不连环追发）。
+                should_reply = True
+                gate_decision = {"route": "reply", "selected": True,
+                                 "reason": "feedback_repair"}
+            elif (fb_target == "bot_response"
+                    and feedback_result.get("continuation") == "reply_now"):
+                # 对方明确要它继续接：按直接对话走，不再掷骰子。
+                should_reply = True
+                gate_decision = {"route": "reply", "selected": True,
+                                 "reason": "feedback_followup"}
+            elif runtime.FEEDBACK.quiet(group_id, now=now):
+                # 原生反馈判过「收敛一下」：暂停窗内 unsolicited 一律不掷不评。
+                gate_decision = {"route": "banter", "selected": False,
+                                 "reason": "feedback_quiet"}
+            elif now - group_last_random_reply.get(group_id, 0) >= config.BANTER_COOLDOWN_SECONDS:
                 # 聊到群主时更容易被点着：这是群里最现成的梗源，也是它刷存在感最自然的位置。
                 # 判断「是不是在说群主」不看写死的人名 —— 见 owner_reference_terms。
                 if mentions_owner(user_input, group_id, mentioned_others):
@@ -1994,7 +2616,57 @@ class GroupBot(botpy.Client):
                 tier = relations.level_key((rec or {}).get("score", 0))
                 act_willingness, _act_turns, _act_line = activation.profile(tier)
                 chance = min(chance * act_willingness, config.BANTER_CHANCE_MAX)
-                if random.random() < chance:
+                # 何时介入（2026-10-31）：原来这枚骰子**与对话无关** —— 冷了二十分钟的
+                # 死群和三个人你一句我一句的热场，掷的是同一个概率。先验按本群分数
+                # 均值归一，所以整体话量不变，只是把这些话挪到有空档的时刻。
+                if opening_trace.get("opening_score") is not None:
+                    chance = min(chance * opening_trace["opening_shape"],
+                                 config.BANTER_CHANCE_MAX)
+                # 插嘴判断（2026-11-01）：每条消息分诊时都问过「此刻插一句合不合适」，
+                # 它的 p(join_briefly) 按本群均值折成乘数。原来是先掷骰子、掷中了再让判断
+                # 一票否决 —— 判断只能减不能加，而它的结论在冲着机器人聊的场合几乎总是
+                # stay_quiet，群主看到的就是「插话这事沉默得太多」。现在判断决定落在哪些时刻，
+                # 话量仍由 BANTER_PROBABILITY 定。判断不可用时乘数为 1，退回原来的骰子。
+                if intervention_trace:
+                    chance = min(chance * intervention_trace["intervention_shape"],
+                                 config.BANTER_CHANCE_MAX)
+                # 接纳度：证据够了才允许偏离群体口径，否则乘数恰为 1.0。
+                receptive_trace = {}
+                if config.RECEPTIVE_ENABLED:
+                    receptive_trace = runtime.RECEPTIVE.assess(
+                        group_id, sender_openid, now=now)
+                    chance = min(chance * receptive_trace["receptive_multiplier"],
+                                 config.BANTER_CHANCE_MAX)
+                draw = random.random()
+                hit = draw < chance
+                intervention = feedback_result.get("intervention")
+                if (hit and not feedback_result.get("decision_attempted")
+                        and search_query is None):
+                    # 没分诊过的消息（DECISION_TRIAGE_ALL=false 时的普通消息）：掷中后
+                    # 单问一次，按结论拦。分诊过的判断已经折进了概率，不再一票否决；
+                    # 同一条消息绝不发起第二次原生调用。
+                    try:
+                        intervention = await runtime.FEEDBACK.consider_banter(
+                            group_id, sender_openid,
+                            history=list(buf or [])[-4:],
+                            source_message_id=message.id)
+                    except Exception:
+                        logger.exception("⚠️ 插嘴仲裁异常（%s）", group_id[-6:])
+                        intervention = None
+                vetoed = (hit and intervention == "stay_quiet"
+                          and not feedback_result.get("decision_attempted"))
+                gate_decision = {"route": "banter",
+                                 "selected": bool(hit and not vetoed),
+                                 "reason": ("decision_quiet" if vetoed else
+                                            "hit" if hit else "miss"),
+                                 "gate_probability": chance, "draw": draw,
+                                 **opening_trace, **intervention_trace,
+                                 **receptive_trace}
+                if vetoed:
+                    gate_decision["decision_action"] = "stay_quiet"
+                elif intervention in ("join_briefly", "stay_quiet"):
+                    gate_decision["decision_action"] = intervention
+                if hit and not vetoed:
                     should_reply = True
                     is_random = True
                     logger.info("🎲 插嘴命中（激活度 %.2f × 亲密度权重 %.2f → 概率 %.3f，%s）",
@@ -2003,9 +2675,54 @@ class GroupBot(botpy.Client):
                     group_last_random_reply[group_id] = now
                     runtime.STATE.data["cooldowns"][group_id] = now
                     runtime.STATE.mark_dirty()
+                    # 「居然记得」（2026-10-31 群主：「有时候让人觉得意想不到居然
+                    # 记得」）：本地话题闸先挑出本人旧话，再问一次原生判断 ——
+                    # 此刻端出来是「居然记得」还是「翻档案」。判断不可用就不端，
+                    # 新增的惊喜不许靠失败兜底。要稀才稀奇：每人冷却 + 每天上限。
+                    if (config.DECISION_CALLBACK_ENABLED
+                            and config.PERSONAL_MEMORY_ENABLED
+                            and config.DIGEST_ENABLED
+                            and runtime.RECEPTIVE.callback_allowed(
+                                group_id, sender_openid, now=now)):
+                        who, sources = digest_mod.match_people(
+                            runtime.DIGESTS.get(group_id), group_id=group_id,
+                            sender=sender_openid, text=user_input,
+                            resolver=_resolve_name(group_id))
+                        if sources:
+                            try:
+                                approved = await runtime.FEEDBACK.consider_callback(
+                                    group_id, sender_openid,
+                                    quote=sources[0]["quote"],
+                                    quote_ts=sources[0]["ts"],
+                                    history=list(buf or [])[-4:], now=now,
+                                    source_message_id=message.id)
+                            except Exception:
+                                logger.exception("⚠️ 回忆判断异常（%s）",
+                                                 group_id[-6:])
+                                approved = None
+                            if approved is not None:
+                                gate_decision["callback"] = bool(approved)
+                            if approved:
+                                callback_note = refresh_names(
+                                    group_id,
+                                    digest_mod.render_matched(who, sources[:1]))
+                            if callback_note:
+                                runtime.RECEPTIVE.mark_callback(
+                                    group_id, sender_openid, now=now)
+                                runtime.STATE.mark_dirty()
+                                logger.info("🫧 居然记得：端出 1 条旧话（%s）",
+                                            sender_openid[-4:])
+            else:
+                gate_decision = {"route": "banter", "selected": False,
+                                 "reason": "cooldown"}
+        if gate_decision is not None:
+            runtime.INTERACTIONS.append(
+                "decision", group_id, user=sender_openid, actor="system",
+                source_message_id=message.id, **gate_decision)
 
-        # 9.5 显式联网搜索：所有群友可用，按群限流；不自动搜索。
-        search_query = search_mod.extract_query(user_input)
+        # 9.5 联网：显式「搜索」命令所有群友可用、按群限流；配了联网查询时，
+        #     分诊判断说「这句得先查」也会查（见下面 9.6）。lookup = (慢活名, 要查的话)。
+        lookup = None
         if search_query is not None:
             if not config.SEARCH_ENABLED:
                 await safe_reply(message, "联网搜索没开。")
@@ -2023,17 +2740,46 @@ class GroupBot(botpy.Client):
                     "（摆摆手）刚搜过，缓一分钟再问。" if reason == "cooldown"
                     else "（扶额）今天搜得有点多，明天再搜吧。")
                 return
-            results = await search_mod.search_web(search_query)
-            if results is None:
-                await safe_reply(message, "搜索暂时连不上，稍后再试。")
-                return
-            if not results:
-                await safe_reply(message, "（搜了一圈）没找到靠谱的结果，换个说法？")
-                return
-            search_note = search_mod.render_note(results)
-            should_reply = True
-            is_random = False
-            logger.info("🌐 按需搜索：%d 条结果（%s）", len(results), group_id[-6:])
+            if providers.research_available():
+                lookup = ("search", search_query)
+                should_reply = True
+                is_random = False
+                runtime.INTERACTIONS.append(
+                    "decision", group_id, user=sender_openid, actor="system",
+                    source_message_id=message.id, route="search", selected=True,
+                    reason="search_override")
+            else:
+                results = await search_mod.search_web(search_query)
+                if results is None:
+                    await safe_reply(message, "搜索暂时连不上，稍后再试。")
+                    return
+                if not results:
+                    await safe_reply(message, "（搜了一圈）没找到靠谱的结果，换个说法？")
+                    return
+                search_note = search_mod.render_note(results)
+                should_reply = True
+                is_random = False
+                logger.info("🌐 按需搜索：%d 条结果（%s）", len(results), group_id[-6:])
+                # 搜索成功会改写上面的门控结果 —— 单独记一条，而不是回头涂改插嘴记录。
+                runtime.INTERACTIONS.append(
+                    "decision", group_id, user=sender_openid, actor="system",
+                    source_message_id=message.id, route="search", selected=True,
+                    reason="search_override")
+
+        # 9.6 判断触发的联网查询：只在本轮本来就要正经回话时才查（插嘴、短接、喊停都不查）。
+        #     research 是隐藏彩蛋：今天的次数用完或刚用过，就退回普通查询。
+        #     自动查询不吃「搜索」命令的冷却，只算进每日上限。
+        if (lookup is None and should_reply and not is_random and not quip
+                and not back_off and config.SEARCH_ENABLED
+                and providers.research_available()
+                and not wordfilter.has_hit(user_input)):
+            kind = feedback_result.get("lookup")
+            if kind == "research" and not (config.DEEP_RESEARCH_ENABLED
+                                           and search_mod.DEEP_LIMITER.acquire(group_id)[0]):
+                kind = "search"
+            if kind == "research" or (kind == "search" and search_mod.LIMITER.acquire(
+                    group_id, cooldown=False)[0]):
+                lookup = (kind, _lookup_query(user_input, buf, message.id))
 
         if not should_reply:
             if image_url:
@@ -2047,6 +2793,11 @@ class GroupBot(botpy.Client):
             await safe_reply(message, f"找{naming.bot_name()}啥事？直接说就行。")
             return
         if not await BudgetGate.check(message, group_id):
+            runtime.INTERACTIONS.append(
+                "decision", group_id, user=sender_openid, actor="system",
+                source_message_id=message.id,
+                route="banter" if is_random else "reply",
+                selected=False, reason="budget_blocked")
             return
         if image_url:
             caption = await media.caption_for(
@@ -2093,57 +2844,46 @@ class GroupBot(botpy.Client):
         # 每人每群一份独立 session，彻底隔离会话，绝不串台
         session_id = f"{group_id}_{sender_openid}"
 
-        # 关系档案注入：告诉模型「对面这个人跟你有过多深的往来」，同时消费掉待播报的里程碑
-        relation_note = ""
-        target_record = None
-        if config.AFFINITY_ENABLED:
-            target_record = runtime.RELATIONS.get(group_id, sender_openid)
-            relation_note = relations.build_relation_note(
-                target_record, sender_openid, mode=active_mode,
-                other_names=_other_names(group_id, sender_openid),
-            )
-        pending_milestone = (target_record or {}).get("pending_milestone")
+        # 称呼与游戏关系注入：称呼在好感开关之外也要给（不然 AFFINITY_ENABLED=false
+        # 时连名字都叫不出来）；游戏部分（档位/模式/里程碑）只在好感开着时写。
+        # 同时消费掉待播报的里程碑。
+        target_record = runtime.RELATIONS.get(group_id, sender_openid,
+                                              create=config.AFFINITY_ENABLED)
+        relation_note = relations.build_relation_note(
+            target_record, sender_openid, mode=active_mode,
+            other_names=_other_names(group_id, sender_openid),
+            include_game=config.AFFINITY_ENABLED)
+        pending_milestone = ((target_record or {}).get("pending_milestone")
+                             if config.AFFINITY_ENABLED else None)
         def commit_milestone():
             if pending_milestone and target_record.get("pending_milestone") == pending_milestone:
                 target_record["pending_milestone"] = None
                 target_record["told_day"] = time.strftime("%Y-%m-%d")
 
-        # 群聊长期记忆注入（2026-10-06 对照实验后收敛）：**只喂人物名册**。
-        # 名册是防张冠李戴的事实底账（谁叫什么、当前什么状态），一行一人、全是稳定状态。
-        # 实验数据（全量记忆 / 台账+名册 / 只名册 / 无记忆 各 6 发，全 Gemini 应答）：
-        # 「正文+转折词+旧事回顾」尾巴率 1/4、2/4、1/4、0/4，均字数 120/128/102/39 ——
-        # 旧事素材（八卦简报/话题/梗/台账）只要在眼前就会长出回忆尾巴，瘦身（去掉简报留台账）无效；
-        # 唯一把尾巴压下去的同时还能保住事实底账的形态，就是只喂名册。
-        # 简报/台账的独立出口都还在：群史记查询（render_digest_reply）、催债定时任务、
+        # 群聊长期记忆注入：**每日层只留共享的群表达参考**（口头禅/语气词）。
+        # 个人材料不再进这层 —— 它随说话人与话题变化，属于本轮动态层（见下方
+        # personal_note）。简报/台账的独立出口照旧：群史记查询、催债定时任务、
         # 查账触发词 —— 需要时查得到，不需要时不陪跑。
-        group_memory = ""
-        if config.DIGEST_ENABLED:
-            summary = runtime.DIGESTS.get(group_id)
-            if summary:
-                parts = []
-                people_block = digest_mod.render_people(summary).strip()
-                if people_block:
-                    parts.extend([prompts.PROMPT_MEMORY_HEADER, people_block])
-                style_block = digest_mod.render_style(summary)
-                if style_block:
-                    parts.append(style_block)
-                if parts:
-                    group_memory = refresh_names(group_id, "\n".join(parts))
+        summary = runtime.DIGESTS.get(group_id) if config.DIGEST_ENABLED else None
+        group_memory = refresh_names(group_id, digest_mod.render_style(summary)) if summary else ""
 
         # 可编辑知识库：维护者改文件、下一轮即生效；只按关键词取少量进动态层。
         knowledge_note = ""
-        if (not is_random and not looks_like_back_off(user_input)
-                and config.KNOWLEDGE_ENABLED):
+        if (not is_random and not quip and not back_off
+                and not feedback_note and config.KNOWLEDGE_ENABLED):
             knowledge_note = refresh_names(
                 group_id, runtime.KNOWLEDGE.render(group_id, user_input))
             if knowledge_note:
                 logger.info("📚 知识库命中：%d 条（%s）",
                             knowledge_note.count("\n- "), session_id[-12:])
 
-        # 旧账召回：只在对方明确问起往事时查本地归档，0 token；随机插嘴不翻旧账。
+        # 旧账召回：分诊判断「这句的回答要靠本群旧账」时才查本地归档；随机插嘴不翻旧账。
+        # 以前靠「上次 / 之前 / 答应」这类线索词触发，真实语料里点名消息上命中的 5 条全是误触发
+        # （「之前那个模型更有趣」「我叫王红闻你就要答应」），判断全判对了。
         recall_note = ""
-        if (not is_random and not looks_like_back_off(user_input)
-                and config.MEMORY_RECALL_ENABLED):
+        if (not is_random and not quip and not back_off
+                and not feedback_note and config.MEMORY_RECALL_ENABLED
+                and feedback_result.get("recall") == "look_up"):
             recall_note = refresh_names(group_id, recall_mod.build_note(
                 group_id, user_input,
                 archive=runtime.ARCHIVE, promises=runtime.PROMISES,
@@ -2153,16 +2893,42 @@ class GroupBot(botpy.Client):
                 logger.info("🔎 旧账召回：%d 条本地证据（%s）",
                             recall_note.count("\n- "), session_id[-12:])
 
-        reply_text, delta, delivery = await reply_in_session(
-            message, session_id, user_input, on_delivered=commit_milestone,
-            owner_hint_group=group_id,
+        # 个人原话：当前说话人、当前话题命中、来源与时间齐备才给，最多两条。
+        # 知识库/旧账/搜索已答了本轮要的东西时不再叠加；随机插嘴与喊停同样不给。
+        # 插嘴轮：只认门控里被原生判断放行的那一条（callback_note）；
+        # 普通接话轮照旧按本人 + 当前话题现挑。两条路都走同一道准入闸。
+        personal_note = callback_note
+        if (summary and not is_random and not quip and not back_off
+                and not feedback_note
+                and not any((knowledge_note, recall_note, search_note, lookup))):
+            personal_note = refresh_names(group_id, digest_mod.render_people(
+                summary, group_id=group_id, sender=sender_openid, text=user_input,
+                resolver=_resolve_name(group_id)))
+            if personal_note:
+                logger.info("🗣 个人原话：%d 条命中（%s）",
+                            personal_note.count("\n- "), session_id[-12:])
+
+        reply_kwargs = dict(
+            on_delivered=commit_milestone, owner_hint_group=group_id,
             is_owner=is_owner, mode=active_mode,
             context_hint=context_hint, is_random_banter=is_random,
             relation_note=relation_note, group_memory=group_memory,
             owner_label=owner_label(group_id), state_note=state_note,
             knowledge_note=knowledge_note, recall_note=recall_note,
-            search_note=search_note,
+            personal_note=personal_note,
+            callback_approved=bool(callback_note),
+            feedback_note=feedback_note, reply_context=reply_context,
+            back_off=back_off, quip=quip,
+            history=list(buf or [])[-4:],
         )
+        outcome = None
+        if lookup:
+            outcome = await answer_with_lookup(message, session_id, user_input,
+                                               *lookup, reply_kwargs=reply_kwargs)
+        if outcome is None:
+            outcome = await reply_in_session(message, session_id, user_input,
+                                             search_note=search_note, **reply_kwargs)
+        reply_text, delta, delivery = outcome
         if delivery is None:
             # 模型行使了不说话的权利：这轮到此为止，好感度/情绪结算全部跳过
             return
@@ -2173,13 +2939,17 @@ class GroupBot(botpy.Client):
         # 现在是：模型判**方向**（-1/0/1，见 CMD_PROTOCOL），拿不到模型判定时退回本地词表，
         #   最后统一过每日封顶。真正的印象结算仍在压缩里做（它看得到一整天，更准）。
         if config.AFFINITY_ENABLED:
+            reason = "模型判方向" if delta is not None else "词表兜底"
             if delta is None:
                 delta = relations.local_sentiment(user_input)
-                apply_affinity_delta_capped(group_id, sender_openid, delta, "词表兜底")
-            else:
-                # reason 区分开是有用的：跑几天就能从日志里看出「模型判方向」和
-                # 「词表兜底」各自的占比与准头，再决定要不要把权重挪向压缩结算。
-                apply_affinity_delta_capped(group_id, sender_openid, delta, "模型判方向")
+            # 有效原生反馈在场时，负向情绪不落账：被指出问题、嫌插话时机不对、
+            # 甚至玩笑式粗口都不该扣交情（正向与游戏结算照旧照记）。
+            if (delta or 0) < 0 and feedback_result.get("target") in (
+                    "bot_response", "another_person", "unclear"):
+                delta = 0
+            # reason 区分开是有用的：跑几天就能从日志里看出「模型判方向」和
+            # 「词表兜底」各自的占比与准头，再决定要不要把权重挪向压缩结算。
+            apply_affinity_delta_capped(group_id, sender_openid, delta, reason)
             # 心情（2026-10-19）：跟着每轮结算漂移——被怼多了它会烦，被捧了会顺气。
             # 零额外模型调用：方向值是现成的，心情只是它的指数移动平均。
             if delta:
@@ -2233,6 +3003,7 @@ class GroupBot(botpy.Client):
             return
         runtime.STATE.mark_dirty()
 
+        # 私聊不走分诊：不为最私密的那一路新开第三方数据流，喊停照旧靠 get_ai_reply 里的本地词表。
         await reply_in_session(
             message, f"user_{sender_openid}", user_input,
             is_owner=is_owner, mode="normal", private=True)
@@ -2294,6 +3065,16 @@ def _run_bot():
                 config.PROVIDER["label"],
                 _main_models[0] if _main_models else "（无可用 Key）",
                 " → ".join(config.PROVIDER_PRESETS[n]["label"] for n in providers.PROVIDER_CHAIN))
+    # 各司其职：每一档走哪家、第一个模型是谁（config.TIER_PROVIDERS）
+    for _tier, _chains in (("回复", providers.MODEL_CHAINS), ("摘要", providers.MODEL_CHAINS_DIGEST),
+                           ("审核", providers.MODEL_CHAINS_JUDGE)):
+        _key = {"回复": "chat", "摘要": "digest", "审核": "judge"}[_tier]
+        _name = providers._TIER_PROVIDER_CHAINS[_key][0] if providers._TIER_PROVIDER_CHAINS[_key] else ""
+        _first = (_chains.get(_name) or ["（无）"])[0]
+        _profile = providers.model_profile(_first)
+        _level = config.TIER_REASONING.get(_key) if (_profile or {}).get("effort") else ""
+        logger.info("   %s → %s / %s%s", _tier, config.PROVIDER_PRESETS.get(_name, {}).get("label", "（无）"),
+                    _first, (f"（推理 {_level}）" if _level else "（已登记调用档案）") if _profile else "")
     if runtime.SESSIONS._sessions:
         logger.info("💾 已恢复 %s 个会话上下文", len(runtime.SESSIONS._sessions))
 
@@ -2319,7 +3100,11 @@ def _run_bot():
     if config.DIGEST_ENABLED:
         jobs["digest"] = digest_loop
     if config.PROMISE_ENABLED:
-        jobs["promise"] = promise_loop
+        runtime.SCHEDULER.register("promise", remind_promise, hold=_promise_hold)
+        for gid in list(runtime.PROMISES.items):
+            schedule_promises(gid)
+    runtime.SCHEDULER.register("followup", finish_lookup)
+    jobs["schedule"] = scheduler_loop
     for name, factory in jobs.items():
         task = loop.create_task(STATUS.run(name, factory))
         _background_tasks.add(task)

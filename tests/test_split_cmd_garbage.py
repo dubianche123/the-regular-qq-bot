@@ -34,6 +34,14 @@ class SplitCmdGarbageTest(unittest.TestCase):
         self.assertEqual(body, "正常说话，没有标签")
         self.assertIsNone(payload)
 
+    def test_html_wrapper_is_stripped(self):
+        """2026-11-01 网关 glm 把整段回复包成 <p>…</p>，原样进了群、又被下一条学去。"""
+        body, payload = bot.split_cmd("<p>能看个趋势<br/>别急着下结论</p><CMD>{\"aff\":1}</CMD>")
+        self.assertEqual(body, "能看个趋势别急着下结论")
+        self.assertEqual(payload, {"aff": 1})
+        self.assertEqual(bot.split_cmd("<p>行吧</p>")[0], "行吧")
+        self.assertEqual(bot.split_cmd("我<3你，1<2 也成立")[0], "我<3你，1<2 也成立")
+
 
 class GarbageRunDetectorTest(unittest.TestCase):
     """采样乱码检测器：两个历史形态都命中，正常缩写不误伤。"""

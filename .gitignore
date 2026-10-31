@@ -15,10 +15,13 @@ botpy.log.*
 # Docker 部署的运行数据目录（state/archive/memory/owner 全迁进来）
 data/
 owner.txt
+# 判断 API 本地配置（含密钥，绝不进版本库）
+decision_api.json
 
 # 原始消息归档与每日摘要（含群友聊天内容，不进版本库）
 archive/
 memory/
+interactions/
 # 可编辑知识库（含群内事实，不进版本库；格式说明见 knowledge/README.md）
 knowledge/*
 !knowledge/README.md

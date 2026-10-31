@@ -82,6 +82,7 @@ class MessageArchive:
             "group": group_id,
             "sender": sender,
             "text": t[: self.max_text],
+            "text_complete": len(t) <= self.max_text,
             "message_id": str(message_id or uuid.uuid4().hex),
         }
         if at:
@@ -397,9 +398,14 @@ class MessageArchive:
                 lines.append(f"- 「{m.get('quote','')}」" + (f" —— {m.get('why','')}" if m.get("why") else ""))
             lines.append("")
         if data.get("people"):
-            lines.append("## 人物近况")
+            # 这里写的是「TA 当时说过的话」，不是性格断言；来源标识留在 state 里，不落 MD。
+            lines.append("## 人物发言摘录")
             for p in data["people"]:
-                lines.append(f"- {p.get('who','')}：{p.get('note','')}")
+                if isinstance(p, dict) and isinstance(p.get("evidence"), dict):
+                    lines.append(f"- {p.get('who','')} 说过："
+                                 f"{json.dumps(p.get('note',''), ensure_ascii=False)}")
+                else:
+                    lines.append(f"- {p.get('who','')}：{p.get('note','')}（旧摘要，未核实）")
             lines.append("")
 
         body = "\n".join(lines).rstrip() + "\n"

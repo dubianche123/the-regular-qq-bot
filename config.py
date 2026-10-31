@@ -4,6 +4,7 @@
 缺少必要凭证会直接启动失败并给出提示 —— 宁可 fail fast，也不要带残缺配置跑起来。
 """
 
+import math
 import os
 from pathlib import Path
 from dotenv import load_dotenv as _load_dotenv
@@ -122,6 +123,17 @@ if FALLBACK_PROVIDER and FALLBACK_PROVIDER not in PROVIDER_PRESETS:
     CONFIG_ERRORS.append("FALLBACK_PROVIDER 必须为空、openai、zhipu 或 gemini")
     FALLBACK_PROVIDER = ""
 
+# 各司其职（2026-11-01）：回复、摘要、审核可以各走一家；不设就跟 AI_PROVIDER。
+# 每一档照旧可以落到 FALLBACK_PROVIDER；读图另有 VISION_PROVIDER。
+TIER_PROVIDERS = {}
+for _tier, _env_name in (("chat", "CHAT_PROVIDER"), ("digest", "DIGEST_PROVIDER"),
+                         ("judge", "JUDGE_PROVIDER")):
+    _value = _env_str(_env_name, "").lower() or AI_PROVIDER
+    if _value not in PROVIDER_PRESETS:
+        CONFIG_ERRORS.append(f"{_env_name} 必须是 openai、zhipu 或 gemini")
+        _value = AI_PROVIDER
+    TIER_PROVIDERS[_tier] = _value
+
 def load_api_keys(provider=None):
     """多 Key 灾备轮询：同级目录建 api_keys_{provider}.txt，每行一个 Key（# 开头为注释）。
 
@@ -205,6 +217,40 @@ AI_MAX_TOKENS = _env_int("AI_MAX_TOKENS", 768)
 AI_MAX_TOKENS_BANTER = _env_int("AI_MAX_TOKENS_BANTER", 320)
 JUDGE_MAX_TOKENS = _env_int("JUDGE_MAX_TOKENS", 400)   # 称呼审核：要容纳“依据 + OK/NG”
 AI_TEMPERATURE = _env_float("AI_TEMPERATURE", 0.9)
+# ══════════════════ 模型调用档案 ══════════════════
+# 每个模型「怎么调」各不相同，错一个参数就是 HTTP 400 或一句空回复（2026-11-01 逐个实测，
+# 见 docs/model-roles.md）：
+#   token_param —— 输出上限的字段名（gpt-6-luna 只收 max_completion_tokens）
+#   temperature —— 收不收温度（gpt-6-luna 只能用默认值，传了就 400）
+#   off         —— 关掉推理的写法：回复、摘要、读图都用它（推理会先吃掉 256 的插嘴额度，
+#                  hy4-preview 实测一个字没写就结束；它不认 thinking=disabled，只认 reasoning_effort）
+#   on          —— 允许推理的写法：审核用（认谐音靠推理）。没登记 on 就当这个模型不推理。
+#   effort      —— 推理强度的字段名（gpt-6-luna 是 reasoning_effort，认 none/low/medium/high/xhigh）。
+#                  登记了它，各档就能用 *_REASONING 单独定强度（见下面 TIER_REASONING）。
+# 没登记的模型照旧：max_tokens + 温度 + 供应商预设的 extra_body。网关模型名的「cn:」前缀查表时去掉。
+MODEL_PROFILES = {
+    "glm-5.3-flash": {"off": {"thinking": {"type": "disabled"}}},
+    "deepseek-v4.1-flash": {"off": {"thinking": {"type": "disabled"}}, "on": {}},
+    "hy4-preview": {"off": {"reasoning_effort": "none"}, "on": {}},
+    "gpt-6-luna": {"token_param": "max_completion_tokens", "temperature": False,
+                   "effort": "reasoning_effort",
+                   "off": {"reasoning_effort": "none"}, "on": {}},
+    "gemini-3.5-flash-lite": {"off": {}},     # 不推理；传任何推理参数都 400
+}
+# 允许推理时的输出上限（是上限不是目标）。推理先花额度：审核在 400 时，难的称呼约三分之一
+# 一个字都没写出来就结束，而「没有结论」按设计是放行。摘要开 xhigh 时，339 条的一天
+# 推理就用了 7,497 token（2026-11-01 实测），所以默认给到 16000。
+REASONING_MAX_TOKENS = _env_int("REASONING_MAX_TOKENS", 16000)
+# 各档推理强度（2026-11-01）：只对登记了 effort 的模型生效。空 = 照旧（审核档按 on 推理，其余关）。
+# 线上：回复 low（盲评第一、2 秒左右），摘要 xhigh（不再把「维尼」这类写进记忆，后台跑、慢点无妨）。
+REASONING_LEVELS = ("none", "low", "medium", "high", "xhigh")
+TIER_REASONING = {}
+for _tier in ("chat", "digest", "judge", "vision"):
+    _value = _env_str(f"{_tier.upper()}_REASONING", "").lower()
+    if _value and _value not in REASONING_LEVELS:
+        CONFIG_ERRORS.append(f"{_tier.upper()}_REASONING 必须是 {' / '.join(REASONING_LEVELS)} 之一，或者留空")
+        _value = ""
+    TIER_REASONING[_tier] = _value
 # 显式设置 AI_TEMPERATURE 时覆盖供应商预设；不设则沿用预设（智谱 0.7）。
 AI_TEMPERATURE_EXPLICIT = "AI_TEMPERATURE" in os.environ
 
@@ -305,10 +351,14 @@ DIGEST_MAX_BLOCKS = _env_int("DIGEST_MAX_BLOCKS", 10)              # 一次最�
 DIGEST_MAX_PENDING = _env_int("DIGEST_MAX_PENDING", 2000)          # 单次最多喂给模型多少条
 DIGEST_CHECK_INTERVAL = _env_float("DIGEST_CHECK_INTERVAL", 1800.0)  # 后台检查间隔（秒）
 DIGEST_MAX_TOKENS = _env_int("DIGEST_MAX_TOKENS", 1200)   # 摘要正文 + <DIGEST> JSON + 思考 token
-# 人物名册里一条「近况」能喂给模型多少天（见 digest.stamp_people / render_people）。
-# 名册的定位本来就是「最近在干什么」，不是永久档案；模型每次压缩又习惯把旧条目原样抄回，
-# 所以靠时间戳让它自然过期 —— 实测「号刚解封」这条标签挂了五天，天天被拿来说。
+# 摘要在后台跑，单次请求的时限单独给：开深推理时一次要一分多钟（xhigh 实测 68 秒）。
+DIGEST_TIMEOUT_SECONDS = _env_float("DIGEST_TIMEOUT_SECONDS", 240.0)
+# 个人原话的时效按**原始发言时间**算，不是压缩时间：换个措辞复述、重复压缩、
+# 重读同一条消息都不会让旧材料变新（见 digest.stamp_people / render_people）。
 PEOPLE_NOTE_MAX_AGE_DAYS = _env_float("PEOPLE_NOTE_MAX_AGE_DAYS", 2.0)
+# 个人原话注入开关：关掉只去掉「本轮动态层」里的个人材料，称呼、游戏关系、
+# 摘要与归档照常 —— 用于和「普通接话」做干净对照，不改任何收集行为。
+PERSONAL_MEMORY_ENABLED = _env_bool("PERSONAL_MEMORY_ENABLED", True)
 # 「名场面/梗」同样有时效（见 digest.stamp_memes / render_summary）。
 # 原先只喂列表里第一条、且不限时，于是排到首位的那条梗天天在模型眼前 ——
 # 收录进去的偏偏是「你死了十二天」这种针对它自己的吐槽。
@@ -341,12 +391,31 @@ KNOWLEDGE_DIR = data_path("KNOWLEDGE_DIR", "knowledge")
 KNOWLEDGE_MAX_ITEMS = _env_int("KNOWLEDGE_MAX_ITEMS", 2)
 KNOWLEDGE_MAX_CHARS = _env_int("KNOWLEDGE_MAX_CHARS", 360)
 
-# 按需联网搜索（见 search.py）：只有明确的「搜索 关键词」命令才查 DuckDuckGo，所有群友可用但按群限流。
+# 联网搜索（见 search.py）。配了 RESEARCH_PROVIDER 就走它的联网查询（OpenAI Responses 的
+# web_search），并且分诊判断说「这句得先查」时自动查；没配就只有「搜索 关键词」命令查 DuckDuckGo。
 SEARCH_ENABLED = _env_bool("SEARCH_ENABLED", True)
 SEARCH_MAX_RESULTS = _env_int("SEARCH_MAX_RESULTS", 3)
 SEARCH_TIMEOUT_SECONDS = _env_float("SEARCH_TIMEOUT_SECONDS", 8.0)
+# 冷却只管「搜索」命令；判断触发的自动查询不受冷却，只算进每日上限 ——
+# 有人连着问几个要查的问题时，第二个不该因为冷却变成瞎答。
 SEARCH_COOLDOWN_SECONDS = _env_float("SEARCH_COOLDOWN_SECONDS", 60.0)
-SEARCH_DAILY_CAP = _env_int("SEARCH_DAILY_CAP", 20)
+SEARCH_DAILY_CAP = _env_int("SEARCH_DAILY_CAP", 60)
+
+# 联网查询 / 深度研究（2026-11-01，见 slowwork.py）：OpenAI Responses 后台任务 + web_search。
+# 空 = 不开。RESEARCH_MODEL 空就用这家的第一个对话模型。
+RESEARCH_PROVIDER = _env_str("RESEARCH_PROVIDER", "").lower()
+if RESEARCH_PROVIDER and RESEARCH_PROVIDER not in PROVIDER_PRESETS:
+    CONFIG_ERRORS.append("RESEARCH_PROVIDER 必须是 openai、zhipu 或 gemini，或者留空")
+    RESEARCH_PROVIDER = ""
+RESEARCH_MODEL = _env_str("RESEARCH_MODEL", "") or (
+    (PROVIDER_PRESETS[RESEARCH_PROVIDER]["models"] or [""])[0] if RESEARCH_PROVIDER else "")
+RESEARCH_TIMEOUT_SECONDS = _env_float("RESEARCH_TIMEOUT_SECONDS", 15.0)   # 发起 / 轮询单次 HTTP
+# 「人能等的那几秒」：查询在这之内回来就一条回复；回不来先说一句在查，后台做完再回。
+ASYNC_REPLY_SECONDS = _env_float("ASYNC_REPLY_SECONDS", 6.0)
+# 深度研究是隐藏彩蛋：有人明确要它认真查、整理、调研时才做，几十秒到几分钟，后台做完再回。
+DEEP_RESEARCH_ENABLED = _env_bool("DEEP_RESEARCH_ENABLED", True)
+DEEP_RESEARCH_DAILY_CAP = _env_int("DEEP_RESEARCH_DAILY_CAP", 3)
+DEEP_RESEARCH_COOLDOWN_SECONDS = _env_float("DEEP_RESEARCH_COOLDOWN_SECONDS", 600.0)
 # 搜索默认直连，刻意不继承部署环境里的 HTTP(S)_PROXY：模型网关的代理未必
 # 转发公网 HTTPS，实测会让 DuckDuckGo 直接连不上。需要代理时显式填写。
 SEARCH_PROXY = _env_str("SEARCH_PROXY")
@@ -354,13 +423,86 @@ SEARCH_USE_ENV_PROXY = _env_bool("SEARCH_USE_ENV_PROXY", False)
 ARCHIVE_KEEP_DAYS = _env_int("ARCHIVE_KEEP_DAYS", 90)   # 原始消息保留天数，0 = 永不清理
 ARCHIVE_MAX_TEXT = _env_int("ARCHIVE_MAX_TEXT", 500)    # 单条消息存多少字
 
+# ══════════════════ 交互观察日志（见 interactions.py）═════════════════
+# 只进不出的本地观察：收到的消息、门控决策、实际送达与显式反馈按天 JSONL。
+# 它不进提示词/摘要/召回，也不写进原始消息归档 —— 是行为研究底稿，不是模型材料。
+INTERACTION_LOG_ENABLED = _env_bool("INTERACTION_LOG_ENABLED", True)
+INTERACTION_LOG_DIR = data_path("INTERACTION_LOG_DIR", "interactions")
+# 「反馈」命令能绑定的目标窗口：只认最近这么秒内、发给本人的已送达回复。
+INTERACTION_FEEDBACK_MAX_AGE_SECONDS = _env_float("INTERACTION_FEEDBACK_MAX_AGE_SECONDS", 1800.0)
+# 观察口径版本号：随每条 delivery 落盘，供离线分析区分记录口径，不影响行为。
+INTERACTION_POLICY_ID = _env_str("INTERACTION_POLICY_ID", "regular-observe-v1")
+
+# ══════════════════ 判断 API（原生 GPT Decisions，见 providers.call_decision）═════════════════
+# 独立配置：端点/模型/密钥在 data/decision_api.json（面板「判断 API」页保存），
+# 不是 chat/completions，不改动会话模型梯队。关掉则原生请求一律不发出。
+DECISION_ENABLED = _env_bool("DECISION_ENABLED", True)
+# 单次原生请求的总时限（秒）；一次调用只发一次，不自动重试。
+DECISION_TIMEOUT_SECONDS = _env_float("DECISION_TIMEOUT_SECONDS", 6.0)
+# 判断请求自己的每日次数上限，和聊天的 DAILY_BUDGET 分开记：判断便宜（按输入计费、输出免费），
+# 又是每条群消息都问 —— 共用一份的话，刷屏就能把当天的回复额度烧光。
+DECISION_DAILY_BUDGET = _env_int("DECISION_DAILY_BUDGET", 5000)
+# 每条群消息都分诊（群主 2026-10-31 同意：先多攒数据，够了再收）。关掉则只问跟机器人
+# 有关的消息（叫到它 / 它刚说过话 / 要起名），插嘴仲裁退回「骰子掷中才问」。
+DECISION_TRIAGE_ALL = _env_bool("DECISION_TRIAGE_ALL", True)
+# 反馈评估只覆盖最近一条已送达模型回复（秒）；「收敛」后 unsolicited 暂停时长（秒）。
+DECISION_FEEDBACK_WINDOW_SECONDS = _env_float("DECISION_FEEDBACK_WINDOW_SECONDS", 120.0)
+DECISION_QUIET_SECONDS = _env_float("DECISION_QUIET_SECONDS", 180.0)
+# 弃答地板：被选中那项比第二名高出不到这么多，就当这一题这次不可用，退回基线。
+# 用**边际**而不是绝对概率，因为概率的刻度不能用（2026-10-31 实测 ECE 0.22、
+# Platt 斜率 0.21）；边际是无标度的。实测弃掉边际 <0.3 的那 41% 样本，
+# 它们挑对率 0.512（掷硬币），留下的从 0.575 升到 0.619；但阈值再往上反而变差
+# （0.70 时 0.559，低于不弃答）—— 所以这是**地板**，不是越高越好。
+# 设 0 关闭弃答闸（恢复「只取 argmax」的旧行为）。见 docs/decision-calibration.md。
+DECISION_MIN_MARGIN = _env_float("DECISION_MIN_MARGIN", 0.25)
+# 原生判过「值得长期留」的个人原话保鲜天数；未裁决/临时条目照旧 2 天。
+PEOPLE_DURABLE_MAX_AGE_DAYS = _env_float("PEOPLE_DURABLE_MAX_AGE_DAYS", 90.0)
+PEOPLE_MEMORY_MAX_ITEMS = _env_int("PEOPLE_MEMORY_MAX_ITEMS", 24)
+
+# ══════════════════ 何时介入（opening.py / receptive.py）═════════════════
+# 开口时机先验：把插嘴概率按「此刻有没有接话空档」重新分配。乘数按本群分数均值
+# 归一，所以 BANTER_PROBABILITY 仍然决定整体话量，先验只决定落在哪些时刻。
+# 关掉就退回原来那枚与对话无关的骰子。系数与留出结果见 opening.py 的模块说明。
+OPENING_PRIOR_ENABLED = _env_bool("OPENING_PRIOR_ENABLED", True)
+OPENING_SHAPE_MIN = _env_float("OPENING_SHAPE_MIN", 0.40)
+OPENING_SHAPE_MAX = _env_float("OPENING_SHAPE_MAX", 2.00)
+# 插嘴判断：每条群消息分诊时都问了「此刻插一句合不合适」。用的是它给的
+# p(join_briefly)，按本群均值折成乘数（同上一套保量折算），不是它的结论 ——
+# 结论的刻度跟着场景漂（归档里 37% 说 join，冲着它聊的那一晚 0%）。
+# 下限 0：判断有把握地说不合适时可以把这一下压到零；上限只防极端值。
+# 折算细节与实测见 regular/decisions.py 的 INTERVENTION_SHARPNESS。
+INTERVENTION_SHAPE_MIN = _env_float("INTERVENTION_SHAPE_MIN", 0.0)
+INTERVENTION_SHAPE_MAX = _env_float("INTERVENTION_SHAPE_MAX", 3.0)
+
+# 插嘴接纳度：把自然反馈（被嫌烦 / 被接着逗）慢慢折成每人一个乘数。
+# 证据不足时乘数恰为 1.0（照群体口径），不是「先当他讨厌机器人」。
+RECEPTIVE_ENABLED = _env_bool("RECEPTIVE_ENABLED", True)
+RECEPTIVE_PRIOR_WEIGHT = _env_float("RECEPTIVE_PRIOR_WEIGHT", 4.0)     # 向群体层收缩的伪计数
+RECEPTIVE_HALF_LIFE_DAYS = _env_float("RECEPTIVE_HALF_LIFE_DAYS", 14.0)  # 证据半衰期，不留永久标签
+RECEPTIVE_MIN_EVIDENCE = _env_float("RECEPTIVE_MIN_EVIDENCE", 4.0)     # 进入检验的最少等效证据条数
+RECEPTIVE_ALPHA = _env_float("RECEPTIVE_ALPHA", 0.05)                 # 声明门槛：全群至少错认一人的概率上限
+RECEPTIVE_PERMUTATIONS = _env_int("RECEPTIVE_PERMUTATIONS", 200)      # 跨成员打乱标签的次数
+RECEPTIVE_GAIN = _env_float("RECEPTIVE_GAIN", 1.5)
+RECEPTIVE_MULTIPLIER_MIN = _env_float("RECEPTIVE_MULTIPLIER_MIN", 0.5)
+RECEPTIVE_MULTIPLIER_MAX = _env_float("RECEPTIVE_MULTIPLIER_MAX", 1.5)
+
+# 「居然记得」：主动插嘴里端出一句本人旧话，由原生判断把关是否此刻合适。
+# 要稀才稀奇 —— 每人冷却 + 每群每天上限；判断不可用时一律不端出。
+DECISION_CALLBACK_ENABLED = _env_bool("DECISION_CALLBACK_ENABLED", True)
+DECISION_CALLBACK_COOLDOWN_SECONDS = _env_float("DECISION_CALLBACK_COOLDOWN_SECONDS", 21600.0)
+DECISION_CALLBACK_MAX_PER_DAY = _env_int("DECISION_CALLBACK_MAX_PER_DAY", 2)
+
 # ══════════════════ 承诺催债（见 digest.PromiseBook）═════════════════
 PROMISE_ENABLED = _env_bool("PROMISE_ENABLED", True)
 PROMISE_GRACE_HOURS = _env_float("PROMISE_GRACE_HOURS", 24.0)      # 立下之后多久才允许催
 PROMISE_NAG_INTERVAL_HOURS = _env_float("PROMISE_NAG_INTERVAL_HOURS", 48.0)  # 两次催债间隔
 PROMISE_MAX_NAG = _env_int("PROMISE_MAX_NAG", 2)                   # 催满几次就撤下，别变骚扰
 PROMISE_MAX_ITEMS = _env_int("PROMISE_MAX_ITEMS", 12)              # 每群最多记几条
-PROMISE_CHECK_INTERVAL = _env_float("PROMISE_CHECK_INTERVAL", 3600.0)  # 后台检查间隔（秒）
+# 同一个群两次催债至少隔多久（秒）。原来是每小时一圈的检查间隔；改成定时任务后
+# 每条账有自己的闹钟，几条同时到期时靠它错开，别一口气全催出来。
+PROMISE_CHECK_INTERVAL = _env_float("PROMISE_CHECK_INTERVAL", 3600.0)
+# 定时任务（scheduler.py）多久看一次到点的（秒）。
+SCHEDULE_TICK_SECONDS = _env_float("SCHEDULE_TICK_SECONDS", 60.0)
 # 这些小时段内不主动开口（本地时间），免得半夜把群吵醒
 def _quiet_hours():
     try:
@@ -388,9 +530,25 @@ def validate():
     for name in ("BANTER_PROBABILITY", "OWNER_MENTION_PROBABILITY", "BANTER_CHANCE_MAX", "MEME_PROBABILITY", "BUDGET_WARN_RATIO"):
         if not 0 <= globals()[name] <= 1:
             errors.append(f"{name} 必须在 0~1 之间")
-    for name in ("DAILY_BUDGET", "VISION_DAILY_CAP"):
+    for name in ("DAILY_BUDGET", "VISION_DAILY_CAP", "DECISION_DAILY_BUDGET"):
         if globals()[name] < 0:
             errors.append(f"{name} 不能为负数")
+    if not 0 < OPENING_SHAPE_MIN <= 1 <= OPENING_SHAPE_MAX:
+        errors.append("OPENING_SHAPE_MIN/MAX 必须满足 0 < MIN <= 1 <= MAX")
+    if not 0 <= INTERVENTION_SHAPE_MIN <= 1 <= INTERVENTION_SHAPE_MAX:
+        errors.append("INTERVENTION_SHAPE_MIN/MAX 必须满足 0 <= MIN <= 1 <= MAX")
+    if not 0 < RECEPTIVE_MULTIPLIER_MIN <= 1 <= RECEPTIVE_MULTIPLIER_MAX:
+        errors.append("RECEPTIVE_MULTIPLIER_MIN/MAX 必须满足 0 < MIN <= 1 <= MAX")
+    if RECEPTIVE_PRIOR_WEIGHT <= 0 or RECEPTIVE_HALF_LIFE_DAYS <= 0:
+        errors.append("RECEPTIVE_PRIOR_WEIGHT 与 RECEPTIVE_HALF_LIFE_DAYS 必须为正数")
+    if not 0 < RECEPTIVE_ALPHA < 1:
+        errors.append("RECEPTIVE_ALPHA 必须在 0~1 之间（不含端点）")
+    elif RECEPTIVE_PERMUTATIONS + 1 < 1 / RECEPTIVE_ALPHA:
+        # 置换 p 值最小是 1/(B+1)：B 太小时门槛永远过不去，个人层被悄悄关掉
+        errors.append("RECEPTIVE_PERMUTATIONS 太少：至少要 %d 次，p 值才可能低于 RECEPTIVE_ALPHA"
+                      % math.ceil(1 / RECEPTIVE_ALPHA - 1))
+    if not 0 <= DECISION_MIN_MARGIN <= 1:
+        errors.append("DECISION_MIN_MARGIN 必须在 0~1 之间")
     if not QQ_APP_ID:
         errors.append("缺少 QQ_APP_ID（在 .env 里配置）")
     if not QQ_APP_SECRET:
@@ -404,7 +562,8 @@ def validate():
         errors.append("AI_MAX_ATTEMPTS 必须至少为 1")
     if AI_TIMEOUT_SECONDS <= 0 or AI_TOTAL_TIMEOUT <= 0:
         errors.append("AI_TIMEOUT_SECONDS 和 AI_TOTAL_TIMEOUT 必须大于 0")
-    for provider_name in dict.fromkeys((AI_PROVIDER, FALLBACK_PROVIDER)):
+    for provider_name in dict.fromkeys((AI_PROVIDER, *TIER_PROVIDERS.values(),
+                                        FALLBACK_PROVIDER, RESEARCH_PROVIDER)):
         if not provider_name:
             continue
         preset = PROVIDER_PRESETS[provider_name]
@@ -412,6 +571,9 @@ def validate():
             errors.append(f"缺少 {provider_name.upper()}_BASE_URL")
         if not preset["models"]:
             errors.append(f"缺少 {provider_name.upper()}_MODELS")
+        if provider_name != AI_PROVIDER and not load_api_keys(provider_name):
+            errors.append(f"缺少 {preset['label']} 的 API Key（在 .env 或 "
+                          f"api_keys_{provider_name}.txt 里配置）")
     if not AI_KEYS:
         errors.append(f"缺少 {PROVIDER['label']} 的 API Key（在 .env 或 api_keys_{AI_PROVIDER}.txt 里配置）")
     return errors

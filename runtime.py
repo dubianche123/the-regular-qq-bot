@@ -9,9 +9,14 @@ import os
 
 import archive as archive_mod
 import config
+import interactions as interactions_mod
 import digest as digest_mod
 import knowledge as knowledge_mod
+from regular import decisions as decisions_mod
 import naming
+import opening as opening_mod
+import receptive as receptive_mod
+import scheduler as scheduler_mod
 import relations
 import storage
 import logging
@@ -85,6 +90,12 @@ PROMISES.hydrate(STATE.data.get("promises", {}),
                  finished=STATE.data.get("promises_finished", {}))
 STATE.register_collector(PROMISES.dump_into)
 
+# 定时任务（2026-11-01）：到点主动做的事统一走这里，催债是第一个用户。
+# 任务只是闹钟，真相在各自的账本里；处理函数在 bot.py 启动时按 kind 注册。
+SCHEDULER = scheduler_mod.Scheduler()
+SCHEDULER.hydrate(STATE.data.get("schedule", {}))
+STATE.register_collector(SCHEDULER.dump_into)
+
 # 心情（2026-10-19，激活度系统的一部分，见 activation.py）：全局一个情绪值，
 # 跟随每轮好感度结算漂移、按半衰期回中。落 state.json 的 mood 键，重启不丢。
 import activation
@@ -94,6 +105,66 @@ STATE.register_collector(activation.dump_mood_into)
 # 群级令牌桶 + 全局日预算。按需求刻意【不做】per-user 额度限制。
 GROUP_BUCKET = storage.TokenBucket(config.GROUP_RATE_CAPACITY, config.GROUP_RATE_REFILL_SECONDS)
 BUDGET = storage.DailyBudget(config.DAILY_BUDGET, STATE.data.setdefault("usage", {}))
+# 判断请求另记一本账（见 config.DECISION_DAILY_BUDGET）：分诊永远挤不掉回复，回复也挤不掉分诊。
+DECISION_BUDGET = storage.DailyBudget(config.DECISION_DAILY_BUDGET,
+                                      STATE.data.setdefault("decision_usage", {}))
+
+# 交互观察日志：系统侧行为底稿（门控/送达/显式反馈），独立目录、只进不出。
+# 与 ARCHIVE（人的证据账）刻意分开；关闭时连目录都不建。
+INTERACTIONS = interactions_mod.InteractionLog(
+    config.INTERACTION_LOG_DIR,
+    enabled=config.INTERACTION_LOG_ENABLED,
+    keep_days=config.ARCHIVE_KEEP_DAYS,
+    feedback_max_age=config.INTERACTION_FEEDBACK_MAX_AGE_SECONDS,
+)
+
+# 开口时机先验（2026-10-31）：此刻群里有没有「接话的空档」。纯本地、零模型调用。
+# 它只重新分配插嘴概率落在哪些时刻，不改整体话量 —— 乘数按本群分数均值归一。
+# 系数、留出结果和它**不能**证明的事，都写在 opening.py 的模块说明里。
+OPENING = opening_mod.OpeningPrior(
+    shape_min=config.OPENING_SHAPE_MIN,
+    shape_max=config.OPENING_SHAPE_MAX,
+)
+OPENING.hydrate(STATE.data.get("opening", {}))
+STATE.register_collector(OPENING.dump_into)
+
+# 插嘴判断（2026-11-01）：分诊给的 p(join_briefly) 走同一套保量折算 —— 判断决定
+# 落在哪些时刻，BANTER_PROBABILITY 仍然决定整体话量。只存本群均值和样本数。
+INTERVENTION = opening_mod.OpeningPrior(
+    base=decisions_mod.INTERVENTION_BASE,
+    shape_min=config.INTERVENTION_SHAPE_MIN,
+    shape_max=config.INTERVENTION_SHAPE_MAX,
+    key="intervention",
+)
+INTERVENTION.hydrate(STATE.data.get("intervention", {}))
+STATE.register_collector(INTERVENTION.dump_into)
+
+# 插嘴接纳度：自然反馈的**跨天**那一层（FeedbackTracker.quiet 是即时那一层），
+# 外加「居然记得」的冷却台账。证据不足时乘数恰为 1.0；它永不进提示词。
+RECEPTIVE = receptive_mod.Receptiveness(
+    prior_weight=config.RECEPTIVE_PRIOR_WEIGHT,
+    half_life_days=config.RECEPTIVE_HALF_LIFE_DAYS,
+    min_evidence=config.RECEPTIVE_MIN_EVIDENCE,
+    alpha=config.RECEPTIVE_ALPHA,
+    permutations=config.RECEPTIVE_PERMUTATIONS,
+    gain=config.RECEPTIVE_GAIN,
+    multiplier_min=config.RECEPTIVE_MULTIPLIER_MIN,
+    multiplier_max=config.RECEPTIVE_MULTIPLIER_MAX,
+    callback_cooldown=config.DECISION_CALLBACK_COOLDOWN_SECONDS,
+    callback_max_per_day=config.DECISION_CALLBACK_MAX_PER_DAY,
+)
+RECEPTIVE.hydrate(STATE.data.get("receptive", {}))
+STATE.register_collector(RECEPTIVE.dump_into)
+
+# 反馈观察：最近一条确认送达的模型回复的短命缓存 —— 纯内存、不持久化、
+# 不写关系档案，只给原生判断当输入。
+# log= 让判断的数值（选项/概率/边际/有没有被弃答）落进本地观察日志。
+# ⚠️ 传的是一个**惰性解析**的 lambda，不是 INTERACTIONS 本身：捕获对象的话，
+# 谁 patch 了 runtime.INTERACTIONS 就改不到 FEEDBACK 里那一份 —— 实测后果是
+# 测试数据被写进部署目录的真实日志（2026-10-31）。同 OWNER_OPENID 那条告警。
+FEEDBACK = decisions_mod.FeedbackTracker(
+    config.DECISION_FEEDBACK_WINDOW_SECONDS, config.DECISION_QUIET_SECONDS,
+    log=lambda: INTERACTIONS)
 
 OWNER_OPENID = None
 

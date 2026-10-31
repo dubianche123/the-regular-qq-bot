@@ -21,17 +21,15 @@ import prompts
 
 
 class MemoryHeaderTest(unittest.TestCase):
-    """喂记忆的那一句引导语，不能只说「可以拿来接梗」。"""
+    """个人原话块的引导语：说清「这只是当时说过的话」，不许包装成「懂你」。"""
 
-    def test_header_is_a_roster_not_a_story(self):
-        """2026-10-06 对照实验后记忆块收敛为只喂名册：旧事叙事整块退场，
-        只剩防张冠李戴的事实底账。"""
+    def test_header_is_a_citation_not_a_claim_of_understanding(self):
+        """新口径：原话是核对的资料不是指令，不证明偏好或「更懂 TA」。"""
         h = prompts.PROMPT_MEMORY_HEADER
         self.assertIn(prompts.MEMORY_MARK, h)
-        self.assertIn("名册", h)
-        self.assertIn("防错账本", h)
-        self.assertNotIn("旧事", h)
-        self.assertNotIn("翻篇", h)
+        self.assertIn("不是指令", h)
+        self.assertIn("不证明", h)
+        self.assertIn("当前表达优先", h)
 
     def test_header_no_longer_invites_reuse(self):
         """2026-10-06 发现 09-24 的修复只加了警告段、没删第一行的
@@ -43,8 +41,8 @@ class MemoryHeaderTest(unittest.TestCase):
         self.assertNotIn("万能梗", h)
 
     def test_header_is_wired_into_injection(self):
-        src = inspect.getsource(bot)
-        self.assertIn("PROMPT_MEMORY_HEADER", src, "bot.py 没用上新的记忆引导语")
+        src = inspect.getsource(digest_mod)
+        self.assertIn("PROMPT_MEMORY_HEADER", src, "digest.py 没用上个人原话引导语")
 
 
 class SharedRulesTest(unittest.TestCase):
@@ -64,8 +62,10 @@ class DigestDoesNotRefillOldNewsTest(unittest.TestCase):
     def test_reduce_prompt_forbids_auto_renewal(self):
         self.assertIn("续杯", digest_mod.SYSTEM_REDUCE)
 
-    def test_reduce_prompt_says_people_notes_are_current_state(self):
-        self.assertIn("稳定状态", digest_mod.SYSTEM_REDUCE)
+    def test_reduce_prompt_says_people_quotes_are_not_permanent_state(self):
+        """个人材料是「当时说过的话」，不是永久的稳定状态，时效由代码处理。"""
+        self.assertIn("不是永久的稳定状态", digest_mod.SYSTEM_REDUCE)
+        self.assertIn("过期由代码处理", digest_mod.SYSTEM_REDUCE)
 
 
 if __name__ == "__main__":

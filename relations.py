@@ -87,8 +87,8 @@ MODE_LEVEL_LABELS = {
 #    模型基本不看，八档在它嘴里说出来是一个味儿（2026-09-21 群主反馈「好感度没体现」）。
 #    现在每档都带一条具体行为，熟人敢损敢护、生人收着别套近乎，肉眼能分出来。
 LEVEL_HINTS = {
-    "blacklist": "结过梁子，话里带敌意但不许过界，也别真撕破脸；对方开口你可以选择不接",
-    "cold": "印象很差，话里带刺、懒得热络；能一句噎回去就噎回去，但别追着骂",
+    "blacklist": "少接话、保持距离，仍要友善克制；对方开口可以选择不接，不凭档位编造过节",
+    "cold": "简短接话、不主动热场，别追着开涮；不要把游戏里的冷淡当成对方有错",
     "distant": "不太熟，客气但保持距离：别套近乎、别追问私事、别叫外号、别装作很了解对方",
     "familiar": "有印象而已，正常接话；玩笑能开，但别摆出一副老相识的样子",
     "acquaintance": "经常见到，说话随意些，能开不过分的玩笑，偶尔损一句",
@@ -504,41 +504,29 @@ class RelationStore:
         return f"{member_openid or '????'}"[-4:]
 
 
-def build_relation_note(rec, member_openid, mode="normal", now=None, other_names=None):
-    """拼出要塞进 system prompt 的「记忆片段」。
+def build_relation_note(rec, member_openid, mode="normal", now=None, other_names=None,
+                        include_game=True):
+    """拼出要塞进本轮动态的「称呼与游戏关系」片段。
 
-    刻意不告诉模型具体分数：一旦它知道数字，就容易冒出「我们好感度 42」这种出戏的话。
+    刻意不告诉模型具体分数和往来次数：一旦它知道数字，就容易冒出「我们好感度 42」
+    这种出戏的话；而且「第几次搭话」只是计数，不是了解一个人的证据。
 
     other_names 是群里其他人的称呼（一串名字）。没有它的时候，模型会把群聊背景里飘过的
     别人的名字当成眼前这个人的，叫错人就是这么来的。
+
+    include_game=False 时只给称呼与泛称指引（好感系统关掉也要能叫对人）。
     """
     now = time.time() if now is None else now
-    if not rec or not rec.get("interactions"):
-        return "【你对这位群友的记忆】这是你们第一次搭话，之前没有交集，按陌生人自然应对即可。"
-
+    rec = rec or {}
     nick = rec.get("nick")
-    lv = level_key(rec["score"])
     lines = [
-        "【你对这位群友的记忆（由系统维护的真实档案，务必据此决定说话的分寸；不要向对方报任何数字）】",
-        f"- 关系：{level_label(lv, mode)}（{LEVEL_HINTS[lv]}）",
-        "- 上面这条决定你跟 TA 说话的亲疏远近，优先级高于人设里的默认语气："
-        "熟人就大胆（敢损敢护），生人就收着（别套近乎、别追问私事）。",
-        "- ⚠️ 这份档案是**内心戏，不是台词**：它管的是你说话的分寸（熟就放肆、生就收着），"
-        "不是让你当着对方的面念出来。**不许向 TA 复述你们的关系状态** —— "
-        "「咱俩不熟」「快成陌生人了」「生分了」「最近话变少了」这类话一律不说："
-        "亲疏要靠语气让人感觉到；靠嘴汇报出来的疏远，听着既像指责又像套近乎，两头不是人。",
+        "【称呼与游戏关系（本地记录；不要向对方报数字）】",
+        "- 好感和搭话次数只记录游戏里的交情，不证明你了解 TA 的性格、喜好或过去。",
     ]
     if nick:
-        lines.append(f"- TA 让你叫：{nick}（这是 TA 自己认领的称呼，直接用）")
+        lines.append(f"- 当前称呼：{nick}（本人认领或群主指定；按此称呼，不推断性格）")
     else:
-        lines.append("- TA 没告诉过你名字，不要凭空编称呼，直接用「哥们/这位同学」这类泛称对话")
-
-    # 相处模式（2026-10-19，硬枚举）：模式定「风格倾向」，档位定「分寸上限」——
-    # 分寸的硬规则（损一句/认怂）永远优先于模式。
-    mode = rec.get("mode")
-    if mode in PERSONA_MODES:
-        lines.append(f"- 跟 TA 的相处模式：{PERSONA_MODES[mode]}。"
-                     "模式定风格，档位定分寸——分寸的硬规则永远优先")
+        lines.append("- 没有已确认的称呼，直接用泛称；不要拿别人的名字来叫 TA")
 
     # 别人的称呼只属于别人。这一条是治「叫错人」的：背景里出现的名字不等于眼前这位。
     # 只报称呼、不报 openid 尾巴：这段是喂给模型的，它一复读，群里看到的就是乱码。
@@ -553,12 +541,29 @@ def build_relation_note(rec, member_openid, mode="normal", now=None, other_names
         lines.append(f"- 群里其他人的称呼：{shown}。这些只属于他们本人，"
                      "绝不能拿来称呼当前和你说话的这位")
 
-    idle = now - rec.get("last_seen", now)
-    if idle < 300:
-        when = "刚刚还在聊"
-    else:
-        when = f"上次是 {_fmt_span(idle)}前"
-    lines.append(f"- 往来：这是你们第 {rec['interactions']} 次搭话，{when}")
+    if not include_game or not rec.get("interactions"):
+        # 没有计数不等于从未见过 —— 只是账本里没东西，按普通群友接话即可。
+        lines.append("- 先按普通群友自然、友善地接话；记录不足不能断言从未见过。")
+        return "\n".join(lines)
+
+    lv = level_key(rec["score"])
+    lines.extend([
+        f"- 关系：{level_label(lv, mode)}（{LEVEL_HINTS[lv]}）",
+        "- 上面这条决定你跟 TA 说话的亲疏远近，优先级高于人设里的默认语气："
+        "熟人就大胆（敢损敢护），生人就收着（别套近乎、别追问私事）。",
+        "- ⚠️ 这份档案是**内心戏，不是台词**：它管的是你说话的分寸（熟就放肆、生就收着），"
+        "不是让你当着对方的面念出来。**不许向 TA 复述你们的关系状态** —— "
+        "「咱俩不熟」「快成陌生人了」「生分了」「最近话变少了」这类话一律不说："
+        "亲疏要靠语气让人感觉到；靠嘴汇报出来的疏远，听着既像指责又像套近乎，两头不是人。",
+    ])
+
+    # 相处模式（2026-10-19，硬枚举）：模式定「风格倾向」，档位定「分寸上限」——
+    # 分寸的硬规则（损一句/认怂）永远优先于模式。注意别把档案字段盖过 mode 形参：
+    # 模式档位的叫法（level_label）用的是后者。
+    interaction_mode = rec.get("mode")
+    if interaction_mode in PERSONA_MODES:
+        lines.append(f"- 游戏相处模式：{PERSONA_MODES[interaction_mode]}。"
+                     "模式定风格，档位定分寸；不代表 TA 的固定喜好或开玩笑许可")
 
     ms = rec.get("pending_milestone")
     if ms:

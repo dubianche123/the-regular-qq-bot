@@ -2,7 +2,8 @@
 """按需旧账召回：只查明确问起的往事，且只取少量本地证据。
 
 守护的核心不是「能搜到」，而是**不乱搜**：
-  · 没有往事线索 / 没有具体内容词 → 不查；
+  · 要不要翻由调用方的分诊判断（recall == look_up），build_note 只管拿什么；
+  · 没有具体内容词 → 不查；
   · 只有人名、没有那件事的消息 → 不拿来凑数；
   · 敏感词、指令行、太老的归档 → 不进 prompt；
   · 结果只放本轮动态层，由 test_harness 钉住。
@@ -46,8 +47,16 @@ class RecallTest(unittest.TestCase):
             "g", text, archive=self.archive, names=self.names,
             name_of=self.name_of, now=self.now, **kwargs)
 
-    def test_no_cue_returns_nothing(self):
-        self.assertEqual(self.note("今天显卡又崩了"), "")
+    def test_lookup_needs_no_cue_word(self):
+        """判断说要翻，就不该再被「有没有『上次』这类词」卡住 —— 那是旧的触发方式。"""
+        self.assertIn("奶茶", self.note("阿强那杯奶茶后来请了没"))
+
+    def test_bot_only_looks_up_when_triage_says_so(self):
+        import inspect
+        import bot
+        src = inspect.getsource(bot)
+        self.assertIn('feedback_result.get("recall") == "look_up"', src)
+        self.assertFalse(hasattr(recall, "has_cue"), "线索词不再当触发器")
 
     def test_cue_without_subject_returns_nothing(self):
         """有往事线索但没有具体事由：「你还记得吗」不该把所有旧账翻出来。"""

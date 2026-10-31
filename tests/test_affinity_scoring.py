@@ -169,7 +169,10 @@ class TwoTierStandardsTest(unittest.TestCase):
         import digest
         self.assertIn("关系走势，不是逐句流水账", digest.SYSTEM_REDUCE)
         self.assertIn("该对冲就对冲", digest.SYSTEM_REDUCE)
-        self.assertIn("分界跟着交情走", digest.SYSTEM_REDUCE)
+        # 原来的「分界跟着交情走」已改写成更紧的口径：交情只帮助理解笑骂，
+        # 不构成开玩笑的许可，也不许因为熟就忽略喊停。
+        self.assertIn("交情可以帮助理解笑骂，但不是开玩笑许可", digest.SYSTEM_REDUCE)
+        self.assertIn("不能因为交情深就忽略喊停", digest.SYSTEM_REDUCE)
         self.assertIn("【当前关系底账】", digest.SYSTEM_REDUCE)
 
     def test_ledger_lists_tiers_by_nick(self):

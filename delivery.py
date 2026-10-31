@@ -47,6 +47,7 @@ class DeliveryResult:
     text: str
     receipt: object = None
     reason: str = ""
+    fallback: bool = False
 
     @property
     def delivered(self):
@@ -65,6 +66,8 @@ class PendingSend:
     send_lock: object = None
     prepare: Callable | None = None
     attempts: int = 0
+    on_outcome: Callable | None = None
+    fallback: bool = False
 
 
 class Sender:
@@ -88,11 +91,24 @@ class Sender:
             self._sequences.popitem(last=False)
         return value
 
+    def _observe(self, item, result):
+        """One synchronous outcome notice per meaningful state; never breaks delivery."""
+        if item is not None and item.on_outcome is not None and result is not None:
+            try:
+                item.on_outcome(result)
+            except Exception:
+                # 观察者崩溃绝不拖累已确认的发送与状态提交。
+                logger.exception("投递观察者回调失败（不影响发送）")
+        return result
+
     async def _delivered(self, item, receipt):
-        result = DeliveryResult("delivered", item.text, receipt)
+        result = DeliveryResult("delivered", item.text, receipt, fallback=item.fallback)
         self.last_status = result.status
         self.last_delivery_at = self.clock()
         logger.info("📤 [已送达] %s", item.text.replace("\n", " ")[:120])
+        # 观察记录先于业务回调落账：异步/卡住的 on_delivered 不许拖延
+        # 「已送达」进入索引，否则随后赶到的显式反馈会找不到刚送达的回复。
+        self._observe(item, result)
         if item.on_delivered is not None:
             try:
                 pending = item.on_delivered(result)
@@ -105,22 +121,29 @@ class Sender:
 
     def _queue(self, item, reason):
         if len(self.pending) >= self.max_pending:
-            self.pending.popleft()
+            evicted = self.pending.popleft()
+            self._observe(evicted, DeliveryResult(
+                "dropped", evicted.text, reason="queue overflow",
+                fallback=evicted.fallback))
             logger.warning("补投队列已满，撤下最早的未确认回复")
         self.pending.append(item)
         self.last_status = "queued"
-        return DeliveryResult("queued", item.text, reason=reason)
+        return self._observe(item, DeliveryResult(
+            "queued", item.text, reason=reason, fallback=item.fallback))
 
     async def _attempt(self, item):
         # Preparation and confirmed-state commit share the same optional scope lock.
         async with item.send_lock or nullcontext():
             if item.is_current and not item.is_current():
                 self.last_status = "superseded"
-                return DeliveryResult("superseded", item.text)
+                return self._observe(item, DeliveryResult(
+                    "superseded", item.text, fallback=item.fallback))
             age = message_age_seconds(item.message)
             if age is not None and age > passive_reply_window(item.message):
                 self.last_status = "expired"
-                return DeliveryResult("expired", item.text, reason="passive reply window elapsed")
+                return self._observe(item, DeliveryResult(
+                    "expired", item.text, reason="passive reply window elapsed",
+                    fallback=item.fallback))
             if item.prepare is not None:
                 text = item.prepare()
                 if text != item.text and item.attempts:
@@ -131,9 +154,10 @@ class Sender:
             return await self._delivered(item, sent) if sent else None
 
     async def reply(self, message, text, *, on_delivered=None, is_current=None,
-                    retry_lock=None, send_lock=None, prepare=None):
+                    retry_lock=None, send_lock=None, prepare=None, on_outcome=None):
         item = PendingSend(message, text, self.clock(), self._next_sequence(message),
-                           on_delivered, is_current, retry_lock, send_lock, prepare)
+                           on_delivered, is_current, retry_lock, send_lock, prepare,
+                           on_outcome=on_outcome)
         for attempt in range(2):
             try:
                 result = await self._attempt(item)
@@ -143,11 +167,14 @@ class Sender:
                 if attempt == 0 and self.fallback and ("40034006" in str(error) or "违规" in str(error)):
                     item.text = self.fallback(message)
                     item.prepare = None
+                    item.fallback = True
                     item.sequence = self._next_sequence(message)
                     continue
                 self.last_status = "rejected"
                 logger.warning("QQ拒收回复: %s", str(error)[:160])
-                return DeliveryResult("rejected", item.text, reason=type(error).__name__)
+                return self._observe(item, DeliveryResult(
+                    "rejected", item.text, reason=type(error).__name__,
+                    fallback=item.fallback))
             if result is not None:
                 return result
             # botpy can swallow a timeout. Unchanged payload retries reuse the sequence.
@@ -163,6 +190,10 @@ class Sender:
                     if (self.clock() - item.created_at > passive_reply_window(item.message) - 15
                             or (age is not None and age > passive_reply_window(item.message))):
                         self.last_status = "expired"
+                        self._observe(item, DeliveryResult(
+                            "expired", item.text,
+                            reason="passive reply window elapsed",
+                            fallback=item.fallback))
                         continue
                     try:
                         result = await self._attempt(item)
@@ -171,6 +202,9 @@ class Sender:
                             self.pending.appendleft(item)
                             break
                         self.last_status = "rejected"
+                        self._observe(item, DeliveryResult(
+                            "rejected", item.text, reason=type(error).__name__,
+                            fallback=item.fallback))
                         continue
                     if result is None:
                         self.pending.append(item)

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import interactions
 from regular import cli, service
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,6 +87,15 @@ class ProductConfigTest(unittest.TestCase):
             self.assertEqual(str(actual[field]), str(type(actual[field])(examples[field])))
         for readme in ("README.md", "README_EN.md"):
             self.assertNotIn("AI_DAILY_BUDGET", (ROOT / readme).read_text())
+
+    def test_every_root_module_is_packaged(self):
+        """The installed `regular` command only sees listed modules; a missing one fails at `run`."""
+        try:
+            import tomllib
+        except ImportError:
+            self.skipTest("tomllib needs Python 3.11+")
+        listed = set(tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["setuptools"]["py-modules"])
+        self.assertEqual({p.stem for p in ROOT.glob("*.py")} - listed, set())
 
 
 class DemoConsoleTest(unittest.IsolatedAsyncioTestCase):
@@ -547,6 +557,83 @@ assert main(['--directory', DIRECTORY, 'doctor', '--json']) == 1
                 cli.main(["--directory", directory, "probe", "probe_cache"])
             self.assertEqual(raised.exception.code, 2)
             run.assert_not_called()
+
+
+class CoverageTest(unittest.TestCase):
+    """regular coverage：只读覆盖率命令，不建目录、不引运行时、不泄露原文。"""
+
+    def _main(self, directory, *argv):
+        config = SimpleNamespace(
+            INTERACTION_LOG_DIR=str(Path(directory) / "interactions"))
+        with patch("regular.cli.load_config", return_value=config), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            code = cli.main(["--directory", directory, "coverage", *argv])
+        return code, output.getvalue()
+
+    def test_no_journal_reports_unavailable_not_zero(self):
+        with tempfile.TemporaryDirectory(prefix="regular coverage ") as directory:
+            code, out = self._main(directory, "--json")
+            self.assertEqual(code, 1)
+            report = json.loads(out)
+            self.assertIsNone(report["overall"]["injection_rate"])
+            self.assertEqual(report["files_read"], 0)
+            # 只读命令不许顺手建出数据目录
+            self.assertFalse((Path(directory) / "interactions").exists())
+            self.assertFalse((Path(directory) / "data").exists())
+            self.assertEqual(os.listdir(directory), [])
+
+            code, out = self._main(directory)
+            self.assertEqual(code, 1)
+            self.assertIn("unavailable", out)
+            self.assertIn("not 0%", out)
+
+    def test_one_injected_delivery_counts_and_leaks_nothing(self):
+        with tempfile.TemporaryDirectory(prefix="regular coverage ") as directory:
+            log_dir = Path(directory) / "interactions"
+            log_dir.mkdir()
+            row = {"schema": interactions.SCHEMA, "kind": "delivery",
+                   "actor": "assistant", "status": "delivered", "route": "reply",
+                   "group": "GROUP_TEST_COVERAGE", "user": "USER_TEST_COVERAGE",
+                   "outgoing_id": "out-1", "generation": "model", "fallback": False,
+                   "personal_memory_used": True, "personal_memory_enabled": True,
+                   "text": "DO_NOT_PRINT_REPLY_TEXT"}
+            (log_dir / "2026-01-01.jsonl").write_text(
+                json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+            code, out = self._main(directory, "--json")
+            self.assertEqual(code, 0)
+            overall = json.loads(out)["overall"]
+            self.assertEqual(overall["delivered_model_replies"], 1)
+            self.assertEqual(overall["measured"], 1)
+            self.assertEqual(overall["injected"], 1)
+            self.assertEqual(overall["injection_rate"], 1.0)
+            for sentinel in ("GROUP_TEST_COVERAGE", "USER_TEST_COVERAGE",
+                             "DO_NOT_PRINT_REPLY_TEXT"):
+                self.assertNotIn(sentinel, out)
+
+            code, out = self._main(directory)
+            self.assertEqual(code, 0)
+            self.assertIn("100.00%", out)
+            self.assertIn("not eligibility", out)
+
+    def test_coverage_needs_no_network_or_runtime_imports(self):
+        with tempfile.TemporaryDirectory(prefix="regular coverage ") as directory:
+            (Path(directory) / ".env").write_text(
+                "QQ_APP_ID=123\nQQ_APP_SECRET=fake-qq\nAI_PROVIDER=zhipu\nZHIPU_API_KEY=fake-model\n")
+            code = """import socket, sys
+from regular.cli import main
+
+def forbidden(*args, **kwargs):
+    raise AssertionError('coverage must stay offline')
+socket.socket.connect = forbidden
+socket.socket.connect_ex = forbidden
+code = main(['--directory', DIRECTORY, 'coverage', '--json'])
+assert code == 1  # fresh instance has no journal yet
+assert not any(name in sys.modules for name in ('bot', 'runtime', 'providers'))
+""".replace("DIRECTORY", repr(directory))
+            env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(ROOT)}
+            result = subprocess.run([sys.executable, "-c", code], cwd=ROOT,
+                                    env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

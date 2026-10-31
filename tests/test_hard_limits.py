@@ -94,26 +94,49 @@ class MemeFreshnessTest(unittest.TestCase):
         self.assertIn("针对", digest.SYSTEM_REDUCE)
 
 
-class PeopleRosterFallbackTest(unittest.TestCase):
-    """全过期时宁可给陈旧的，也不要给空 —— 名册空了张冠李戴立刻复发。"""
+class PeopleQuoteFallbackTest(unittest.TestCase):
+    """称呼由独立的本地记录提供，个人材料不足时正常接话；不靠过期档案填空。"""
 
-    def test_all_stale_still_serves_something(self):
-        old = time.time() - (config.PEOPLE_NOTE_MAX_AGE_DAYS + 5) * 86400
-        state = {"data": {"people": [{"who": "罗老板", "note": "很久以前的观察", "ts": old}]}}
-        out = digest.render_people(state)
-        self.assertIn("罗老板", out)
+    RESOLVER = staticmethod(
+        lambda uid: {"user-alice": "阿青"}.get(uid))
 
-    def test_copied_note_keeps_aging(self):
-        old = {"people": [{"who": "家豪", "note": "天天整活", "ts": 500.0}]}
-        new = {"people": [{"who": "家豪", "note": "天天整活"}]}
-        digest.stamp_people(old, new, now=1000.0)
-        self.assertEqual(new["people"][0]["ts"], 500.0)
+    def _row(self, ts=1000.0):
+        quote = "喝咖啡时我不要糖，喜欢黑咖啡"
+        return {"who": "阿青", "note": quote, "quote": quote,
+                "keywords": ["咖啡"], "ts": ts,
+                "evidence": {"group": "test-group", "sender": "user-alice",
+                             "message_id": "message-one", "ts": ts, "quote": quote}}
 
-    def test_note_from_a_timestamp_less_archive_gets_no_free_stamp(self):
-        old = {"people": [{"who": "家豪", "note": "天天整活"}]}
-        new = {"people": [{"who": "家豪", "note": "天天整活"}]}
-        digest.stamp_people(old, new, now=1000.0)
-        self.assertFalse(new["people"][0].get("ts"))
+    def test_all_stale_renders_nothing(self):
+        now = 10 ** 9
+        stale = now - (config.PEOPLE_NOTE_MAX_AGE_DAYS + 5) * 86400
+        state = {"data": {"people": [self._row(ts=stale)]}}
+        out = digest.render_people(state, group_id="test-group",
+                                   sender="user-alice", text="咖啡",
+                                   resolver=self.RESOLVER, now=now)
+        self.assertEqual(out, "")
+
+    def test_source_timestamp_beats_compression_time(self):
+        """时效看原始发言时间：复述/重压都不续杯。"""
+        entry = {"group": "test-group", "sender": "user-alice",
+                 "message_id": "message-one", "text": "喝咖啡时我不要糖，喜欢黑咖啡",
+                 "text_complete": True, "ts": 1000.0}
+        new = {"people": [{"who": "阿青", "note": "x", "quote": entry["text"],
+                           "keywords": ["咖啡"]}]}
+        digest.stamp_people(None, new, now=99999.0, entries=[entry],
+                            resolver=self.RESOLVER, group_id="test-group")
+        self.assertEqual(new["people"][0]["ts"], 1000.0)
+
+    def test_rephrasing_an_old_quote_never_mints_a_new_source(self):
+        """旧行没有来源就永远不会有来源 —— 换个措辞也不能造出证据。"""
+        old = {"people": [{"who": "阿青", "note": "喝咖啡时我不要糖，喜欢黑咖啡",
+                           "ts": 500.0}]}
+        new = {"people": [{"who": "阿青", "note": "x",
+                           "quote": "喝咖啡时我不要糖，喜欢黑咖啡",
+                           "keywords": ["咖啡"]}]}
+        digest.stamp_people(old, new, now=1000.0, entries=[],
+                            resolver=self.RESOLVER, group_id="test-group")
+        self.assertEqual(new["people"], [])
 
 
 class GroupBufferTtlTest(unittest.TestCase):

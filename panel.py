@@ -24,6 +24,8 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+from regular import decision_settings
+
 import knowledge as knowledge_mod
 import search as search_mod
 import storage
@@ -153,6 +155,7 @@ def _page(title, body, active=""):
         ("/knowledge", "知识库", "knowledge"),
         ("/memory", "记忆", "memory"),
         ("/search", "搜索", "search"),
+        ("/decision", "判断 API", "decision"),
     ]
     links = "".join(
         f'<a class="{"active" if key == active else ""}" href="{href}">{label}</a>'
@@ -197,8 +200,9 @@ pre {{ background:#292721; color:#eee8dc; padding:14px; border-radius:10px;
 textarea {{ width:100%; min-height:420px; padding:12px; border:1px solid var(--line);
   border-radius:10px; font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
   background:var(--card); color:var(--ink); }}
-input[type=text] {{ padding:9px 11px; border:1px solid var(--line); border-radius:8px;
-  background:var(--card); color:var(--ink); min-width:260px; }}
+input[type=text],input[type=password] {{ padding:9px 11px; border:1px solid var(--line);
+  border-radius:8px; background:var(--card); color:var(--ink); min-width:260px; }}
+form.decision input {{ width:100%; max-width:560px; min-width:0; }}
 button {{ padding:9px 16px; border:0; border-radius:8px; background:var(--accent);
   color:white; font-weight:600; cursor:pointer; }}
 .row {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
@@ -399,6 +403,59 @@ async def _search(cfg, request):
     return _page("搜索", body, "search")
 
 
+def _decision(cfg, request, csrf):
+    """判断 API 配置页：只显示 endpoint/model 与「是否已配 key」，永不回显 key。"""
+    settings = decision_settings.public_settings(cfg.DATA_DIR)
+    saved_path = os.path.join(str(cfg.DATA_DIR), decision_settings.FILENAME)
+    notice = ""
+    if request.query.get("saved"):
+        notice = '<div class="notice good">已保存。下一步在聊天里告诉它「填好了」。</div>'
+    elif not settings["key_configured"] and os.path.isfile(saved_path):
+        # 文件在但读不出合法配置：只给通用提示，不回显文件内容
+        notice = '<div class="notice bad">已保存的配置暂时无法读取，请重新填写并保存。</div>'
+    state = ("已保存配置（下次保存仍需重新输入 Key）" if settings["key_configured"]
+             else "尚未配置")
+    body = f"""
+<h1>判断 API</h1>
+<p class="muted">给老群友接一个判断帮手：理解反馈、挑选记忆、拿捏介入。
+这里只保存独立配置，不改当前聊天模型，也不重启机器人。保存后在聊天里告诉我「填好了」，
+我会用模拟群聊先做最多 6 次真实调用。</p>
+{notice}
+<div class="card">
+<p><span class="label">接口形态</span>：OpenAI 原生 GPT Decisions
+（POST /v1/decisions），<strong>不是</strong> /chat/completions。</p>
+<form method="post" action="/decision/save" class="decision">
+<input type="hidden" name="csrf" value="{_esc(csrf)}">
+<p><label>Endpoint URL<br>
+<input type="text" name="endpoint" value="{_esc(settings['endpoint'])}" required></label></p>
+<p><label>模型<br>
+<input type="text" name="model" value="{_esc(settings['model'])}" required></label></p>
+<p><label>API Key（每次保存都重新输入，页面永不回显）<br>
+<input type="password" name="api_key" value="" autocomplete="off" required></label></p>
+<button type="submit">保存配置（暂不调用）</button>
+</form>
+<p class="muted">当前状态：{state}</p>
+</div>
+"""
+    return _page("判断 API", body, "decision")
+
+
+async def _decision_save(cfg, request, csrf):
+    """保存判断 API 配置：CSRF + 字段校验都过才落盘，失败一律通用 400。"""
+    form = await request.post()
+    if not hmac.compare_digest(str(form.get("csrf") or ""), str(csrf)):
+        raise web.HTTPBadRequest(text="请求无效")
+    try:
+        decision_settings.save_settings(
+            cfg.DATA_DIR,
+            endpoint=str(form.get("endpoint") or ""),
+            model=str(form.get("model") or ""),
+            api_key=str(form.get("api_key") or ""))
+    except (ValueError, OSError):
+        raise web.HTTPBadRequest(text="保存失败：字段不合法或无法写入") from None
+    raise web.HTTPFound("/decision?saved=1")
+
+
 def create_app(cfg, *, token):
     @web.middleware
     async def auth(request, handler):
@@ -436,12 +493,21 @@ def create_app(cfg, *, token):
     async def search(request):
         return _html(await _search(cfg, request))
 
+    async def decision(request):
+        return _html(_decision(cfg, request, csrf))
+
+    async def decision_save(request):
+        return await _decision_save(cfg, request, csrf)
+
+    csrf = secrets.token_urlsafe(24)
     app = web.Application(middlewares=[auth])
     app.router.add_get("/", home)
     app.router.add_get("/knowledge", knowledge)
     app.router.add_post("/knowledge/save", knowledge_save)
     app.router.add_get("/memory", memory)
     app.router.add_get("/search", search)
+    app.router.add_get("/decision", decision)
+    app.router.add_post("/decision/save", decision_save)
     return app
 
 

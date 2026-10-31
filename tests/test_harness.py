@@ -120,6 +120,79 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
                                recall_note=note)
         self.assertNotIn(recall.RECALL_MARK, msgs[-1]["content"])
 
+    # ── 个人原话：只进本轮动态层 ──
+
+    async def test_personal_note_only_in_tail(self):
+        """个人原话随说话人/话题每轮变化，只能进最末信封，绝不碰稳定头/每日记忆。"""
+        note = prompts.MEMORY_MARK + "（测试）】\n- 阿青（01-01 08:00）说过：\"喝咖啡\""
+        msgs = await self.grab("th_personal_1", "咖啡喝什么", personal_note=note)
+        head = "\n".join(m["content"] for m in msgs[:-1])
+        self.assertNotIn(prompts.MEMORY_MARK, head)
+        self.assertIn(prompts.MEMORY_MARK, msgs[-1]["content"])
+        self.assertIn("喝咖啡", msgs[-1]["content"])
+
+    async def test_personal_note_does_not_shift_the_earlier_prefix(self):
+        """两次调用只差 personal_note：之前的消息逐字节一致 —— 前缀缓存不陪它失效。"""
+        note = prompts.MEMORY_MARK + "（测试）】\n- 阿青说过：\"喝咖啡\""
+        sid_a, sid_b = "th_p_same_a", "th_p_same_b"
+        for sid in (sid_a, sid_b):
+            runtime.SESSIONS.record(sid, "上一轮原话", "上一轮回复")
+        self.addCleanup(lambda: runtime.SESSIONS.drop_session(sid_a))
+        self.addCleanup(lambda: runtime.SESSIONS.drop_session(sid_b))
+        with_note = await self.grab(sid_a, "在吗", personal_note=note,
+                                    group_memory="共享群表达")
+        without = await self.grab(sid_b, "在吗", group_memory="共享群表达")
+        self.assertEqual(with_note[:-1], without[:-1])
+        head = "\n".join(m["content"] for m in with_note[:-1])
+        self.assertIn("共享群表达", head)
+        self.assertIn("上一轮原话", head)
+        self.assertIn("上一轮回复", head)
+        self.assertNotIn(prompts.MEMORY_MARK, head)
+        self.assertIn(prompts.MEMORY_MARK, with_note[-1]["content"])
+        self.assertNotIn(prompts.MEMORY_MARK, without[-1]["content"])
+
+    async def test_personal_memory_switch_blocks_even_explicit_notes(self):
+        """PERSONAL_MEMORY_ENABLED=false：直接调用方塞进来的个人材料也要被挡。"""
+        note = prompts.MEMORY_MARK + "（测试）】\n- 阿青说过：\"喝咖啡\""
+        from unittest.mock import patch
+        with patch.object(config, "PERSONAL_MEMORY_ENABLED", False):
+            msgs = await self.grab("th_pswitch", "咖啡喝什么", personal_note=note,
+                                   relation_note="【称呼】\n- 当前称呼：阿青",
+                                   group_memory="共享群表达")
+        self.assertNotIn(prompts.MEMORY_MARK, msgs[-1]["content"])
+        self.assertIn("阿青", msgs[-1]["content"])
+        self.assertIn("共享群表达", msgs[1]["content"])
+
+    async def test_personal_note_is_suppressed_for_banter_backoff_and_existing_material(self):
+        """随机插嘴、对方喊停、或知识库/旧账/搜索已给了材料：调用方塞了也一律不拼。"""
+        note = prompts.MEMORY_MARK + "（测试）】\n- 阿青说过：\"喝咖啡\""
+        cases = [
+            ("banter", "咖啡喝什么", dict(is_random_banter=True)),
+            ("knowledge", "咖啡喝什么",
+             dict(knowledge_note=knowledge.KNOWLEDGE_MARK + "（测试）】\n- 群规：不发广告")),
+            ("recall", "咖啡喝什么",
+             dict(recall_note=recall.RECALL_MARK + "（测试）】\n- 10-01 老王：上次")),
+            ("search", "咖啡喝什么",
+             dict(search_note=search.SEARCH_MARK + "（测试）】\n[1] 示例 — 摘要（https://example.com）")),
+            ("backoff", "别这么损我，很过分", {}),
+        ]
+        for tag, text, extra in cases:
+            with self.subTest(tag=tag):
+                msgs = await self.grab(f"th_psup_{tag}", text,
+                                       personal_note=note, **extra)
+                self.assertNotIn(prompts.MEMORY_MARK, msgs[-1]["content"])
+
+    async def test_names_survive_when_affinity_is_off(self):
+        """AFFINITY_ENABLED=false：游戏部分退场，称呼行必须还在 —— 名字不是游戏的附属品。"""
+        orig = config.AFFINITY_ENABLED
+        config.AFFINITY_ENABLED = False
+        try:
+            msgs = await self.grab("th_aff_off", "在吗",
+                                   relation_note="【称呼与游戏关系】\n- 当前称呼：阿青")
+            self.assertIn("阿青", msgs[-1]["content"])
+        finally:
+            config.AFFINITY_ENABLED = orig
+
     async def test_output_rules_sit_in_stable_head(self):
         """排版约束要在稳定头里，对所有模式生效。
 
@@ -702,6 +775,142 @@ class NickCollisionEndToEndTest(unittest.IsolatedAsyncioTestCase):
         await self.bot.handle_nick_command(
             object(), {"scope": "other", "nick": "小满"}, self.GID, self.OWNER, True, [self.B])
         self.assertEqual(self._nick_of(self.B), "小满")
+
+
+class PersonalQuoteWiringTest(unittest.IsolatedAsyncioTestCase):
+    """端到端接线（全 mock、内存档案）：个人原话必须真的走到本轮信封里。
+
+    钉三件事：
+      1. group_memory（每日层）只剩共享表达参考，个人材料一律在 personal_note（本轮层）；
+      2. 渲染认的是**当前说话人的 sender**，别人的原话绝不串进来；
+      3. 全程零模型调用 —— 渲染是纯本地代码路径。
+    """
+
+    GID = "TESTGID_PERSONAL_WIRE"
+    ALICE = "OPENID_PW_ALICE"
+    BOB = "OPENID_PW_BOB"
+    QUOTE = "喝咖啡时我不要糖，喜欢黑咖啡"
+
+    @classmethod
+    def setUpClass(cls):
+        global bot
+        import bot as _bot
+        cls.bot = _bot
+
+    def setUp(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        import archive as archive_mod
+        import runtime as _runtime
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+        self._orig = {
+            "archive": _runtime.ARCHIVE,
+            "reply_in_session": self.bot.reply_in_session,
+            "call_model": self.bot.call_model,
+            "knowledge_render": _runtime.KNOWLEDGE.render,
+        }
+
+        def _restore():
+            _runtime.ARCHIVE = self._orig["archive"]
+            self.bot.reply_in_session = self._orig["reply_in_session"]
+            self.bot.call_model = self._orig["call_model"]
+            _runtime.KNOWLEDGE.render = self._orig["knowledge_render"]
+        self.addCleanup(_restore)
+
+        _runtime.ARCHIVE = archive_mod.MessageArchive(self._tmp.name, keep_days=0)
+        self.addCleanup(_runtime.ARCHIVE.close)
+        _runtime.KNOWLEDGE.render = lambda *a, **k: ""
+
+        self.calls = []
+        self.model_calls = []
+
+        async def fake_reply_in_session(message, session_id, user_text, **kwargs):
+            self.calls.append(kwargs)
+            return "（测试回复）", None, None          # delivery=None → 本轮到此为止
+
+        async def fake_call_model(*a, **k):
+            self.model_calls.append((a, k))
+            return "（不该走到这里）"
+
+        self.bot.reply_in_session = fake_reply_in_session
+        self.bot.call_model = fake_call_model
+
+        # 摘要：共享表达 + 一条来源核实的阿青原话（时间戳贴着现在，保证「新鲜」）
+        src_ts = time.time() - 60
+        _runtime.DIGESTS.groups[self.GID] = {"summary": {
+            "brief": "",
+            "data": {
+                "style": [{"phrase": "绷不住了", "when": "看到离谱操作"}],
+                "people": [{
+                    "who": "阿青", "note": self.QUOTE, "quote": self.QUOTE,
+                    "keywords": ["咖啡"], "ts": src_ts,
+                    "evidence": {"group": self.GID, "sender": self.ALICE,
+                                 "message_id": "pw-msg-1", "ts": src_ts,
+                                 "quote": self.QUOTE},
+                }],
+            },
+        }}
+        self.addCleanup(lambda: _runtime.DIGESTS.groups.pop(self.GID, None))
+
+        _runtime.RELATIONS.set_nick(self.GID, self.ALICE, "阿青", source="claim")
+        _runtime.RELATIONS.set_nick(self.GID, self.BOB, "小白", source="claim")
+
+        def _cleanup_records():
+            for oid in (self.ALICE, self.BOB):
+                _runtime.RELATIONS.records.pop(f"{self.GID}|{oid}", None)
+            _runtime.RENAMES.groups.pop(self.GID, None)
+        self.addCleanup(_cleanup_records)
+
+        self.SimpleNamespace = SimpleNamespace
+        self.AsyncMock = AsyncMock
+
+    def _message(self, sender, text):
+        import uuid
+        return self.SimpleNamespace(
+            id=f"pw-ev-{uuid.uuid4().hex}", content=text, group_openid=self.GID,
+            author=self.SimpleNamespace(member_openid=sender),
+            attachments=[], mentions=[])
+
+    async def _drive(self, sender, text):
+        fake_self = self.SimpleNamespace(
+            robot=self.SimpleNamespace(id="BOTPWID", name="regular"))
+        await self.bot.GroupBot.handle_group_msg(fake_self, self._message(sender, text),
+                                                 is_at=True)
+
+    async def test_personal_quote_reaches_the_turn_envelope(self):
+        await self._drive(self.ALICE, "咖啡怎么选")
+        self.assertEqual(len(self.calls), 1, "没走到 reply_in_session")
+        ctx = self.calls[0]
+        personal = ctx.get("personal_note") or ""
+        daily = ctx.get("group_memory") or ""
+        # 本轮层：本人、来源核实、话题命中 → 原话进信封，名字显示为当前称呼
+        self.assertIn(prompts.MEMORY_MARK, personal)
+        self.assertIn("阿青", personal)
+        self.assertIn(self.QUOTE, personal)
+        for identifier in (self.GID, self.ALICE, "pw-msg-1"):
+            self.assertNotIn(identifier, personal, "来源标识不许进模型")
+        # 每日层：只剩共享表达参考，个人材料一律不许混进来
+        self.assertIn("绷不住了", daily)
+        self.assertNotIn(self.QUOTE, daily)
+        self.assertNotIn(prompts.MEMORY_MARK, daily)
+        self.assertNotIn("说过", daily)
+        # 称呼与游戏关系照常给到（与好感开关无关）
+        self.assertIn("阿青", ctx.get("relation_note") or "")
+        # 渲染全程本地：一次模型都没叫
+        self.assertEqual(self.model_calls, [])
+
+    async def test_other_speaker_gets_no_personal_material(self):
+        """小白没有来源条目 —— 同一句话问出来，personal_note 必须是空。"""
+        await self._drive(self.BOB, "咖啡怎么选")
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0].get("personal_note") or "", "")
+        # 小白的称呼行照常 —— 个人材料缺席不影响叫对人
+        self.assertIn("小白", self.calls[0].get("relation_note") or "")
 
 
 if __name__ == "__main__":

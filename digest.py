@@ -38,6 +38,7 @@ import config
 import naming
 import prompts
 import wordfilter
+from recall import MACHINE_ID
 
 DIGEST_TAG = re.compile(r"<DIGEST>(.*?)</DIGEST>", re.S)
 
@@ -52,9 +53,11 @@ SYSTEM_MAP = """你在为 QQ 群整理聊天记录。下面是一段原始聊天
 - 出现了什么好玩的梗/金句（照抄原话）
 - 反复出现的口头禅/语气词/表情（照抄原话；只出现一次的不算）
 - 谁 许下了什么承诺 / 说要做什么事（请客、发资源、还钱等），哪怕只是一句玩笑
-- 谁 对「{bot}」明显热情/示好，或明显在抬杠/阴阳/钓鱼（照抄最能说明态度的那一句）
+- 谁 跟「{bot}」有来回、态度是热络示好 / 平常 / 抬杠阴阳钓鱼（照抄最能说明态度的那一句）
 
 没有的内容就不要写。不要写总结性的套话，不要评价。
+如有值得保留的个人材料，另列最多 3 条「[称呼] 完整原话」，每条 4~240 字，不受上面的
+25 字要点上限限制。必须保留整条发言的否定、条件和转述对象，不用推测性格；没有就不列。
 
 【敏感内容一律不复述 —— 这是硬规则，优先于上面所有条目】
 原始记录里若出现政治性内容（人名、事件、谐音或缩写暗号、地域/族群歧视）、涉黄涉暴，
@@ -70,7 +73,7 @@ SYSTEM_REDUCE = """你在为 QQ 群「{bot}」整理长期记忆。你会拿到�
 要求：像群里最八卦的人在做周报，可以有吐槽和调侃，但别伤人；没发生什么就直说这阵子群里安静得离谱。
 
 第 2 段：换行后单独输出一行机器指令，严格形如：
-<DIGEST>{"topics":[{"topic":"话题","who":["阿强"],"heat":3}],"memes":[{"quote":"原话","why":"好笑在哪"}],"promises":[{"who":"阿强","what":"说要请全群喝奶茶","due":""}],"people":[{"who":"阿强","note":"最近在打黑猴","mode":"损友"}],"style":[{"phrase":"绷不住了","when":"看到离谱操作"}],"affinity":[{"who":"阿强","delta":2,"why":"一整天都在捧场接梗"}]}</DIGEST>
+<DIGEST>{"topics":[{"topic":"话题","who":["阿强"],"heat":3}],"memes":[{"quote":"原话","why":"好笑在哪"}],"promises":[{"who":"阿强","what":"说要请全群喝奶茶","due":""}],"people":[{"who":"阿强","note":"最近在玩黑猴，喜欢自己探索","quote":"最近在玩黑猴，喜欢自己探索","keywords":["黑猴"],"mode":"损友"}],"style":[{"phrase":"绷不住了","when":"看到离谱操作"}],"affinity":[{"who":"阿强","delta":2,"why":"一整天都在捧场接梗"}]}</DIGEST>
 
 字段规则：
 - topics：近期话题，heat 用 1~5 表示热度。最多 6 条。
@@ -88,33 +91,39 @@ SYSTEM_REDUCE = """你在为 QQ 群「{bot}」整理长期记忆。你会拿到�
   ⚠️ 只收「大家一起用」的表达，而且每条至少在这段记录里出现过两次；只出现一次的不算。
   针对某个人的外貌/糗事、平台处置、政治/涉黄涉暴一律不收；也不要收{bot}自己的口癖
   （那会变成每轮复读）。没有就空数组，不要硬凑。
-- people：对具体某个人的新认知（在玩什么、什么处境）。最多 6 条。
-  ⚠️ note 描述的是**这个人平时什么样**，不是他跟{bot}的关系账：不许写成
-  「组织大家来拿{bot}寻开心」「拿{bot}当玩具练手」这类把人写成麻烦制造者的措辞 ——
-  那是控诉书，不是性格速写，写了他就每轮照着这个身份去对待人家（这个坑踩过两次）。
-  写法用稳定性格：「爱开玩笑，爱搭话」「发言比较抽象」；别用「刚 / 昨天」式时效词。
-  每个人还可以带一个**可选的 mode 字段**——给 TA 定相处模式，只能从这四个里挑：
-  损友（互怼是你们的主旋律）/ 知心（少损多听，情绪价值优先）/ 护短（自动站他那边）/
-  捧场（多接他的梗捧他的场）。依据这段时间**真实发生过的互动**来定，不是你想怎么处就
-  怎么处；拿不准或跟之前比没变化就不写。代码只认这四个词，编别的会被整个丢掉。
-  ⚠️ 两条禁项（都踩过）：① 不许把「敏感话题 / 政治」写成某人的爱好——政治线由规则把守，
-  写进名册等于每轮在{bot}眼前放个雷，还可能引它去接；② 「威胁 / 骚扰 / 测试」这类
-  冲着{bot}来的行为动词同禁——那是某一天的事件，不是性格，换成人畜无伤的稳定性格词。
-- affinity：**这一段时间里，每个人跟「{bot}」这段关系的净走向**。delta 取 -3~3 的整数：
-  正 = 更熟络/更客气/愿意接梗/主动搭话；负 = 抬杠、冒犯、阴阳怪气、反复钓鱼。
+- people：只收能帮助下一次接话的具体原话，最多 6 条；不写性格速写或控诉书。
+  who 必须是这段记录中可分清的说话人；quote 完整照抄 TA 的一条发言，4~240 字，
+  只允许合并空白，不许删掉否定、条件或转述对象。note 同样填写这条原话。
+  keywords 给 1~4 个原话中实际出现的具体话题词，每个 2~24 字；不用人名、代词或泛泛的态度词。
+  泛泛的友善、尊重、希望被理解是普通接话的基线，不必记成个人特点。
+  一次提到、聊天频繁、好感高，都不证明稳定喜好或已经了解此人。没有合适原话就空数组。
+  不把敏感话题、威胁、骚扰或对机器人的试探归纳成某人的性格；图片描述也不是本人自述。
+  可选 mode 仍只从损友 / 知心 / 护短 / 捧场中选，作为游戏里的相处风格提案；
+  它不代表已证实的性格、喜好或开玩笑许可，拿不准就不写。
+- affinity：**这一段时间里，每个人跟「{bot}」这段关系的净走向**。delta 取 -3~3 的整数，按这把尺子：
+  +2~3 护着{bot}、热络捧场、主动帮它；+1 主动搭话、轻松接梗、玩得开心；
+  0 只是提问办事，或者正负都有、互相抵消；
+  -1 出现过冲着{bot}的贬损、骂它的话，或拿荤话低俗问题逗它（熟人间的笑骂不算），但整体还是在玩；
+  -2~-3 反复辱骂贬损它，或者它已经拒绝了还拿荤话、擦边内容死缠。
+  拿{bot}起哄、出题考它、试探边界本身不扣分，这是群里常见的玩法；扣分看的是冲着它的贬损和纠缠。
   这是唯一会决定「{bot}日后对某人什么态度」的字段，所以只依据记录里真实发生过的互动来判，
-  不许凭印象编。这段时间没露过面、或态度没明显变化的人，不要写进来（宁缺勿滥）。
+  不许凭印象编。这段时间跟{bot}有过来回的人每个都要过一遍：看得出方向的就写一条，
+  轻微的给 ±1；来回很多却确实看不出方向的给 0，why 里写清为什么；没露过面的不写。
+  明确要求安静、指出理解错误、嫌插话时机不对或要求别开这种玩笑，都是有效反馈，
+  不能因此扣好感。先修正{bot}的行为，不把提出边界的人记成敌人。
   ⚠️ **你判的是关系走势，不是逐句流水账**：另有只看单句的方向判定在当场记账，
   那套会把熟人间的玩笑、互喷也记成敌意。你看到的是一整段时间，以你的判断为准、该对冲就对冲：
   整天互相损但气氛融洽的，净值给 0 或正，别被单句的火药味带偏；反过来单句客气、
   整体却在疏远试探的，也照实给负。你的结算就是对单句误判的最终修正。
-  ⚠️ **玩笑和敌意的分界跟着交情走**：先看【当前关系底账】里这个人站在哪个档位 ——
-  交情深的损它是日常，不算冒犯；交情浅、还在生疏档的突然辱骂或越界，权重要放大；
-  底账里没有名字的，按刚认识的生人对待。
+  ⚠️ **玩笑和敌意要看上下文**：交情可以帮助理解笑骂，但不是开玩笑许可。
+  【当前关系底账】给的是各人现在站在哪个档位 —— 它只帮你读懂一句话的分量，
+  不授予任何许可，也不替代这段记录里真实发生过的事。
+  对方笑着接梗、主动让你继续，与明确嫌烦是不同的；不能因为交情深就忽略喊停，
+  也不能因为刚认识就把批评自动放大成敌意。
   ⚠️ 别一律给 +1：全都 +1 的话档位永远跨不过去，好感度就成了个摆设。
-  态度明确（热络捧场、或反复抬杠冒犯）就给 ±2~3；只是露过面、平平无奇的宁可不写。
-  ⚠️ **互动多 ≠ 亲近**：骂它（脏话、人格侮辱）、性骚扰、反复抬杠钓鱼，都算冒犯，要给负分 ——
-  别因为他「一直在刷存在感、互动很积极」就给了正分（实测就这么放过了一个天天骂它的人）。
+  态度明确（热络捧场、或反复抬杠冒犯）就给 ±2~3。
+  ⚠️ **互动多 ≠ 亲近，脏话也不自动等于敌意**：持续人身攻击、性骚扰、恶意钓鱼可以给负分；
+  熟人笑骂、纠正错误、催正常回答或嫌它打扰不要据此扣分。也别把针对别人的骂声算到{bot}头上。
 - 只写记录里真实出现过的内容，绝不许编造。没有的字段给空数组 []。
 - **敏感内容不复述（硬规则）**：政治性人名/事件/谐音暗号、地域族群歧视、涉黄涉暴，一律不进这份记忆 ——
   包括 memes 的 quote、people 的 note、topics 的 topic 名、以及第 1 段的《群史记》。
@@ -127,10 +136,8 @@ SYSTEM_REDUCE = """你在为 QQ 群「{bot}」整理长期记忆。你会拿到�
   群里看着就像揪着人不放。只有今天又被人提起、或者还在产生影响（承诺没兑现、
   事情还没了结）时才留下。⚠️ 别人倒霉/出糗的事尤其要按这条办：留在记忆里它就变成了
   那个人的标签，说出口就是揭短。
-- ⚠️ **people 的 note 只写稳定状态**（在玩什么、平时什么风格、跟谁走得近），两条禁令：
-  一是不写标签（「爱整活」「经常口嗨」这类行为定性别写）；二是不带当天就过期的时效词
-  （「刚刚 / 才 / 昨天 / 这会儿」这类字眼过一天就假了，挂久了机器人天天拿它说事）。
-  非写不可的临时状态，下一次压缩若没被新的事实印证，就整条删掉。
+- people 记录的是当时说过的话，不是永久的稳定状态。不要用时效词改写原话，也不要续杯：
+  只有旧摘要里有、这次没有新发言支持的条目不得编造新来源或新时间；过期由代码处理。
 - 压缩稿里的署名有时会写成「一位群友」：那是**系统给不出名字的人**共用的泛称，
   不是谁的外号也不是真名。别把它当成某一个人来总结，也别写进 people / promises 的 who；
   真要提到就说「某位群友」，不要复读这个泛称。
@@ -289,7 +296,7 @@ def render_summary(state, mode="normal"):
         # ⚠️ 这块原先只喂 memes[0]（固定第一条、每轮都喂、还没有时限），于是某条梗
         # 一旦排到首位就天天在模型眼前 —— 哪怕那条记录的是「某人被平台处置」或者
         # 「群友吐槽它掉线」这种根本不该复用的东西。
-        # 现在三道处理：过期的不喂（和名册同一套时间戳）、按最新优先取、
+        # 现在三道处理：过期的不喂（按时间戳卡）、按最新优先取、
         # 而「为什么新鲜」由 stamp_memes 判定（内容没变 = 没有新料，继续变老）。
         best = ""
         for m in data["memes"]:
@@ -308,43 +315,151 @@ def render_summary(state, mode="normal"):
     return "\n".join(parts)
 
 
-def render_people(state, limit=8, now=None):
-    """把摘要里的人物档案渲染成「谁：什么事」的名册，注入给模型用（0 token）。
+# ── 个人原话：模型提案、代码核对来源 ──
+# people 条目只收「能帮助下一次接话的具体原话」。模型压缩时提议 who/quote/keywords，
+# 代码把提案绑回**本批已处理**的原始消息（发言人 + 消息标识 + 时间），对不上就丢。
+# 摘要里的性格推测、模型自带的 evidence/时间戳一律不作数 —— 生成的描述永远不会
+# 变成可调用的「个人事实」。
+def _people_text(value):
+    return ' '.join(value.split()) if isinstance(value, str) else ''
 
-    ⚠️ 为什么单独加这一块（2026-09-20 实测）：人物档案此前**从不注入**，模型只能读
-    【群史记】里那种连动长句（「A 号刚解封就忙着跟 B 贴贴飙车」），读的时候把主语拧成
-    另一个人（把「家豪解封」说成「老王解封」），再把错的存进会话反复引用。
-    「谁：什么事」一行一人，主语想拧都没得拧。
-    只喂给模型，不进 render_summary（那个是发到群里的版本，群友不需要看档案）。
+
+def _people_keywords(values, quote, who):
+    if not isinstance(values, list):
+        return []
+    kept = []
+    for value in values:
+        key = _people_text(value)
+        if (2 <= len(key) <= 24 and key != who
+                and key.casefold() in quote.casefold()
+                and not wordfilter.has_hit(key) and not MACHINE_ID.search(key)
+                and key not in kept):
+            kept.append(key)
+        if len(kept) == 4:
+            break
+    return kept
+
+
+def _people_evidence(row, now):
+    source = row.get('evidence') if isinstance(row, dict) else None
+    if not isinstance(source, dict):
+        return None
+    if any(not isinstance(source.get(key), str) or not source[key]
+           for key in ('group', 'sender', 'message_id')):
+        return None
+    ts = source.get('ts')
+    if type(ts) not in (int, float) or not 0 < ts <= now:
+        return None
+    quote = _people_text(source.get('quote'))
+    if (not 4 <= len(quote) <= 240 or wordfilter.has_hit(quote)
+            or MACHINE_ID.search(quote)
+            or any(source[key] in quote for key in ('group', 'sender', 'message_id'))):
+        return None
+    return {key: source[key] for key in ('group', 'sender', 'message_id', 'ts')} | {'quote': quote}
+
+
+_PEOPLE_KIND_VALUES = {"preference", "fact", "temporary", "shared_moment",
+                       "correction", "discard"}
+_PEOPLE_ACTION_VALUES = {"retain_quote", "keep_briefly", "replace_old", "discard"}
+_PEOPLE_DURABLE_KINDS = {"preference", "fact", "shared_moment", "correction"}
+_PEOPLE_DURABLE_ACTIONS = {"retain_quote", "replace_old"}
+
+
+def people_decision(row):
+    """返回 {kind, action, message_id}；注解与核实来源对不上号就 None。
+
+    kind/action 必须在原生词表内，message_id 必须恰好等于该条目已核实的
+    evidence.message_id —— 防止把裁决贴到别的发言头上。
     """
-    data = (state or {}).get("data") or {}
-    # ⚠️ key 大小写要容忍：people 条目是模型压缩时产出的，实测出过 "Who"（大写）——
-    # 严格只认小写会**静默漏人**（罗老板整条消失，名册看着像生效实际缺人）。
-    #
-    # ⚠️ 时效闸（2026-09-24）：名册定位是「最近在干什么」，但模型每次压缩都会把旧条目
-    #    原样抄回来，于是「号刚解封」这种**当天就过期**的标签挂了五天，机器人天天拿它
-    #    说事，最后被群友当面吐槽。代码按 ts 卡掉过期的：没写新内容就是没有新消息。
+    if not isinstance(row, dict):
+        return None
+    decision = row.get('decision')
+    if not isinstance(decision, dict):
+        return None
+    kind, action = decision.get('kind'), decision.get('action')
+    evidence = row.get('evidence')
+    # 先做类型闸再做成员判断：畸形元数据只能算「没裁决过」，不许抛 TypeError。
+    if (not isinstance(evidence, dict)
+            or not isinstance(kind, str) or not isinstance(action, str)
+            or not isinstance(evidence.get('message_id'), str)
+            or not evidence['message_id']
+            or not isinstance(decision.get('message_id'), str)
+            or decision['message_id'] != evidence['message_id']):
+        return None
+    if (kind not in _PEOPLE_KIND_VALUES or action not in _PEOPLE_ACTION_VALUES):
+        return None
+    return {'kind': kind, 'action': action, 'message_id': evidence['message_id']}
+
+
+def people_max_age_seconds(row):
+    """这条原话的保鲜期：原生判过「值得长期留」的用耐久天数，其余照旧短时效。"""
+    decision = people_decision(row)
+    days = (config.PEOPLE_DURABLE_MAX_AGE_DAYS
+            if decision and decision['kind'] in _PEOPLE_DURABLE_KINDS
+            and decision['action'] in _PEOPLE_DURABLE_ACTIONS
+            else config.PEOPLE_NOTE_MAX_AGE_DAYS)
+    return max(0.0, days) * 86400.0
+
+
+def match_people(state, limit=2, now=None, *, group_id='', sender='', text='',
+                 resolver=None):
+    """挑出可用的个人原话来源：条件不齐就返回 ('', [])（0 token）。
+
+    这是「准入与相关性」闸，不是「个性化有效」的证明：只取**当前群、当前说话人本人**、
+    发言时间仍新鲜、且至少一个话题词命中本轮输入的原话，最多两条、新的在前。
+    取不到就什么都不喂 —— 宁可按普通群友自然接话，也不拿全群名册、别人的话或
+    过期/无来源条目凑数。来源标识（群号、openid、消息 ID）只留在本地。
+
+    从 render_people 里拆出来（2026-10-31）：插嘴前的「这句旧话现在端出来合不合适」
+    判断需要**原话本身**，而不是渲染好的那段提示词。两个出口共用同一道闸，
+    不许任何一侧单独放宽条件。
+    """
+    if (not config.PERSONAL_MEMORY_ENABLED or not group_id or not sender
+            or not text or resolver is None or wordfilter.has_hit(text)):
+        return '', []
+    limit = min(2, max(0, int(limit)))
+    if not limit:
+        return '', []
     now = time.time() if now is None else now
-    max_age = getattr(config, "PEOPLE_NOTE_MAX_AGE_DAYS", 2.0) * 86400.0
-    fresh, stale = [], []
-    for p in (data.get("people") or []):
-        if not isinstance(p, dict):
+    who = _people_text(resolver(sender))
+    if (not who or who == UNAMED_WHO or who == sender
+            or wordfilter.has_hit(who) or MACHINE_ID.search(who)):
+        return '', []
+    matched, seen = [], set()
+    for row in (((state or {}).get('data') or {}).get('people') or []):
+        source = _people_evidence(row, now)
+        if (not source or source['group'] != group_id or source['sender'] != sender
+                or now - source['ts'] > people_max_age_seconds(row)
+                or source['quote'] == _people_text(text)):
             continue
-        who = p.get("who") or p.get("Who")
-        note = p.get("note") or p.get("Note")
-        if not (who and note):
+        keys = _people_keywords(row.get('keywords'), source['quote'], who)
+        if not any(key.casefold() in text.casefold() for key in keys):
             continue
-        ts = float(p.get("ts") or 0)
-        (fresh if ts and (now - ts) <= max_age else stale).append((who, note))
-    # ⚠️ 一条都不新鲜时宁可给陈旧的，也不要给空 —— 名册空着，模型就只能去读
-    # 【群史记】里那种连动长句，「把谁干的安到谁头上」的老病立刻复发（09-20 实测）。
-    # 所以这里是「有新的用新的，全旧了用旧的」，而不是「过期的宁可不喂」。
-    people = fresh or stale
-    if not people:
-        return ""
-    lines = "\n".join(f"- {who}：{note}" for who, note in people[:limit])
-    return ("👥 这阵子你观察到的几个人（系统整理的档案，谁的条目说的就是谁的事，"
-            "引用前对准名字，别张冠李戴）：\n" + lines)
+        if source['message_id'] in seen:
+            continue
+        seen.add(source['message_id'])
+        matched.append(source)
+    matched.sort(key=lambda source: source['ts'], reverse=True)
+    return who, matched[:limit]
+
+
+def render_matched(who, sources):
+    """把挑好的来源渲染进本轮动态层。空来源返回空串。"""
+    lines = [f"- {who}（{time.strftime('%m-%d %H:%M', time.localtime(source['ts']))}）说过："
+             + json.dumps(source['quote'], ensure_ascii=False)
+             for source in sources or []]
+    return prompts.PROMPT_MEMORY_HEADER.strip() + '\n' + '\n'.join(lines) if lines else ''
+
+
+def render_people(state, limit=2, now=None, *, group_id='', sender='', text='',
+                  resolver=None):
+    """把已核实的个人原话渲染进**本轮动态层**；条件不齐就返回空串（0 token）。
+
+    准入逻辑全在 match_people 里，这里只负责渲染 —— 两处出口永远同一道闸。
+    """
+    return render_matched(*match_people(
+        state, limit, now, group_id=group_id, sender=sender, text=text,
+        resolver=resolver))
 
 
 class GroupDigest:
@@ -471,7 +586,9 @@ class GroupDigest:
             if isinstance(node, list):
                 return [walk(x) for x in node]
             if isinstance(node, dict):
-                return {k: walk(v) for k, v in node.items()}
+                # 改名只改展示用的称呼与原话字面；evidence 是本地留存的原始出处
+                # （发言人/消息标识/时间），改写它会弄坏出处核对，原样保留。
+                return {k: v if k == 'evidence' else walk(v) for k, v in node.items()}
             return node
 
         summary["brief"] = walk(summary.get("brief") or "")
@@ -518,9 +635,27 @@ class GroupDigest:
         if data.get("promises"):
             parts.append("[上一版待兑现] " + "；".join(
                 f"{p.get('who','')}:{p.get('what','')}" for p in data["promises"]))
+        # 上一版的个人条目只回喂「已核实来源的原话」：who 用当前称呼、quote 原文、
+        # keywords 话题词。不带 evidence 里的标识与时间，更不带旧版性格推测 ——
+        # 那些不是这个人的事实，喂回去只会让模型把猜测续写成新一版「认知」。
         if data.get("people"):
-            parts.append("[上一版人物] " + "；".join(
-                f"{p.get('who','')}:{p.get('note','')}" for p in data["people"]))
+            rows = []
+            now = time.time()
+            for p in data["people"]:
+                source = _people_evidence(p, now)
+                if (not source or now - source['ts'] > people_max_age_seconds(p)):
+                    continue
+                who = _people_text(resolver(source["sender"]) if resolver else "")
+                if (not who or who == UNAMED_WHO or who == source['sender']
+                        or wordfilter.has_hit(who) or MACHINE_ID.search(who)):
+                    continue
+                keywords = _people_keywords(p.get("keywords"), source["quote"], who)
+                if not keywords:
+                    continue
+                rows.append({"who": who, "quote": source["quote"], "keywords": keywords})
+            if rows:
+                parts.append("[上一版个人原话] " + "；".join(
+                    json.dumps(r, ensure_ascii=False) for r in rows))
         if data.get("style"):
             parts.append("[上一版口头禅] " + "、".join(
                 str(s.get("phrase") or "") for s in data["style"]
@@ -533,7 +668,7 @@ class GroupDigest:
 
 
 async def compress_group(store, group_id, entries, ask, resolver=None, budget=None, log=None,
-                         refresh=None, ledger=None):
+                         refresh=None, ledger=None, people_curator=None):
     """把一批新消息合并进长期摘要。
 
     entries: 待压缩的原始消息（来自 archive.since），元素形如 {"sender","text","ts"}
@@ -627,22 +762,33 @@ async def compress_group(store, group_id, entries, ask, resolver=None, budget=No
     }
     if processed[-1].get("_cursor") is not None:
         summary["source_cursor"] = dict(processed[-1]["_cursor"])
-    # 人物名册打时间戳：只有**内容变了**才算刷新，否则沿用旧时间。
-    # 不这么比对的话，模型每次把「家豪：号刚解封」原样抄回来，这条标签就永远年轻。
+    # 个人条目裁决：模型只提议 who/quote/keywords/mode，代码把每条 quote 绑回
+    # 本批已处理前缀里的真实发言（发言人 + 消息标识 + 原始时间）。
+    # 绑不上的（没说过、别人的话、指令、图片描述、时间不全）整条丢弃 ——
+    # 生成的性格推测永远不会成为可调用的个人事实。
     stamp_people((slot.get("summary") or {}).get("data"), summary["data"],
-                 now=summary["updated"])
+                 now=summary["updated"], entries=processed, resolver=resolver,
+                 group_id=group_id)
     stamp_memes((slot.get("summary") or {}).get("data"), summary["data"],
                 now=summary["updated"])
+    # 可选的个人原话裁决：摘要落槽【之前】换好最终名单 —— 中途不许把
+    # 短时效新名单刷进 state 让耐久旧条目提前退场。回调抛错同样不许换。
+    if people_curator is not None:
+        old_people = (((slot.get("summary") or {}).get("data") or {})
+                      .get("people") or [])
+        summary["data"]["people"] = await people_curator(
+            summary["data"]["people"], old_people,
+            entries=processed, now=summary["updated"])
     slot["summary"] = summary
     return slot["summary"]
 
 
 def stamp_memes(old_data, new_data, now=None):
-    """梗也要有时间戳，判定口径和名册一样：**换个说法才算新料**。
+    """梗也要有时间戳，判定口径：**换个说法才算新料**。
 
     ⚠️ 抄回来的旧梗不给新时间戳：老 state 里的梗压根没有 ts，那就让它继续没有 ——
     render 时会被当成过期的跳过。给 now 等于白送它两天的保质期，
-    这正是名册那次「文本没变却当成新信息」续杯的翻版。
+    这正是旧名册那次「文本没变却当成新信息」续杯的翻版。
     """
     now = time.time() if now is None else now
     old = {}
@@ -660,66 +806,95 @@ def stamp_memes(old_data, new_data, now=None):
         m["ts"] = now if q not in old else old[q]
 
 
-# 名册 note 的**写入闸**（2026-10-16，借鉴 Mem0 的写入前裁决：模型提案、代码裁决）。
-# 提示词禁了三轮，漂移还是换了三种框架回来（控诉书 / 玩具化 / 爱好化 / 威胁化）——
-# 合同挡不住的事就换成代码闸。命中框架黑名单的改写一律按 NOOP 处理：
-# 老人沿用旧 note 和旧 ts（继续变老），新人整条丢弃。每个词都有事故回执。
-NOTE_BANNED_FRAMINGS = (
-    "敏感话题", "政治", "威胁", "骚扰", "测试", "调教", "欺负",
-    "围攻", "寻开心", "玩具", "口嗨", "整活", "撩", "发情",
-)
+def stamp_people(old_data, new_data, now=None, *, entries=(), resolver=None, group_id=''):
+    """把模型的 people 提案绑回已核实的来源，返回实际收录的条数。
 
+    来源只有两个合法出处：**本批已处理**的原始发言，或上一版摘要里已收录的
+    evidence。收录口径（全部满足才进）：
+      · 提案给出能分清的 who 和一条完整 quote（4~240 字、只做空白归一）；
+      · quote 逐字等于来源里的原话（指令、图片描述、其他群的话不算；
+        归档标记 text_complete 不是 True 的原始记录没有资格当来源）；
+      · 该来源的发言人能被 resolver 叫出当前名字、且时间戳齐备；
+      · 至少一个话题词（原话里真实出现的 2~24 字词）留存。
 
-def _note_is_clean(note):
-    return not any(w in note for w in NOTE_BANNED_FRAMINGS)
+    时间口径：**ts 取原始发言时间，不是压缩时间**。模型换个说法复述旧 quote
+    时沿用旧来源与旧时间；真的出现一条新消息（新 message_id）才带新时间；
+    同一 message_id 无论被压多少次都不会续杯。
 
-
-def stamp_people(old_data, new_data, now=None):
-    """给名册条目记「这条认知是什么时候更新的」，返回更新过的条数。
-
-    判定口径故意很直白：**文本完全一样 = 没新信息 = 继续变老**。
-    换个说法（哪怕只改几个字）才算刷新。这样模型偷懒照抄旧条目时，
-    那条会一路老化到被 render_people 拦下。
+    旧摘要里已核实的条目允许被「换个措辞」的提案继承原来源 —— 但同一条 quote
+    若同时能对上两个不同发言人（改名的模糊性），宁可丢也不猜是谁说的。
+    没被任何提案引用的旧条目随摘要自然退场；legacy 行没有来源，永远不会被复活。
     """
     now = time.time() if now is None else now
     old = {}
-    for p in ((old_data or {}).get("people") or []):
-        if isinstance(p, dict):
-            who = str(p.get("who") or p.get("Who") or "").strip()
-            note = str(p.get("note") or p.get("Note") or "").strip()
-            if who and note:
-                old[who] = (note, float(p.get("ts") or 0))
-    stamped = 0
-    drop_ids = set()
-    for p in ((new_data or {}).get("people") or []):
-        if not isinstance(p, dict):
+    current = {}
+    for row in ((old_data or {}).get('people') or []):
+        source = _people_evidence(row, now)
+        if not source or source['group'] != group_id:
             continue
-        who = str(p.get("who") or p.get("Who") or "").strip()
-        note = str(p.get("note") or p.get("Note") or "").strip()
-        if not (who and note):
+        who = _people_text(resolver(source['sender']) if resolver else '')
+        if who and who != UNAMED_WHO:
+            old.setdefault((who, source['quote']), []).append((row, source))
+    for entry in entries:
+        if (not isinstance(entry, dict) or entry.get('cmd') or entry.get('kind')
+                or entry.get('text_complete') is not True
+                or entry.get('group', group_id) != group_id):
             continue
-        prev_note, prev_ts = old.get(who, ("", None))
-        if prev_note == note:
-            # 原样抄回来的：沿用旧时间戳（旧数据没有 ts 就仍然没有 ⇒ 会被当成过期的）
-            p["ts"] = prev_ts
-        elif not _note_is_clean(note):
-            # 写入闸：改写撞框架黑名单 → 按 NOOP 处理（Mem0 式写入前裁决）。
-            # 老人沿用旧版（继续变老，模型下轮看到旧版大概率照抄）；新人整条丢弃。
-            if prev_note:
-                p["note"] = prev_note
-                p["ts"] = prev_ts
-                logger.warning("🧯 名册改写命中框架黑名单，沿用旧版: %s 的「%s」", who, note[:60])
-            else:
-                logger.warning("🧯 新人 note 命中框架黑名单，整条丢弃: %s 的「%s」", who, note[:60])
-                drop_ids.add(id(p))
+        source = _people_evidence({'evidence': {
+            'group': group_id, 'sender': entry.get('sender'),
+            'message_id': entry.get('message_id'), 'ts': entry.get('ts'),
+            'quote': entry.get('text'),
+        }}, now)
+        if not source:
+            continue
+        who = _people_text(resolver(source['sender']) if resolver else '')
+        if who and who != UNAMED_WHO:
+            current.setdefault((who, source['quote']), []).append(source)
+    kept, seen = [], set()
+    for proposal in (new_data.get('people') or []):
+        if not isinstance(proposal, dict):
+            continue
+        who = _people_text(proposal.get('who') or proposal.get('Who'))
+        quote = _people_text(proposal.get('quote'))
+        if not who or wordfilter.has_hit(who) or MACHINE_ID.search(who):
+            continue
+        previous = old.get((who, quote), [])
+        candidates = current.get((who, quote), [])
+        # 同名 + 同一句原话能对上两个发言人时，身份是模糊的 —— 宁可丢也不把
+        # 旧来源转给一个可能是另一个人的人。
+        if len({s['sender'] for s in candidates + [s for _, s in previous]}) > 1:
+            continue
+        sources = candidates or [source for _, source in previous]
+        if not sources or len({s['sender'] for s in sources}) != 1:
+            continue
+        source = max(sources, key=lambda s: s['ts'])
+        prior = next(((row, saved) for row, saved in previous
+                      if saved['sender'] == source['sender']
+                      and saved['message_id'] == source['message_id']), None)
+        if prior:
+            saved_row, source = prior
+            keywords = _people_keywords(saved_row.get('keywords'), source['quote'], who)
         else:
-            p["ts"] = now
-        stamped += 1
-    if drop_ids:
-        new_data["people"] = [
-            x for x in (new_data.get("people") or []) if id(x) not in drop_ids
-        ]
-    return stamped
+            keywords = _people_keywords(proposal.get('keywords'), source['quote'], who)
+        identity = (source['sender'], source['message_id'])
+        if not keywords or identity in seen:
+            continue
+        seen.add(identity)
+        item = {'who': who, 'note': source['quote'], 'quote': source['quote'],
+                'keywords': keywords, 'evidence': dict(source), 'ts': source['ts']}
+        if isinstance(proposal.get('mode'), str):
+            item['mode'] = proposal['mode']
+        # 裁决注解只能跟着「同一条已核实来源」走：旧条目自带的 decision 才允许
+        # 继承，模型提案里塞的 decision 一律不认（不给新来源/新时间背书）。
+        if prior:
+            saved_decision = people_decision(saved_row)
+            if saved_decision:
+                item['decision'] = saved_decision
+        kept.append(item)
+        if len(kept) == 6:
+            break
+    new_data['people'] = kept
+    return len(kept)
 
 
 # ══════════════════════════ 承诺账本 ══════════════════════════
@@ -1023,22 +1198,26 @@ class PromiseBook:
         return visible
 
     # ── 催债 ──
+    def get(self, group_id, promise_id):
+        return next((r for r in self.list(group_id) if r["id"] == promise_id), None)
+
+    def next_nag(self, row):
+        """这条最早什么时候能催：过了宽限期（或说好的时间），且离上次催够久。
+
+        催满上限就是 None。定时任务（scheduler.py）按它定闹钟，dunnable 按它挑。
+        """
+        if row.get("nag", 0) >= self.max_nag:
+            return None
+        start = row.get("due_ts") or (row.get("since", 0) + self.grace_hours * 3600.0)
+        if row.get("last_nag"):
+            start = max(start, row["last_nag"] + self.nag_interval_hours * 3600.0)
+        return start
+
     def dunnable(self, group_id, now=None):
         """该催的承诺：过了宽限期，且离上次催够久，且还没催满上限。"""
         now = time.time() if now is None else now
-        grace = self.grace_hours * 3600.0
-        gap = self.nag_interval_hours * 3600.0
-        out = []
-        for r in self.list(group_id):
-            if r.get("nag", 0) >= self.max_nag:
-                continue
-            start = r.get("due_ts") or (r.get("since", 0) + grace)
-            if now < start:
-                continue
-            if r.get("last_nag") and now - r["last_nag"] < gap:
-                continue
-            out.append(r)
-        return out
+        return [r for r in self.list(group_id)
+                if (t := self.next_nag(r)) is not None and t <= now]
 
     def mark_nagged(self, group_id, promise_id, now=None):
         now = time.time() if now is None else now

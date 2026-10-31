@@ -5,6 +5,7 @@ binds its DailyBudget; the SDK's hidden retries are disabled.
 """
 import asyncio
 import base64
+import contextvars
 from email.utils import parsedate_to_datetime
 import logging
 import time
@@ -13,14 +14,30 @@ import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
 import config
+from regular import decision_settings
 
 logger = logging.getLogger("qqbot")
 _llm_http = None
 _budget = None
+_decision_budget = None
 _on_usage = None
 _initialized = False
 AI_CLIENTS = {}
-PROVIDER_CHAIN = list(dict.fromkeys(filter(None, (config.AI_PROVIDER, config.FALLBACK_PROVIDER))))
+PROVIDER_CHAIN = list(dict.fromkeys(filter(None, (config.TIER_PROVIDERS["chat"],
+                                                   config.FALLBACK_PROVIDER))))
+# 每一档走哪几家（config.TIER_PROVIDERS）。跟回复同一家的档**共用 PROVIDER_CHAIN 这一个列表**，
+# 所以默认配置下行为与以前逐字相同；只有被显式指到别家的档才有自己的链。
+def _tier_chains(tier_providers, fallback, chat_chain):
+    chains = {"chat": chat_chain}
+    for tier in ("digest", "judge"):
+        provider = tier_providers[tier]
+        chains[tier] = (chat_chain if provider == tier_providers["chat"]
+                        else list(dict.fromkeys(filter(None, (provider, fallback)))))
+    return chains
+
+
+_TIER_PROVIDER_CHAINS = _tier_chains(config.TIER_PROVIDERS, config.FALLBACK_PROVIDER,
+                                     PROVIDER_CHAIN)
 MODEL_CHAINS = {name: list(preset["models"]) for name, preset in config.PROVIDER_PRESETS.items()}
 MODEL_CHAINS_DIGEST = {name: list(preset.get("models_digest") or preset["models"])
                        for name, preset in config.PROVIDER_PRESETS.items()}
@@ -30,11 +47,25 @@ _TIER_CHAINS = {"chat": MODEL_CHAINS, "digest": MODEL_CHAINS_DIGEST, "judge": MO
 _provider_state = {}  # only explicit Retry-After deadlines and credential failures
 _key_idx = {}
 
+# 最近一次成功补全的出处（task-local）：回复日志只记录真正答上来的那个候选，
+# 别的并发任务/后续尝试不会串改它。只存 provider/model/tier/finish_reason。
+_completion_meta = contextvars.ContextVar("providers_completion_meta", default=None)
 
-def initialize(*, budget=None, on_usage=None):
-    global _llm_http, _budget, _on_usage, _initialized
+
+def reset_completion_meta():
+    _completion_meta.set(None)
+
+
+def completion_meta():
+    return _completion_meta.get()
+
+
+def initialize(*, budget=None, decision_budget=None, on_usage=None):
+    global _llm_http, _budget, _decision_budget, _on_usage, _initialized
     if budget is not None:
         _budget = budget
+    if decision_budget is not None:
+        _decision_budget = decision_budget
     if on_usage is not None:
         _on_usage = on_usage
     if _initialized:
@@ -46,7 +77,8 @@ def initialize(*, budget=None, on_usage=None):
     _llm_http = httpx.AsyncClient(verify=config.SSL_VERIFY,
                                   mounts={"all://127.0.0.1": None,
                                           "all://localhost": None})
-    selected = list(PROVIDER_CHAIN)
+    selected = list(dict.fromkeys(name for chain in _TIER_PROVIDER_CHAINS.values()
+                                  for name in chain))
     if config.VISION_ENABLED and config.VISION_PROVIDER not in selected:
         selected.append(config.VISION_PROVIDER)
     for name in selected:
@@ -112,7 +144,11 @@ def status():
     return {"initialized": _initialized, "providers": rows, "vision": cfg["vision"],
             "request_policy": cfg["request_policy"],
             "budget": ({"used": _budget.used, "limit": _budget.limit,
-                        "remaining": _budget.remaining} if _budget is not None else None)}
+                        "remaining": _budget.remaining} if _budget is not None else None),
+            "decision_budget": ({"used": _decision_budget.used,
+                                 "limit": _decision_budget.limit,
+                                 "remaining": _decision_budget.remaining}
+                                if _decision_budget is not None else None)}
 
 
 class _BudgetExhausted(Exception):
@@ -127,12 +163,37 @@ def _bound_budget():
     return _budget
 
 
-async def _request_completion(client, **kwargs):
-    """One SDK call = one reserved physical attempt, including failures."""
-    if not _bound_budget().try_consume():
+def _bound_decision_budget():
+    """判断请求自己的日额度（2026-10-31 起每条群消息都分诊，不能和回复抢一份）。
+
+    只给了一份预算的调用方（离线工具、旧用例）沿用那一份，不为它把 runtime 拉进来。
+    """
+    global _decision_budget, _on_usage
+    if _decision_budget is None:
+        if _budget is not None:
+            return _budget
+        import runtime
+        _decision_budget = runtime.DECISION_BUDGET
+        if _on_usage is None:
+            _on_usage = runtime.STATE.mark_dirty
+    return _decision_budget
+
+
+def _reserve_attempt(budget=None):
+    """One physical request = one daily budget unit + usage mark.
+
+    失败、超时、HTTP 错误同样计费 —— 预留发生在发起之前。
+    budget 不给就是聊天那一份；判断请求传自己那一份。
+    """
+    if not (_bound_budget() if budget is None else budget).try_consume():
         raise _BudgetExhausted
     if _on_usage is not None:
         _on_usage()
+
+
+async def _request_completion(client, **kwargs):
+    """One SDK call = one reserved physical attempt, including failures."""
+    _reserve_attempt()
     return await client.chat.completions.create(**kwargs)
 
 
@@ -180,6 +241,40 @@ def _temperature(preset, explicit):
     return preset.get("temperature", config.AI_TEMPERATURE)
 
 
+def model_profile(model):
+    """这个模型的调用档案（config.MODEL_PROFILES）；网关的「cn:」这类前缀去掉再查。"""
+    name = str(model or "")
+    return (config.MODEL_PROFILES.get(name)
+            or config.MODEL_PROFILES.get(name.split(":", 1)[-1]))
+
+
+def _request_params(model, tier, max_tokens, temperature, preset):
+    """这个模型、这一档该怎么调。没登记的模型照旧：max_tokens + 温度 + 预设 extra_body。
+
+    登记过的：输出上限用它认的字段名；不收温度就不传；推理按档来 —— 模型登记了 effort、
+    这一档又配了 *_REASONING，就按配的强度；否则审核档按 on 推理，其余各档一律关。
+    推理时放宽额度。档案里的写法替换预设的 extra_body，不叠加
+    （hy4-preview 收到智谱那句 thinking=disabled 会照样推理，再把额度吃光）。
+    """
+    profile = model_profile(model)
+    if profile is None:
+        return {"max_tokens": max_tokens,
+                "temperature": _temperature(preset, temperature),
+                "extra_body": preset.get("extra_body") or None}
+    level = config.TIER_REASONING.get(tier) if profile.get("effort") else ""
+    if level:
+        reason, extra = level != "none", {profile["effort"]: level}
+    else:
+        reason = tier == "judge" and "on" in profile
+        extra = profile["on"] if reason else profile.get("off") or {}
+    limit = max(max_tokens, config.REASONING_MAX_TOKENS) if reason else max_tokens
+    params = {profile.get("token_param", "max_tokens"): limit}
+    if profile.get("temperature", True):
+        params["temperature"] = _temperature(preset, temperature)
+    params["extra_body"] = dict(extra) or None
+    return params
+
+
 def _reply_metrics(result, choice):
     """Best-effort usage fields; observability must never break a good reply."""
     try:
@@ -224,7 +319,13 @@ def _log_reply(name, model, tier, attempt, elapsed, result, choice, text):
 
 async def _complete(messages, max_tokens, tier, temperature, names, chains, *, total_timeout=None):
     initialize()
-    deadline = time.monotonic() + (config.AI_TOTAL_TIMEOUT if total_timeout is None else total_timeout)
+    # 摘要在后台跑，深推理一次要一分多钟：单次与总时限都按 DIGEST_TIMEOUT_SECONDS 放宽。
+    per_attempt = (config.DIGEST_TIMEOUT_SECONDS if tier == "digest"
+                   else config.AI_TIMEOUT_SECONDS)
+    if total_timeout is None:
+        total_timeout = max(config.AI_TOTAL_TIMEOUT, per_attempt) if tier == "digest" \
+            else config.AI_TOTAL_TIMEOUT
+    deadline = time.monotonic() + total_timeout
     attempts = 0
     for name in names:
         clients = AI_CLIENTS.get(name) or []
@@ -241,16 +342,18 @@ async def _complete(messages, max_tokens, tier, temperature, names, chains, *, t
             try:
                 result = await asyncio.wait_for(
                     _request_completion(
-                        client, model=model, messages=messages, max_tokens=max_tokens,
-                        temperature=_temperature(preset, temperature),
-                        extra_body=preset.get("extra_body") or None),
-                    timeout=min(left, config.AI_TIMEOUT_SECONDS))
+                        client, model=model, messages=messages,
+                        **_request_params(model, tier, max_tokens, temperature, preset)),
+                    timeout=min(left, per_attempt))
                 if result and result.choices:
                     choice = result.choices[0]
                     text = (getattr(choice.message, "content", None) or "").strip()
                     _log_reply(name, model, tier, attempts, time.monotonic() - started,
                                result, choice, text)
                     if text:  # reasoning_content is deliberately not a user answer
+                        _completion_meta.set({
+                            "provider": name, "model": model, "tier": tier,
+                            "finish_reason": getattr(choice, "finish_reason", None)})
                         return text
             except _BudgetExhausted:
                 return None
@@ -272,7 +375,153 @@ async def call_model(messages, max_tokens, tier="chat", temperature=None):
     chains = _TIER_CHAINS.get(tier)
     if chains is None:
         raise ValueError(f"Unknown model task: {tier}")
-    return await _complete(messages, max_tokens, tier, temperature, PROVIDER_CHAIN, chains)
+    reset_completion_meta()  # 失败/无人应答时保持 None，不许残留上一轮的出处
+    return await _complete(messages, max_tokens, tier, temperature,
+                           _TIER_PROVIDER_CHAINS.get(tier, PROVIDER_CHAIN), chains)
+
+
+async def call_decision(input, questions):
+    """One explicit native GPT Decisions POST —— 不是 chat completions。
+
+    端点/模型/密钥只读本机保存的 decision_api.json；请求体就是
+    {model, input, questions}，不加 max_tokens/temperature/stream，
+    也不退回会话梯队。一次物理尝试计一份共享日预算，限时 6s 默认、
+    不自动重试；失败只记错误类型/状态码，绝不落 URL/输入/密钥/正文。
+    _completion_meta 不许碰 —— 判断请求永远不算「聊天回复的出处」。
+    """
+    if not config.DECISION_ENABLED:
+        return None
+    settings = decision_settings.load_settings(config.DATA_DIR)
+    if settings is None:
+        return None
+    initialize()
+    try:
+        _reserve_attempt(_bound_decision_budget())
+    except _BudgetExhausted:
+        return None
+    body = {"model": settings["model"], "input": input,
+            "questions": questions}
+    try:
+        response = await asyncio.wait_for(
+            _llm_http.post(settings["endpoint"], json=body,
+                           headers={"Authorization":
+                                    f"Bearer {settings['api_key']}"}),
+            timeout=config.DECISION_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("判断请求失败 type=%s status=%s", type(exc).__name__,
+                       getattr(exc, "status_code", None))
+        return None
+    if response.status_code != 200:
+        logger.warning("判断请求失败 type=HTTPError status=%s",
+                       response.status_code)
+        return None
+    try:
+        data = response.json()
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("answers"), list):
+        return None
+    return data
+
+
+# ── 联网查询 / 深度研究：OpenAI Responses 后台任务（2026-11-01）──
+# 这里只发起和查进度，不等：等多久、做不完怎么办归 slowwork.py 和 bot.py。
+# 本机 openai SDK 1.99 的 responses 模块一导入就报错，所以和判断一样直接发 HTTP。
+
+def research_available():
+    name = config.RESEARCH_PROVIDER
+    return bool(name and config.RESEARCH_MODEL
+                and config.PROVIDER_PRESETS[name].get("base_url")
+                and config.load_api_keys(name))
+
+
+def _research_endpoint(path=""):
+    name = config.RESEARCH_PROVIDER
+    base = config.PROVIDER_PRESETS[name]["base_url"].rstrip("/")
+    return (f"{base}/responses{path}",
+            {"Authorization": f"Bearer {config.load_api_keys(name)[0]}"})
+
+
+async def _research_http(method, path="", body=None):
+    initialize()
+    url, headers = _research_endpoint(path)
+    try:
+        response = await asyncio.wait_for(
+            _llm_http.request(method, url, json=body, headers=headers),
+            timeout=config.RESEARCH_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("联网查询请求失败 type=%s", type(exc).__name__)
+        return None
+    if response.status_code != 200:
+        logger.warning("联网查询请求失败 type=HTTPError status=%s", response.status_code)
+        return None
+    try:
+        data = response.json()
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def start_research(query, *, instructions, deep=False):
+    """起一个带 web_search 的后台任务，只交回 response id（约 1 秒）；失败 None。
+
+    发起计一份聊天日预算；之后的轮询是免费的 GET，不计。
+    深度研究：推理开到 high、搜索上下文开到 high，实测 60 秒左右、搜 8 轮。
+    """
+    if not research_available():
+        return None
+    initialize()   # 预算要先绑上，才能在发起前预留
+    try:
+        _reserve_attempt()
+    except _BudgetExhausted:
+        return None
+    data = await _research_http("POST", body={
+        "model": config.RESEARCH_MODEL, "instructions": instructions, "input": query,
+        "background": True, "store": True,
+        "tools": [{"type": "web_search",
+                   "search_context_size": "high" if deep else "medium"}],
+        "reasoning": {"effort": "high" if deep else "low"}})
+    rid = (data or {}).get("id")
+    return rid if isinstance(rid, str) and rid else None
+
+
+def _research_output(data):
+    text, sources = [], []
+    for item in data.get("output") or ():
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for part in item.get("content") or ():
+            if not isinstance(part, dict):
+                continue
+            text.append(part.get("text") or "")
+            for note in part.get("annotations") or ():
+                if isinstance(note, dict) and note.get("type") == "url_citation":
+                    source = {"title": note.get("title") or "", "url": note.get("url") or ""}
+                    if source not in sources:
+                        sources.append(source)
+    return "".join(text).strip(), sources
+
+
+async def poll_research(response_id):
+    """("running", None) / ("done", {"text", "sources"}) / ("failed", None)。
+
+    一次轮询失败（网络抖一下）算还在跑：放弃与否由调用方的总时限决定。
+    """
+    data = await _research_http("GET", f"/{response_id}")
+    if data is None:
+        return "running", None
+    status = data.get("status")
+    if status in ("queued", "in_progress"):
+        return "running", None
+    text, sources = _research_output(data)
+    if status in ("completed", "incomplete") and text:
+        return "done", {"text": text, "sources": sources}
+    logger.warning("联网查询没有结果 status=%s", status)
+    return "failed", None
 
 
 async def describe_image(image_url, context_text=""):

@@ -24,17 +24,16 @@ HEADER = f"""{RECALL_MARK}（系统按你的问题从本地归档翻到的旧消
 只在对方问的正是这件事时拿它核对；对不上就忽略。不要主动提旧事、不要复述整段，
 也不要用「我记得你以前」起头。引用时对准说话人，别把别人的事安到眼前这位头上。】"""
 
-# 强往事线索。刻意不收「什么时候」「查一下」——它们太常出现在与旧事无关的
-# 眼前问题里（「你什么时候下班」），会凭空把旧聊天翻出来。
+# 往事虚词：抽检索词之前先剥掉 —— 「上次」「之前」本身不是要找的内容。
+# 2026-10-31 起它们**不再决定要不要翻旧账**：那是分诊里 recall 那一题的事
+# （decisions.FeedbackTracker.assess），调用方判断过才会来这里取证据。
+# 真实语料里点名消息上命中线索词的 5 条全是误触发（「之前那个模型更有趣」
+# 「我叫王红闻你就要答应」），判断全判对了。
 RECALL_CUES = (
     "上次", "上回", "那天", "当时", "那次", "之前", "以前", "后来",
     "还记得", "记不记得", "你说过", "跟我说过", "答应过", "答应", "承诺",
     "不是说好", "说好", "兑现", "翻旧账", "旧账", "谁说的", "哪天", "多久了",
     "来着",
-)
-PROMISE_CUES = (
-    "答应", "承诺", "不是说好", "说好", "兑现", "请客", "请我", "请全群",
-    "欠我", "欠大家", "还欠", "欠着",
 )
 
 # 先剥掉这些短语再抽内容词，避免「奶茶的事」被切成「奶茶事」而搜不到。
@@ -49,10 +48,6 @@ HAN_RUN = re.compile(r"[\u4e00-\u9fff]+")
 WORD_RUN = re.compile(r"[A-Za-z0-9]{2,12}")
 QUOTED = re.compile(r"[「“\"《]([^」”\"》]{2,12})[」”\"》]")
 MACHINE_ID = re.compile(r"<@!?[0-9A-Fa-f]{16,}>|(?<![0-9A-Fa-f])[0-9A-Fa-f]{16,}(?![0-9A-Fa-f])")
-
-
-def has_cue(text):
-    return [cue for cue in RECALL_CUES if cue and cue in (text or "")]
 
 
 def _strip_phrases(text, phrases):
@@ -161,7 +156,7 @@ def _pick(rows, terms, names, now, max_items, exclude_text=""):
 
 
 def _promise_line(promises, group_id, text, terms):
-    if promises is None or not any(cue in text for cue in PROMISE_CUES):
+    if promises is None:
         return ""
     try:
         rows = promises.list(group_id)
@@ -191,11 +186,15 @@ def _promise_line(promises, group_id, text, terms):
 
 def build_note(group_id, text, *, archive, promises=None, names=(), name_of=None,
                now=None, max_items=None, lookback_days=None, exclude_text=""):
-    """返回可直接塞进本轮动态层的召回块；没有可靠命中时返回空串。"""
+    """返回可直接塞进本轮动态层的召回块；没有可靠命中时返回空串。
+
+    **要不要翻**不在这里判：调用方（bot 的分诊结果 recall == look_up）已经判过。
+    这里只管「翻的话拿什么」—— 没有具体内容词、命中敏感词、太老、是指令行，都不给。
+    """
     if not config.MEMORY_RECALL_ENABLED:
         return ""
     text = (text or "").strip()
-    if not text or not has_cue(text) or wordfilter.has_hit(text):
+    if not text or wordfilter.has_hit(text):
         return ""
 
     names = tuple(name for name in names if name and len(name) >= 2)

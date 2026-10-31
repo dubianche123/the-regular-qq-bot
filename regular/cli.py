@@ -340,6 +340,41 @@ async def demo(messages):
     return 0
 
 
+def coverage(config, *, as_json=False):
+    from regular.observations import personal_memory_coverage
+    report = personal_memory_coverage(config.INTERACTION_LOG_DIR)
+    stats = report["overall"]
+    if as_json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        rate = stats["injection_rate"]
+        label = "unavailable (no measured model replies)" if rate is None else f"{rate:.2%} (among traced replies)"
+        print(f"Personal-quote injection coverage: {label}")
+        print(f"Delivered model replies: {stats['delivered_model_replies']} | injected: {stats['injected']} | not injected: {stats['not_injected']} | unknown: {stats['unknown']}")
+        print("Scope: observed confirmed model replies, not eligibility or personalization benefit.")
+        if not report["files_read"]:
+            print("No readable interaction journal files; unavailable is not 0% coverage.")
+        if report["read_errors"]:
+            print("Warning: journal read errors; results cover readable rows only.")
+    return 1 if report["read_errors"] or not stats["measured"] else 0
+
+
+def calibration(config, *, site="banter", as_json=False):
+    """只读核对：判断说的概率和随后真实发生的事对不对得上。
+
+    不连 QQ、不调模型、不改日志。样本不足时报条数而不是编出来的比例。
+    """
+    from regular.calibration import render, report
+    out = report(config.INTERACTION_LOG_DIR, site=site)
+    if as_json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(render(out))
+    if out["read_errors"]:
+        return 1
+    return 0 if out["counts"]["labelled"] else 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="regular", description="The Regular: local demo, configuration, diagnostics and QQ runtime")
     parser.add_argument("--version", action="version", version=__version__)
@@ -353,6 +388,12 @@ def main(argv=None):
     diag.add_argument("--json", action="store_true")
     stat = sub.add_parser("status", help="read runtime's structured snapshot")
     stat.add_argument("--json", action="store_true")
+    cov = sub.add_parser("coverage", help="read-only personal-quote injection coverage; no network or inference")
+    cov.add_argument("--json", action="store_true")
+    cal = sub.add_parser("calibration", help="read-only check of native-judgement probabilities against what actually happened; no network or inference")
+    cal.add_argument("--site", choices=("banter", "callback"), default="banter",
+                     help="which judgement to check (default: banter)")
+    cal.add_argument("--json", action="store_true")
     panel = sub.add_parser("panel", help="serve the local maintenance panel on loopback")
     panel.add_argument("--host", default="127.0.0.1", help="loopback address (default: 127.0.0.1)")
     panel.add_argument("--port", type=int, default=8765, help="local port (default: 8765)")
@@ -388,6 +429,10 @@ def main(argv=None):
             return doctor(config, network=args.network, as_json=args.json)
         if args.command == "status":
             return status(config, as_json=args.json)
+        if args.command == "coverage":
+            return coverage(config, as_json=args.json)
+        if args.command == "calibration":
+            return calibration(config, site=args.site, as_json=args.json)
         if args.command == "panel":
             if args.host not in ("127.0.0.1", "localhost", "::1"):
                 parser.error("panel only binds to loopback; use --host 127.0.0.1")

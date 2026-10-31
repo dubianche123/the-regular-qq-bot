@@ -142,7 +142,9 @@ class PromisePayloadTest(unittest.IsolatedAsyncioTestCase):
             self.captured["payload"] = messages[-1]["content"]
             return "（催债测试）"
 
-        async def fake_post(group_id, text):
+        async def fake_post(group_id, text, **_kwargs):
+            # post_to_group 现在带 model_generated / history（投递观察用）；
+            # 替身照收不校验 —— 这个测试只看催债文案里的称呼。
             return True
 
         bot.call_model = fake_call_model
@@ -158,7 +160,7 @@ class PromisePayloadTest(unittest.IsolatedAsyncioTestCase):
         runtime.RENAMES.groups.pop(GID, None)
 
     async def test_nag_prompt_uses_the_current_name(self):
-        await bot.dun_promises(GID)
+        await bot.dun_promise(GID, runtime.PROMISES.get(GID, "p1"))
         payload = self.captured.get("payload", "")
         self.assertTrue(payload, "没走到模型调用那一步，这条测试白测了")
         self.assertIn("阿强", payload, "催债时还在用旧名")

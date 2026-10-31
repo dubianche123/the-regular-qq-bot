@@ -56,3 +56,33 @@ def keys_are_real(provider=None):
     import config
     keys = config.load_api_keys(provider) or []
     return any(not str(k).startswith(HERMETIC_PREFIX) for k in keys)
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _never_write_the_deployment_journal(tmp_path_factory):
+    """任何用例都不许往**部署目录**的 interactions/ 里写。
+
+    2026-10-31 实测到的泄漏：`test_delivery_commit.py` 等用例 patch 了
+    SESSIONS / STATE / SENDER，却没 patch INTERACTIONS，于是
+    `safe_reply` / `_delivery_observer` 把 delivery 行真的写进了
+    `data/interactions/`。跑一轮全量就攒下 1,275 行夹具数据
+    （group 全是 commit-group、TESTGROUP_* 这类测试标识）。
+
+    为什么这不只是脏：`regular coverage` 和 `regular calibration` 都是
+    **只读真实日志**的报告命令 —— 夹具混进去，它们就会把测试数据当成
+    生产观察值报出来。所以这里把单例换成一个关掉的日志：append 直接返回
+    None，连目录都不建。要断言日志内容的用例照旧自己 patch，
+    那层 patch 在本 fixture 之内生效、之后恢复，互不干扰。
+    """
+    import interactions as interactions_mod
+    import runtime
+    saved = runtime.INTERACTIONS
+    runtime.INTERACTIONS = interactions_mod.InteractionLog(
+        str(tmp_path_factory.mktemp("journal")), enabled=False, keep_days=0)
+    try:
+        yield
+    finally:
+        runtime.INTERACTIONS = saved

@@ -5,6 +5,7 @@
 """
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -137,6 +138,93 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
         text = await page.text()
         self.assertIn("Example", text)
         self.assertIn("https://example.com/a", text)
+
+    async def _decision_page(self):
+        page = await self.client.get("/decision", headers=self.auth())
+        self.assertEqual(page.status, 200)
+        text = await page.text()
+        match = re.search(r'name="csrf" value="([^"]+)"', text)
+        self.assertIsNotNone(match)
+        return text, match.group(1)
+
+    async def test_decision_page_shows_form_without_secret(self):
+        text, _csrf = await self._decision_page()
+        self.assertIn("判断 API", text)
+        self.assertIn("Decisions", text)
+        self.assertIn("/v1/decisions", text)
+        self.assertIn("gpt-6-luna", text)
+        self.assertIn('name="api_key"', text)
+        # key 输入框永远空白，页面上没有任何已存值
+        self.assertIn('name="api_key" value=""', text)
+        self.assertIn("尚未配置", text)
+
+    async def test_decision_save_requires_auth_and_csrf(self):
+        post = {"csrf": "bogus", "endpoint": "https://api.openai.com/v1/decisions",
+                "model": "gpt-6-luna", "api_key": "sk-fake-1"}
+        unauth = await self.client.post("/decision/save", data=post)
+        self.assertEqual(unauth.status, 401)
+        bad_csrf = await self.client.post("/decision/save", data=post,
+                                          headers=self.auth())
+        self.assertEqual(bad_csrf.status, 400)
+        self.assertFalse((Path(self.cfg.DATA_DIR) / "decision_api.json").exists())
+
+    async def test_decision_save_round_trip_never_echoes_key(self):
+        # 「保存没顺手 import 运行时」的判法：对比前后模块对象本身，
+        # 不管测试套件顺序里 bot 是否早已被别的用例引过。
+        before = {name: sys.modules.get(name)
+                  for name in ("bot", "runtime", "providers")}
+        _text, csrf = await self._decision_page()
+        with patch("aiohttp.ClientSession",
+                   side_effect=AssertionError("save must stay offline")):
+            response = await self.client.post(
+                "/decision/save", headers=self.auth(),
+                data={"csrf": csrf,
+                      "endpoint": "https://api.openai.com/v1/decisions",
+                      "model": "gpt-6-luna", "api_key": "sk-fake-secret-001"},
+                allow_redirects=False)
+        self.assertEqual(response.status, 302)
+        saved = Path(self.cfg.DATA_DIR) / "decision_api.json"
+        self.assertEqual(stat.S_IMODE(saved.stat().st_mode), 0o600)
+        row = json.loads(saved.read_text(encoding="utf-8"))
+        self.assertEqual(row["api_key"], "sk-fake-secret-001")
+        # GET 回显的只有「已配置」状态，key 一个字节都不上页面
+        text, _ = await self._decision_page()
+        self.assertIn("已保存配置", text)
+        self.assertNotIn("sk-fake-secret-001", text)
+        self.assertIn('name="api_key" value=""', text)
+        # 不碰 .env、不建其他文件
+        self.assertFalse((Path(self.cfg.DATA_DIR) / ".env").exists())
+        self.assertEqual({name: sys.modules.get(name)
+                          for name in ("bot", "runtime", "providers")}, before)
+
+    async def test_decision_save_rejects_bad_fields_without_echo(self):
+        _text, csrf = await self._decision_page()
+        saved = Path(self.cfg.DATA_DIR) / "decision_api.json"
+        for bad in (
+                {"endpoint": "http://api.openai.com/v1/decisions"},
+                {"endpoint": "https://user:pw@api.openai.com/v1/decisions"},
+                {"endpoint": "https://api.openai.com/v1/decisions?x=1"},
+                {"endpoint": "https://api.openai.com/v1/decisions\nevil"},
+                {"api_key": ""}, {"api_key": "  "}):
+            post = {"csrf": csrf,
+                    "endpoint": "https://api.openai.com/v1/decisions",
+                    "model": "gpt-6-luna", "api_key": "sk-echo-me-not"}
+            post.update(bad)
+            response = await self.client.post("/decision/save", data=post,
+                                              headers=self.auth())
+            self.assertEqual(response.status, 400, bad)
+            body = await response.text()
+            self.assertNotIn("sk-echo-me-not", body)
+        self.assertFalse(saved.exists())
+
+    async def test_decision_resave_requires_fresh_key(self):
+        _text, csrf = await self._decision_page()
+        response = await self.client.post(
+            "/decision/save", headers=self.auth(),
+            data={"csrf": csrf,
+                  "endpoint": "https://api.openai.com/v1/decisions",
+                  "model": "gpt-6-luna", "api_key": " "})
+        self.assertEqual(response.status, 400)
 
     async def test_token_file_is_private_and_stable(self):
         token = panel.load_or_create_token(self.cfg)

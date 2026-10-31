@@ -115,5 +115,60 @@ class PersonaModeTest(unittest.TestCase):
         self.assertIn("知心", detail)
 
 
+class GameIsNotUnderstandingTest(unittest.TestCase):
+    """分数、次数、模式全是游戏里的交情 —— 不能凭它们造出「了解这个人」的材料。"""
+
+    def setUp(self):
+        for k in [k for k in runtime.RELATIONS.records if k.startswith(GROUP)]:
+            runtime.RELATIONS.records.pop(k, None)
+
+    def tearDown(self):
+        for k in [k for k in runtime.RELATIONS.records if k.startswith(GROUP)]:
+            runtime.RELATIONS.records.pop(k, None)
+
+    def test_maxed_out_stats_still_fabricate_no_quote(self):
+        """顶格分数 + 几百次搭话：档案里没有的就是没有，不许长出个人材料。"""
+        rec = _fresh_rec(100)
+        rec["interactions"] = 500
+        runtime.RELATIONS.set_nick(GROUP, OID, NICK, source="claim")
+        rec = runtime.RELATIONS.get(GROUP, OID)
+        note = relations.build_relation_note(rec, OID)
+        self.assertNotIn("说过", note, "游戏数据不许生成「原话」")
+        self.assertNotIn("500", note, "搭话次数不进模型上下文")
+        self.assertNotIn("次搭话", note)
+        self.assertIn("不证明你了解 TA", note)
+
+    def test_canonical_name_works_with_zero_interactions_and_no_game(self):
+        """只认领了名字、一次没聊过：称呼照常给，但不能说「从未见过」。"""
+        runtime.RELATIONS.set_nick(GROUP, OID, NICK, source="claim")
+        rec = runtime.RELATIONS.get(GROUP, OID, create=False)
+        rec["interactions"] = 0
+        note = relations.build_relation_note(rec, OID)
+        self.assertIn(f"当前称呼：{NICK}", note)
+        self.assertNotIn("第一次搭话", note)
+        self.assertNotIn("之前没有交集", note)
+        self.assertIn("记录不足不能断言从未见过", note)
+        # 游戏关掉时也一样：称呼在，档位/模式行退场
+        rec = _fresh_rec(45)
+        note = relations.build_relation_note(rec, OID, include_game=False)
+        self.assertIn(f"当前称呼：{NICK}", note)
+        self.assertNotIn("- 关系：", note)
+        self.assertNotIn("相处模式", note)
+
+    def test_mode_level_labels_use_the_display_mode_not_the_stored_mode(self):
+        """档案里存的相处模式（知心）不许盖过当前展示模式 —— 里程碑叫法跟模式走。"""
+        rec = _fresh_rec(12)
+        runtime.RELATIONS.set_nick(GROUP, OID, NICK, source="claim")
+        runtime.RELATIONS.set_mode(GROUP, OID, "知心", source="digest")
+        rec = runtime.RELATIONS.get(GROUP, OID)
+        rec["pending_milestone"] = {"from": 7, "to": 12, "ts": 0}
+        note = relations.build_relation_note(rec, OID, mode="discipline")
+        line = [l for l in note.splitlines() if "刚刚的变化" in l][0]
+        # discipline 的叫法：familiar→普通同学，acquaintance→守纪同学
+        self.assertIn("守纪同学", line)
+        # 通用叫法「熟人」不该出现 —— 那说明 rec 的 mode 把形参盖掉了
+        self.assertNotIn("熟人", line)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
