@@ -57,7 +57,7 @@ class WhichQuestionsTest(_Base):
 
     async def test_named_asks_addressed_tone_and_intervention(self):
         out = await self.tracker.assess(G, A, "小王傻", named=True, history=HIST, now=10.0)
-        self.assertEqual(self.asked(), {"addressed", "next_move", "intervention"})
+        self.assertEqual(self.asked(), {"addressed", "next_move", "intervention", "request_kind"})
         self.assertEqual(out["asked"], sorted(self.asked()))
         self.assertIn(out["addressed"], ("answer", "quip", "let_it_pass"))
 
@@ -144,6 +144,88 @@ class OneBadAnswerTest(_Base):
         self.assertIsNone(decisions.parse_answers(body, qs))
         self.assertEqual(decisions.parse_each(body, qs)["x"]["choice"], "a")
         self.assertIsNone(decisions.parse_each(body, qs)["y"])
+
+
+class PlayfulRequestTest(_Base):
+    @staticmethod
+    def _answer(probabilities, choice="playful"):
+        def respond(text, questions):
+            body = body_for(questions)
+            for answer in body["answers"]:
+                if answer["name"] == "request_kind":
+                    answer["choice"] = choice
+                    answer["probabilities"] = [
+                        {"value": name, "probability": value}
+                        for name, value in probabilities.items()]
+            return body
+        return respond
+
+    async def test_low_sincere_and_playful_share_existing_call(self):
+        self.calls.side_effect = self._answer({"sincere": 0.02, "playful": 0.9,
+                                               "not_request": 0.08})
+        out = await self.tracker.assess(G, A, "给我写篇外星论文", named=True, now=10.0)
+        self.assertTrue(out["playful_request"])
+        self.assertIn("request_kind", self.asked())
+        self.assertEqual(self.calls.await_count, 1)
+
+    async def test_not_request_or_threshold_boundary_cannot_become_a_joke(self):
+        for probs, choice in (({"sincere": 0.01, "playful": 0.09, "not_request": 0.9}, "not_request"),
+                              ({"sincere": 0.1, "playful": 0.8, "not_request": 0.1}, "playful"),
+                              ({"sincere": 0.01, "playful": 0.8}, "playful"),
+                              ({"sincere": 0.01, "playful": 0.3, "not_request": 0.69}, "playful")):
+            with self.subTest(probs=probs):
+                self.calls.side_effect = self._answer(probs, choice)
+                out = await self.tracker.assess(G, A, "小王看看", named=True, now=10.0)
+                self.assertNotIn("playful_request", out)
+
+    async def test_unrelated_message_does_not_add_question(self):
+        await self.tracker.assess(G, A, "今天好热", every_message=True, now=10.0)
+        self.assertNotIn("request_kind", self.asked())
+
+
+class ImageRequestTest(_Base):
+    async def test_direct_request_shares_triage_and_sanitizes_image_context(self):
+        self.calls.side_effect = lambda text, qs: body_for(qs, image_generation="generate")
+        out = await self.tracker.assess(
+            G, A, f"小王给这只猫画一张图 {G} {A}", named=True, want_image=True,
+            history=HIST, message_id="MSG_SECRET", now=10.0)
+        self.assertEqual(self.calls.await_count, 1)
+        self.assertIn("image_generation", self.asked())
+        self.assertEqual(out["image_generation"], "generate")
+        for secret in (G, A, B, "MSG_SECRET", "h1"):
+            self.assertNotIn(secret, out["image_prompt"])
+
+    async def test_contextual_followup_is_asked_without_another_mention(self):
+        self.tracker.remember(G, A, "可以画成一张海报", route="reply",
+                              outgoing_id="o1", history=HIST, now=0.0)
+        self.calls.side_effect = lambda text, qs: body_for(qs, image_generation="generate")
+        out = await self.tracker.assess(G, A, "那就来一张吧", want_image=True, now=5.0)
+        self.assertEqual(out["image_generation"], "generate")
+        self.assertIn("可以画成一张海报", out["image_prompt"])
+        self.assertEqual(self.calls.await_count, 1)
+
+    async def test_no_request_or_uncertain_answer_never_generates(self):
+        # 图片描述、讨论画画等由题目要求选 no_generation；代码只认积极选项。
+        for sentence in ("这张图片是什么", "你觉得画画难吗"):
+            out = await self.tracker.assess(G, A, sentence, is_direct=True,
+                                            want_image=True, now=10.0)
+            self.assertNotIn("image_generation", out)
+        def uncertain(text, qs):
+            body = body_for(qs, image_generation="generate")
+            for answer in body["answers"]:
+                if answer["name"] == "image_generation":
+                    answer["probabilities"] = [{"value": "generate", "probability": 0.51},
+                                               {"value": "no_generation", "probability": 0.49}]
+            return body
+        self.calls.side_effect = uncertain
+        out = await self.tracker.assess(G, A, "来一个", is_direct=True,
+                                        want_image=True, now=10.0)
+        self.assertNotIn("image_generation", out)
+
+    async def test_unrelated_chat_does_not_add_an_image_question(self):
+        await self.tracker.assess(G, A, "谁想画画", want_image=True,
+                                  every_message=True, now=10.0)
+        self.assertNotIn("image_generation", self.asked())
 
 
 if __name__ == "__main__":

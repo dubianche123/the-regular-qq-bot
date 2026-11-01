@@ -54,21 +54,6 @@ class MemeFreshnessTest(unittest.TestCase):
     def _state(self, memes):
         return {"brief": "", "data": {"memes": memes}}
 
-    def test_meme_without_timestamp_is_not_served(self):
-        """没时间戳的（老 state）宁可不喂：无法证明它新鲜。"""
-        out = digest.render_summary(self._state([{"quote": "老梗", "why": "x"}]))
-        self.assertNotIn("名场面", out)
-
-    def test_fresh_meme_is_served(self):
-        out = digest.render_summary(self._state(
-            [{"quote": "新梗", "why": "x", "ts": time.time()}]))
-        self.assertIn("名场面", out)
-
-    def test_stale_meme_is_not_served(self):
-        old = time.time() - (config.MEME_NOTE_MAX_AGE_DAYS + 1) * 86400
-        out = digest.render_summary(self._state([{"quote": "陈梗", "why": "x", "ts": old}]))
-        self.assertNotIn("名场面", out)
-
     def test_copied_meme_keeps_aging_instead_of_getting_a_fresh_stamp(self):
         """模型原样抄回来的梗不许白拿新时间戳 —— 那是续杯。"""
         old = {"memes": [{"quote": "老梗", "why": "x", "ts": 500.0}]}

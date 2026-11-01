@@ -51,7 +51,7 @@ class RelationNoteTest(unittest.TestCase):
             # last_seen 贴近 now：否则「上次是 NNNN 个月前」这类正常的数字也会被
             # 四位十六进制的扫法误伤 —— 那是测试自己的噪声，不是产品的问题
             {"interactions": 5, "score": 2, "last_seen": now - 60},
-            OWNER, mode="normal", now=now,
+            OWNER, now=now,
             other_names=["蒋泽明", "罗老板"])
         self.assertIn("蒋泽明", note, "别人认领过的称呼得告诉模型，不然会张冠李戴")
         self.assertIsNone(HEX_TAIL.search(note), f"关系档案里混进了编号：{note}")
@@ -60,7 +60,7 @@ class RelationNoteTest(unittest.TestCase):
         """旧调用点传 (名字, 后四位) 二元组时，也不能把编号印出来。"""
         note = relations.build_relation_note(
             {"interactions": 5, "score": 2, "last_seen": 0.0},
-            OWNER, mode="normal", now=10 ** 10,
+            OWNER, now=10 ** 10,
             other_names=[("蒋泽明", "78D0")])
         self.assertIn("蒋泽明", note)
         self.assertNotIn("78D0", note)

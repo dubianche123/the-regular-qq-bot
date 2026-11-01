@@ -115,11 +115,10 @@ class SharedRulesTest(unittest.TestCase):
         for word in ("爹", "主人", "家谱"):
             self.assertIn(word, rules)
 
-    def test_rules_are_not_copied_into_each_mode(self):
-        """这几条不属于任何一个人设：共享一份就够，各模式里不该再抄一遍。"""
-        import bot
-        for mode, text in bot.MODE_PROMPTS.items():
-            self.assertNotIn("身份与关系", text, f"{mode} 不该自己抄一份共享规则")
+    def test_rules_are_not_copied_into_the_persona(self):
+        """这几条不是人设的口味：共享一份就够，人设里不该再抄一遍。"""
+        import prompts
+        self.assertNotIn("身份与关系", prompts.PROMPT_NORMAL)
 
 
 if __name__ == "__main__":

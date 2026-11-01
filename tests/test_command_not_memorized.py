@@ -23,14 +23,12 @@ import digest as digest_mod
 
 
 class IsControlCommandTest(unittest.TestCase):
-    def test_mode_switch_is_a_command(self):
-        # 用真实的触发词字面：退出那档是「退出猫娘/恢复正常」这类，没有「退出模式」
-        for text in ("猫娘模式", "切换到发疯模式", "变身猫娘", "退出猫娘", "恢复正常"):
-            self.assertTrue(bot.is_control_command(text), text)
-
-    def test_local_queries_are_commands(self):
-        for text in ("查好感", "关系榜", "称呼表", "群史记", "决斗", "办他"):
-            self.assertTrue(bot.is_control_command(text), text)
+    def test_retired_triggers_are_just_chat_now(self):
+        """2026-11-01 手动模式和查榜、骰子这些指令删了：这些话现在是普通聊天，照常进记忆
+        —— 「把喊模式当成人物事实」交给压缩提示词那条规则（见 test_digest_prompt_*）。"""
+        for text in ("猫娘模式", "切换到发疯模式", "退出猫娘", "恢复正常",
+                     "查好感", "关系榜", "称呼表", "群史记", "决斗", "办他"):
+            self.assertFalse(bot.is_control_command(text), text)
 
     def test_ordinary_chat_is_not_a_command(self):
         for text in ("今天天气不错", "小王你疯了", "我想把⭐🧊传染给群友", "", "   "):
@@ -39,27 +37,9 @@ class IsControlCommandTest(unittest.TestCase):
     def test_rename_lock_is_a_command(self):
         self.assertTrue(bot.is_control_command("锁起名"))
 
-
-class RelationQueryNeedsIntentTest(unittest.TestCase):
-    """「好感度」这三个字本身不该触发查询 —— 吐槽系统时也会被抢答（2026-09-21 群主反馈）。"""
-
-    def test_real_questions_still_trigger(self):
-        for text in ("查好感", "查一下好感度", "好感度多少", "我跟你多熟", "我们熟吗",
-                     "关系怎么样", "操行分多少"):
-            self.assertTrue(bot.matches_relation_query(text), text)
-
-    def test_merely_mentioning_it_is_not_a_query(self):
-        """这几句是**提**到好感度，不是**问**好感度 —— 抢答会打断正经聊天。"""
-        for text in ("这个好感度系统没有啥体现", "好感度到底有啥用啊",
-                     "我觉得好感度就那样", "几级了也没见变化"):
-            self.assertFalse(bot.matches_relation_query(text), text)
-
     def test_mentioning_it_is_not_archived_as_a_command(self):
         """不是指令就不该打 cmd 标记 —— 它还是聊天内容，该进记忆。"""
         self.assertFalse(bot.is_control_command("这个好感度系统没有啥体现"))
-
-    def test_board_triggers_are_untouched(self):
-        self.assertTrue(bot.is_control_command("关系榜"))
 
 
 class CommandNeverReachesCompressionTest(unittest.TestCase):

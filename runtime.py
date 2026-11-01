@@ -13,6 +13,7 @@ import interactions as interactions_mod
 import digest as digest_mod
 import knowledge as knowledge_mod
 from regular import decisions as decisions_mod
+from regular import resource_quota
 import naming
 import opening as opening_mod
 import receptive as receptive_mod
@@ -102,12 +103,16 @@ import activation
 activation.hydrate_mood(STATE.data.get("mood", {}))
 STATE.register_collector(activation.dump_mood_into)
 
-# 群级令牌桶 + 全局日预算。按需求刻意【不做】per-user 额度限制。
+# 群级令牌桶 + 全局日预算；生图和搜索另有群内个人额度。
 GROUP_BUCKET = storage.TokenBucket(config.GROUP_RATE_CAPACITY, config.GROUP_RATE_REFILL_SECONDS)
 BUDGET = storage.DailyBudget(config.DAILY_BUDGET, STATE.data.setdefault("usage", {}))
 # 判断请求另记一本账（见 config.DECISION_DAILY_BUDGET）：分诊永远挤不掉回复，回复也挤不掉分诊。
 DECISION_BUDGET = storage.DailyBudget(config.DECISION_DAILY_BUDGET,
                                       STATE.data.setdefault("decision_usage", {}))
+IMAGE_GENERATION_BUDGET = storage.DailyBudget(config.IMAGE_GENERATION_DAILY_CAP,
+                                              STATE.data.setdefault("image_generation_usage", {}))
+RESOURCE_QUOTAS = resource_quota.ResourceQuotas(
+    STATE.data.setdefault("resource_quotas", {}), STATE.mark_dirty, STATE.save_now)
 
 # 交互观察日志：系统侧行为底稿（门控/送达/显式反馈），独立目录、只进不出。
 # 与 ARCHIVE（人的证据账）刻意分开；关闭时连目录都不建。
@@ -115,7 +120,6 @@ INTERACTIONS = interactions_mod.InteractionLog(
     config.INTERACTION_LOG_DIR,
     enabled=config.INTERACTION_LOG_ENABLED,
     keep_days=config.ARCHIVE_KEEP_DAYS,
-    feedback_max_age=config.INTERACTION_FEEDBACK_MAX_AGE_SECONDS,
 )
 
 # 开口时机先验（2026-10-31）：此刻群里有没有「接话的空档」。纯本地、零模型调用。

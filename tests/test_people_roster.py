@@ -165,10 +165,6 @@ class RenderPeopleTest(unittest.TestCase):
                 self.STATE, group_id=GROUP, sender=BOB,
                 text="咖啡喝什么", resolver=recycled, now=1100), "")
 
-    def test_people_block_is_not_in_the_group_visible_summary(self):
-        """个人材料只喂给模型；发到群里的摘要（render_summary）不该晒出去。"""
-        self.assertNotIn("说过", digest_mod.render_summary(self.STATE))
-
 
 class PeopleBlockReachesTheModelTest(unittest.TestCase):
     """注入接线：render_people 必须被 bot 接到本轮动态层。"""

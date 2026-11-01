@@ -294,10 +294,22 @@ VISION_COOLDOWN_SECONDS = _env_float("VISION_COOLDOWN_SECONDS", 60.0)
 VISION_DAILY_CAP = _env_int("VISION_DAILY_CAP", 30)
 # 读图输出上限同样包含思考 token；25 字描述 + 思考需要 300 左右，80 会整轮空正文。
 VISION_MAX_TOKENS = _env_int("VISION_MAX_TOKENS", 300)
-BANTER_CHANCE_MAX = _env_float("BANTER_CHANCE_MAX", 0.5)
 
-MEME_COOLDOWN_SECONDS = _env_float("MEME_COOLDOWN_SECONDS", 60.0)
-MEME_PROBABILITY = _env_float("MEME_PROBABILITY", 0.40)
+# 生图单独开关与额度；缺少凭据时自动不可用。
+IMAGE_GENERATION_ENABLED = _env_bool("IMAGE_GENERATION_ENABLED", True)
+IMAGE_GENERATION_BASE_URL = _env_str("IMAGE_GENERATION_BASE_URL", PROVIDER_PRESETS["openai"]["base_url"] or "https://api.openai.com/v1")
+IMAGE_GENERATION_API_KEY = _env_str("IMAGE_GENERATION_API_KEY")
+IMAGE_GENERATION_MODEL = _env_str("IMAGE_GENERATION_MODEL", "gpt-image-2.5-flare")
+IMAGE_GENERATION_QUALITY = _env_str("IMAGE_GENERATION_QUALITY", "medium")
+IMAGE_GENERATION_SIZE = _env_str("IMAGE_GENERATION_SIZE", "1024x1024")
+IMAGE_GENERATION_DAILY_CAP = _env_int("IMAGE_GENERATION_DAILY_CAP", 40)
+IMAGE_USER_DAILY_CAP = _env_int("IMAGE_USER_DAILY_CAP", 5)
+IMAGE_USER_EXTRA_ACQUAINTANCE = _env_int("IMAGE_USER_EXTRA_ACQUAINTANCE", 1)
+IMAGE_USER_EXTRA_FRIEND = _env_int("IMAGE_USER_EXTRA_FRIEND", 2)
+IMAGE_USER_EXTRA_BUDDY = _env_int("IMAGE_USER_EXTRA_BUDDY", 4)
+IMAGE_USER_EXTRA_SOULMATE = _env_int("IMAGE_USER_EXTRA_SOULMATE", 8)
+IMAGE_GENERATION_TIMEOUT_SECONDS = _env_float("IMAGE_GENERATION_TIMEOUT_SECONDS", 150.0)
+BANTER_CHANCE_MAX = _env_float("BANTER_CHANCE_MAX", 0.5)
 
 # ══════════════════ 群友关系档案（见 relations.py）══════════════════
 AFFINITY_ENABLED = _env_bool("AFFINITY_ENABLED", True)
@@ -318,27 +330,6 @@ AFFINITY_DECAY_GRACE_DAYS = _env_float("AFFINITY_DECAY_GRACE_DAYS", 3.0)  # 这�
 AFFINITY_DECAY_STEP_DAYS = _env_float("AFFINITY_DECAY_STEP_DAYS", 2.0)    # 之后每 N 天向 0 收敛一次
 AFFINITY_DECAY_AMOUNT = _env_int("AFFINITY_DECAY_AMOUNT", 1)
 AFFINITY_PRUNE_IDLE_DAYS = _env_float("AFFINITY_PRUNE_IDLE_DAYS", 90.0)   # 长期不互动就清掉档案
-AFFINITY_BOARD_SIZE = _env_int("AFFINITY_BOARD_SIZE", 5)                  # 排行榜显示人数
-# 切换人格模式（猫娘/风纪/发疯…）的最低交情分 —— 见 bot.mode_switch_allowed。
-# 事故：2026-09-21 群里家豪好感度 −6（一直骂人）照样一句「猫娘模式」就切换成功，太没分寸。
-# 默认 0 = familiar 档起步：打过交道但印象一般/更差的会被回绝；**没打过交道的新人放行**
-# （不能因为还不熟就被拒，那是把门槛用成排斥）。群主永远豁免。
-MODE_SWITCH_MIN_AFFINITY = _env_int("MODE_SWITCH_MIN_AFFINITY", 0)
-
-# ── 心情闸门（2026-10-22 群主：他说他很烦，一句猫娘模式就进去了，违和）──
-# 元气/玩闹类模式在心情差时演不了：低于门槛的切换被回绝（台词符合心情，不提内部机制）。
-# 消极类（crazy 发疯）不设门槛 —— 烦的时候发疯反而最真，只有「烦+猫娘」才违和。
-MODE_MOOD_FLOOR = _env_float("MODE_MOOD_FLOOR", -0.5)
-
-# ── 自动发疯（给懒得喊口令的群友的自动化路径）──
-# 心情 ≤ AUTO_CRAZY_THRESHOLD 持续 AUTO_CRAZY_ENTER_MINUTES 分钟 → 自动进 crazy；
-# 回升到 AUTO_CRAZY_EXIT 之上 → 自动退。只对**自动进的** crazy 生效，手动进的归手动管。
-# 每天自动进入 AUTO_MODE_DAILY_CAP 次封顶（防抖：心情反复横跳也不能一天发疯八回）。
-AUTO_CRAZY_THRESHOLD = _env_float("AUTO_CRAZY_THRESHOLD", -0.7)
-AUTO_CRAZY_ENTER_MINUTES = _env_float("AUTO_CRAZY_ENTER_MINUTES", 30.0)
-AUTO_CRAZY_EXIT = _env_float("AUTO_CRAZY_EXIT", -0.2)
-AUTO_MODE_DAILY_CAP = _env_int("AUTO_MODE_DAILY_CAP", 2)
-
 # ══════════════════ 群聊长期记忆（每日滚动摘要，见 digest.py）══════════════════
 DIGEST_ENABLED = _env_bool("DIGEST_ENABLED", True)
 DIGEST_INTERVAL_HOURS = _env_float("DIGEST_INTERVAL_HOURS", 24.0)  # 多久压一次
@@ -400,6 +391,11 @@ SEARCH_TIMEOUT_SECONDS = _env_float("SEARCH_TIMEOUT_SECONDS", 8.0)
 # 有人连着问几个要查的问题时，第二个不该因为冷却变成瞎答。
 SEARCH_COOLDOWN_SECONDS = _env_float("SEARCH_COOLDOWN_SECONDS", 60.0)
 SEARCH_DAILY_CAP = _env_int("SEARCH_DAILY_CAP", 60)
+SEARCH_USER_DAILY_CAP = _env_int("SEARCH_USER_DAILY_CAP", 20)
+SEARCH_USER_EXTRA_ACQUAINTANCE = _env_int("SEARCH_USER_EXTRA_ACQUAINTANCE", 5)
+SEARCH_USER_EXTRA_FRIEND = _env_int("SEARCH_USER_EXTRA_FRIEND", 10)
+SEARCH_USER_EXTRA_BUDDY = _env_int("SEARCH_USER_EXTRA_BUDDY", 20)
+SEARCH_USER_EXTRA_SOULMATE = _env_int("SEARCH_USER_EXTRA_SOULMATE", 30)
 
 # 联网查询 / 深度研究（2026-11-01，见 slowwork.py）：OpenAI Responses 后台任务 + web_search。
 # 空 = 不开。RESEARCH_MODEL 空就用这家的第一个对话模型。
@@ -428,8 +424,6 @@ ARCHIVE_MAX_TEXT = _env_int("ARCHIVE_MAX_TEXT", 500)    # 单条消息存多少�
 # 它不进提示词/摘要/召回，也不写进原始消息归档 —— 是行为研究底稿，不是模型材料。
 INTERACTION_LOG_ENABLED = _env_bool("INTERACTION_LOG_ENABLED", True)
 INTERACTION_LOG_DIR = data_path("INTERACTION_LOG_DIR", "interactions")
-# 「反馈」命令能绑定的目标窗口：只认最近这么秒内、发给本人的已送达回复。
-INTERACTION_FEEDBACK_MAX_AGE_SECONDS = _env_float("INTERACTION_FEEDBACK_MAX_AGE_SECONDS", 1800.0)
 # 观察口径版本号：随每条 delivery 落盘，供离线分析区分记录口径，不影响行为。
 INTERACTION_POLICY_ID = _env_str("INTERACTION_POLICY_ID", "regular-observe-v1")
 
@@ -527,12 +521,21 @@ RESET_BACKOFF_AFTER = _env_float("RESET_BACKOFF_AFTER", 120.0)  # 稳定运行�
 def validate():
     """启动前校验，缺东西就 fail fast。"""
     errors = list(CONFIG_ERRORS)
-    for name in ("BANTER_PROBABILITY", "OWNER_MENTION_PROBABILITY", "BANTER_CHANCE_MAX", "MEME_PROBABILITY", "BUDGET_WARN_RATIO"):
+    for name in ("BANTER_PROBABILITY", "OWNER_MENTION_PROBABILITY", "BANTER_CHANCE_MAX", "BUDGET_WARN_RATIO"):
         if not 0 <= globals()[name] <= 1:
             errors.append(f"{name} 必须在 0~1 之间")
-    for name in ("DAILY_BUDGET", "VISION_DAILY_CAP", "DECISION_DAILY_BUDGET"):
+    for name in ("DAILY_BUDGET", "VISION_DAILY_CAP", "DECISION_DAILY_BUDGET", "IMAGE_GENERATION_DAILY_CAP",
+                 "IMAGE_USER_DAILY_CAP", "IMAGE_USER_EXTRA_ACQUAINTANCE", "IMAGE_USER_EXTRA_FRIEND",
+                 "IMAGE_USER_EXTRA_BUDDY", "IMAGE_USER_EXTRA_SOULMATE", "SEARCH_USER_DAILY_CAP",
+                 "SEARCH_USER_EXTRA_ACQUAINTANCE", "SEARCH_USER_EXTRA_FRIEND", "SEARCH_USER_EXTRA_BUDDY",
+                 "SEARCH_USER_EXTRA_SOULMATE"):
         if globals()[name] < 0:
             errors.append(f"{name} 不能为负数")
+    for prefix in ("IMAGE", "SEARCH"):
+        extras = [globals()[f"{prefix}_USER_EXTRA_{tier}"]
+                  for tier in ("ACQUAINTANCE", "FRIEND", "BUDDY", "SOULMATE")]
+        if extras != sorted(extras):
+            errors.append(f"{prefix}_USER_EXTRA 各档额度必须递增或相等")
     if not 0 < OPENING_SHAPE_MIN <= 1 <= OPENING_SHAPE_MAX:
         errors.append("OPENING_SHAPE_MIN/MAX 必须满足 0 < MIN <= 1 <= MAX")
     if not 0 <= INTERVENTION_SHAPE_MIN <= 1 <= INTERVENTION_SHAPE_MAX:
@@ -562,6 +565,8 @@ def validate():
         errors.append("AI_MAX_ATTEMPTS 必须至少为 1")
     if AI_TIMEOUT_SECONDS <= 0 or AI_TOTAL_TIMEOUT <= 0:
         errors.append("AI_TIMEOUT_SECONDS 和 AI_TOTAL_TIMEOUT 必须大于 0")
+    if not math.isfinite(IMAGE_GENERATION_TIMEOUT_SECONDS) or IMAGE_GENERATION_TIMEOUT_SECONDS <= 0:
+        errors.append("IMAGE_GENERATION_TIMEOUT_SECONDS 必须大于 0")
     for provider_name in dict.fromkeys((AI_PROVIDER, *TIER_PROVIDERS.values(),
                                         FALLBACK_PROVIDER, RESEARCH_PROVIDER)):
         if not provider_name:

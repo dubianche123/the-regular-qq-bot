@@ -303,7 +303,7 @@ async def demo(messages):
     from regular.demo import DemoSession
     identity = {"user_id": "alice", "group_id": "demo-group"}
     async with DemoSession() as session:
-        help_text = "Try 查好感 / 掷骰子 / 群史记; /user NAME and /group ID switch identity; /quit exits."
+        help_text = "Just chat, e.g. 小王 在吗 / 叫我阿强; /user NAME and /group ID switch identity; /quit exits."
         print("Local demo: no QQ connection or model requests. " + help_text)
 
         async def dispatch(message):

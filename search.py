@@ -233,7 +233,7 @@ class SearchLimiter:
             self._last = {}
             self._counts = {}
 
-    def acquire(self, group_id, *, cooldown=True):
+    def check(self, group_id, *, cooldown=True):
         now = self.clock()
         self._roll(now)
         if self.daily_cap <= 0:
@@ -242,6 +242,13 @@ class SearchLimiter:
             return False, "cooldown"
         if self._counts.get(group_id, 0) >= self.daily_cap:
             return False, "daily"
+        return True, ""
+
+    def acquire(self, group_id, *, cooldown=True):
+        allowed, reason = self.check(group_id, cooldown=cooldown)
+        if not allowed:
+            return allowed, reason
+        now = self.clock()
         self._last[group_id] = now
         self._counts[group_id] = self._counts.get(group_id, 0) + 1
         return True, ""

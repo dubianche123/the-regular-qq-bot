@@ -33,38 +33,12 @@ def _rows(log_dir):
 
 
 def _make_log(tmp, **kw):
-    kw.setdefault("feedback_max_age", 1800.0)
     return interactions.InteractionLog(os.path.join(tmp, "ix"), **kw)
 
 
-class ParseFeedbackTest(unittest.TestCase):
-    """命令语法：只认「反馈 合适/不合适/不确定 [整体/时机/内容/语气]」。"""
-
-    def test_not_feedback_returns_none(self):
-        for text in ("", "今天天气不错", "反馈一下这个活动", "请反馈给我",
-                     "回馈 合适", " 反馈性不错", "反馈合适"):
-            self.assertIsNone(interactions.parse_feedback(text), text)
-
-    def test_valid_forms(self):
-        self.assertEqual(interactions.parse_feedback("反馈 合适"),
-                         {"valid": True, "label": "appropriate", "dimension": "overall"})
-        self.assertEqual(interactions.parse_feedback("反馈 不合适 时机"),
-                         {"valid": True, "label": "inappropriate", "dimension": "timing"})
-        self.assertEqual(interactions.parse_feedback("反馈 不确定 语气"),
-                         {"valid": True, "label": "unsure", "dimension": "tone"})
-        self.assertEqual(interactions.parse_feedback("反馈 合适 内容"),
-                         {"valid": True, "label": "appropriate", "dimension": "content"})
-
-    def test_invalid_forms(self):
-        for text in ("反馈", "反馈 可能", "反馈 合适 频率", "反馈 合适 整体 多余",
-                     "反馈 合适吗"):
-            parsed = interactions.parse_feedback(text)
-            self.assertIsNotNone(parsed, text)
-            self.assertFalse(parsed["valid"], text)
-
 
 class InteractionLogTest(unittest.TestCase):
-    """日志本体：追加行结构、反馈绑定窗口、修订链、禁用与恢复。"""
+    """日志本体：追加行结构、禁用、写入失败与截断尾。"""
 
     G, U, U2 = "GID_TEST_OBS", "USER_OBS_A", "USER_OBS_B"
 
@@ -103,208 +77,23 @@ class InteractionLogTest(unittest.TestCase):
     def test_disabled_writes_nothing(self):
         log = self._log(enabled=False)
         self.assertIsNone(log.append("incoming", self.G, user=self.U))
-        self.assertIsNone(log.latest_reply(self.G, self.U))
-        self.assertIsNone(log.feedback(self.G, self.U, "m", "appropriate"))
         self.assertFalse(os.path.exists(log.log_dir))
 
     def test_io_failure_returns_none_not_raises(self):
         log = self._log()
-        target = self._delivered(log)
         with patch.object(log, "_ensure_fp", side_effect=OSError("disk full")):
             self.assertIsNone(log.append("incoming", self.G))
-            # 已有目标还在索引里，但写入失败不许假装记上
-            self.assertIsNone(log.feedback(self.G, self.U, "fb-1", "appropriate"))
-        # 索引里没有因为失败多出东西
-        self.assertEqual(log.latest_reply(self.G, self.U)["event_id"], target["event_id"])
 
-    def test_latest_reply_window_and_targeting(self):
-        log = self._log()
-        row = self._delivered(log)
-        self.assertEqual(log.latest_reply(self.G, self.U)["event_id"], row["event_id"])
-        # 超窗与「未来行」都不可绑
-        self.assertIsNone(log.latest_reply(self.G, self.U, now=row["ts"] + 1801))
-        self.assertIsNone(log.latest_reply(self.G, self.U, now=row["ts"] - 1))
-        # 跨人/跨群绑不上
-        self.assertIsNone(log.latest_reply(self.G, self.U2))
-        self.assertIsNone(log.latest_reply("OTHER_GROUP", self.U))
-
-    def test_only_eligible_deliveries_count(self):
-        log = self._log()
-        for fields in ({"status": "queued"}, {"status": "rejected"},
-                       {"status": "delivered", "feedback_eligible": False,
-                        "route": "local"},
-                       {"status": "delivered", "feedback_eligible": False,
-                        "route": "proactive"}):
-            base = dict(route="reply", feedback_eligible=True,
-                        source_message_id="s", outgoing_id="o", text="t")
-            base.update(fields)
-            log.append("delivery", self.G, user=self.U, actor="assistant", **base)
-        self.assertIsNone(log.latest_reply(self.G, self.U))
-        # user=None 的 proactive 也不行
-        log.append("delivery", self.G, user=None, actor="assistant",
-                   status="delivered", route="proactive", feedback_eligible=False,
-                   text="广播")
-        self.assertIsNone(log.latest_reply(self.G, self.U))
-
-    def test_feedback_revisions_are_per_dimension(self):
-        """同一条回复上不同维度是并存的评价；只有同维度重打分才 supersede。"""
-        log = self._log()
-        reply = self._delivered(log)
-        first = log.feedback(self.G, self.U, "fb-msg-1", "appropriate")
-        self.assertEqual(first["reply_event_id"], reply["event_id"])
-        self.assertIsNone(first["supersedes"])
-        second = log.feedback(self.G, self.U, "fb-msg-2", "inappropriate",
-                              dimension="timing")
-        # 不同维度：兼容的另一条评价，supersedes 为空
-        self.assertEqual(second["reply_event_id"], reply["event_id"])
-        self.assertIsNone(second["supersedes"])
-        self.assertEqual(second["dimension"], "timing")
-        third = log.feedback(self.G, self.U, "fb-msg-3", "appropriate",
-                             dimension="timing")
-        # 同维度第二次打分才是修订
-        self.assertEqual(third["supersedes"], second["event_id"])
-        feedbacks = [r for r in _rows(log.log_dir) if r["kind"] == "feedback"]
-        self.assertEqual(len(feedbacks), 3)
-
-    def test_feedback_rejects_off_vocabulary_values(self):
-        log = self._log()
-        self._delivered(log)
-        for bad in (dict(label="love_it"), dict(label="合适"),
-                    dict(dimension="speed"), dict(dimension="整体"),
-                    dict(label=None)):
-            kw = dict(label="appropriate", dimension="overall")
-            kw.update(bad)
-            self.assertIsNone(log.feedback(self.G, self.U, "fb", **kw), bad)
-        self.assertEqual([r for r in _rows(log.log_dir)
-                          if r["kind"] == "feedback"], [])
-
-    def test_feedback_without_target_is_none(self):
-        log = self._log()
-        self.assertIsNone(log.feedback(self.G, self.U, "fb", "appropriate"))
-        self.assertEqual(_rows(log.log_dir), [])
-
-    def test_restart_recovers_index_and_skips_malformed_tail(self):
-        log = self._log()
-        reply = self._delivered(log)
-        first = log.feedback(self.G, self.U, "fb-1", "appropriate")
-        log.close()
-        # 截断/坏行粘在文件尾，重启不该炸
-        for name in glob.glob(os.path.join(log.log_dir, "*.jsonl")):
-            with open(name, "a", encoding="utf-8") as fp:
-                fp.write("{not json\nplain garbage\n")
-        log2 = self._log()
-        self.assertEqual(log2.latest_reply(self.G, self.U)["event_id"],
-                         reply["event_id"])
-        again = log2.feedback(self.G, self.U, "fb-2", "unsure")
-        # 修订链跨重启续上：supersedes 指回重启前那条同维度记录
-        self.assertEqual(again["supersedes"], first["event_id"])
-        other = log2.feedback(self.G, self.U, "fb-3", "unsure", dimension="tone")
-        self.assertIsNone(other["supersedes"])
-
-    def test_midnight_rollover_recovery(self):
-        """跨午夜：昨天文件里的近期送达，今天开的进程照样能绑。"""
-        yesterday = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
-        today = time.strftime("%Y-%m-%d")
-        if yesterday == today:  # 午夜前后几秒跑测试：文件名同一天也能恢复，直接跳过构造
-            self.skipTest("midnight boundary")
-        log_dir = os.path.join(self._tmp.name, "ix")
-        os.makedirs(log_dir)
-        row = {"schema": interactions.SCHEMA, "event_id": "late-ev",
-               "ts": time.time() - 60, "kind": "delivery", "group": self.G,
-               "user": self.U, "actor": "assistant", "status": "delivered",
-               "route": "reply", "feedback_eligible": True,
-               "source_message_id": "s-late", "text": "昨晚那句"}
-        with open(os.path.join(log_dir, f"{yesterday}.jsonl"), "w", encoding="utf-8") as fp:
-            fp.write(json.dumps(row, ensure_ascii=False) + "\n")
-        log = self._log(feedback_max_age=26 * 3600.0)
-        self.assertEqual(log.latest_reply(self.G, self.U)["event_id"], "late-ev")
-
-    def test_init_and_recover_survive_unwritable_paths(self):
-        """目录建不起来/读不了只告警，不拖垮启动，也不假装记上。"""
+    def test_init_survives_unwritable_paths(self):
+        """目录建不起来只告警，不拖垮启动，也不假装记上。"""
         file_path = os.path.join(self._tmp.name, "a-file")
         open(file_path, "w").close()
         log = interactions.InteractionLog(os.path.join(file_path, "ix"))
         self.addCleanup(log.close)
         self.assertIsNone(log.append("incoming", self.G, text="x"))
-        self.assertIsNone(log.latest_reply(self.G, self.U))
 
-    def test_recover_skips_malformed_rows_and_picks_latest_valid(self):
-        """结构对但字段脏的行不许进索引；最新的**有效**送达才是目标。"""
-        day = time.strftime("%Y-%m-%d")
-        now = time.time()
-        valid_old = {"schema": interactions.SCHEMA, "event_id": "ev-old",
-                     "ts": now - 120, "kind": "delivery", "group": self.G,
-                     "user": self.U, "actor": "assistant", "status": "delivered",
-                     "route": "reply", "feedback_eligible": True,
-                     "source_message_id": "s-old", "text": "旧"}
-        valid_new = dict(valid_old, event_id="ev-new", ts=now - 30,
-                         source_message_id="s-new")
-        bad_rows = [
-            dict(valid_new, schema="other.schema"),          # 外来 schema
-            dict(valid_new, event_id=""),                    # 缺 event_id
-            dict(valid_new, ts="abc"),                       # 非数值时间
-            dict(valid_new, ts=str(now - 10)),               # 数字字符串也不收
-            dict(valid_new, ts=True),                        # bool 不算数值
-            dict(valid_new, ts=None),
-            dict(valid_new, ts=float("nan")),
-            dict(valid_new, ts=now + 99999),                 # 未来行
-            dict(valid_new, route="local"),                  # 本地应答不算
-            dict(valid_new, route=["reply"]),                # 列表 route 不许崩
-            dict(valid_new, route={"reply": 1}),
-            dict(valid_new, actor="user"),
-            dict(valid_new, feedback_eligible="yes"),        # 不是 True
-            dict(valid_new, group=["unhashable"]),           # 畸形键
-            # 形状正确的反馈，但 label/dimension 是列表/字典 —— 恢复不许炸
-            {"schema": interactions.SCHEMA, "kind": "feedback",
-             "actor": "user", "group": self.G, "user": self.U,
-             "event_id": "fb-bad-1", "reply_event_id": "ev-new",
-             "label": ["appropriate"], "dimension": "overall",
-             "supersedes": None, "ts": now - 20},
-            {"schema": interactions.SCHEMA, "kind": "feedback",
-             "actor": "user", "group": self.G, "user": self.U,
-             "event_id": "fb-bad-2", "reply_event_id": "ev-new",
-             "label": "appropriate", "dimension": {"d": 1},
-             "supersedes": None, "ts": now - 20},
-            dict(valid_new, kind="feedback", label="bogus"), # 词表外反馈
-            "not a dict at all",
-        ]
-        path = os.path.join(self._tmp.name, "ix")
-        os.makedirs(path)
-        with open(os.path.join(path, f"{day}.jsonl"), "w", encoding="utf-8") as fp:
-            fp.write(json.dumps(valid_old, ensure_ascii=False) + "\n")
-            fp.write(json.dumps(valid_new, ensure_ascii=False) + "\n")
-            for bad in bad_rows:
-                fp.write(json.dumps(bad, ensure_ascii=False, default=str) + "\n")
-        log = self._log()
-        self.assertEqual(log.latest_reply(self.G, self.U)["event_id"], "ev-new")
-        # 坏的反馈行没进索引：新写的同维度反馈 supersedes 为空
-        fb = log.feedback(self.G, self.U, "fb-1", "appropriate", dimension="timing")
-        self.assertIsNone(fb["supersedes"])
-
-    def test_recovery_scans_full_window_not_last_two_files(self):
-        """窗口配三天时，三天前文件里的有效送达也要能恢复。"""
-        window = 3 * 86400.0
-        old_day = time.strftime("%Y-%m-%d", time.localtime(time.time() - 2.9 * 86400))
-        today = time.strftime("%Y-%m-%d")
-        log_dir = os.path.join(self._tmp.name, "ix")
-        os.makedirs(log_dir)
-        old_row = {"schema": interactions.SCHEMA, "event_id": "ev-3d",
-                   "ts": time.time() - 2.8 * 86400, "kind": "delivery",
-                   "group": self.G, "user": self.U, "actor": "assistant",
-                   "status": "delivered", "route": "banter",
-                   "feedback_eligible": True, "source_message_id": "s-3d"}
-        noise = {"schema": interactions.SCHEMA, "event_id": "noise",
-                 "ts": time.time(), "kind": "incoming", "group": self.G,
-                 "user": self.U, "actor": "user", "text": "x"}
-        with open(os.path.join(log_dir, f"{old_day}.jsonl"), "w", encoding="utf-8") as fp:
-            fp.write(json.dumps(old_row, ensure_ascii=False) + "\n")
-        with open(os.path.join(log_dir, f"{today}.jsonl"), "w", encoding="utf-8") as fp:
-            fp.write(json.dumps(noise, ensure_ascii=False) + "\n")
-        log = self._log(feedback_max_age=window)
-        self.assertEqual(log.latest_reply(self.G, self.U)["event_id"], "ev-3d")
-
-    def test_unterminated_tail_gets_separator_and_new_row_recovers(self):
-        """崩溃留下的无换行尾行：新事件不能被粘进去，要能单独成行恢复。"""
+    def test_unterminated_tail_gets_separator(self):
+        """崩溃留下的无换行尾行：新事件不能被粘进去，要单独成行。"""
         day = time.strftime("%Y-%m-%d")
         log_dir = os.path.join(self._tmp.name, "ix")
         os.makedirs(log_dir)
@@ -325,41 +114,6 @@ class InteractionLogTest(unittest.TestCase):
             lines = fp.read().splitlines()
         self.assertTrue(any('"ev-pre"' in l for l in lines))
         self.assertTrue(any(row["event_id"] in l for l in lines))
-        log2 = self._log()
-        self.assertEqual(log2.latest_reply(self.G, self.U)["event_id"],
-                         row["event_id"])
-        self.assertIsNotNone(log2.feedback(self.G, self.U, "fb", "appropriate"))
-
-    def test_recovery_survives_truncated_utf8_tail(self):
-        """截断在汉字中间的尾部：恢复不中断，旧字节原样保留，新行照样入索引。"""
-        day = time.strftime("%Y-%m-%d")
-        log_dir = os.path.join(self._tmp.name, "ix")
-        os.makedirs(log_dir)
-        path = os.path.join(log_dir, f"{day}.jsonl")
-        good = {"schema": interactions.SCHEMA, "event_id": "ev-good",
-                "ts": time.time() - 100, "kind": "delivery", "group": self.G,
-                "user": self.U, "actor": "assistant", "status": "delivered",
-                "route": "reply", "feedback_eligible": True,
-                "source_message_id": "s-good"}
-        with open(path, "wb") as fp:
-            fp.write(json.dumps(good, ensure_ascii=False).encode("utf-8") + b"\n")
-            # 真实崩溃尾：JSON 断在一个汉字（\xe4\xb8\x??）的中间
-            fp.write('{"kind":"feedback","text":"汉'.encode("utf-8")[:-1])
-        with open(path, "rb") as fp:
-            original_bytes = fp.read()
-
-        log = self._log()   # 恢复不许炸：有效行照样进索引，坏尾巴只丢它自己
-        self.assertEqual(log.latest_reply(self.G, self.U)["event_id"], "ev-good")
-        row = self._delivered(log, text="坏尾之后的新送达")
-        log.close()
-        # 旧字节一字节没动 —— 只许在尾巴后面补分隔，不许回写
-        with open(path, "rb") as fp:
-            self.assertTrue(fp.read().startswith(original_bytes))
-
-        log2 = self._log()  # 第二次重启：新送达也恢复出来了
-        self.assertEqual(log2.latest_reply(self.G, self.U)["event_id"],
-                         row["event_id"])
-        self.assertIsNotNone(log2.feedback(self.G, self.U, "fb", "unsure"))
 
 
 def _group_message(text="你好", sender="USER_A", group="GID_OBS", msg_id=None,
@@ -452,7 +206,6 @@ class DeliveryObserveTest(unittest.IsolatedAsyncioTestCase):
         for row in rows:
             self.assertNotIn("text", row, row["status"])
             self.assertNotIn("platform_message_id", row)
-        self.assertIsNone(self.log.latest_reply(self.G, self.U))
 
     async def test_queued_then_drained_records_once_with_same_id(self):
         # 两次内联尝试都没拿到回执 → 进队列；补投窗口内第三次成功只记一次 delivered
@@ -666,14 +419,12 @@ class GateAndIncomingTest(_HandlerBase, unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("event_id", r)
             self.assertNotIn("kind", r)
 
-    async def test_direct_and_fortune_routes(self):
+    async def test_direct_route(self):
         with patch.object(bot, "reply_in_session",
                           AsyncMock(return_value=("ok", None, None))):
             await self._drive("你好", is_at=True)
-            await self._drive("算命", is_at=False)
         routes = [(d["route"], d["selected"], d["reason"]) for d in self.decisions()]
         self.assertIn(("direct", True, "direct_address"), routes)
-        self.assertIn(("fortune", True, "fortune_trigger"), routes)
 
     async def test_banter_hit_miss_cooldown_without_extra_draws(self):
         with patch.object(bot, "reply_in_session",
@@ -714,107 +465,6 @@ class GateAndIncomingTest(_HandlerBase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual((blocked["route"], blocked["selected"], blocked["reason"]),
                          ("reply", False, "budget_blocked"))
 
-
-class FeedbackFlowTest(_HandlerBase, unittest.IsolatedAsyncioTestCase):
-    """「反馈」命令端到端：绑定、回执、越界目标、禁用与写失败。"""
-
-    async def _deliver_reply(self, sender=None, text="你好"):
-        """走真实链路回一条 AI 应答，返回 journal 里的 delivered 行。"""
-        await self._drive(text, sender=sender, is_at=True)
-        delivered = [r for r in _rows(self.log.log_dir)
-                     if r["kind"] == "delivery" and r["status"] == "delivered"]
-        self.assertTrue(delivered)
-        return delivered[-1]
-
-    async def test_feedback_binds_own_latest_reply(self):
-        reply = await self._deliver_reply()
-        msg = await self._drive("反馈 合适 内容")
-        fb = [r for r in _rows(self.log.log_dir) if r["kind"] == "feedback"]
-        self.assertEqual(len(fb), 1)
-        self.assertEqual(fb[0]["reply_event_id"], reply["event_id"])
-        self.assertEqual(fb[0]["label"], "appropriate")
-        self.assertEqual(fb[0]["dimension"], "content")
-        self.assertEqual(fb[0]["user"], self.A)
-        # 回执文案不含任何内部 ID
-        ack = msg.reply.await_args_list[-1].kwargs["content"]
-        self.assertNotIn(reply["event_id"], ack)
-        self.assertNotIn(reply.get("outgoing_id", "zz"), ack)
-
-    async def test_feedback_revision_and_ack_not_retargeted(self):
-        reply = await self._deliver_reply()
-        await self._drive("反馈 合适")
-        await self._drive("反馈 不合适")
-        fbs = [r for r in _rows(self.log.log_dir) if r["kind"] == "feedback"]
-        self.assertEqual(len(fbs), 2)
-        # 第二次仍绑同一条 AI 回复（中间那条「记了一笔」回执是 local，不算目标）
-        self.assertEqual(fbs[1]["reply_event_id"], reply["event_id"])
-        self.assertEqual(fbs[1]["supersedes"], fbs[0]["event_id"])
-
-    async def test_feedback_dimensions_coexist_and_revise_independently(self):
-        reply = await self._deliver_reply()
-        await self._drive("反馈 合适 内容")
-        await self._drive("反馈 不合适 时机")     # 不同维度：并存，不互相覆盖
-        await self._drive("反馈 合适 时机")       # 同维度重打分：修订上一条时机
-        fbs = [r for r in _rows(self.log.log_dir) if r["kind"] == "feedback"]
-        self.assertEqual(len(fbs), 3)
-        self.assertTrue(all(f["reply_event_id"] == reply["event_id"] for f in fbs))
-        content, timing1, timing2 = fbs
-        self.assertIsNone(content["supersedes"])
-        self.assertIsNone(timing1["supersedes"])
-        self.assertEqual(timing2["supersedes"], timing1["event_id"])
-
-    async def test_feedback_invalid_syntax_gets_usage(self):
-        await self._deliver_reply()
-        for text in ("反馈", "反馈 可能吧", "反馈 合适 多余 词"):
-            msg = await self._drive(text)
-            ack = msg.reply.await_args_list[-1].kwargs["content"]
-            self.assertIn("反馈 合适", ack, text)
-        self.assertEqual([r for r in _rows(self.log.log_dir)
-                          if r["kind"] == "feedback"], [])
-
-    async def test_feedback_without_target_says_so(self):
-        msg = await self._drive("反馈 合适")   # 没有任何已送达回复
-        ack = msg.reply.await_args_list[-1].kwargs["content"]
-        self.assertIn("没有能对应上的回复", ack)
-        self.assertEqual([r for r in _rows(self.log.log_dir)
-                          if r["kind"] == "feedback"], [])
-
-    async def test_feedback_never_binds_other_people_or_local_acks(self):
-        await self._deliver_reply(sender=self.A)       # 只回过 A
-        msg = await self._drive("反馈 合适", sender=self.B)
-        ack = msg.reply.await_args_list[-1].kwargs["content"]
-        self.assertIn("没有能对应上的回复", ack)
-        self.assertEqual([r for r in _rows(self.log.log_dir)
-                          if r["kind"] == "feedback"], [])
-
-    async def test_feedback_disabled_and_io_failure_never_fake_success(self):
-        reply = await self._deliver_reply()
-        disabled = _make_log(self._tmp.name, enabled=False)
-        with patch.object(runtime, "INTERACTIONS", disabled):
-            msg = await self._drive("反馈 合适")
-            self.assertIn("没记上", msg.reply.await_args_list[-1].kwargs["content"])
-        with patch.object(self.log, "_ensure_fp", side_effect=OSError("io")):
-            msg = await self._drive("反馈 合适")
-            self.assertIn("写不进去", msg.reply.await_args_list[-1].kwargs["content"])
-        fbs = [r for r in _rows(self.log.log_dir) if r["kind"] == "feedback"]
-        self.assertEqual(fbs, [])
-
-    async def test_feedback_costs_nothing_and_stays_out_of_buffers(self):
-        await self._deliver_reply()
-        before_budget = runtime.BUDGET.used
-        before_scores = {k: (v or {}).get("score") for k, v in runtime.RELATIONS.records.items()}
-        calls_before = len(self.model_calls)
-        await self._drive("反馈 不合适 时机")
-        self.assertEqual(runtime.BUDGET.used, before_budget)
-        self.assertEqual({k: (v or {}).get("score")
-                          for k, v in runtime.RELATIONS.records.items()}, before_scores)
-        self.assertEqual(len(self.model_calls), calls_before)
-        self.assertFalse(any(b["text"].startswith("反馈")
-                             for b in bot.group_buffers.get(self.G, ())))
-        # 归档里它是 cmd=1 的操作，不会进压缩证据
-        pending_rows, _ = self.archive.pending(self.G, include_cmd=True)
-        fb_archived = [r for r in pending_rows if r["text"].startswith("反馈")]
-        self.assertTrue(fb_archived and all(r.get("cmd") for r in fb_archived))
 
 
 class ProviderMetaTest(unittest.IsolatedAsyncioTestCase):

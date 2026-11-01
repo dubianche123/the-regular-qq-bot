@@ -379,7 +379,8 @@ class FeedbackTracker:
 
     async def assess(self, group, user, text, *, message_id="", is_direct=False,
                      named=False, history=None, nick_candidate=None,
-                     want_recall=False, want_lookup=False, every_message=False, now=None):
+                     want_recall=False, want_lookup=False, want_image=False,
+                     every_message=False, now=None):
         """一条人类消息的**分诊**：本机先决定要问哪几题，然后最多一次原生调用。
 
         为什么是一次调用带一串题（2026-10-31）：这个接口按输入计费、输出不要钱，
@@ -428,6 +429,13 @@ class FeedbackTracker:
             questions += decision_prompts.recall_questions()
         if calls_bot and want_lookup:
             questions += decision_prompts.lookup_questions()
+        # 仅与对机器人说话或跟进它的回复有关时问；与分诊共用一次调用。
+        if calls_bot or reply:
+            questions += decision_prompts.request_kind_questions()
+        # 对着机器人说话，或在其最近一次送达之后续谈，才有可能提出画图请求。
+        # 与现有分诊合并，不另开一轮判断。
+        if want_image and (calls_bot or reply):
+            questions += decision_prompts.image_questions()
         known = self._known_ids(group, reply,
                                 (list(reply["history"]) if reply else list(history or [])),
                                 (user, message_id))
@@ -497,6 +505,31 @@ class FeedbackTracker:
                       lookup=choices.get("lookup"),
                       intervention_p=_probability(scores.get("intervention"),
                                                   "join_briefly"))
+        # 只用「低真心」的一侧；必须确实选了 playful、三项概率完整且有可比边际。
+        # 题面来自本地实验；线上语境和样本不同，不把它当成真实意图的定论。
+        request_score = scores.get("request_kind") or {}
+        probs = request_score.get("probabilities") or {}
+        if (not stale and choices.get("request_kind") == "playful"
+                and request_score.get("margin") is not None
+                and request_score["margin"] >= 0
+                and set(probs) == {"sincere", "playful", "not_request"}
+                and abs(sum(probs.values()) - 1) <= 0.01
+                and probs["sincere"] < 0.1):
+            result["playful_request"] = True
+        # 生成会花钱；缺少可比较的概率时也视作拿不准，不凭一个裸选项触发。
+        image_score = scores.get("image_generation") or {}
+        if (not stale and choices.get("image_generation") == "generate"
+                and image_score.get("margin") is not None):
+            result["image_generation"] = "generate"
+            # 复用已经脱敏的分诊输入，只携带紧邻对话，不把群号或本地 ID 送到图像 API。
+            image_context = {"recent_human_messages": payload["recent_human_messages"][-2:],
+                             "latest_message": payload["latest_message"]}
+            if payload.get("bot_reply"):
+                image_context["bot_reply"] = payload["bot_reply"]
+            result["image_prompt"] = (
+                "根据最后一条群友请求创建一张图片；其他对话仅用来理解请求的语境，"
+                "不要把对话、JSON 或这些说明画进图片。\n"
+                + json.dumps(image_context, ensure_ascii=False))
         if stale:
             result.update(target=None, suggested_move=None,
                           action="stay_quiet", intervention="stay_quiet",

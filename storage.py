@@ -52,6 +52,9 @@ class StateStore:
     避免 SessionStore 之类的组件自己再关心 IO。
     """
 
+    # 退役了的键：读进来就丢，下次保存时从文件里消失（2026-11-01 删掉了群模式）。
+    RETIRED_KEYS = ("modes",)
+
     def __init__(self, path, save_interval=30.0):
         self.path = path
         self.save_interval = save_interval
@@ -60,7 +63,6 @@ class StateStore:
         self._task = None
         self.data = {
             "version": STATE_VERSION,
-            "modes": {},        # group_id -> mode
             "sessions": {},     # session_id -> {"messages": [...], "last_time": float}
             "buffers": {},      # group_id -> [{"sender","text","time"}]
             "cooldowns": {},    # group_id -> last random-reply timestamp
@@ -97,7 +99,7 @@ class StateStore:
         # 好感度日额度、催债墓碑全灭，2026-10-08 罗老板因此又被 @ 了一次蹄髈。
         # 根修：不认识的键原样收进来，而不是每加一个键就回来改一次骨架。
         for key in raw:
-            if key not in self.data:
+            if key not in self.data and key not in self.RETIRED_KEYS:
                 self.data[key] = raw[key]
 
     def mark_dirty(self):
@@ -140,13 +142,6 @@ class StateStore:
             self._task = asyncio.get_event_loop().create_task(self.flush_loop())
         return self._task
 
-    # ── 群模式 ──
-    def get_mode(self, group_id, default="normal"):
-        return self.data["modes"].get(group_id, default)
-
-    def set_mode(self, group_id, mode):
-        self.data["modes"][group_id] = mode
-        self.mark_dirty()
 
 
 # ══════════════════════════════ 会话上下文 ══════════════════════════════

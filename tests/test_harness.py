@@ -62,7 +62,7 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
         """稳定头 → 每日记忆 → 历史 → 本轮动态，顺序不能乱。"""
         msgs = await self.grab(
             "th_order_1", "老张今天来了吗",
-            is_owner=True, mode="normal",
+            is_owner=True,
             context_hint="【群聊最近背景】- 阿强：今天天气不错",
             relation_note="【你对这位群友的记忆】很熟",
             group_memory="【这个群最近发生的事】上周在聊黑猴",
@@ -194,33 +194,28 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
             config.AFFINITY_ENABLED = orig
 
     async def test_output_rules_sit_in_stable_head(self):
-        """排版约束要在稳定头里，对所有模式生效。
+        """排版约束要在稳定头里。
 
         它防的是「换个供应商就带 Markdown」：同一个请求，Gemini 会输出
         「那必须是**某位群友请客**啊！」，星号原样发进 QQ 群只会显示成符号；智谱则不会。
         所以要跟模型无关地钉在稳定头里，而不是塞进某一次的即时指令。
         """
-        for mode in ("normal", "catgirl"):
-            msgs = await self.grab("th_out_%s" % mode, "在吗", mode=mode)
-            self.assertIn(self.prompts.PROMPT_OUTPUT_RULES, msgs[0]["content"],
-                          f"{mode} 模式的稳定头没带上排版约束")
+        first = await self.grab("th_out_normal", "在吗")
+        self.assertIn(self.prompts.PROMPT_OUTPUT_RULES, first[0]["content"])
 
         # 稳定头每轮必须是同一份，否则前缀缓存整段作废
-        again = await self.grab("th_out_normal2", "吃饭了吗", mode="normal")
-        first = await self.grab("th_out_normal", "在吗", mode="normal")
+        again = await self.grab("th_out_normal2", "吃饭了吗")
         self.assertEqual(again[0]["content"], first[0]["content"])
 
     async def test_shared_rules_sit_in_stable_head(self):
-        """防幻觉的身份/关系硬规则要在稳定头里，对所有模式生效。
+        """防幻觉的身份/关系硬规则要在稳定头里。
 
         它防的是「机器人自己编关系」：实测群友拿「我是你爹」开涮，机器人被问
         「我是谁」时顺着编了一段辈分关系。关系只能来自系统档案，所以这条跟人设无关，
-        必须钉在稳定头里，而不是某个模式的私货。
+        必须钉在稳定头里。
         """
-        for mode in ("normal", "catgirl", "crazy"):
-            msgs = await self.grab("th_rules_%s" % mode, "在吗", mode=mode)
-            self.assertIn(self.prompts.PROMPT_SHARED_RULES, msgs[0]["content"],
-                          f"{mode} 模式的稳定头没带上身份/关系硬规则")
+        msgs = await self.grab("th_rules_normal", "在吗")
+        self.assertIn(self.prompts.PROMPT_SHARED_RULES, msgs[0]["content"])
 
     # ── 缓存命中的核心断言 ──
 
@@ -249,26 +244,18 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
         判方向是模型的强项，绝对幅度交给代码和每日封顶；关掉它（CMD_PROTOCOL_ENABLED=false）
         好感度就只剩本地词表 + 每日压缩。
         """
-        msgs = await self.grab("th_cmd_1", "你好", is_owner=True, mode="normal",
+        msgs = await self.grab("th_cmd_1", "你好", is_owner=True,
                                relation_note="【记忆】x")
         blob = "\n".join(m["content"] for m in msgs)
         self.assertTrue(config.CMD_PROTOCOL_ENABLED)
         self.assertIn("<CMD>", blob)
         self.assertIn("-1、0、1", blob)
 
-    async def test_scoring_rubric_rides_along_with_the_protocol(self):
-        """「记账口径」跟着协议一起进稳定头 —— 协议开着时它在，关系才判得准。
-
-        反过来：协议关掉（CMD_PROTOCOL_ENABLED=false）它就该消失，否则白占 token。
-        """
-        msgs = await self.grab("th_hint_1", "喵", mode="catgirl",
-                               relation_note="【记忆】x")
-        self.assertEqual(bool(config.CMD_PROTOCOL_ENABLED),
-                         "记账口径" in msgs[0]["content"])
-
     async def test_envelope_never_stored_in_history(self):
         """信封只贴在发出去的请求上，历史里存的是原话，否则会一轮轮堆成雪球。"""
         sid = "th_hist_1"
+        runtime.SESSIONS.drop_session(sid)
+        self.addCleanup(lambda: runtime.SESSIONS.drop_session(sid))
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
         message = SimpleNamespace(id="history-first", reply=AsyncMock(return_value={"id": "ok"}))
@@ -465,6 +452,10 @@ class ApplyDigestAffinityTest(unittest.TestCase):
         cls.relations = _relations
 
     def setUp(self):
+        table = runtime.STATE.data.setdefault("affinity_daily", {})
+        for key in list(table):
+            if key.startswith(f"{self.GID}|"):
+                del table[key]
         runtime.RELATIONS.set_nick(self.GID, "OPENID_STRONG", "阿强")
         runtime.RELATIONS.set_nick(self.GID, "OPENID_QUIET", "阿远")
 
@@ -472,6 +463,10 @@ class ApplyDigestAffinityTest(unittest.TestCase):
         prefix = f"{self.GID}|"
         for k in [k for k in list(runtime.RELATIONS.records) if k.startswith(prefix)]:
             runtime.RELATIONS.records.pop(k, None)
+        table = runtime.STATE.data.setdefault("affinity_daily", {})
+        for key in list(table):
+            if key.startswith(prefix):
+                del table[key]
 
     def test_maps_nick_and_clamps_span(self):
         n, detail = self.bot.apply_digest_affinity(self.GID, [

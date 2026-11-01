@@ -94,13 +94,13 @@ class PersonaModeTest(unittest.TestCase):
     def test_note_renders_the_mode(self):
         runtime.RELATIONS.set_mode(GROUP, OID, "知心", source="digest")
         rec = runtime.RELATIONS.get(GROUP, OID)
-        note = relations.build_relation_note(rec, OID, mode="normal")
+        note = relations.build_relation_note(rec, OID)
         self.assertIn("相处模式：少损多听", note)
         self.assertIn("档位定分寸", note)
 
     def test_note_has_no_mode_line_when_unset(self):
         rec = runtime.RELATIONS.get(GROUP, OID)
-        note = relations.build_relation_note(rec, OID, mode="normal")
+        note = relations.build_relation_note(rec, OID)
         self.assertNotIn("相处模式", note)
 
     def test_apply_digest_modes_applies_whitelist_only(self):
@@ -155,19 +155,6 @@ class GameIsNotUnderstandingTest(unittest.TestCase):
         self.assertNotIn("- 关系：", note)
         self.assertNotIn("相处模式", note)
 
-    def test_mode_level_labels_use_the_display_mode_not_the_stored_mode(self):
-        """档案里存的相处模式（知心）不许盖过当前展示模式 —— 里程碑叫法跟模式走。"""
-        rec = _fresh_rec(12)
-        runtime.RELATIONS.set_nick(GROUP, OID, NICK, source="claim")
-        runtime.RELATIONS.set_mode(GROUP, OID, "知心", source="digest")
-        rec = runtime.RELATIONS.get(GROUP, OID)
-        rec["pending_milestone"] = {"from": 7, "to": 12, "ts": 0}
-        note = relations.build_relation_note(rec, OID, mode="discipline")
-        line = [l for l in note.splitlines() if "刚刚的变化" in l][0]
-        # discipline 的叫法：familiar→普通同学，acquaintance→守纪同学
-        self.assertIn("守纪同学", line)
-        # 通用叫法「熟人」不该出现 —— 那说明 rec 的 mode 把形参盖掉了
-        self.assertNotIn("熟人", line)
 
 
 if __name__ == "__main__":

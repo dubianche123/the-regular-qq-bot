@@ -20,6 +20,7 @@ import scheduler
 import search
 import slowwork
 from test_when_to_intervene import A, G, _Base
+from regular.resource_quota import ResourceQuotas
 
 
 class FakeJob:
@@ -184,6 +185,7 @@ class LookupFlowTest(_Base):
         for target, name, value in (
                 (providers, "research_available", lambda: True),
                 (runtime, "SCHEDULER", self.sched),
+                (runtime, "RESOURCE_QUOTAS", ResourceQuotas({}, lambda: None, lambda: None)),
                 (config, "BOT_NAMES", ["小王"]),
                 (config, "ASYNC_REPLY_SECONDS", 0.05),
                 (bot, "_bot_ref", {"client": self.client}),
@@ -284,12 +286,12 @@ class LookupFlowTest(_Base):
         self.assertNotIn("lookup", {q["name"] for q in self.calls.await_args.args[1]})
         self.assertEqual(fake.started, [])
 
-    async def test_start_failure_falls_back_to_a_plain_reply(self):
+    async def test_start_failure_reports_that_lookup_failed(self):
         self.use(FakeJob("search", [], handle=None))
         msg = await self._drive("小王 最新的漫威是哪部")
         self.assertEqual(msg.reply.await_count, 1)
-        self.assertNotIn(search.LOOKUP_MARK, self.turn())
-        self.assertNotIn(prompts.PROMPT_LOOKUP_PENDING.strip(), self.turn())
+        self.assertIn("没查成", msg.reply.await_args.kwargs["content"])
+        self.assertEqual(self.prompts_seen, [])
 
     async def test_explicit_search_command_goes_through_luna(self):
         fake = FakeJob("search", [slowwork.DONE])

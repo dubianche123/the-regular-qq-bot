@@ -18,6 +18,7 @@ import prompts
 import runtime
 import storage
 from regular import decisions
+from regular.resource_quota import ResourceQuotas
 
 
 def _group_message(text="你好", sender="USER_A", group="GID_FB", msg_id=None):
@@ -75,6 +76,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
                 (runtime, "INTERACTIONS", self.log),
                 (runtime, "ARCHIVE", self.archive),
                 (runtime, "FEEDBACK", self.feedback),
+                (runtime, "RESOURCE_QUOTAS", ResourceQuotas({}, lambda: None, lambda: None)),
                 (decisions.providers, "call_decision", self.calls),
                 (bot, "SENDER", delivery.Sender(fallback=bot._blocked_reply)),
                 (runtime, "GROUP_BUCKET",
@@ -264,9 +266,9 @@ class BanterVetoTest(_Base):
     async def test_local_search_and_command_paths_bypass(self):
         await self._drive("开场", is_at=True)
         self.calls.reset_mock()
-        for text in ("搜索 咖啡", "查好感"):
+        for text in ("搜索 咖啡", "锁起名"):
             await self._drive(text, msg_id="x-" + text)
-        # 命令行与搜索路径都不进反馈评估
+        # 本地指令（起名开关）与搜索路径都不进反馈评估
         self.assertEqual(self.calls.await_count, 0)
 
 
@@ -518,7 +520,6 @@ class ProactiveLoopTickTest(_Base):
         gen = AsyncMock(return_value=("开场白", None))
         post = AsyncMock(return_value=True)
         for target, name, value in (
-                (bot, "_auto_mood_targets", lambda now: []),
                 (bot.activation, "proactive_ok",
                  lambda *a, **k: (True, "ok")),
                 (bot.activation, "current_mood", lambda now: 0.5),
@@ -596,6 +597,153 @@ class AssessExceptionTest(_Base):
         # 异常算「已尝试」：不补发第二次原生，骰子基线照常放行
         self.assertEqual(self.calls.await_count, 1)
         self.assertEqual(len(self.model_calls), 1)
+
+
+class PlayfulRequestRoutingTest(_Base):
+    async def test_playful_hint_only_enters_this_turn(self):
+        # 群里的单招/大专玩笑即使出现，也不该默认当成一次正经求助。
+        result = {"playful_request": True}
+        with patch.object(self.feedback, "assess", AsyncMock(return_value=result)):
+            await self._drive("单招大专申请火箭科学家，帮我写个获奖感言", is_at=True)
+        self.assertEqual(len(self.model_calls), 1)
+        messages = self.model_calls[-1]
+        marker = "【本轮语气线索】"
+        self.assertIn(marker, messages[-1]["content"])
+        self.assertIn("不要揪着学历", messages[-1]["content"])
+        self.assertNotIn(marker, "\n".join(m["content"] for m in messages[:-1]))
+
+    async def test_no_playful_signal_leaves_no_extra_hint(self):
+        with patch.object(self.feedback, "assess", AsyncMock(return_value={})):
+            await self._drive("单招考不上怎么办", is_at=True)
+        self.assertNotIn("【本轮语气线索】", self.model_calls[-1][-1]["content"])
+
+    async def test_feedback_backoff_and_repair_override_playful_signal(self):
+        for action in ("back_off", "repair_briefly"):
+            with self.subTest(action=action):
+                result = {"playful_request": True, "target": "bot_response",
+                          "action": action, "back_off": action == "back_off"}
+                with patch.object(self.feedback, "assess", AsyncMock(return_value=result)):
+                    await self._drive("别拿这个笑我", is_at=True)
+                tail = self.model_calls[-1][-1]["content"]
+                self.assertNotIn("【本轮语气线索】", tail)
+                self.assertIn("嫌你打扰" if action == "back_off" else "纠正刚才", tail)
+
+    async def test_actual_lookup_suppresses_playful_hint(self):
+        result = {"playful_request": True, "lookup": "search"}
+        with patch.object(config, "SEARCH_ENABLED", True), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.providers, "research_available", return_value=True), \
+             patch.object(bot, "_reserve_search", return_value="normal"), \
+             patch.object(bot, "answer_with_lookup", AsyncMock(return_value=None)) as lookup:
+            msg = await self._drive("帮我查一下单招报名时间", is_at=True)
+        lookup.assert_awaited_once()
+        self.assertEqual(lookup.await_args.kwargs["reply_kwargs"]["playful_note"], "")
+        self.assertIn("没查成", msg.reply.await_args.kwargs["content"])
+
+
+class ImageRoutingTest(_Base):
+    async def test_confirmed_image_becomes_followup_context(self):
+        async def send(_message, **kw):
+            self.assertEqual(await kw["before_send"](), 1)
+            return True
+        assessor = AsyncMock(return_value={"image_generation": "generate",
+                                          "image_prompt": "sanitized context"})
+        with patch.object(config, "IMAGE_GENERATION_ENABLED", True), \
+             patch.object(self.feedback, "assess", assessor), \
+             patch.object(bot.image_generation, "generate_and_send", side_effect=send) as generated:
+            await self._drive("给我画只猫", is_at=True)
+        self.assertTrue(assessor.await_args.kwargs["want_image"])
+        generated.assert_awaited_once()
+        self.assertEqual(self.model_calls, [])
+        self.assertIn("已生成并发送图片", self.feedback._groups[self.G]["reply"]["text"])
+
+    async def test_slow_image_waits_then_sends_with_next_sequence(self):
+        async def send(_message, **kw):
+            await asyncio.sleep(0.01)
+            self.assertEqual(await kw["before_send"](), 2)
+            return True
+        result = {"image_generation": "generate", "image_prompt": "cat"}
+        with patch.object(config, "IMAGE_GENERATION_ENABLED", True), \
+             patch.object(config, "ASYNC_REPLY_SECONDS", 0), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.image_generation, "generate_and_send", side_effect=send):
+            msg = await self._drive("画只猫", is_at=True)
+        self.assertEqual(msg.reply.await_count, 1)
+        self.assertEqual(msg.reply.await_args.kwargs["msg_seq"], 1)
+        self.assertIn("稍等", msg.reply.await_args.kwargs["content"])
+
+    async def test_failed_image_reports_failure_without_chat_budget(self):
+        result = {"image_generation": "generate", "image_prompt": "cat"}
+        with patch.object(config, "IMAGE_GENERATION_ENABLED", True), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock(return_value=False)), \
+             patch.object(bot.BudgetGate, "check", AsyncMock(return_value=False)) as budget:
+            msg = await self._drive("画只猫", is_at=True)
+        self.assertIn("没画成", msg.reply.await_args.kwargs["content"])
+        budget.assert_not_awaited()
+
+    async def test_slow_failure_notifies_even_when_chat_budget_is_exhausted(self):
+        async def send(_message, **kw):
+            await asyncio.sleep(0.01)
+            return False
+        result = {"image_generation": "generate", "image_prompt": "cat"}
+        with patch.object(config, "IMAGE_GENERATION_ENABLED", True), \
+             patch.object(config, "ASYNC_REPLY_SECONDS", 0), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.image_generation, "generate_and_send", side_effect=send), \
+             patch.object(bot.BudgetGate, "check", AsyncMock(return_value=False)) as budget, \
+             patch.object(bot, "safe_reply", AsyncMock(wraps=bot.safe_reply)) as replies:
+            await self._drive("画只猫", is_at=True)
+        self.assertEqual(replies.await_count, 2)
+        self.assertIn("没画成", replies.await_args.args[1])
+        budget.assert_not_awaited()
+
+    async def test_unknown_send_result_never_sends_an_extra_reply(self):
+        result = {"image_generation": "generate", "image_prompt": "cat"}
+        with patch.object(config, "IMAGE_GENERATION_ENABLED", True), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock(return_value=None)):
+            msg = await self._drive("画只猫", is_at=True)
+        msg.reply.assert_not_awaited()
+        self.assertEqual(self.model_calls, [])
+
+    async def test_no_reply_gate_never_generates(self):
+        result = {"image_generation": "generate", "image_prompt": "cat",
+                  "intervention": "stay_quiet", "decision_attempted": True}
+        with patch.object(config, "IMAGE_GENERATION_ENABLED", True), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.random, "random", return_value=1.0), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as generated:
+            await self._drive("画只猫")
+        generated.assert_not_awaited()
+
+    async def test_followup_without_mention_uses_existing_reply_gate(self):
+        result = {"image_generation": "generate", "image_prompt": "poster",
+                  "target": "bot_response", "continuation": "reply_now",
+                  "action": "continue_normally"}
+        async def send(_message, **kw):
+            await kw["before_send"]()
+            return True
+        with patch.object(config, "IMAGE_GENERATION_ENABLED", True), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.image_generation, "generate_and_send", side_effect=send) as generated:
+            await self._drive("那就来一张吧")
+        generated.assert_awaited_once()
+
+    async def test_image_intent_takes_priority_over_automatic_lookup(self):
+        result = {"image_generation": "generate", "image_prompt": "poster", "lookup": "search"}
+        async def send(_message, **kw):
+            await kw["before_send"]()
+            return True
+        with patch.object(config, "IMAGE_GENERATION_ENABLED", True), \
+             patch.object(config, "SEARCH_ENABLED", True), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.providers, "research_available", return_value=True), \
+             patch.object(bot.image_generation, "generate_and_send", side_effect=send) as generated, \
+             patch.object(bot, "answer_with_lookup", AsyncMock()) as lookup:
+            await self._drive("给我画一幅未来城市", is_at=True)
+        generated.assert_awaited_once()
+        lookup.assert_not_awaited()
 
 
 if __name__ == "__main__":

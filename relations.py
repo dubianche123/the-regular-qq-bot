@@ -48,40 +48,6 @@ LEVELS = [
     (85,   "soulmate",     "本命"),
 ]
 
-LEVEL_ICONS = {
-    "blacklist": "💀", "cold": "❄️", "distant": "😐", "familiar": "👀",
-    "acquaintance": "🙂", "friend": "😎", "buddy": "🍻", "soulmate": "💖",
-}
-
-# 各模式对同一档位的不同叫法 —— 这是「同一个分数，多种人格」的关键
-MODE_LEVEL_LABELS = {
-    "catgirl": {
-        "blacklist": "讨厌的两脚兽", "cold": "把小猫弄炸毛过的人", "distant": "从不喂小鱼干的人",
-        "familiar": "见过两面的人类", "acquaintance": "偶尔会来rua一下的人",
-        "friend": "经常投喂小鱼干的人", "buddy": "准铲屎官", "soulmate": "本命铲屎官",
-    },
-    "discipline": {
-        "blacklist": "重点关注对象", "cold": "反复违纪分子", "distant": "有违纪嫌疑者",
-        "familiar": "普通同学", "acquaintance": "守纪同学", "friend": "模范同学",
-        "buddy": "操行标兵", "soulmate": "终身荣誉标兵",
-    },
-    "crazy": {
-        "blacklist": "想顺着网线打死的人", "cold": "看见就烦的人", "distant": "不认识的路人",
-        "familiar": "有点印象的冤种", "acquaintance": "一起加班的难兄难弟",
-        "friend": "能一起发疯的战友", "buddy": "一个战壕里爬出来的", "soulmate": "唯一还肯陪我疯的人",
-    },
-    "fortune": {
-        "blacklist": "命里犯冲的缘主", "cold": "业障深重之人", "distant": "缘分尚浅的施主",
-        "familiar": "有缘之人", "acquaintance": "常有香火的贵人", "friend": "福泽深厚者",
-        "buddy": "命中注定的财神", "soulmate": "天选贵人",
-    },
-    "driver": {
-        "blacklist": "黑名单乘客", "cold": "差评乘客", "distant": "拼过一次的客人",
-        "familiar": "眼熟的老乘客", "acquaintance": "常坐副驾的兄弟", "friend": "老搭档",
-        "buddy": "穿一条裤子的车搭子", "soulmate": "命中注定的副驾",
-    },
-}
-
 # 告诉模型「这个熟络程度该怎么拿捏语气」，只讲分寸不讲数字。
 # ⚠️ 每一档都要写清「能做什么 / 不许做什么」—— 只给一句「不太熟」这种抽象描述时，
 #    模型基本不看，八档在它嘴里说出来是一个味儿（2026-09-21 群主反馈「好感度没体现」）。
@@ -139,18 +105,14 @@ def level_key(score):
     return key
 
 
-def level_label(key, mode="normal"):
-    per_mode = MODE_LEVEL_LABELS.get(mode)
-    if per_mode and key in per_mode:
-        return per_mode[key]
+def level_label(key):
     for _, k, label in LEVELS:
         if k == key:
             return label
     return LEVELS[0][2]
 
 
-def level_icon(key):
-    return LEVEL_ICONS.get(key, "·")
+
 
 
 # 档位从低到高的顺序，用来比较「升了还是降了」
@@ -498,13 +460,9 @@ class RelationStore:
             return nick
         return None
 
-    def label_of(self, rec, member_openid, mode="normal"):
-        if not (rec or {}).get("interactions"):
-            return None
-        return f"{member_openid or '????'}"[-4:]
 
 
-def build_relation_note(rec, member_openid, mode="normal", now=None, other_names=None,
+def build_relation_note(rec, member_openid, now=None, other_names=None,
                         include_game=True):
     """拼出要塞进本轮动态的「称呼与游戏关系」片段。
 
@@ -549,14 +507,13 @@ def build_relation_note(rec, member_openid, mode="normal", now=None, other_names
     # 稳定头（prompts.PROMPT_SHARED_RULES）吃前缀缓存；这里只留一行提醒，挨着档位本身。
     lv = level_key(rec["score"])
     lines.extend([
-        f"- 关系：{level_label(lv, mode)}（{LEVEL_HINTS[lv]}）",
+        f"- 关系：{level_label(lv)}（{LEVEL_HINTS[lv]}）",
         "- 这份档案是内心戏不是台词：分寸的优先级高于人设里的默认语气；它不证明你了解 TA，"
         "也不许向 TA 复述你们的关系状态",
     ])
 
     # 相处模式（2026-10-19，硬枚举）：模式定「风格倾向」，档位定「分寸上限」——
-    # 分寸的硬规则（损一句/认怂）永远优先于模式。注意别把档案字段盖过 mode 形参：
-    # 模式档位的叫法（level_label）用的是后者。
+    # 分寸的硬规则（损一句/认怂）永远优先于模式。
     interaction_mode = rec.get("mode")
     if interaction_mode in PERSONA_MODES:
         lines.append(f"- 游戏相处模式：{PERSONA_MODES[interaction_mode]}（模式定风格，档位定分寸）")
@@ -568,8 +525,8 @@ def build_relation_note(rec, member_openid, mode="normal", now=None, other_names
         up = tier_rank(ms.get("to", 0)) > tier_rank(ms.get("from", 0))
         if up:
             lines.append(
-                f"- 刚刚的变化：你们更熟了一点（从「{level_label(tier_of(ms.get('from', 0)), mode)}」"
-                f"升到「{level_label(tier_of(ms.get('to', 0)), mode)}」）。"
+                f"- 刚刚的变化：你们更熟了一点（从「{level_label(tier_of(ms.get('from', 0)))}」"
+                f"升到「{level_label(tier_of(ms.get('to', 0)))}」）。"
                 "这次回复里**要当场说出来**，一句带过就行。"
                 "⚠️ 不许报任何数字、也不许提「好感度」这三个字 —— 就像人自己突然意识到"
                 "「咦我俩好像挺熟了」那样随口一提，或者拿这件小事开个玩笑。"
@@ -586,81 +543,6 @@ def build_relation_note(rec, member_openid, mode="normal", now=None, other_names
                 "⚠️「咱俩生分了/更陌生了/话变少了」这种话不许出现。"
             )
     return "\n".join(lines)
-
-
-def render_rank(rows, mode="normal", title=None):
-    """本地排行榜渲染，0 token。没留名的人只能显示 openid 后四位做区分。"""
-    if not rows:
-        if mode == "discipline":
-            return "📋 【违纪台账】目前还是一片空白——要么是各位同学表现太好，要么是你们还没跟我说过话。"
-        return "📋 【群友关系榜】目前还没人跟我说过话，名单空空如也。"
-
-    title = title or ("违纪台账" if mode == "discipline" else "群友关系榜")
-    out = [f"📋 【{title}】"]
-    offenders = [r for r in rows if r[1]["score"] < 0]
-    good = [r for r in rows if r[1]["score"] >= 0]
-
-    if offenders:
-        head = "违纪重点关注" if mode == "discipline" else "还需要多聊聊"
-        out.append(f"🔻 {head}：")
-        for member_openid, rec in offenders:
-            lv = level_key(rec["score"])
-            shown = rec.get("nick") or f"（未留名·{member_openid[-4:]}）"
-            out.append(f"  {level_icon(lv)} {shown} —— {level_label(lv, mode)}｜互动 {rec['interactions']} 次")
-
-    if good:
-        head = "表扬榜" if mode == "discipline" else "熟络榜"
-        out.append(f"🔺 {head}：")
-        for member_openid, rec in good:
-            lv = level_key(rec["score"])
-            shown = rec.get("nick") or f"（未留名·{member_openid[-4:]}）"
-            out.append(f"  {level_icon(lv)} {shown} —— {level_label(lv, mode)}｜互动 {rec['interactions']} 次")
-
-    return "\n".join(out)
-
-
-def render_name_table(rows, mode="normal"):
-    """称呼对照表：谁是谁，一眼看清。名字绑错人的时候靠它当场核对（0 token）。"""
-    if not rows:
-        return ("📛 【称呼对照表】目前还没有人留过称呼。\n"
-                "想让我记住你，直接说「叫我 XXX」；群主想给别人起，@对方再说名字就行。")
-
-    out = ["📛 【称呼对照表】（名字后面是 ID 后四位，用来确认绑对了人）"]
-    for member_openid, rec in rows:
-        nick = rec.get("nick")
-        if nick:
-            out.append(f"  {nick} —— {member_openid[-4:]}")
-    if len(out) == 1:
-        return "📛 【称呼对照表】还没有人留过称呼，大家都是「哥们/这位同学」。"
-    return "\n".join(out)
-
-
-def render_status(rec, member_openid, mode="normal", now=None):
-    """单人关系速查，0 token。同样不报数字，只报档位。"""
-    now = time.time() if now is None else now
-    if not rec or not rec.get("interactions"):
-        if mode == "discipline":
-            return "（翻开点名册，对着空白页吹了吹气）这位同学——我的记录册上暂时查无此人，敢情这一整个学期的晚自习你都没来过？"
-        return "（翻了翻记忆小本本）嗯？这位面生的朋友，我们的记录好像还是一片空白——要不要先从打个招呼开始？"
-
-    lv = level_key(rec["score"])
-    who = rec.get("nick")
-    address = f"{who}，" if who else ""
-    meeting = f"，第 {rec['interactions']} 次搭话了" if rec["interactions"] > 1 else ""
-    last = _fmt_span(now - rec.get("last_seen", now))
-    tail = f"（距上次聊天已经过去 {last}）" if last != "刚刚" else "（你俩刚刚还在聊）"
-
-    flavor = {
-        "discipline": "（推了推值日生袖标，翻开缺勤记录本）"
-                      f"{address}经查，你当前的操行评级是【{level_label(lv, mode)}】{meeting}{tail}。"
-                      "本委员希望你继续保持优良的晚自习作风。",
-        "catgirl": "（耳朵一抖，偷偷翻开写满歪扭字迹的粉色小本）"
-                   f"{address}喵~……小猫咪仔细数了数，在你勉强可以算作【{level_label(lv, mode)}】哦{meeting}{tail}。"
-                   "（尾巴紧张地绞在一起）不准偷看后面的页码喵！",
-    }
-    if mode in flavor:
-        return flavor[mode]
-    return f"（翻了翻记忆小本本）{address}我在小本本上给你记的是【{level_label(lv, mode)}】{meeting}{tail}。"
 
 
 # ══════════════════════════ 旧称呼台账 ══════════════════════════

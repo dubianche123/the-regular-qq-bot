@@ -191,11 +191,12 @@ class PromptAntiTicTest(unittest.TestCase):
             self.assertNotIn(w, prompts.PROMPT_OUTPUT_RULES)
         self.assertIn("不用句号", prompts.PROMPT_OUTPUT_RULES)
 
-    def test_joke_errands_are_played_along_not_done(self):
-        """2026-11-01：「帮我写篇 nature 论文，我待会验收」—— luna 先应下「我认真研究」，
-        又补一条「不能凭空编数据，先把研究方向发我」。群里没人等它交活；这条进共享块，换人设也在。"""
+    def test_joke_and_genuine_requests_are_distinguished(self):
+        """玩笑可以顺着演；拿不准时照顾实际需求，不能假定所有请求都是起哄。"""
         rule = prompts.PROMPT_SHARED_RULES
-        self.assertIn("群里没人等你交活", rule)
+        self.assertNotIn("群里没人等你交活", rule)
+        self.assertIn("认真求助就认真帮", rule)
+        self.assertIn("先照顾实际需求", rule)
         self.assertIn("免责声明", rule)
         self.assertIn("客服尾巴", rule)
         self.assertNotIn("别一直抖机灵", prompts.PROMPT_NORMAL, "这句是给 glm 刹车的，luna 照办就成了一本正经")

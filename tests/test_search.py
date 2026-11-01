@@ -15,7 +15,6 @@ import httpx
 
 sys.path.insert(0, "..")
 
-import bot
 import config
 import search
 
@@ -129,6 +128,11 @@ class LimiterTest(unittest.TestCase):
         self.assertTrue(self.limiter.acquire("g1")[0])
         self.assertTrue(self.limiter.acquire("g2")[0])
 
+    def test_automatic_lookup_skips_cooldown_but_still_uses_daily_cap(self):
+        self.assertTrue(self.limiter.acquire("g1")[0])
+        self.assertTrue(self.limiter.acquire("g1", cooldown=False)[0])
+        self.assertEqual(self.limiter.acquire("g1", cooldown=False), (False, "daily"))
+
     def test_day_rollover_resets_counts(self):
         self.limiter = search.SearchLimiter(0, 1, clock=lambda: self.now[0])
         self.now[0] = 1000.0
@@ -160,15 +164,6 @@ class FetchTest(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             self.assertIsNone(await search.search_web("test", client=client))
-
-
-class WiringTest(unittest.TestCase):
-    def test_bot_wires_search_into_reply(self):
-        import inspect
-        src = inspect.getsource(bot)
-        self.assertIn("search_mod.search_web", src)
-        self.assertIn("search_note=search_note", src)
-        self.assertIn("LIMITER.acquire", src)
 
 
 if __name__ == "__main__":

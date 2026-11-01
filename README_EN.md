@@ -47,13 +47,12 @@ This is not an agent harness wearing a QQ skin. A group-chat companion does not 
 | **Recent-context budget follows gameplay** | Affinity only decides how much recent chatter is pulled into the turn (`soulmate` sees 10 messages; `distant` sees 2)—a participation budget, not knowledge or evidence about a person. |
 | **Per-group nicknames that the model can't overwrite** | Self-claimed or owner-assigned nicknames live in per-group storage. Names mentioned in daily model digests are used strictly for **one-way lookup** to apply affinity deltas—never to overwrite a user's canonical nickname. |
 | **Reads group images once** | A vision model captions incoming images and caches descriptions by message ID under independent daily budget caps. |
-| **Zero-token local games & lookups** | `掷骰子` (dice), `查好感` (affinity), `关系榜` (leaderboard), `群史记` (chronicle), `查账` (promise ledger), and `翻旧账` (archive search) run entirely in local Python handlers with 0 tokens. |
 | **Old stories only when asked** | Recall fires only when the triage judges the reply needs this group's earlier chat (cue words like "last time" no longer trigger it: on real data every named message they fired on was a misfire) plus a concrete name or subject; at most 2 local archive snippets enter the end of the turn, and random banter or a back-off request suppresses it entirely. |
 | **Quotes the speaker, never guesses character** | During the daily digest the model only proposes "who said which sentence + topic words"; code binds each quote verbatim to a message in the processed batch confirmed complete by the archive (speaker, message ID and timestamp must all match). At reply time only the current speaker's quotes that hit the current topic and are still fresh are injected—at most 2, into the end of the turn. Generated personality descriptions never become personal facts. Mechanics and trade-offs: [docs/personal-memory.md](docs/personal-memory.md). |
 | **Learns group catchphrases without becoming a loop** | The daily digest proposes expressions from raw messages; code keeps only phrases seen at least twice in the batch, caps the list at 5, and injects them as an optional style reference. |
 | **Maintainer-editable knowledge base** | `knowledge/all.md` plus per-group files, matched by keyword and injected only into the current turn; a maintainer edits Markdown and the next relevant message uses it—no recompression. |
 | **On-demand lookup** | With `RESEARCH_PROVIDER` set (e.g. OpenAI `gpt-6-luna` with web_search), the triage judgment decides when a reply addressed to the bot should look things up first; if the lookup misses a few seconds, the bot says it is checking and follows up when the background job finishes ([slow work](docs/slow-work.md)). The `搜索 关键词` command still works; without a research provider only the command searches DuckDuckGo. Results are **untrusted external evidence**, capped per group per day. |
-| **Shared group atmosphere modes** | Switch into catgirl, unhinged, disciplinary, fortune-teller, or banter modes; gated by local affinity (`familiar` or higher) so drive-by strangers can't derail the room. |
+| **No modes to switch** | Ask it to "do a catgirl bit" or "go unhinged" and it plays along for a line or two as a one-off joke, then talks normally; when its mood bottoms out it gets snappy and vents, following its mood rather than a command you enter and exit. The five manual personas and the leaderboard/dice-style commands from before 2026-11-01 were almost never used in 27 days and were removed ([usage counts](docs/DESIGN_NOTES.md#删掉的东西2026-11-01)). |
 
 ## One message, three possible routes
 
@@ -61,17 +60,14 @@ This is not an agent harness wearing a QQ skin. A group-chat companion does not 
 
 | Example input | Route | What happens under the hood |
 | --- | --- | --- |
-| `查好感` / `关系榜` | Local relationship lookup | Reads directly from the local ledger instead of asking an LLM to hallucinate a score. |
-| `掷骰子` / `决斗` | Local game handler | Rolls locally and applies the coded affinity delta for wins/losses. |
 | `叫我小林` | Naming flow | A local pattern proposes the name and a native judgment may veto it (homophone bait, or not actually a naming request); then owner locks, word filters, cooldowns and the audit tier run before the group-scoped nickname is updated. |
 | `@<bot> 今天吃什么` | Generated reply | A platform @ always gets an answer: assembles the 4-layer context prefix, calls the configured provider tier, and sanitizes the output. |
 | `小王你真蠢` / `小王 今天几号` | Triage | The bot's name in the text is not an obligation to answer. One native judgment call separates "asking it" (answer), "teasing it" (a short quip only when it fits), and "merely mentioning it" (treated as ordinary chatter). If the judgment is unavailable, it answers. See [docs/judgment-layer.md](docs/judgment-layer.md). |
 | "What was that milk tea 阿强 mentioned last time?" | On-demand recall | Reads the local archive only when the triage judges that a good answer depends on this group's earlier chat; takes at most 2 snippets and puts them at the end of the turn. Not asked, no digging. |
 | `搜索 今天的天气` | On-demand search | One DuckDuckGo query; titles/snippets/links are wrapped as untrusted evidence at the end of the turn. No page fetching, no follow-up loop. |
 | Unmentioned group chatter | Activation gate | Checks cooldown, circadian factor, mood, and affinity dice; stays quiet and archives the message if it doesn't fire. |
-| `反馈 合适` / `反馈 不合适 时机` | Local feedback ledger | Binds an explicit rating to that person's most recent delivered reply (within 30 minutes) in the local `interactions/` journal; says so plainly when nothing is linkable. |
 
-System-side behavior (incoming messages, gate outcomes, delivered replies, explicit feedback) is appended to a separate local `interactions/` daily JSONL log—write-only: never into prompts, digests, or recall—and can be fully disabled with `INTERACTION_LOG_ENABLED=false`. These are replayable observation records, **not evidence of personalization benefit**; see [docs/interaction-observations.md](docs/interaction-observations.md) for the design.
+System-side behavior (incoming messages, gate outcomes, delivered replies) is appended to a separate local `interactions/` daily JSONL log—write-only: never into prompts, digests, or recall—and can be fully disabled with `INTERACTION_LOG_ENABLED=false`. These are replayable observation records, **not evidence of personalization benefit**; see [docs/interaction-observations.md](docs/interaction-observations.md) for the design.
 
 Use `regular --directory . coverage --json` for read-only observed personal-quote injection coverage, split by reply/banter, feature state, and report-local account aliases. Unknown traces are not treated as non-injection; absent logs mean unavailable, not 0%. This does not estimate personalization benefit or run a randomized experiment. See [docs/interaction-observations.md](docs/interaction-observations.md) for denominators and limits.
 
@@ -83,7 +79,7 @@ Keeping the ledger in Python means **the model never gets write access to relati
 
 | Layer | Contents | Why it sits here |
 | --- | --- | --- |
-| 1 · Stable head | Persona, group rules, output constraints, optional protocol | Identical across turns in the same group and mode; maximizes prefix-cache reuse. |
+| 1 · Stable head | Persona, group rules, output constraints, optional protocol | Identical across turns in the same group; maximizes prefix-cache reuse. |
 | 2 · Group memory | Shared expression reference from the rolling digest (group catchphrases/tone) | Changes only when background compression folds in a new batch; carries no personal material. |
 | 3 · Session history | Accepted recent conversation turns | Appends cleanly onto the cached prefix. |
 | 4 · This turn | Names & game relationship, affinity-sliced nearby chatter, up to 2 source-verified quotes from the current speaker, on-demand recall/knowledge/search, circadian/mood state line | Changes on every speaker and timestamp, so it always sits at the very end. |
@@ -152,8 +148,8 @@ To try it first:
 uvx --python 3.12 --from https://github.com/dubianche123/the-regular-qq-bot/releases/download/v0.2.0/the_regular-0.2.0-py3-none-any.whl regular demo
 ```
 
-The demo needs no account or key and makes no QQ or model requests. Try
-`查好感`, `掷骰子`, or `群史记`; `/help` lists controls. After installation,
+The demo needs no account or key and makes no QQ or model requests. Just
+chat; `/help` lists controls. After installation,
 `regular demo` works too.
 
 <details>
@@ -318,15 +314,8 @@ Built-in command phrases below are shown exactly as accepted by the local handle
 | **Chat** | Mention the bot or use a configured alias | 1 call |
 | **Random Banter** | Ordinary group conversation may trigger an interjection | 1 call |
 | **Send an image** | Mention the bot with a picture | 1 chat + up to 1 vision call |
-| **Dice / Duel** | `掷骰子` / `摇骰子` / `比大小` / `决斗` | **0** |
 | **Nicknames / Rename** | `叫我阿强` / `我是阿强` / `别叫我了` | 0–1 call |
-| **Switch Mode** | `猫娘模式` / `发疯模式` / `风纪委员模式` / `算命模式` / `老司机模式` | **0** |
-| **Reset Mode** | `恢复正常` / `正常点` / `冷静点` / `吃药了` | **0** |
-| **Check Affinity** | `查好感` / `我跟你多熟` / `几档了` | **0** |
-| **Leaderboard** | `关系榜` / `点名册` / `群友榜` | **0** |
-| **Chronicles** | `群史记` / `最近聊了啥` / `周报` | **0** |
-| **Promise Ledger** | `查账` / `谁请客`; after fulfilling: `结清` | **0** |
-| **Verify Archives** | `翻旧账 关键词` | **0** |
+| **Ask for a bit** | "小王来段猫娘" / "小王发个疯" — it plays along for a line or two | 1 call |
 | **Ask about the past** | "What was that milk tea 阿强 mentioned last time?" / "What did you promise before?" | **0** local recall + 1 reply |
 | **On-demand search** | `搜索 关键词` | **0** search + 1 reply |
 | **Owner Admin** | Mention a member with `叫他阿珍`; `锁起名` / `解锁起名` | **0** |
@@ -342,7 +331,6 @@ Tweak bot behavior and budget guardrails in `.env`:
 * `OWNER_MENTION_PROBABILITY`: Banter chance when owner is mentioned (default `0.30`)
 * `BANTER_COOLDOWN_SECONDS`: Minimum cooldown between banter replies (default `120`s)
 * `DAILY_BUDGET`: Max daily LLM calls for the whole group (default `3000`, prevents wallet drain)
-* `MODE_SWITCH_MIN_AFFINITY`: Minimum affinity level required to switch modes (default `familiar`)
 * `MEMORY_RECALL_MAX_ITEMS`: Max local evidence snippets per recall (default `2`, turn context only)
 * `MEMORY_RECALL_LOOKBACK_DAYS`: How far recall looks back (default `30` days)
 * `STYLE_NOTE_MAX_ITEMS` / `STYLE_MIN_REPEATS`: Max learned expressions and minimum repeats before a phrase is kept (default `5` / `2`)

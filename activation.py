@@ -79,9 +79,17 @@ def current_mood(now=None):
     return max(-_MOOD_MAX, min(_MOOD_MAX, _decay(now)))
 
 
+# 烦透了的那条线。以前心情压在这下面半小时，整群会自动切进「发疯模式」（换一套人设、
+# 发一段固定的进场词，回升了再发一段退场词）；2026-11-01 模式全删了，发疯只剩这一句状态，
+# 每轮跟着心情走 —— 不用切换，也就不会卡在一个状态里。
+_FED_UP = -0.7
+
+
 def _mood_word(v):
     if v >= 0.3:
         return "心情不错"
+    if v <= _FED_UP:
+        return "烦透了"
     if v <= -0.3:
         return "有点烦"
     return ""
@@ -115,7 +123,10 @@ def state_line(label, mood_v):
     elif label == "刚睡醒":
         bits.append("你刚醒没多久，脑子还没完全转起来")
     mw = _mood_word(mood_v)
-    if mw == "有点烦":
+    if mw == "烦透了":
+        bits.append("你今天烦透了：说话冲、带火气，可以发几句牢骚、小小发个疯，"
+                    "但火冲着事不冲着人，别迁怒眼前这位")
+    elif mw == "有点烦":
         bits.append("你今天有点烦：更懒得接话，别人起哄你懒得陪")
     elif mw == "心情不错":
         bits.append("你今天心情不错：更愿意接梗闲聊两句")

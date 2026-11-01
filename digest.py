@@ -275,46 +275,6 @@ def render_style(state, limit=None):
     return prompts.PROMPT_STYLE_HEADER.strip() + "\n" + "\n".join(lines)
 
 
-def render_summary(state, mode="normal"):
-    """把摘要渲染成能发到群里的文本，0 token。"""
-    if not state or not state.get("brief") and not state.get("data"):
-        if mode == "discipline":
-            return "（翻开班级日志）本班近期的档案还是空白的，值日生无从查起。"
-        return "（翻了翻群史记）这一阵子群里安静得离谱，连个能记的槽点都没攒下。"
-
-    parts = []
-    if state.get("brief"):
-        parts.append(f"📜 【群史记】{state['brief']}")
-    data = state.get("data") or {}
-    if data.get("topics"):
-        parts.append("🔥 最近在聊：" + "、".join(
-            str(t.get("topic") or "") for t in data["topics"] if t.get("topic")))
-    if data.get("promises"):
-        parts.append("🧾 还没兑现：" + "；".join(
-            f"{p.get('who','有人')}——{p.get('what','')}" for p in data["promises"] if p.get("what")))
-    if data.get("memes"):
-        # ⚠️ 这块原先只喂 memes[0]（固定第一条、每轮都喂、还没有时限），于是某条梗
-        # 一旦排到首位就天天在模型眼前 —— 哪怕那条记录的是「某人被平台处置」或者
-        # 「群友吐槽它掉线」这种根本不该复用的东西。
-        # 现在三道处理：过期的不喂（按时间戳卡）、按最新优先取、
-        # 而「为什么新鲜」由 stamp_memes 判定（内容没变 = 没有新料，继续变老）。
-        best = ""
-        for m in data["memes"]:
-            if not isinstance(m, dict):
-                continue
-            quote = str(m.get("quote") or "").strip()
-            if not quote:
-                continue
-            ts = float(m.get("ts") or 0)
-            if not ts or (time.time() - ts) > config.MEME_NOTE_MAX_AGE_DAYS * 86400.0:
-                continue
-            best = quote
-            break
-        if best:
-            parts.append(f"😂 名场面：「{best}」")
-    return "\n".join(parts)
-
-
 # ── 个人原话：模型提案、代码核对来源 ──
 # people 条目只收「能帮助下一次接话的具体原话」。模型压缩时提议 who/quote/keywords，
 # 代码把提案绑回**本批已处理**的原始消息（发言人 + 消息标识 + 时间），对不上就丢。

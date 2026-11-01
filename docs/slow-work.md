@@ -125,3 +125,4 @@ response id，重启以后接着问。以后本地的慢计算照这个接口接
 | `DEEP_RESEARCH_ENABLED` | true | 彩蛋开关 |
 | `DEEP_RESEARCH_DAILY_CAP` / `DEEP_RESEARCH_COOLDOWN_SECONDS` | 3 / 600 | 彩蛋每天几次、同群间隔 |
 | `SEARCH_DAILY_CAP` | 60 | 每群每天联网查询上限（命令和自动共用） |
+| `SEARCH_USER_DAILY_CAP` / `SEARCH_USER_EXTRA_*` | 20 / 5、10、20、30 | 每群每人基础次数 / 熟人至本命的额外次数；深度研究也计入 |

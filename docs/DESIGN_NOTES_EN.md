@@ -67,6 +67,10 @@ This table records early deployment parameters as design background. See the [RE
 | (Owner) flavour command | 办他 / 拖出去 / 拿下 / 护驾 | 0 |
 | Direct message | Just DM it | 1 call |
 
+> Since 2026-11-01 the dice duel, local meme replies, mode switching, affinity/leaderboard/name-table lookups,
+> chronicle, promise ledger commands, archive lookup, forced compression and the owner flavour command are
+> gone — see "删掉的东西（2026-11-01）" in the [Chinese design notes](DESIGN_NOTES.md#删掉的东西2026-11-01) for usage counts.
+
 ⚠️ **Renaming works in group chat only.** Nicknames are stored per group (`group_id|openid`),
 and a DM carries no group id — so there is no way to tell which group the change belongs to.
 Saying "call me Aryu" in a DM does **not** write anything; it gets a local pointer back to the
@@ -124,7 +128,7 @@ One related hard rule: **relationships come from the archive only.** Anyone clai
 | Expression style | `state.json` (digest `style`) | Recomputed each compression, at most 5; each phrase must appear at least twice in the batch |
 | Editable knowledge base | `knowledge/all.md` + `knowledge/<group_id>.md` | Maintainer-edited; applies next turn; at most 2 entries / ~360 chars per turn |
 
-Why keep the raw logs at all: summaries are lossy and the model occasionally mixes people up. When it does, `翻旧账 <keyword>` goes back to the JSONL and checks — otherwise you just live with the error.
+Why keep the raw logs at all: summaries are lossy and the model occasionally mixes people up. When it does, you can go back to the JSONL in `archive/` and check — otherwise you just live with the error.
 
 Old stories are only retrieved when asked. A 2026-10-06 controlled experiment showed that merely having old material in context makes the model grow a "reminiscence tail" even when nobody asked. `recall.py` therefore requires a strong past cue ("last time", "before", "you promised", "remember") plus a concrete name or subject, reads at most 2 snippets from the last 30 days, and puts them only in the turn-context layer. Random banter, a back-off request, or a sensitive-word hit all suppress recall. It shares the raw archive with the `翻旧账` command and makes no model call.
 

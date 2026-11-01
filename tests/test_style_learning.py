@@ -76,10 +76,6 @@ class RenderStyleTest(unittest.TestCase):
         self.assertEqual(digest.render_style(None), "")
         self.assertEqual(digest.render_style({"data": {}}), "")
 
-    def test_style_is_not_in_group_visible_summary(self):
-        out = digest.render_summary(self.state([{"phrase": "绷不住了", "when": "离谱"}]))
-        self.assertNotIn("绷不住了", out)
-
 
 class StyleSchemaTest(unittest.TestCase):
     def test_reduce_prompt_asks_for_style_with_repeat_rule(self):

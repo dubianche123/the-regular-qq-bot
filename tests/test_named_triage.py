@@ -28,7 +28,9 @@ from test_when_to_intervene import A, G, _Base
 # 选项恰好是 back_off，会让每条消息都像在叫它收敛。
 NEUTRAL = {"feedback_target": "not_feedback", "next_move": "no_adjustment",
            "continuation": "no_reply_needed", "intervention": "stay_quiet",
-           "addressed": "answer", "recall": "no_need", "nickname": "adopt"}
+           "addressed": "answer", "recall": "no_need", "nickname": "adopt",
+           "image_generation": "no_generation", "request_kind": "not_request",
+           "lookup": "none"}
 
 
 def answering(mapping):
