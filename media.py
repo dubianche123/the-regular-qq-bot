@@ -32,6 +32,10 @@ class CaptionService:
         self._closing = False
         self._foreground = {}
         self._targets = {}
+        # (group_id, message_id) -> (sender, image_url)：收到了、还没读成的图（remember 记入）。
+        # 后台读图在路上或被冷却 / 名额挡掉时都留在这里，回话前由 settle 等它或前台补读；
+        # 拿到描述、或真读过一次（无论成败）就划掉。
+        self._owed = {}
         self.cache = self.state.data.setdefault("captions", {})
         self.usage = self.state.data.setdefault("vision_usage", {})
         self._trim_cache()
@@ -93,6 +97,11 @@ class CaptionService:
         except Exception as exc:
             logger.warning("🖼 图片描述失败: %s", str(exc)[:100])
             return None
+        finally:
+            # 占了名额就是真读过：读成了已回填，读失败也不该每轮回话都再烧一个名额。
+            # 读完才划掉而不是占名额时划——在途的图 settle 还得能找到、能等。
+            for group_id, message_id, _sender in self._targets.get(image_url, ()):
+                self._owed.pop((group_id, str(message_id)), None)
 
     def _finished(self, image_url, task):
         if self.inflight.get(image_url) is task:
@@ -127,6 +136,7 @@ class CaptionService:
             return None
         caption = self.cache.get(image_url)
         if caption:
+            self._owed.pop((group_id, str(message_id)), None)
             self._attach(group_id, message_id, sender, caption)
         else:
             self._targets.setdefault(image_url, set()).add((group_id, message_id, sender))
@@ -141,6 +151,32 @@ class CaptionService:
             # 一条消息被取消，不应取消另一路仍在等待的共享读图。
             caption = await asyncio.shield(task)
         return caption
+
+    def remember(self, group_id, message_id, sender, image_url):
+        """收到图就同步记一笔。不能等后台读图协程自己登记：它要等这条消息的分诊
+        请求回来才排上，这期间紧跟着的提问会找不到它。"""
+        if not config.VISION_ENABLED or not image_url or not message_id:
+            return
+        self._owed[(group_id, str(message_id))] = (sender, image_url)
+        while len(self._owed) > self.cache_size:
+            self._owed.pop(next(iter(self._owed)))
+
+    async def settle(self, group_id, message_ids, timeout):
+        """要回话了：把这些背景消息里还没读成的图读掉，最多等 timeout 秒。
+
+        在途的等同一个任务；被冷却挡掉的按前台补读（前台不吃冷却）。超时只是不等了——
+        读图本身被 shield 护着，读完照常回填缓冲和归档，下一轮就能用上。
+        """
+        owed = [(str(mid), *self._owed[(group_id, str(mid))]) for mid in message_ids
+                if (group_id, str(mid)) in self._owed]
+        if not owed:
+            return
+        reads = [self.caption_for(group_id, mid, sender, url, foreground=True)
+                 for mid, sender, url in owed]
+        try:
+            await asyncio.wait_for(asyncio.gather(*reads), timeout)
+        except asyncio.TimeoutError:
+            logger.info("🖼 背景里的图 %.0f 秒内没读完，先回话", timeout)
 
     async def drain(self):
         """Wait for the actual producers, including those protected by shield."""
@@ -172,6 +208,16 @@ async def caption_for(group_id, message_id, sender, image_url, *, foreground=Fal
         raise RuntimeError("media.initialize must bind the runtime before reading images")
     return await _service.caption_for(group_id, message_id, sender, image_url,
                                       foreground=foreground)
+
+
+def remember(group_id, message_id, sender, image_url):
+    if _service is not None:
+        _service.remember(group_id, message_id, sender, image_url)
+
+
+async def settle(group_id, message_ids, timeout):
+    if _service is not None:
+        await _service.settle(group_id, message_ids, timeout)
 
 
 async def drain():

@@ -2246,10 +2246,14 @@ class GroupBot(botpy.Client):
         #     只挡「同一个人连着刷一模一样的内容」（复读机、表情三连），别让它把窗口占满；
         #     其余照收。以前这里是「? / 6 / 草 / 哈哈」之类的白名单枚举，来一句新的
         #     口头禅就得回来加一个词，而且把「？」这种真实的接话信号也一起挡掉了。
+        #     带图的不算复读：描述回填前两张图都是「[图片]」，第二张会被当成复读丢掉
+        #     （2026-11-01 12:31:53/55 连发两张，问「读这两张图」时背景里只剩一张）。
         buf = group_buffers[group_id]
-        if not buf or buf[-1]["sender"] != sender_openid or buf[-1]["text"] != user_input:
+        if (not buf or image_url or buf[-1]["sender"] != sender_openid
+                or buf[-1]["text"] != user_input):
             buf.append({"sender": sender_openid, "text": user_input, "time": time.time(), "message_id": message.id})
             runtime.STATE.data["buffers"][group_id] = list(buf)
+        media.remember(group_id, message.id, sender_openid, image_url)
 
         # 节奏先验在这里算**一次**，对每条进背景缓存的消息都算（见 opening.py）。
         # ⚠️ 不要挪到插嘴门里去算：那里会被冷却窗和收敛窗跳过，而被跳过的恰好是
@@ -2821,6 +2825,11 @@ class GroupBot(botpy.Client):
             _willingness, _turns, state_note = activation.profile(_tier)
             prev = [b for b in fresh[:-1] if b["text"] != user_input][-_turns:]
             if prev:
+                # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被
+                # 冷却挡掉没读。不然模型只看见裸 [图片]，答「没看到图」——2026-11-01
+                # 12:32 连着三次，都是冷却挡掉的那两张（实测见 docs/image-before-reply.md）。
+                await media.settle(group_id, [b.get("message_id") for b in prev],
+                                   config.ASYNC_REPLY_SECONDS)
                 # 必须标出发言人。之前只给一串裸文本，模型分不清哪句是谁说的，
                 # 于是把别人认领的名字安到了当前这位头上 —— 叫错人就是这么来的
                 # （_who_label 已提为模块级：读图上下文共用，两处渲染不许漂移）

@@ -299,6 +299,53 @@ class CaptionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service.inflight, {})
         self.assertEqual(self.service.cache, {})
 
+    # ── settle：回话前把背景里欠着的图读掉（docs/image-before-reply.md） ──
+
+    async def test_settle_reads_a_remembered_image_the_cooldown_skipped(self):
+        self.add("m0")
+        await self.caption("m0", url="https://image.invalid/z")    # 刚读过一张
+        row = self.add("m1")
+        self.service.remember("g", "m1", "alice", "https://image.invalid/a")
+        self.assertIsNone(await self.caption())                    # 后台：冷却挡掉
+        await self.service.settle("g", ["m1"], 1.0)
+        self.assertEqual(row["text"], "[图片：一只猫]")
+        self.assertEqual(len(self.calls), 2)
+        await self.service.settle("g", ["m1"], 1.0)                # 读成了就不再欠
+        self.assertEqual(len(self.calls), 2)
+
+    async def test_settle_gives_up_waiting_but_the_caption_still_lands(self):
+        row = self.add("m1")
+        release = asyncio.Event()
+        async def describe(url):
+            self.calls.append(url)
+            await release.wait()
+            return "一只猫"
+        self.service = self.build(describe=describe)
+        self.service.remember("g", "m1", "alice", "https://image.invalid/a")
+        await self.service.settle("g", ["m1"], 0.01)               # 不等太久，先回话
+        self.assertEqual(row["text"], "[图片]")
+        release.set()
+        await self.service.drain()
+        self.assertEqual(row["text"], "[图片：一只猫]")             # 读图没被取消
+        self.assertEqual(len(self.calls), 1)
+
+    async def test_settle_does_not_spend_a_slot_retrying_a_failed_read(self):
+        self.add("m1")
+        async def fail(url):
+            self.calls.append(url)
+            return None
+        self.service = self.build(describe=fail)
+        self.service.remember("g", "m1", "alice", "https://image.invalid/a")
+        self.assertIsNone(await self.caption(foreground=True))
+        await self.service.settle("g", ["m1"], 1.0)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.state.data["vision_usage"]["count"], 1)
+
+    async def test_settle_ignores_messages_without_a_remembered_image(self):
+        self.add("m1", "纯文字")
+        await self.service.settle("g", ["m1", None], 1.0)
+        self.assertEqual(self.calls, [])
+
 
 class CaptionContextTest(unittest.IsolatedAsyncioTestCase):
     """读图带群聊上下文（2026-10-20 群主定调）：多模态看图带着对话看才准。"""
