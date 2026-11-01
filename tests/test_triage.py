@@ -248,6 +248,58 @@ class ContextualContinuationTest(_Base):
         self.assertEqual(self.payload()["current_speaker_messages"], [
             {"text": "启动后的新请求"}, {"text": "小王"}])
 
+    async def test_image_claim_excludes_handled_request_but_keeps_a_new_one(self):
+        self.calls.side_effect = lambda text, qs: body_for(qs, image_generation="generate")
+        first = await self.tracker.assess(
+            G, A, "小王画一只猫", named=True, want_image=True, now=100.0)
+        self.assertIsNone(first["image_boundary"])
+        self.assertTrue(self.tracker.claim_image(
+            G, A, message_time=100.0, expected_boundary=first["image_boundary"]))
+        history = [
+            {"sender": A, "text": "小王画一只猫", "message_id": "old", "time": 100.0},
+            {"sender": A, "text": "重画一只蓝色的", "message_id": "new", "time": 101.0},
+        ]
+        second = await self.tracker.assess(
+            G, A, "小王", named=True, want_image=True, history=history, now=102.0)
+        self.assertEqual(second["image_boundary"], 100.0)
+        self.assertTrue(self.payload()["previous_image_request_handled"])
+        self.assertEqual(self.payload()["current_speaker_messages"], [
+            {"text": "重画一只蓝色的"}, {"text": "小王"}])
+        self.assertTrue(self.tracker.claim_image(
+            G, A, message_time=102.0, expected_boundary=second["image_boundary"]))
+
+    async def test_previous_image_fact_is_fresh_and_person_specific(self):
+        self.assertTrue(self.tracker.claim_image(
+            G, A, message_time=100.0, expected_boundary=None))
+        await self.tracker.assess(G, B, "小王", named=True, want_image=True, now=101.0)
+        self.assertFalse(self.payload()["previous_image_request_handled"])
+        await self.tracker.assess(G, A, "小王", named=True, want_image=True, now=221.0)
+        self.assertFalse(self.payload()["previous_image_request_handled"])
+
+    async def test_in_flight_image_claim_is_atomic_and_user_scoped(self):
+        self.calls.side_effect = lambda text, qs: body_for(qs, image_generation="generate")
+        first = await self.tracker.assess(G, A, "画一只猫", named=True,
+                                          want_image=True, now=100.0)
+        second = await self.tracker.assess(G, A, "怎么还没好", named=True,
+                                           want_image=True, now=101.0)
+        self.assertTrue(self.tracker.claim_image(
+            G, A, message_time=100.0, expected_boundary=first["image_boundary"]))
+        # 两次判断都在第一条执行前取到了同一旧边界，后到的不能重复执行。
+        self.assertFalse(self.tracker.claim_image(
+            G, A, message_time=101.0, expected_boundary=second["image_boundary"]))
+        self.assertTrue(self.tracker.claim_image(
+            G, B, message_time=101.0, expected_boundary=None))
+        self.assertTrue(self.tracker.claim_image(
+            "another-group", A, message_time=101.0, expected_boundary=None))
+
+    async def test_image_boundary_cannot_be_rolled_back_by_late_event(self):
+        self.assertTrue(self.tracker.claim_image(
+            G, A, message_time=100.0, expected_boundary=None))
+        self.assertFalse(self.tracker.claim_image(
+            G, A, message_time=99.0, expected_boundary=100.0))
+        self.assertFalse(self.tracker.claim_image(
+            G, A, message_time=float("nan"), expected_boundary=100.0))
+
     async def test_image_pending_messages_do_not_cross_known_reply_when_quiet(self):
         self.tracker.remember(G, A, "已经回答", route="reply", outgoing_id="o1", now=100.0)
         self.tracker._slot(G)["quiet_until"] = 200.0

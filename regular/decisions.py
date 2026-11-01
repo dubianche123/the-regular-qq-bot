@@ -349,6 +349,25 @@ class FeedbackTracker:
             "user": user, "text": text, "route": route,
             "outgoing_id": outgoing_id, "ts": now, "history": human}
 
+    def claim_image(self, group, user, *, message_time, expected_boundary):
+        """为一个画图意图原子划定已处理边界；过时的并发分诊不能再次执行。
+
+        仅保留群内成员的消息时间，不记录文本；明确的新请求仍可由判断选择生成。
+        """
+        if (not group or not user or not isinstance(message_time, (int, float))
+                or isinstance(message_time, bool) or not math.isfinite(message_time)):
+            return False
+        claims = self._slot(group).setdefault("image_claims", {})
+        old = claims.get(user)
+        if old != expected_boundary or (old is not None and message_time <= old):
+            return False
+        claims[user] = float(message_time)
+        # 观察只服务于短窗口；清理其他久未出现的人，避免群成员变动时无限增长。
+        for member, stamp in list(claims.items()):
+            if member != user and message_time - stamp > self.window_seconds:
+                del claims[member]
+        return True
+
     def quiet(self, group, *, now=None):
         """原生反馈判过「收敛一下」之后，插嘴暂停窗内还有没有剩。"""
         if not config.DECISION_ENABLED:
@@ -409,6 +428,7 @@ class FeedbackTracker:
         now = time.time() if now is None else now
         slot = self._groups.get(group) or {}
         last_reply = slot.get("reply")
+        image_boundary = (slot.get("image_claims") or {}).get(user)
         reply = last_reply
         if reply and now - reply["ts"] > self.window_seconds:
             reply = None
@@ -497,7 +517,10 @@ class FeedbackTracker:
             prior = []
             # 回复缓存仅在进程内存在；启动前的持久化消息无法证明是否已答过，
             # 不把它当成待执行的生图请求。普通聊天背景仍可照常使用。
-            boundary = last_reply["ts"] if last_reply else image_history_since
+            boundaries = [value for value in (
+                last_reply["ts"] if last_reply else None,
+                image_history_since, image_boundary) if value is not None]
+            boundary = max(boundaries) if boundaries else None
             for row in history:
                 try:
                     ts = float(row.get("time"))
@@ -512,6 +535,10 @@ class FeedbackTracker:
             payload["current_speaker_messages"] = [
                 {"text": row["text"]} for row in own
             ] + [{"text": current}]
+            # 只表明本人的上一项画图请求已处理过，既不暴露身份，也不声称画成或失败。
+            # 让“再试一次”能结合旧内容解析主题，同时区分普通进度询问。
+            payload["previous_image_request_handled"] = bool(
+                image_boundary is not None and 0 <= now - image_boundary <= self.window_seconds)
         if candidate:
             payload["nickname_candidate"] = candidate
         _with_aliases(payload)
@@ -556,6 +583,8 @@ class FeedbackTracker:
         if (not stale and choices.get("image_generation") == "generate"
                 and image_score.get("margin") is not None):
             result["image_generation"] = "generate"
+            # 给本地执行口做乐观并发检查，不进入提示或发送内容。
+            result["image_boundary"] = image_boundary
             # 复用已经脱敏的分诊输入，只携带紧邻对话，不把群号或本地 ID 送到图像 API。
             image_context = {"recent_human_messages": payload["recent_human_messages"][-2:],
                              "latest_message": payload["latest_message"]}

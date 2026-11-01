@@ -107,6 +107,27 @@ class SearchQuotaRoutingTest(_Base):
 
 
 class ImageQuotaRoutingTest(_Base):
+    async def test_busy_blocked_and_upload_errors_have_distinct_messages(self):
+        for status, text in (("busy", "还在画上一张"),
+                             ("blocked", "没通过图片服务的审核"),
+                             ("upload_error", "没能发到群里")):
+            with self.subTest(status=status), \
+                 patch.object(self.feedback, "assess", AsyncMock(return_value={
+                     "image_generation": "generate", "image_prompt": "cat"})), \
+                 patch.object(bot.image_generation, "generate_and_send", AsyncMock(return_value=status)):
+                # A different sender keeps the claims independent across subtests.
+                msg = await self._drive("画一张", sender="user-" + status, is_at=True)
+            self.assertIn(text, msg.reply.await_args.kwargs["content"])
+
+    async def test_stale_concurrent_decision_does_not_launch_or_report_failure(self):
+        self.feedback.claim_image(self.G, self.A, message_time=1.0, expected_boundary=None)
+        result = {"image_generation": "generate", "image_prompt": "cat", "image_boundary": None}
+        with patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as generate:
+            msg = await self._drive("画一张", is_at=True)
+        generate.assert_not_awaited()
+        msg.reply.assert_not_awaited()
+
     async def test_exhausted_image_quota_gives_human_reply_without_chat_model(self):
         result = {"image_generation": "generate", "image_prompt": "cat"}
         with patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \

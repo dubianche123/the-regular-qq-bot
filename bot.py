@@ -2390,6 +2390,12 @@ class GroupBot(botpy.Client):
         if (not lookup and not is_random and not quip and not back_off
                 and feedback_result.get("image_generation") == "generate"):
             # 分诊与普通回复门都放行后才花图像额度；不同于搜索，图像本身就是回复。
+            # 同人更早的一次判断若已被受理，丢弃过时的并发判断，不能重复发图。
+            if not runtime.FEEDBACK.claim_image(
+                    group_id, sender_openid, message_time=receipt_time,
+                    expected_boundary=feedback_result.get("image_boundary")):
+                logger.info("跳过已过时的生图判断")
+                return
             ready = asyncio.Event()
             proceed = asyncio.Event()
             image_reservation = []
@@ -2436,6 +2442,15 @@ class GroupBot(botpy.Client):
                 return
             if sent == "quota":
                 await safe_reply(message, "今天画得有点累啦，明天再帮你画吧。")
+                return
+            if sent == "busy":
+                await safe_reply(message, "我还在画上一张，等我画完你再叫我画这张吧。")
+                return
+            if sent == "blocked":
+                await safe_reply(message, "这张没通过图片服务的审核，换个想法再试试吧。")
+                return
+            if sent == "upload_error":
+                await safe_reply(message, "图画出来了，但这次没能发到群里。")
                 return
             # 无论是否说过「稍等」，都不依赖聊天预算来说明失败。
             await safe_reply(message, "这次没画成，等会儿再试试。")

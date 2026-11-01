@@ -3,6 +3,9 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
+from openai import BadRequestError
+
 import image_generation as image
 from storage import DailyBudget
 from regular.resource_quota import ResourceQuotas
@@ -51,20 +54,20 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
 
     async def test_failures_consume_once_but_do_not_send(self):
         self.generate.side_effect = asyncio.TimeoutError()
-        self.assertIs(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"), False)
+        self.assertEqual(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"), "generation_error")
         self.assertEqual(self.budget.used, 1)
         self.upload.assert_not_awaited()
         self.message.reply.assert_not_awaited()
 
     async def test_upload_failure_is_definitely_not_sent(self):
         self.upload.side_effect = OSError()
-        self.assertIs(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"), False)
+        self.assertEqual(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"), "upload_error")
         self.message.reply.assert_not_awaited()
 
     async def test_sequence_callback_failure_is_definitely_not_sent(self):
         next_seq = AsyncMock(side_effect=ValueError())
-        self.assertIs(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat",
-                                                    before_send=next_seq), False)
+        self.assertEqual(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat",
+                                                       before_send=next_seq), "upload_error")
         self.message.reply.assert_not_awaited()
 
     async def test_unconfirmed_send_must_not_trigger_fallback(self):
@@ -92,10 +95,48 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
         self.generate.side_effect = pending
         first = asyncio.create_task(image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"))
         await started.wait()
-        self.assertIs(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="dog"), False)
+        self.assertEqual(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="dog"), "busy")
         finish.set()
         self.assertIs(await first, True)
         self.assertEqual(self.budget.used, 1)
+
+    async def test_moderation_and_invalid_request_are_distinct_without_logging_private_text(self):
+        response = httpx.Response(400, request=httpx.Request("POST", "https://example.invalid"))
+        for code, expected in (("moderation_blocked", "blocked"),
+                               ("invalid_value", "generation_error")):
+            self.generate.side_effect = BadRequestError(
+                "sensitive prompt secret", response=response,
+                body={"code": code, "message": "sensitive prompt secret"})
+            with self.assertLogs("qqbot", level="WARNING") as captured:
+                result = await image.generate_and_send(
+                    self.message, group_id="g", user_id="u", score=0, prompt="secret")
+            self.assertEqual(result, expected)
+            self.assertIn("status=400", captured.output[0])
+            self.assertIn(f"code={code}", captured.output[0])
+            self.assertNotIn("secret", captured.output[0])
+        self.upload.assert_not_awaited()
+
+    async def test_unrecognized_provider_code_is_not_logged(self):
+        response = httpx.Response(400, request=httpx.Request("POST", "https://example.invalid"))
+        self.generate.side_effect = BadRequestError(
+            "sensitive prompt", response=response,
+            body={"code": "secret_as_untrusted_code", "message": "sensitive prompt"})
+        with self.assertLogs("qqbot", level="WARNING") as captured:
+            result = await image.generate_and_send(
+                self.message, group_id="g", user_id="u", score=0, prompt="secret")
+        self.assertEqual(result, "generation_error")
+        self.assertIn("code=other", captured.output[0])
+        self.assertNotIn("secret", captured.output[0])
+
+    async def test_upload_response_requires_file_info_and_only_sends_that_field(self):
+        self.upload.return_value = {"file_info": "qq-file", "file_uuid": "opaque", "ttl": 60}
+        self.assertIs(await image.generate_and_send(
+            self.message, group_id="g", user_id="u", score=0, prompt="cat"), True)
+        self.assertEqual(self.message.reply.await_args.kwargs["media"], {"file_info": "qq-file"})
+        self.upload.return_value = {"file_uuid": "opaque"}
+        self.assertEqual(await image.generate_and_send(
+            self.message, group_id="g", user_id="u", score=0, prompt="cat"), "upload_error")
+        self.assertEqual(self.message.reply.await_count, 1)
 
     async def test_failed_reservation_persistence_never_sends_request(self):
         self.state.save_now.side_effect = OSError()

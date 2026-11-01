@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from botpy.http import Route
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 import config
 import delivery
@@ -14,6 +14,25 @@ from regular import decision_settings
 
 logger = logging.getLogger("qqbot")
 _lock = asyncio.Lock()
+
+# API 响应里的自由文本可能包含群聊内容；只允许已知的机器错误码进入日志。
+_SAFE_ERROR_CODES = frozenset({
+    "moderation_blocked", "content_policy_violation", "invalid_value",
+    "invalid_image_size", "invalid_prompt", "unsupported_value",
+    "model_not_found", "billing_hard_limit_reached",
+})
+_BLOCKED_CODES = frozenset({"moderation_blocked", "content_policy_violation"})
+
+
+def _log_generation_error(exc):
+    code = getattr(exc, "code", None)
+    code = code if isinstance(code, str) and code in _SAFE_ERROR_CODES else "other"
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int) or isinstance(status, bool) or not 400 <= status <= 599:
+        status = None
+    logger.warning("生图请求失败: type=%s status=%s code=%s",
+                   type(exc).__name__, status, code)
+    return code
 
 
 def _key():
@@ -64,12 +83,17 @@ async def _generate(prompt, key):
 
 async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_seq=1,
                             before_send=None, on_reserved=None):
-    """True=确认送达，False=确定未发送，None=发送结果未知；额度用完返回 quota。
+    """True=确认送达，None=发送结果未知；False=本地不可用。
+
+    quota=额度用完、busy=正在画、blocked=模型拒绝、generation_error=生成失败、
+    upload_error=QQ 上传失败。所有非 True/None 的情况均确定没有发出图片。
 
     只把图片内容交给 QQ 的 file_data 接口，不存盘、不记录生成提示或图片内容。
     """
-    if not prompt or not available() or _lock.locked() or _expired(message):
+    if not prompt or not available() or _expired(message):
         return False
+    if _lock.locked():
+        return "busy"
     async with _lock:
         # 日额在请求前预约并立即落盘，失败/超时也计入；落盘失败时不发请求。
         state = runtime.RESOURCE_QUOTAS.check("image", group_id, user_id, score)
@@ -86,22 +110,31 @@ async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_se
         try:
             image_data = await asyncio.wait_for(
                 _generate(prompt, _key()), timeout=config.IMAGE_GENERATION_TIMEOUT_SECONDS)
-            if not image_data or _expired(message):
-                return False
+        except BadRequestError as exc:
+            code = _log_generation_error(exc)
+            return "blocked" if code in _BLOCKED_CODES else "generation_error"
+        except Exception as exc:
+            _log_generation_error(exc)
+            return "generation_error"
+        if not image_data or _expired(message):
+            return "generation_error"
+        try:
             # botpy 尚未封装 file_data；与其 post_group_file 使用同一 QQ 路由。
             route = Route("POST", "/v2/groups/{group_openid}/files", group_openid=group_id)
             media = await asyncio.wait_for(message._api._http.request(route, json={
                 "file_type": 1, "file_data": image_data, "srv_send_msg": False,
             }), timeout=30)
-            if not media or _expired(message):
-                return False
+            file_info = media.get("file_info") if isinstance(media, dict) else None
+            if not isinstance(file_info, str) or not file_info or _expired(message):
+                return "upload_error"
+            media = {"file_info": file_info}
             if before_send is not None:
                 msg_seq = await before_send()
             if _expired(message):
-                return False
+                return "upload_error"
         except Exception as exc:
-            logger.warning("生图或上传失败: %s", type(exc).__name__)
-            return False
+            logger.warning("图片上传或发送准备失败: type=%s", type(exc).__name__)
+            return "upload_error"
         # 发出请求后，异常或空回执不能证明未送达，不能自动发其他回复。
         try:
             receipt = await asyncio.wait_for(
