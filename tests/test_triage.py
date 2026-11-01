@@ -146,6 +146,198 @@ class OneBadAnswerTest(_Base):
         self.assertIsNone(decisions.parse_each(body, qs)["y"])
 
 
+class ContextualContinuationTest(_Base):
+    async def test_recent_messages_after_bot_reply_keep_speakers_and_chronology(self):
+        before = [{"sender": B, "text": "上一个话题", "message_id": "old", "time": 99.0}]
+        self.tracker.remember(G, B, "上一句回复", route="reply",
+                              outgoing_id="o1", history=before, now=100.0)
+        history = before + [
+            {"sender": A, "text": f"请讲讲星星 {A}", "message_id": "part", "time": 101.0},
+            {"sender": B, "text": "另一位群友的话", "message_id": "other", "time": 102.0},
+            {"sender": A, "text": "小王", "message_id": "current", "time": 103.0},
+            {"sender": A, "text": "未来消息", "message_id": "future", "time": 104.0},
+        ]
+        await self.tracker.assess(G, A, "小王", named=True, history=history,
+                                  message_id="current", now=103.0)
+        payload = self.payload()
+        self.assertEqual([r["text"] for r in payload["recent_human_messages"]], ["上一个话题"])
+        self.assertEqual(payload["bot_reply"]["text"], "上一句回复")
+        after = payload["messages_after_bot_reply"]
+        self.assertEqual(len(after), 2)
+        self.assertIn("请讲讲星星", after[0]["text"])
+        self.assertEqual(after[1]["text"], "另一位群友的话")
+        self.assertEqual(after[0]["speaker"], payload["latest_message"]["speaker"])
+        self.assertNotEqual(after[1]["speaker"], payload["latest_message"]["speaker"])
+        for secret in (G, A, B, "current", "future", "part", "other"):
+            self.assertNotIn(secret, self.calls.await_args.args[0])
+
+    async def test_post_reply_context_is_bounded_fresh_and_filters_sensitive_text(self):
+        self.tracker.remember(G, B, "上一句", route="reply", outgoing_id="o1", now=100.0)
+        history = [{"sender": A, "text": f"第 {i} 句", "message_id": str(i), "time": 101.0 + i}
+                   for i in range(6)]
+        history += [{"sender": A, "text": "不可外发", "message_id": "secret", "time": 108.0}]
+        with patch.object(wordfilter, "has_hit", side_effect=lambda t: "不可外发" in (t or "")):
+            await self.tracker.assess(G, A, "小王", named=True, history=history, now=110.0)
+        after = self.payload()["messages_after_bot_reply"]
+        self.assertLessEqual(len(after), 4)
+        self.assertNotIn("不可外发", str(after))
+        self.assertNotIn("第 0 句", str(after))
+
+        # bot 回复过期后不提供该历史字段，也不能将未来输入误当作已有消息。
+        await self.tracker.assess(G, A, "小王", named=True,
+                                  history=[{"sender": A, "text": "未来", "time": 222.0}], now=221.0)
+        self.assertNotIn("messages_after_bot_reply", self.payload())
+
+    async def test_generated_image_prompt_includes_recent_request_after_reply(self):
+        self.tracker.remember(G, B, "上一句", route="reply", outgoing_id="o1", now=100.0)
+        self.calls.side_effect = lambda text, qs: body_for(qs, image_generation="generate")
+        result = await self.tracker.assess(
+            G, A, "小王", named=True, want_image=True, message_id="current", now=103.0,
+            history=[{"sender": A, "text": "给我画只猫", "message_id": "part", "time": 101.0}])
+        self.assertIn("给我画只猫", result["image_prompt"])
+        self.assertNotIn(A, result["image_prompt"])
+
+    async def test_image_sees_only_current_speakers_pending_messages_after_bot_reply(self):
+        self.tracker.remember(G, B, "之前的回答", route="reply", outgoing_id="o1", now=100.0)
+        self.calls.side_effect = lambda text, qs: body_for(qs, image_generation="generate")
+        history = [
+            {"sender": A, "text": "已答复的旧请求", "message_id": "old", "time": 99.0},
+            {"sender": A, "text": f"画一幅风景 {A}", "message_id": "own", "time": 101.0},
+            {"sender": B, "text": "别人的请求", "message_id": "other", "time": 102.0},
+            {"sender": A, "text": "当前消息", "message_id": "current", "time": 103.0},
+            {"sender": A, "text": "未来消息", "message_id": "future", "time": 104.0},
+        ]
+        result = await self.tracker.assess(G, A, "小王", named=True, want_image=True,
+                                           history=history, message_id="current", now=103.0)
+        messages = self.payload()["current_speaker_messages"]
+        self.assertEqual(len(messages), 2)
+        self.assertIn("画一幅风景", messages[0]["text"])
+        self.assertEqual(messages[-1], {"text": "小王"})
+        self.assertNotIn(A, str(messages))
+        self.assertIn("画一幅风景", result["image_prompt"])
+        self.assertNotIn("别人的请求", str(messages))
+        self.assertNotIn("已答复的旧请求", str(messages))
+        self.assertNotIn("未来消息", str(messages))
+
+    async def test_image_pending_messages_without_bot_reply_respect_window_and_identity(self):
+        history = [
+            {"sender": A, "text": "已过期", "message_id": "old", "time": 1.0},
+            {"sender": B, "text": "别人说的话", "message_id": "other", "time": 102.0},
+            {"sender": A, "text": "本人前一句", "message_id": "own", "time": 103.0},
+        ]
+        await self.tracker.assess(G, A, "小王", named=True, want_image=True,
+                                  history=history, message_id="current", now=125.0)
+        self.assertEqual(self.payload()["current_speaker_messages"], [
+            {"text": "本人前一句"}, {"text": "小王"}])
+
+    async def test_image_pending_messages_do_not_send_sensitive_text(self):
+        history = [{"sender": A, "text": "不可外发", "time": 101.0}]
+        with patch.object(wordfilter, "has_hit", side_effect=lambda text: "不可外发" in text):
+            await self.tracker.assess(G, A, "小王", named=True, want_image=True,
+                                      history=history, now=103.0)
+        self.assertEqual(self.payload()["current_speaker_messages"], [{"text": "小王"}])
+        self.assertNotIn("不可外发", self.calls.await_args.args[0])
+
+    async def test_image_pending_messages_exclude_pre_restart_history_without_receipt(self):
+        history = [
+            {"sender": A, "text": "重启前可能已答的请求", "time": 101.0},
+            {"sender": A, "text": "启动后的新请求", "time": 103.0},
+        ]
+        await self.tracker.assess(G, A, "小王", named=True, want_image=True,
+                                  history=history, image_history_since=102.0, now=105.0)
+        self.assertEqual(self.payload()["current_speaker_messages"], [
+            {"text": "启动后的新请求"}, {"text": "小王"}])
+
+    async def test_image_pending_messages_do_not_cross_known_reply_when_quiet(self):
+        self.tracker.remember(G, A, "已经回答", route="reply", outgoing_id="o1", now=100.0)
+        self.tracker._slot(G)["quiet_until"] = 200.0
+        history = [
+            {"sender": A, "text": "已回答的请求", "time": 99.0},
+            {"sender": A, "text": "新的请求", "time": 101.0},
+        ]
+        await self.tracker.assess(G, A, "小王", named=True, want_image=True,
+                                  history=history, now=105.0)
+        self.assertNotIn("bot_reply", self.payload())
+        self.assertEqual(self.payload()["current_speaker_messages"], [
+            {"text": "新的请求"}, {"text": "小王"}])
+
+    async def test_named_supplement_retains_previous_bot_reply_and_directed_fact(self):
+        self.tracker.remember(G, A, "我不确定是什么", route="reply",
+                              outgoing_id="o1", history=HIST, now=0.0)
+        self.calls.side_effect = lambda text, qs: body_for(
+            qs, addressed="answer", feedback_target="bot_response",
+            continuation="reply_now", next_move="continue_normally")
+        # 正文已经被调用方剥掉小王；named 仍保留原始叫名事实。
+        result = await self.tracker.assess(G, B, "这个好像是另一种", named=True, now=5.0)
+        self.assertTrue(self.payload()["latest_is_directed"])
+        self.assertEqual(self.payload()["latest_message"]["text"], "这个好像是另一种")
+        self.assertEqual(self.payload()["bot_reply"]["text"], "我不确定是什么")
+        self.assertEqual(result["addressed"], "answer")
+        self.assertEqual(result["target"], "bot_response")
+        self.assertEqual(result["continuation"], "reply_now")
+        self.assertEqual(self.calls.await_count, 1)
+
+    async def test_unnamed_correction_uses_feedback_and_continuation(self):
+        self.tracker.remember(G, A, "这题结果应该是十", route="reply",
+                              outgoing_id="o1", history=HIST, now=0.0)
+        self.calls.side_effect = lambda text, qs: body_for(
+            qs, feedback_target="bot_response", continuation="reply_now",
+            next_move="repair_briefly")
+        result = await self.tracker.assess(G, B, "少算了两项", now=5.0)
+        self.assertFalse(self.payload()["latest_is_directed"])
+        self.assertNotIn("addressed", self.asked())
+        self.assertEqual(result["target"], "bot_response")
+        self.assertEqual(result["continuation"], "reply_now")
+        self.assertEqual(result["action"], "repair_briefly")
+        self.assertEqual(self.calls.await_count, 1)
+
+    async def test_named_answer_with_uncertain_target_receives_sanitized_reply(self):
+        self.tracker.remember(G, A, f"我不太确定 {G} {A}", route="reply",
+                              outgoing_id="o1", history=HIST, now=0.0)
+        def response(text, questions):
+            body = body_for(questions, addressed="answer")
+            for answer in body["answers"]:
+                if answer["name"] == "feedback_target":
+                    answer["type"] = "refusal"
+            return body
+        self.calls.side_effect = response
+        result = await self.tracker.assess(G, B, "也许是另一种", named=True, now=5.0)
+        self.assertIsNone(result["target"])
+        self.assertEqual(result["addressed"], "answer")
+        self.assertEqual(result["bot_reply_to"], "another_member")
+        self.assertIn("我不太确定", result["bot_reply_text"])
+        self.assertNotIn(G, result["bot_reply_text"])
+        self.assertNotIn(A, result["bot_reply_text"])
+
+    async def test_other_person_and_unrelated_remark_do_not_attach_bot_reply(self):
+        self.tracker.remember(G, A, "我不太确定", route="reply",
+                              outgoing_id="o1", history=HIST, now=0.0)
+        for target, addressed in (("another_person", "answer"),
+                                  ("not_feedback", "let_it_pass")):
+            with self.subTest(target=target, addressed=addressed):
+                self.calls.side_effect = lambda text, qs: body_for(
+                    qs, feedback_target=target, addressed=addressed)
+                result = await self.tracker.assess(G, B, "群里那边怎样了", named=True, now=5.0)
+                self.assertNotIn("bot_reply_text", result)
+
+    async def test_expired_and_replaced_reply_are_not_attached(self):
+        self.tracker.remember(G, A, "过期的回复", route="reply",
+                              outgoing_id="o1", history=HIST, now=0.0)
+        self.calls.side_effect = lambda text, qs: body_for(qs, addressed="answer")
+        result = await self.tracker.assess(G, B, "也许是另一种", named=True, now=121.0)
+        self.assertNotIn("bot_reply_text", result)
+        self.tracker.remember(G, A, "原来的回复", route="reply",
+                              outgoing_id="o2", history=HIST, now=122.0)
+        async def replacement(text, questions):
+            self.tracker.remember(G, A, "更新的回复", route="reply",
+                                  outgoing_id="o3", history=HIST, now=123.0)
+            return body_for(questions, addressed="answer", feedback_target="unclear")
+        self.calls.side_effect = replacement
+        result = await self.tracker.assess(G, B, "也许是另一种", named=True, now=123.0)
+        self.assertNotIn("bot_reply_text", result)
+        self.assertEqual(result["intervention"], "stay_quiet")
+
+
 class PlayfulRequestTest(_Base):
     @staticmethod
     def _answer(probabilities, choice="playful"):

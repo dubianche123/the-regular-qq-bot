@@ -133,6 +133,18 @@ class AssessFlowTest(_Base):
         self.calls.reset_mock()
         self.model_calls.clear()
 
+    async def test_named_reply_gets_cross_person_context_when_feedback_is_uncertain(self):
+        result = {"addressed": "answer", "target": None,
+                  "bot_reply_text": "具体是谁我看不出来",
+                  "bot_reply_to": "another_member"}
+        with patch.object(config, "BOT_NAMES", ["小王"]), \
+             patch.object(self.feedback, "assess", AsyncMock(return_value=result)):
+            await self._drive("小王 这个可能是老张", is_at=False)
+        messages = self.model_calls[-1]
+        self.assertIn("具体是谁我看不出来", messages[-1]["content"])
+        self.assertIn("不要假定两者一定有关", messages[-1]["content"])
+        self.assertNotIn("具体是谁我看不出来", messages[0]["content"])
+
     async def test_back_off_pauses_unsolicited_but_direct_still_answers(self):
         await self._seed_reply()
         self.calls.return_value = _body(next_move="back_off",

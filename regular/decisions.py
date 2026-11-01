@@ -380,7 +380,7 @@ class FeedbackTracker:
     async def assess(self, group, user, text, *, message_id="", is_direct=False,
                      named=False, history=None, nick_candidate=None,
                      want_recall=False, want_lookup=False, want_image=False,
-                     every_message=False, now=None):
+                     every_message=False, image_history_since=None, now=None):
         """一条人类消息的**分诊**：本机先决定要问哪几题，然后最多一次原生调用。
 
         为什么是一次调用带一串题（2026-10-31）：这个接口按输入计费、输出不要钱，
@@ -408,7 +408,8 @@ class FeedbackTracker:
             return {}
         now = time.time() if now is None else now
         slot = self._groups.get(group) or {}
-        reply = slot.get("reply")
+        last_reply = slot.get("reply")
+        reply = last_reply
         if reply and now - reply["ts"] > self.window_seconds:
             reply = None
         calls_bot = bool(is_direct or named)
@@ -436,9 +437,24 @@ class FeedbackTracker:
         # 与现有分诊合并，不另开一轮判断。
         if want_image and (calls_bot or reply):
             questions += decision_prompts.image_questions()
-        known = self._known_ids(group, reply,
-                                (list(reply["history"]) if reply else list(history or [])),
-                                (user, message_id))
+        # 对已有 bot 回复，原历史是该回复的证据；但群友可能在它之后、当前句之前
+        # 连发了几条。调用方提供的是接收当前消息时的快照，按时间再排除旧句和未来句。
+        # 前后两段分开，避免把“回复之后的发言”错放在 bot 回复之前。
+        history = [row for row in (history or ()) if isinstance(row, dict)]
+        after_reply = []
+        if reply:
+            for row in history:
+                try:
+                    ts = float(row.get("time"))
+                except (TypeError, ValueError):
+                    continue
+                if (math.isfinite(ts) and reply["ts"] < ts < now
+                        and now - ts <= self.window_seconds
+                        and (not message_id or row.get("message_id") != message_id)):
+                    after_reply.append(row)
+            after_reply = after_reply[-4:]
+        rows_source = list(reply["history"]) if reply else history
+        known = self._known_ids(group, reply, rows_source + after_reply, (user, message_id))
         # 候选命中本地词表：底线已经拦了，不必再问，也不把它送出去。
         candidate = _sanitize(nick_candidate, known) if nick_candidate else ""
         if candidate:
@@ -447,12 +463,8 @@ class FeedbackTracker:
             return {}
         questions += decision_prompts.intervention_questions()
 
-        # 有窗口内的回复时，语境用**登记回复时**那几条 —— 反馈判断就是在这份
-        # payload 上实测调过的（见 bot_aliases 的说明），分诊不改它；
-        # 没有回复时才用调用方给的当前背景。
-        rows_source = (list(reply["history"]) if reply
-                       else list(history or []))
-        senders = ([row.get("sender") for row in rows_source if isinstance(row, dict)]
+        # 保留登记回复时的历史，另附 bot 回复后的消息，匿名代号在两段中一致。
+        senders = ([row.get("sender") for row in rows_source + after_reply if isinstance(row, dict)]
                    + ([reply["user"]] if reply else []) + [user])
         aliases = _alias_map(senders)
         current = _sanitize(text, known)
@@ -477,6 +489,29 @@ class FeedbackTracker:
                 "reply_to": (aliases.get(reply["user"], "member")
                              if reply["user"] else "group"),
                 "text": bot_text}
+            if after_reply:
+                payload["messages_after_bot_reply"] = self._input_rows(after_reply, aliases, known)
+        if want_image and (calls_bot or reply):
+            # 显示当前说话人的近期原话，不把这些句子拼成指令，也不在代码里裁决意图。
+            # 已知上一次 bot 回复时，只考虑它之后的消息，即使该回复已过反馈窗口。
+            prior = []
+            # 回复缓存仅在进程内存在；启动前的持久化消息无法证明是否已答过，
+            # 不把它当成待执行的生图请求。普通聊天背景仍可照常使用。
+            boundary = last_reply["ts"] if last_reply else image_history_since
+            for row in history:
+                try:
+                    ts = float(row.get("time"))
+                except (TypeError, ValueError):
+                    continue
+                if (user and row.get("sender") == user and math.isfinite(ts)
+                        and 0 < now - ts <= self.window_seconds
+                        and (boundary is None or ts > boundary)
+                        and (not message_id or row.get("message_id") != message_id)):
+                    prior.append(row)
+            own = self._input_rows(prior[-4:], aliases, known)
+            payload["current_speaker_messages"] = [
+                {"text": row["text"]} for row in own
+            ] + [{"text": current}]
         if candidate:
             payload["nickname_candidate"] = candidate
         _with_aliases(payload)
@@ -526,8 +561,13 @@ class FeedbackTracker:
                              "latest_message": payload["latest_message"]}
             if payload.get("bot_reply"):
                 image_context["bot_reply"] = payload["bot_reply"]
+            if payload.get("messages_after_bot_reply"):
+                image_context["messages_after_bot_reply"] = payload["messages_after_bot_reply"]
+            if payload.get("current_speaker_messages"):
+                image_context["current_speaker_messages"] = payload["current_speaker_messages"]
             result["image_prompt"] = (
-                "根据最后一条群友请求创建一张图片；其他对话仅用来理解请求的语境，"
+                "根据当前群友的画图请求创建一张图片；同一人可能分多条消息说完，"
+                "结合 speaker 和对话顺序理解请求，不要把其他群友的话误当作他的要求。"
                 "不要把对话、JSON 或这些说明画进图片。\n"
                 + json.dumps(image_context, ensure_ascii=False))
         if stale:
@@ -560,9 +600,12 @@ class FeedbackTracker:
         result.update(target=target, suggested_move=choices.get("next_move"),
                       action=action, continuation=continuation,
                       intervention=intervention, back_off=action == "back_off")
-        # 跨人场景：有效反馈时把「上一条真正发出去的话」作为代码侧语境交回 ——
-        # 这是本地缓存的原文（已脱敏），不是模型复述。
-        if target == "bot_response":
+        # 点名接话时，分诊已看到最近一条回复；即使反馈题拿不准，也将原句作为
+        # 中性语境交回，否则跨人续谈时当前说话人的 session 根本看不到它。
+        # 明确是针对另一人的反馈时不借用；这不改变反馈判定或新增回复资格。
+        if (target == "bot_response" or
+                (named and choices.get("addressed") == "answer"
+                 and target in (None, "unclear", "not_feedback"))):
             if reply["user"] is None:
                 reply_to = "group"
             elif reply["user"] == user:

@@ -242,11 +242,12 @@ class PromptCallbackAndAttributionTest(unittest.TestCase):
         self.assertIn("别点名", rule)
 
     def test_context_hint_header_pins_the_speaker_boundary(self):
-        """背景材料的引导语必须说清「主语不是眼前这位」—— 只靠共享规则不够，
+        """背景材料的引导语必须按实际发言人区分当前人和他人——只靠共享规则不够，
         因为模型最容易犯浑的位置就是读背景那一刻。"""
         import inspect
         src = inspect.getsource(bot)
-        self.assertIn("不是眼前这位说的", src)
+        self.assertIn("当前说话人", src)
+        self.assertIn("其他群友", src)
         self.assertIn("拿不准是谁就别点名", src)
         # 完整的读法说明进了稳定头（不变的内容放进可缓存的前缀，2026-11-01）
         self.assertIn("[图片：…]", prompts.PROMPT_SHARED_RULES)

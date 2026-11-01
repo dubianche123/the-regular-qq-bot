@@ -208,7 +208,7 @@ from affinity import (affinity_budget, apply_affinity_delta_capped,
 # 背景前言：每条背景都挂的一行提醒。完整的读法说明（别张冠李戴、别复读、[图片：…] 行
 # 照着说）每轮都一样，2026-11-01 挪进了稳定头（prompts.PROMPT_SHARED_RULES）吃前缀缓存；
 # 这里只留最要紧的一句，挨着背景本身 —— 模型最容易犯浑的位置就是读背景那一刻。
-_BG_PREAMBLE = "（每句开头标的是发言人，这些话都不是眼前这位说的；拿不准是谁就别点名）"
+_BG_PREAMBLE = "（每句开头标的是发言人；‘当前说话人’与眼前这位是同一人，其余是其他群友；拿不准是谁就别点名）"
 
 
 from nicking import (extract_mentions, mention_nicks_from_content, mention_nick_from_content,
@@ -228,6 +228,7 @@ for gid, items in (runtime.STATE.data.get("buffers") or {}).items():
 
 group_last_random_reply = dict(runtime.STATE.data.get("cooldowns") or {})
 processed_msg_ids = collections.deque(maxlen=config.DEDUP_MAX)
+_PROCESS_STARTED_AT = time.time()
 
 
 def _who_label(group_id, oid):
@@ -1422,11 +1423,15 @@ slowwork.register(slowwork.Job("research", _start_research, providers.poll_resea
                                poll_every=15.0, give_up_after=1800.0, wait_first=False))
 
 
-def _lookup_query(user_input, buf, message_id=None):
+def _lookup_query(user_input, buf, message_id=None, *, sender_openid=None):
     """送去查的那段话：问题本身，前面带两三句群聊当语境。不带任何 ID，命中本地词表的句子不出本机。"""
-    lines = [row.get("text") or "" for row in list(buf or [])
-             if row.get("message_id") != message_id][-3:]
-    lines = [text[:120] for text in lines if text and not wordfilter.has_hit(text)]
+    rows = [row for row in list(buf or []) if row.get("message_id") != message_id][-3:]
+    lines = []
+    for row in rows:
+        text = row.get("text") or ""
+        if text and not wordfilter.has_hit(text):
+            who = "当前说话人" if sender_openid and row.get("sender") == sender_openid else "其他群友"
+            lines.append(f"{who}：{text[:120]}")
     context = "群聊前几句：\n" + "\n".join(f"- {t}" for t in lines) + "\n\n" if lines else ""
     return f"{context}现在有人问群里的机器人：{user_input}"
 
@@ -1946,6 +1951,12 @@ class GroupBot(botpy.Client):
                 or buf[-1]["text"] != user_input):
             buf.append({"sender": sender_openid, "text": user_input, "time": time.time(), "message_id": message.id})
             runtime.STATE.data["buffers"][group_id] = list(buf)
+        # 记录消息到达时已存在的近期上下文，后续异步处理不把更晚消息倒插到这轮。
+        receipt_time = time.time()
+        history_at_receipt = [row for row in buf
+                              if row.get("message_id") != message.id
+                              and 0 <= receipt_time - float(row.get("time") or 0)
+                              <= config.GROUP_BUFFER_TTL_SECONDS]
         media.remember(group_id, message.id, sender_openid, image_url)
 
         # 节奏先验在这里算**一次**，对每条进背景缓存的消息都算（见 opening.py）。
@@ -1968,15 +1979,16 @@ class GroupBot(botpy.Client):
             if "result" not in triage_box:
                 try:
                     triage_box["result"] = await runtime.FEEDBACK.assess(
-                        group_id, sender_openid, user_input,
+                        group_id, sender_openid,
+                        user_input or (f"@{naming.bot_name()}" if at_bot else ""),
                         message_id=message.id, is_direct=bool(at_bot), named=named,
-                        history=[row for row in buf
-                                 if row.get("message_id") != message.id][-4:],
+                        history=history_at_receipt[-4:],
                         nick_candidate=nick_candidate,
                         want_recall=config.MEMORY_RECALL_ENABLED,
                         want_lookup=(config.SEARCH_ENABLED
                                      and providers.research_available()),
                         want_image=config.IMAGE_GENERATION_ENABLED,
+                        image_history_since=_PROCESS_STARTED_AT,
                         every_message=config.DECISION_TRIAGE_ALL)
                 except Exception:
                     logger.exception("⚠️ 分诊异常（%s）", group_id[-6:])
@@ -2094,18 +2106,18 @@ class GroupBot(botpy.Client):
                 feedback_note = prompts.PROMPT_FEEDBACK_BACK_OFF
             elif feedback_result.get("action") == "repair_briefly":
                 feedback_note = prompts.PROMPT_FEEDBACK_REPAIR
-            # 跨人反馈语境：B 纠正/追问原本发给 A 的那条时，B 的会话里
-            # 并没有那句话 —— 代码把本地缓存的真实原文带进去（仅本轮语境）。
-            bot_text = feedback_result.get("bot_reply_text")
-            if bot_text:
-                reply_context = prompts.PROMPT_PREVIOUS_BOT_REPLY.format(
-                    recipient={
-                        "current_member": "由本轮说话人触发的接话",
-                        "another_member": "由另一位群友触发的接话",
-                        "group": "群内主动发言",
-                    }.get(feedback_result.get("bot_reply_to"),
-                          "由另一位群友触发的接话"),
-                    quoted_text=json.dumps(bot_text, ensure_ascii=False))
+        # 跨人续谈：判断看到的上一句可能不在本人的 session；只把实际送达的
+        # 原句作为本轮参考，不把反馈题的弃答改写成反馈或赋予新的回复资格。
+        bot_text = feedback_result.get("bot_reply_text")
+        if bot_text:
+            reply_context = prompts.PROMPT_PREVIOUS_BOT_REPLY.format(
+                recipient={
+                    "current_member": "由本轮说话人触发的接话",
+                    "another_member": "由另一位群友触发的接话",
+                    "group": "群内主动发言",
+                }.get(feedback_result.get("bot_reply_to"),
+                      "由另一位群友触发的接话"),
+                quoted_text=json.dumps(bot_text, ensure_ascii=False))
 
         should_reply = False
         is_random = False
@@ -2360,7 +2372,9 @@ class GroupBot(botpy.Client):
             if kind in ("search", "research") and status in ("normal", "exception", "extra"):
                 if status == "exception":
                     resource_note = "【本轮状态】今天的基础查询次数已用完，这次实际用了额外次数。可以自然地说这次破例帮他查，不要声称以后无限破例。"
-                lookup = (kind, _lookup_query(user_input, buf, message.id))
+                lookup = (kind, _lookup_query(
+                    user_input or (f"@{naming.bot_name()}" if at_bot else ""),
+                    history_at_receipt, message.id, sender_openid=sender_openid))
 
         if not should_reply:
             if image_url:
@@ -2370,7 +2384,7 @@ class GroupBot(botpy.Client):
                 task.add_done_callback(_media_tasks.discard)
             return
 
-        if is_at and not user_input and not image_url:
+        if is_at and not user_input and not image_url and not history_at_receipt:
             await safe_reply(message, f"找{naming.bot_name()}啥事？直接说就行。")
             return
         if (not lookup and not is_random and not quip and not back_off
@@ -2445,19 +2459,19 @@ class GroupBot(botpy.Client):
         context_hint = ""
         state_note = ""
         buf = group_buffers.get(group_id)
-        if buf and len(buf) > 1:
+        if history_at_receipt:
             # ⚠️ 必须按时间过滤（2026-10-06 实测）：buffer 是落盘的、跨重启保留，
             # 机器睡了 12 天再醒来的第一条消息，配到的还是 12 天前的对话 ——
             # 那不叫「最近背景」，叫考古。
             now_ts = time.time()
-            fresh = [b for b in buf if now_ts - float(b.get("time") or 0)
+            fresh = [b for b in history_at_receipt if 0 <= now_ts - float(b.get("time") or 0)
                      <= config.GROUP_BUFFER_TTL_SECONDS]
             # 关注度（2026-10-19）：亲密度决定背景条数——越熟的人它记得越多，
             # 生人没必要也没资格让它看到太多背景。条数表见 activation.context_turns。
             _rec = runtime.RELATIONS.get(group_id, sender_openid, create=False)
             _tier = relations.level_key((_rec or {}).get("score", 0))
             _willingness, _turns, state_note = activation.profile(_tier)
-            prev = [b for b in fresh[:-1] if b["text"] != user_input][-_turns:]
+            prev = [b for b in fresh if b["text"] != user_input][-_turns:]
             if prev:
                 # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被
                 # 冷却挡掉没读。不然模型只看见裸 [图片]，答「没看到图」——2026-11-01
@@ -2469,11 +2483,11 @@ class GroupBot(botpy.Client):
                 # （_who_label 已提为模块级：读图上下文共用，两处渲染不许漂移）
                 context_hint = refresh_names(
                     group_id,
-                    "\n".join(f"- {_who_label(group_id, b['sender'])}：{b['text']}"
+                    "\n".join(f"- {'当前说话人' if b['sender'] == sender_openid else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}"
                               for b in prev))
                 # ⚠️ 这行是对着「爱翻旧账的模型」写的（实测 Gemini 会把背景里别人的言行安到
                 # 当前说话人头上，一晚上把「当猫娘」安给了三个人）。所以要点名三件事：
-                # 每句都有主、主语不是眼前这位、引用前先核对名字。
+                # 每句都有主，当前说话人与其他人按 ID 区分，引用前先核对标记。
                 context_hint = _BG_PREAMBLE + "\n" + context_hint
 
         # 每人每群一份独立 session，彻底隔离会话，绝不串台
