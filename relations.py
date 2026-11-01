@@ -521,7 +521,6 @@ def build_relation_note(rec, member_openid, mode="normal", now=None, other_names
     nick = rec.get("nick")
     lines = [
         "【称呼与游戏关系（本地记录；不要向对方报数字）】",
-        "- 好感和搭话次数只记录游戏里的交情，不证明你了解 TA 的性格、喜好或过去。",
     ]
     if nick:
         lines.append(f"- 当前称呼：{nick}（本人认领或群主指定；按此称呼，不推断性格）")
@@ -546,15 +545,13 @@ def build_relation_note(rec, member_openid, mode="normal", now=None, other_names
         lines.append("- 先按普通群友自然、友善地接话；记录不足不能断言从未见过。")
         return "\n".join(lines)
 
+    # 档案怎么读（内心戏不是台词、档位压过人设语气）是不变的说明，2026-11-01 挪进了
+    # 稳定头（prompts.PROMPT_SHARED_RULES）吃前缀缓存；这里只留一行提醒，挨着档位本身。
     lv = level_key(rec["score"])
     lines.extend([
         f"- 关系：{level_label(lv, mode)}（{LEVEL_HINTS[lv]}）",
-        "- 上面这条决定你跟 TA 说话的亲疏远近，优先级高于人设里的默认语气："
-        "熟人就大胆（敢损敢护），生人就收着（别套近乎、别追问私事）。",
-        "- ⚠️ 这份档案是**内心戏，不是台词**：它管的是你说话的分寸（熟就放肆、生就收着），"
-        "不是让你当着对方的面念出来。**不许向 TA 复述你们的关系状态** —— "
-        "「咱俩不熟」「快成陌生人了」「生分了」「最近话变少了」这类话一律不说："
-        "亲疏要靠语气让人感觉到；靠嘴汇报出来的疏远，听着既像指责又像套近乎，两头不是人。",
+        "- 这份档案是内心戏不是台词：分寸的优先级高于人设里的默认语气；它不证明你了解 TA，"
+        "也不许向 TA 复述你们的关系状态",
     ])
 
     # 相处模式（2026-10-19，硬枚举）：模式定「风格倾向」，档位定「分寸上限」——
@@ -562,8 +559,7 @@ def build_relation_note(rec, member_openid, mode="normal", now=None, other_names
     # 模式档位的叫法（level_label）用的是后者。
     interaction_mode = rec.get("mode")
     if interaction_mode in PERSONA_MODES:
-        lines.append(f"- 游戏相处模式：{PERSONA_MODES[interaction_mode]}。"
-                     "模式定风格，档位定分寸；不代表 TA 的固定喜好或开玩笑许可")
+        lines.append(f"- 游戏相处模式：{PERSONA_MODES[interaction_mode]}（模式定风格，档位定分寸）")
 
     ms = rec.get("pending_milestone")
     if ms:

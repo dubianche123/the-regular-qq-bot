@@ -423,6 +423,12 @@ async def call_decision(input, questions):
         return None
     if not isinstance(data, dict) or not isinstance(data.get("answers"), list):
         return None
+    # 只记 token 数：判断每条群消息都打一次，是输入 token 的大头；实测这个端点从不命中
+    # 前缀缓存（同一请求连发也是 cached=0），记下来好跟聊天那边的命中率一起看。
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    logger.info("🧭 判断应答 (%d 题, in=%s cached=%s)", len(questions),
+                usage.get("input_tokens"),
+                (usage.get("input_tokens_details") or {}).get("cached_tokens"))
     return data
 
 

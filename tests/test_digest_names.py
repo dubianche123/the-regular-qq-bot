@@ -184,6 +184,28 @@ class PromptAntiTicTest(unittest.TestCase):
         for w in self.FIXED_PROPS:
             self.assertNotIn(w, text, f"提示词里又写死了「{w}」—— 它会被反复搬出来")
 
+    def test_no_canned_refusal_lines(self):
+        """2026-11-01 切到 luna 后：输出规则里写着「一句话带过（「这个不聊」「换个话题」）」，
+        luna 照抄成「这题我不接，咱换个轻松点的聊吧」—— 指令遵循越好的模型越会把例句当模板。"""
+        for w in ("「这个不聊」", "「换个话题」"):
+            self.assertNotIn(w, prompts.PROMPT_OUTPUT_RULES)
+        self.assertIn("不用句号", prompts.PROMPT_OUTPUT_RULES)
+
+    def test_joke_errands_are_played_along_not_done(self):
+        """2026-11-01：「帮我写篇 nature 论文，我待会验收」—— luna 先应下「我认真研究」，
+        又补一条「不能凭空编数据，先把研究方向发我」。群里没人等它交活；这条进共享块，换人设也在。"""
+        rule = prompts.PROMPT_SHARED_RULES
+        self.assertIn("群里没人等你交活", rule)
+        self.assertIn("免责声明", rule)
+        self.assertIn("客服尾巴", rule)
+        self.assertNotIn("别一直抖机灵", prompts.PROMPT_NORMAL, "这句是给 glm 刹车的，luna 照办就成了一本正经")
+        self.assertIn("表情是调味不是标点", prompts.PROMPT_OUTPUT_RULES)
+
+    def test_relation_note_reading_rules_live_in_the_cached_head(self):
+        """档案怎么读是不变的说明，挪进稳定头吃缓存；档案本身只留一行提醒。"""
+        self.assertIn("内心戏", prompts.PROMPT_SHARED_RULES)
+        self.assertIn("不许向 TA 复述你们的关系状态", prompts.PROMPT_SHARED_RULES)
+
     def test_the_anti_tic_rule_is_in_the_shared_block(self):
         rule = prompts.PROMPT_SHARED_RULES
         self.assertIn("口头禅", rule)
@@ -225,6 +247,9 @@ class PromptCallbackAndAttributionTest(unittest.TestCase):
         src = inspect.getsource(bot)
         self.assertIn("不是眼前这位说的", src)
         self.assertIn("拿不准是谁就别点名", src)
+        # 完整的读法说明进了稳定头（不变的内容放进可缓存的前缀，2026-11-01）
+        self.assertIn("[图片：…]", prompts.PROMPT_SHARED_RULES)
+        self.assertIn("不是眼前这位说的", prompts.PROMPT_SHARED_RULES)
 
 
 if __name__ == "__main__":

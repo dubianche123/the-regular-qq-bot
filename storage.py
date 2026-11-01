@@ -152,13 +152,26 @@ class StateStore:
 # ══════════════════════════════ 会话上下文 ══════════════════════════════
 
 
-def trim_messages(messages, max_messages, max_chars):
+# 会话窗口满了以后一次裁到多少（见 trim_messages 的 keep）。
+HISTORY_KEEP = 0.5
+
+
+def trim_messages(messages, max_messages, max_chars, keep=1.0):
     """按「用户+助手」成对裁剪，保证上下文从一条 user 话开头。
 
     两条两条地丢，是因为不成对的开头（第一条就 assistant）会让模型困惑；
     同时用字数而不是条数做最终兜底，防止一波长文本把 token 打爆。
+
+    keep < 1 是「一次多丢点」：超了上限就裁到上限的这个比例，而不是刚好压线。
+    压线裁每来一轮就丢最老一轮，历史开头每轮都变，前缀缓存在稳定头之后就断了；
+    一次裁到一半，之后几轮历史只往后追加，同一个人连着说话时能吃上缓存。
     """
     msgs = list(messages)
+    over = (max_messages and len(msgs) > max_messages) or \
+        sum(len(str(m.get("content") or "")) for m in msgs) > max_chars
+    if over and keep < 1:
+        max_messages = max(2, int(max_messages * keep) // 2 * 2) if max_messages else 0
+        max_chars = int(max_chars * keep)
     if max_messages and len(msgs) > max_messages:
         msgs = msgs[-max_messages:]
 
@@ -292,6 +305,7 @@ class SessionStore:
             ],
             self.max_turns * 2,
             self.max_chars,
+            keep=HISTORY_KEEP,
         )
         sess["last_time"] = now
 

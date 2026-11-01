@@ -205,14 +205,10 @@ from delivery import (Sender, DeliveryResult, passive_reply_window, message_age_
 import media
 from affinity import (apply_relation_delta, affinity_budget, apply_affinity_delta_capped,
                       apply_digest_affinity, apply_digest_modes, affinity_ledger)
-# 背景前言：每条背景都挂的同一段「读法说明」。[图片：…] 引导是 2026-10-19 补的——
-# 异步描述落在背景里之后，模型面对「这是什么」还会装瞎开玩笑（实测「糊得像马赛克」）。
-_BG_PREAMBLE = ("（注意：下面每一句开头都标了发言人 —— 这些话是「他们」说的，"
-                "不是眼前这位说的。别把别人干的蠢事算到当前说话人头上，"
-                "引用谁的言行就对准谁的名字，拿不准是谁就别点名；"
-                "也别刻意复读这些内容。"
-                "带 [图片：…] 标记的行是机器对那张图的客观描述——"
-                "有人问「这图是什么」，答案就在那里，照着说，别装作没看见）")
+# 背景前言：每条背景都挂的一行提醒。完整的读法说明（别张冠李戴、别复读、[图片：…] 行
+# 照着说）每轮都一样，2026-11-01 挪进了稳定头（prompts.PROMPT_SHARED_RULES）吃前缀缓存；
+# 这里只留最要紧的一句，挨着背景本身 —— 模型最容易犯浑的位置就是读背景那一刻。
+_BG_PREAMBLE = "（每句开头标的是发言人，这些话都不是眼前这位说的；拿不准是谁就别点名）"
 
 
 from nicking import (extract_mentions, mention_nicks_from_content, mention_nick_from_content,

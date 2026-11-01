@@ -414,6 +414,22 @@ class BuildMessagesTest(unittest.TestCase):
         self.assertEqual([m["role"] for m in msgs], ["system", "user"])
         self.assertEqual(msgs[1]["content"], "原话")
 
+    def test_full_window_drops_in_chunks_so_the_prefix_holds(self):
+        """2026-11-01 线上：luna 每条聊天都只命中 3496 个 token（稳定头），会话历史一次没命中过
+        —— 窗口满了以后每轮丢最老一轮，历史开头每轮都变。现在满了一次裁到一半，之后只往后追加。"""
+        import storage
+        store = storage.SessionStore(max_turns=4, max_chars=10000, ttl=3600)
+        for i in range(5):
+            store.record("s", f"问{i}", f"答{i}")
+        hist = lambda: [m["content"] for m in store._sessions["s"]["messages"]]
+        self.assertEqual(hist(), ["问3", "答3", "问4", "答4"])
+        before = hist()
+        store.record("s", "问5", "答5")
+        self.assertEqual(hist()[:4], before, "没超上限时历史只许往后追加")
+        store.record("s", "问6", "答6")
+        store.record("s", "问7", "答7")       # 第 9 轮再超，又裁一次
+        self.assertEqual(hist(), ["问6", "答6", "问7", "答7"])
+
 
 class DigestAffinityTest(unittest.TestCase):
     """摘要要把 affinity 传下来，脏数据不许进档案。"""
