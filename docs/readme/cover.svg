@@ -1,34 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-labelledby="title desc">
-<title id="title">The Regular</title><desc id="desc">The Regular. Repository-specific technical illustration.</desc>
-<defs><linearGradient id="project-bg" x2="1" y2="1"><stop stop-color="#241D1C"/><stop offset="1" stop-color="#35291F"/></linearGradient><pattern id="texture" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#FFFFFF" fill-opacity=".035"/></pattern></defs>
-<g font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif">
-<rect x="1" y="1" width="1278" height="518" rx="20" fill="url(#project-bg)" stroke="#283951" />
-<rect x="1" y="1" width="1278" height="518" rx="20" fill="url(#texture)"/>
-<path d="M53 31h25v18H65l-8 6v-6h-4zM59 38h13M59 43h9" fill="none" stroke="#F1C383" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M0 430H1280M640 0V520" fill="none" stroke="#25354F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="88" y="49" font-size="13" fill="#F1C383" font-weight="700" text-anchor="start">A RESIDENT QQ GROUP COMPANION</text>
-<text x="50" y="132" font-size="45" fill="#F7FAFF" font-weight="700" text-anchor="start">The Regular</text>
-<text x="52" y="190" font-size="22" fill="#C2CFE1" font-weight="400" text-anchor="start">A familiar voice,</text>
-<text x="52" y="223" font-size="22" fill="#C2CFE1" font-weight="400" text-anchor="start">with its social state held in code.</text>
-<text x="52" y="350" font-size="17" fill="#8EA4BF" font-weight="400" text-anchor="start">— Activation decides when to speak.</text>
-<text x="52" y="379" font-size="17" fill="#8EA4BF" font-weight="400" text-anchor="start">— Local commands avoid unnecessary calls.</text>
-<text x="52" y="408" font-size="17" fill="#8EA4BF" font-weight="400" text-anchor="start">— Stable context supports provider caching.</text>
-<text x="52" y="486" font-size="12" fill="#6F86A4" font-weight="700" text-anchor="start">PROJECT OVERVIEW  /  SCHEMATIC</text>
-<rect x="699" y="68" width="524" height="100" rx="14" fill="#17263D" stroke="#364A66" />
-<text x="717" y="99" font-size="17" fill="#F1C383" font-weight="700" text-anchor="start">CODE-OWNED SOCIAL STATE</text>
-<text x="717" y="129" font-size="16" fill="#DFE8F5" font-weight="400" text-anchor="start">names  ·  affinity  ·  modes  ·  promise ledger</text>
-<path d="M959 168V200H820V225" fill="none" stroke="#F1C383" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M959 200H1095V225" fill="none" stroke="#F1C383" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M815 218l5 7 5-7M1090 218l5 7 5-7" fill="none" stroke="#F1C383" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="699" y="225" width="242" height="142" rx="14" fill="#17263D" stroke="#364A66" />
-<text x="717" y="256" font-size="17" fill="#F1C383" font-weight="700" text-anchor="start">LOCAL ROUTE</text>
-<text x="717" y="286" font-size="16" fill="#DFE8F5" font-weight="400" text-anchor="start">Dice / lookups</text>
-<text x="717" y="310" font-size="16" fill="#DFE8F5" font-weight="400" text-anchor="start">No model request</text>
-<rect x="967" y="225" width="256" height="142" rx="14" fill="#17263D" stroke="#364A66" />
-<text x="985" y="256" font-size="17" fill="#F1C383" font-weight="700" text-anchor="start">GENERATED REPLY</text>
-<text x="985" y="286" font-size="16" fill="#DFE8F5" font-weight="400" text-anchor="start">Layered context</text>
-<text x="985" y="310" font-size="16" fill="#DFE8F5" font-weight="400" text-anchor="start">Provider fallback</text>
-<text x="699" y="411" font-size="17" fill="#D7E2F1" font-weight="400" text-anchor="start">One message can end in silence, a local command,</text>
-<text x="699" y="438" font-size="17" fill="#D7E2F1" font-weight="400" text-anchor="start">or a checked model reply. The state stays in code.</text>
-<text x="699" y="482" font-size="12" fill="#8FA4C0" font-weight="400" text-anchor="start">QQ EVENTS   /   LOCAL JSON STATE   /   CONFIGURABLE LLM</text>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="cover-title cover-desc">
+  <title id="cover-title">The Regular · 老群友</title>
+  <desc id="cover-desc">一位住在 QQ 群里的 AI 群友：理解上下文，记住共同的事，在合适的时候接话，也能按需查找、画图和发语音。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#192A40"/><stop offset="1" stop-color="#28354B"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#E8B77F" stop-opacity=".16"/><stop offset="1" stop-color="#E8B77F" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="chat" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#2D425C"/><stop offset="1" stop-color="#24364D"/>
+    </linearGradient>
+    <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1" fill="#FFFFFF" opacity=".055"/></pattern>
+  </defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="1" y="1" width="1278" height="478" rx="24" fill="url(#bg)" stroke="#41516B"/>
+    <rect x="1" y="1" width="1278" height="478" rx="24" fill="url(#dots)"/>
+    <path d="M895 1H1255Q1279 1 1279 25V296Q1158 281 1085 189Q1002 82 895 1Z" fill="url(#glow)"/>
+    <g transform="translate(65 49)">
+      <rect x="0" y="0" width="32" height="32" rx="10" fill="#EBC18F"/>
+      <path d="M8 9h16v11H14l-5 4v-4H8z" fill="none" stroke="#23354A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M12 14h8M12 17h5" stroke="#23354A" stroke-width="1.6" stroke-linecap="round"/>
+      <text x="44" y="21" fill="#EBC18F" font-size="13" font-weight="700" letter-spacing="1.8">A COMPANION FOR QQ GROUPS</text>
+    </g>
+    <text x="65" y="159" fill="#F9FAFC" font-size="52" font-weight="700" letter-spacing="-.8">The Regular</text>
+    <text x="67" y="214" fill="#F2C795" font-size="32" font-weight="600">老群友</text>
+    <text x="67" y="272" fill="#E2EAF4" font-size="22">会接话，也会留白。</text>
+    <text x="67" y="307" fill="#B5C3D5" font-size="16">An AI companion that finds its place in the conversation.</text>
+    <path d="M67 355H544" stroke="#5B6B80" stroke-opacity=".65"/>
+    <text x="67" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">群聊上下文</text>
+    <circle cx="177" cy="389" r="2" fill="#E6B980"/>
+    <text x="195" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">共同记忆</text>
+    <circle cx="286" cy="389" r="2" fill="#E6B980"/>
+    <text x="304" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">有边界的能力</text>
+    <text x="67" y="443" fill="#8395AA" font-size="12" font-weight="700" letter-spacing="1.5">CHAT  ·  MEMORY  ·  LOOKUP  ·  IMAGES  ·  VOICE</text>
+
+    <rect x="649" y="57" width="558" height="366" rx="21" fill="#15263A" fill-opacity=".66" stroke="#60718A" stroke-opacity=".48"/>
+    <rect x="649" y="57" width="558" height="57" rx="21" fill="#30465E" fill-opacity=".72"/>
+    <path d="M650 98H1206V114H650z" fill="#30465E" fill-opacity=".72"/>
+    <circle cx="678" cy="85" r="5" fill="#E7B780"/><circle cx="696" cy="85" r="5" fill="#8CB7AA"/><circle cx="714" cy="85" r="5" fill="#8FA4BE"/>
+    <text x="750" y="91" fill="#D3DDE9" font-size="14" font-weight="600" letter-spacing="1">群聊里的日常  /  GROUP CHAT</text>
+    <circle cx="692" cy="155" r="17" fill="#DDBA98"/>
+    <path d="M686 155a6 6 0 1 1 12 0v2a6 6 0 0 1-12 0zM682 167c2-5 7-7 10-7s8 2 10 7" fill="none" stroke="#544A4B" stroke-width="1.5" stroke-linecap="round"/>
+    <rect x="722" y="130" width="316" height="53" rx="15" fill="#435976"/>
+    <text x="742" y="163" fill="#F1F5FA" font-size="17">说说这个故事？</text>
+    <rect x="722" y="193" width="124" height="43" rx="14" fill="#435976"/>
+    <text x="742" y="220" fill="#F1F5FA" font-size="16">小王</text>
+    <circle cx="1162" cy="277" r="17" fill="#A9C8D2"/>
+    <path d="M1154 279v-3a8 8 0 0 1 16 0v3M1157 277h0M1167 277h0M1158 283h8M1162 268v-3" fill="none" stroke="#263D50" stroke-width="2" stroke-linecap="round"/>
+    <rect x="874" y="250" width="258" height="56" rx="16" fill="#DDBA8F"/>
+    <text x="894" y="285" fill="#26384D" font-size="17" font-weight="600">好，我从头讲起。</text>
+    <path d="M680 335H1176" stroke="#5D7088" stroke-opacity=".45"/>
+    <text x="682" y="375" fill="#D8E2ED" font-size="14">听得懂上下文</text>
+    <text x="836" y="375" fill="#D8E2ED" font-size="14">记得群里的事</text>
+    <text x="990" y="375" fill="#D8E2ED" font-size="14">画图 · 语音</text>
+    <circle cx="813" cy="370" r="2" fill="#E6B980"/><circle cx="967" cy="370" r="2" fill="#E6B980"/>
+  </g>
+</svg>
