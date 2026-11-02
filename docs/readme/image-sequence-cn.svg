@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1060" viewBox="0 0 1280 1060" role="img" aria-labelledby="diagram-title diagram-desc" xml:lang="zh-CN">
+  <title id="diagram-title">先读懂这张图，再接话</title>
+  <desc id="diagram-desc">群友发图后马上提问；机器人分诊后，回话前补齐背景里欠着的图。六秒内读完就直接答；若是问话人自己的图还在读，先发本地等待句，再继续等待，读图含下载总超时三十秒。图描述进入四层提示词，回复模型生成后送达，并由代码记录实际结果。</desc>
+  <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="1" y="1" width="1278" height="1058" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+    <text x="48" y="50" font-size="16" font-weight="700" fill="#A7783E" letter-spacing="1.7">THE REGULAR / IMAGE → REPLY</text>
+    <text x="48" y="102" font-size="32" font-weight="700" fill="#213249" >先读懂这张图，再接话</text>
+    <text x="48" y="142" font-size="21" font-weight="400" fill="#56677E" >以「发图后马上问」为例：先补齐图的描述，再交给回复模型。</text>
+    <rect x="48" y="184" width="352" height="204" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="72" y="216" font-size="16" font-weight="700" fill="#A7783E" >01 / 群友 → 老群友</text>
+    <text x="72" y="256" font-size="24" font-weight="650" fill="#213249" >先发一张图</text>
+    <text x="72" y="295" font-size="20" font-weight="400" fill="#56677E" >同步登记「欠着一张图」</text>
+    <text x="72" y="327" font-size="20" font-weight="400" fill="#56677E" >发起后台读图</text>
+    <text x="72" y="359" font-size="20" font-weight="400" fill="#56677E" >后台读图照常受冷却限制</text>
+    <rect x="464" y="184" width="352" height="204" rx="18" fill="#EAF4EF" stroke="#D7E0EB"/>
+    <text x="488" y="216" font-size="16" font-weight="700" fill="#397D70" >02 / 老群友 → Decisions</text>
+    <text x="488" y="256" font-size="24" font-weight="650" fill="#213249" >马上 @ 它追问</text>
+    <text x="488" y="295" font-size="20" font-weight="400" fill="#56677E" >「@小王，这张怎么样？」</text>
+    <text x="488" y="327" font-size="20" font-weight="400" fill="#56677E" >分诊：点名 / 喊停 / 要不要查</text>
+    <text x="488" y="359" font-size="20" font-weight="400" fill="#56677E" >本例：不是喊停，也不用查资料</text>
+    <rect x="880" y="184" width="352" height="204" rx="18" fill="#F0EBF8" stroke="#D7E0EB"/>
+    <text x="904" y="216" font-size="16" font-weight="700" fill="#7962A7" >03 / 老群友 → 读图模型</text>
+    <text x="904" y="256" font-size="24" font-weight="650" fill="#213249" >回话前补读欠图</text>
+    <text x="904" y="295" font-size="20" font-weight="400" fill="#56677E" >已在读，就等同一个任务</text>
+    <text x="904" y="327" font-size="20" font-weight="400" fill="#56677E" >被冷却挡住的，前台补读</text>
+    <text x="904" y="359" font-size="20" font-weight="400" fill="#56677E" >同一张图不重复发起读图</text>
+    <path d="M406 286h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M822 286h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M1056 388v28" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="48" y="426" width="1184" height="52" rx="13" fill="#EAF0F6" stroke="#D7E0EB"/>
+    <text x="72" y="460" font-size="20" font-weight="650" fill="#213249" >先在线上等 6 秒</text>
+    <text x="460" y="460" font-size="19" font-weight="400" fill="#56677E" >ASYNC_REPLY_SECONDS · 等待由本地代码编排</text>
+    <path d="M328 478v28" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M952 478v28" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="48" y="518" width="560" height="200" rx="18" fill="#EAF4EF" stroke="#D7E0EB"/>
+    <text x="72" y="550" font-size="16" font-weight="700" fill="#397D70" >A / 已经读完</text>
+    <text x="72" y="590" font-size="24" font-weight="650" fill="#213249" >6 秒内读完</text>
+    <text x="72" y="629" font-size="20" font-weight="400" fill="#56677E" >取得一句话图描述</text>
+    <text x="72" y="661" font-size="20" font-weight="400" fill="#56677E" >直接进入正式回复</text>
+    <text x="72" y="693" font-size="20" font-weight="400" fill="#56677E" >这一轮只需发一条回答</text>
+    <rect x="672" y="518" width="560" height="200" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="696" y="550" font-size="16" font-weight="700" fill="#A7783E" >B / 自己发的图，还在读</text>
+    <text x="696" y="590" font-size="24" font-weight="650" fill="#213249" >先说一句「我看看图，等我一下」</text>
+    <text x="696" y="629" font-size="20" font-weight="400" fill="#56677E" >继续等同一项读图完成</text>
+    <text x="696" y="661" font-size="20" font-weight="400" fill="#56677E" >读图总上限 30 秒，包含下载</text>
+    <text x="696" y="693" font-size="20" font-weight="400" fill="#56677E" >如果确实读不出来，就照实说</text>
+    <path d="M328 718v24H224v28" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M952 718v24H328" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="48" y="782" width="352" height="164" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="72" y="814" font-size="16" font-weight="700" fill="#A7783E" >04 / 本地代码</text>
+    <text x="72" y="854" font-size="24" font-weight="650" fill="#213249" >组装四层提示词</text>
+    <text x="72" y="893" font-size="20" font-weight="400" fill="#56677E" >背景里已是图描述</text>
+    <text x="72" y="925" font-size="20" font-weight="400" fill="#56677E" >而不是一个裸「[图片]」</text>
+    <rect x="464" y="782" width="352" height="164" rx="18" fill="#F0EBF8" stroke="#D7E0EB"/>
+    <text x="488" y="814" font-size="16" font-weight="700" fill="#7962A7" >05 / 回复模型</text>
+    <text x="488" y="854" font-size="24" font-weight="650" fill="#213249" >照着看见的内容接话</text>
+    <text x="488" y="893" font-size="20" font-weight="400" fill="#56677E" >生成回复正文</text>
+    <text x="488" y="925" font-size="20" font-weight="400" fill="#56677E" >可按场景带上动作标记</text>
+    <rect x="880" y="782" width="352" height="164" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="904" y="814" font-size="16" font-weight="700" fill="#A7783E" >06 / 老群友 → 群友</text>
+    <text x="904" y="854" font-size="24" font-weight="650" fill="#213249" >发送，并记下实际结果</text>
+    <text x="904" y="893" font-size="20" font-weight="400" fill="#56677E" >把正式回复发到群里</text>
+    <text x="904" y="925" font-size="20" font-weight="400" fill="#56677E" >会话与交互日志记下实际结果</text>
+    <path d="M406 864h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M822 864h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <text x="48" y="998" font-size="19" font-weight="400" fill="#56677E" >等待提示是本地短句，不额外调用回复模型；本图展示问话人自己的图片。</text>
+  </g>
+</svg>

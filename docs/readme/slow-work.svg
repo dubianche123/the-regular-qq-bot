@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1080" viewBox="0 0 1280 1080" role="img" aria-labelledby="diagram-title diagram-desc" xml:lang="en">
+  <title id="diagram-title">Slow work: acknowledge, then follow up</title>
+  <desc id="diagram-desc">Code starts a job and receives a durable handle. If it finishes within six seconds, the bot replies with the result. Otherwise it sends a local waiting line and persists the handle in the scheduler. Code polls on a bounded schedule, survives restart and generates a follow-up when results arrive; failure or timeout uses a local failure line. Delivery uses the passive reply window first, then one proactive attempt, then the next group message if needed.</desc>
+  <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="1" y="1" width="1278" height="1078" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+    <text x="48" y="50" font-size="16" font-weight="700" fill="#A7783E" letter-spacing="1.7">THE REGULAR / SLOW WORK</text>
+    <text x="48" y="102" font-size="32" font-weight="700" fill="#213249" >Slow work: acknowledge, then follow up</text>
+    <text x="48" y="142" font-size="21" font-weight="400" fill="#56677E" >A durable job handle keeps waiting and delivery under local control.</text>
+    <rect x="48" y="184" width="1184" height="80" rx="17" fill="#213249" stroke="#213249"/>
+    <text x="72" y="218" font-size="21" font-weight="700" fill="#EDC792" >START → HANDLE</text>
+    <text x="72" y="247" font-size="18" font-weight="400" fill="#D4DFEB" >Code starts one job</text>
+    <path d="M385 204v40" stroke="#54647A"/>
+    <text x="420" y="229" font-size="21" font-weight="500" fill="#FFFFFF" >Wait up to 6 s for a result · ASYNC_REPLY_SECONDS</text>
+    <path d="M328 264v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M952 264v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="48" y="318" width="560" height="176" rx="18" fill="#EAF4EF" stroke="#D7E0EB"/>
+    <text x="72" y="350" font-size="16" font-weight="700" fill="#397D70" >A / FINISHED WITHIN 6 s</text>
+    <text x="72" y="390" font-size="24" font-weight="650" fill="#213249" >Answer with the result</text>
+    <text x="72" y="429" font-size="20" font-weight="400" fill="#56677E" >One result-backed reply</text>
+    <text x="72" y="461" font-size="20" font-weight="400" fill="#56677E" >The turn is complete</text>
+    <rect x="672" y="318" width="560" height="176" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="696" y="350" font-size="16" font-weight="700" fill="#A7783E" >B / STILL RUNNING</text>
+    <text x="696" y="390" font-size="24" font-weight="650" fill="#213249" >Acknowledge, then persist</text>
+    <text x="696" y="429" font-size="20" font-weight="400" fill="#56677E" >“Let me look it up, one moment.”</text>
+    <text x="696" y="461" font-size="20" font-weight="400" fill="#56677E" >Store the handle in a follow-up job</text>
+    <path d="M952 494v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="48" y="548" width="1184" height="158" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+    <text x="72" y="582" font-size="16" font-weight="700" fill="#A7783E" letter-spacing="1">LOCAL SCHEDULER · BOUNDED POLLING</text>
+    <text x="72" y="625" font-size="21" font-weight="650" fill="#213249" >Resume from the handle</text>
+    <text x="72" y="667" font-size="17" font-weight="400" fill="#56677E" >A persisted task survives restart</text>
+    <text x="488" y="625" font-size="21" font-weight="650" fill="#213249" >Poll by code, on a timer</text>
+    <text x="488" y="667" font-size="17" font-weight="400" fill="#56677E" >poll_every interval · give_up_after cap</text>
+    <text x="904" y="625" font-size="21" font-weight="650" fill="#213249" >Compose when complete</text>
+    <text x="904" y="667" font-size="17" font-weight="400" fill="#56677E" >Reply model uses the returned result</text>
+    <path d="M406 630h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M822 630h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="48" y="730" width="1184" height="54" rx="13" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <text x="72" y="765" font-size="19" font-weight="400" fill="#56677E" >Failure or timeout → a local “this lookup did not finish” line. No extra generation.</text>
+    <text x="48" y="831" font-size="16" font-weight="700" fill="#A7783E" letter-spacing="1.1">DELIVER THE FOLLOW-UP</text>
+    <rect x="48" y="852" width="352" height="156" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="72" y="884" font-size="16" font-weight="700" fill="#A7783E" >01 / PASSIVE REPLY</text>
+    <text x="72" y="924" font-size="24" font-weight="650" fill="#213249" >Reply to the original</text>
+    <text x="72" y="963" font-size="18" font-weight="400" fill="#56677E" >Send the follow-up as msg_seq=2</text>
+    <rect x="464" y="852" width="352" height="156" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="488" y="884" font-size="16" font-weight="700" fill="#A7783E" >02 / WINDOW EXPIRED</text>
+    <text x="488" y="924" font-size="24" font-weight="650" fill="#213249" >Try a proactive post</text>
+    <text x="488" y="963" font-size="18" font-weight="400" fill="#56677E" >Use this route if the window closed</text>
+    <rect x="880" y="852" width="352" height="156" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="904" y="884" font-size="16" font-weight="700" fill="#A7783E" >03 / PROACTIVE POST REFUSED</text>
+    <text x="904" y="924" font-size="24" font-weight="650" fill="#213249" >Ride the next message</text>
+    <text x="904" y="963" font-size="18" font-weight="400" fill="#56677E" >Keep the prepared follow-up</text>
+    <text x="904" y="995" font-size="18" font-weight="400" fill="#56677E" >Wait up to one day</text>
+    <path d="M406 935h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M822 935h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <text x="48" y="1047" font-size="19" font-weight="400" fill="#56677E" >Local code polls and delivers; waiting and failure lines use no extra generation.</text>
+  </g>
+</svg>

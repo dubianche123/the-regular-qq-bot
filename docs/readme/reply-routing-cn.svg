@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1010" viewBox="0 0 1280 1010" role="img" aria-labelledby="diagram-title diagram-desc" xml:lang="zh-CN">
+  <title id="diagram-title">什么时候开口，走哪条路</title>
+  <desc id="diagram-desc">平台@进入回答路径。喊名字由 addressed 分诊，answer 正经答，quip 短接一句，let_it_pass 转入自主选择。未点名或 let_it_pass 的消息先过收敛期、喊停、未读纯图等代码边界，再同群排队一次问一句。回复模型结合自己刚说过的话，选择接话或不接。</desc>
+  <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="1" y="1" width="1278" height="1008" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+    <text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1.7">THE REGULAR / REPLY ROUTING</text>
+    <text x="48" y="101" font-size="32" fill="#213249" font-weight="700" >什么时候开口，走哪条路</text>
+    <text x="48" y="140" font-size="21" fill="#56677E" font-weight="400" >被叫到和没被叫到分开走，代码守门，模型决定怎么接。</text>
+    <rect x="48" y="178" width="1184" height="68" rx="16" fill="#213249" stroke="#213249"/>
+    <text x="72" y="221" font-size="24" fill="#FFFFFF" font-weight="600" >群里刚冒出来的一句</text>
+    <rect x="48" y="280" width="1184" height="100" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <text x="72" y="321" font-size="16" fill="#A7783E" font-weight="700" >01 / 平台 @</text>
+    <text x="72" y="355" font-size="23" fill="#213249" font-weight="650" >明确叫到它</text>
+    <path d="M344 330h114" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <text x="488" y="340" font-size="25" fill="#213249" font-weight="650" >进入回答路径</text>
+    <text x="904" y="340" font-size="20" fill="#A7783E" font-weight="600" >回应这条消息</text>
+    <rect x="48" y="404" width="1184" height="200" rx="18" fill="white" stroke="#D7E0EB"/>
+    <text x="72" y="446" font-size="16" fill="#A7783E" font-weight="700" >02 / 喊了名字</text>
+    <text x="72" y="480" font-size="24" fill="#213249" font-weight="650" >Decisions 分诊</text>
+    <text x="72" y="516" font-size="22" fill="#397D70" font-weight="650" >addressed</text>
+    <path d="M294 502h44" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="358" y="446" width="274" height="126" rx="14" fill="#EAF4EF" stroke="#EAF4EF"/>
+    <text x="378" y="487" font-size="22" fill="#397D70" font-weight="650" >answer</text>
+    <text x="378" y="536" font-size="20" fill="#213249" font-weight="600" >正经答</text>
+    <rect x="646" y="446" width="274" height="126" rx="14" fill="#FFF4E4" stroke="#FFF4E4"/>
+    <text x="666" y="487" font-size="22" fill="#A7783E" font-weight="650" >quip</text>
+    <text x="666" y="536" font-size="20" fill="#213249" font-weight="600" >短接一句</text>
+    <rect x="934" y="446" width="274" height="126" rx="14" fill="#F0EBF8" stroke="#F0EBF8"/>
+    <text x="954" y="487" font-size="22" fill="#7962A7" font-weight="650" >let_it_pass</text>
+    <text x="954" y="536" font-size="20" fill="#213249" font-weight="600" >转入下方流程</text>
+    <text x="48" y="655" font-size="17" fill="#7962A7" font-weight="700" >03 / 没被叫到，或 let_it_pass</text>
+    <rect x="48" y="686" width="560" height="230" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <text x="72" y="728" font-size="24" fill="#213249" font-weight="650" >先过本地底线</text>
+    <text x="72" y="771" font-size="21" fill="#56677E" font-weight="400" >收敛期 · 被喊停 · 没读成的纯图</text>
+    <text x="72" y="805" font-size="21" fill="#56677E" font-weight="400" >不通过 → 不调用回复模型</text>
+    <text x="72" y="839" font-size="21" fill="#56677E" font-weight="400" >通过后，同一群排队</text>
+    <text x="72" y="873" font-size="21" fill="#56677E" font-weight="400" >一次只问一句</text>
+    <path d="M618 800h42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="672" y="686" width="560" height="230" rx="18" fill="#F0EBF8" stroke="#D6CCE7"/>
+    <text x="696" y="728" font-size="24" fill="#213249" font-weight="650" >再交给它自己定</text>
+    <text x="696" y="774" font-size="21" fill="#56677E" font-weight="400" >结合背景里自己刚说过的话</text>
+    <text x="696" y="807" font-size="21" fill="#56677E" font-weight="400" >判断这句是不是在接它</text>
+    <rect x="696" y="840" width="192" height="48" rx="12" fill="white" stroke="white"/>
+    <text x="792.0" y="872" font-size="20" fill="#7962A7" font-weight="600" text-anchor="middle">接一句</text>
+    <rect x="908" y="840" width="300" height="48" rx="12" fill="white" stroke="white"/>
+    <text x="1058.0" y="872" font-size="20" fill="#7962A7" font-weight="600" text-anchor="middle">〔不接〕→ 不发送</text>
+    <text x="48" y="970" font-size="19" fill="#56677E" font-weight="400" >本地代码守住发言边界；需要它选择时，把现场和自己刚说的话交代清楚。</text>
+  </g>
+</svg>

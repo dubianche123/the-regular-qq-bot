@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1050" viewBox="0 0 1280 1050" role="img" aria-labelledby="diagram-title diagram-desc" xml:lang="en">
+  <title id="diagram-title">One reminder per member, delivered when due</title>
+  <desc id="diagram-desc">The reply writes a reminder tag, which code registers in the persisted job table. A new reminder from the same member replaces the old; a cancel tag removes it. When due, the job attempts proactive delivery. A refused proactive post waits to ride on the next group message; success is delivered, while more than one hour late is dropped, including after a restart. After delivery or drop, a one-off is removed and a daily reminder is scheduled for the next day.</desc>
+  <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="1" y="1" width="1278" height="1048" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+    <text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1.7">THE REGULAR / REMINDERS</text>
+    <text x="48" y="101" font-size="32" fill="#213249" font-weight="700" >One reminder per member, delivered when due</text>
+    <text x="48" y="140" font-size="21" fill="#56677E" font-weight="400" >Code owns the job, its delivery state and the next scheduled time.</text>
+    <rect x="48" y="180" width="1184" height="92" rx="16" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <text x="72" y="216" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1">REGISTER / REPLACE / CANCEL</text>
+    <text x="72" y="249" font-size="20" fill="#213249" font-weight="600" >〔提醒 …〕 → one stored job; a new one replaces it.  〔取消提醒〕 → remove it.</text>
+    <rect x="48" y="312" width="352" height="156" rx="18" fill="white" stroke="#D7E0EB"/>
+    <text x="72" y="348" font-size="16" fill="#A7783E" font-weight="700" >01 / STORED</text>
+    <text x="72" y="390" font-size="25" fill="#213249" font-weight="650" >One per member</text>
+    <text x="72" y="432" font-size="20" fill="#56677E" font-weight="400" >Restored after a restart</text>
+    <path d="M408 390h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="464" y="312" width="352" height="156" rx="18" fill="white" stroke="#D7E0EB"/>
+    <text x="488" y="348" font-size="16" fill="#A7783E" font-weight="700" >02 / DUE</text>
+    <text x="488" y="390" font-size="24" fill="#213249" font-weight="650" >The scheduler wakes it</text>
+    <text x="488" y="432" font-size="18" fill="#56677E" font-weight="400" >Quiet window: hold until it ends</text>
+    <path d="M824 390h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="880" y="312" width="352" height="156" rx="18" fill="white" stroke="#D7E0EB"/>
+    <text x="904" y="348" font-size="16" fill="#A7783E" font-weight="700" >03 / ATTEMPT DELIVERY</text>
+    <text x="904" y="390" font-size="24" fill="#213249" font-weight="650" >Post proactively first</text>
+    <text x="904" y="432" font-size="20" fill="#56677E" font-weight="400" >Record the actual result</text>
+    <text x="48" y="518" font-size="17" fill="#56677E" font-weight="700" letter-spacing="1">DELIVERY STATES</text>
+    <rect x="48" y="546" width="352" height="230" rx="18" fill="#EAF4EF" stroke="#C9DFD5"/>
+    <rect x="464" y="546" width="352" height="230" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <rect x="880" y="546" width="352" height="230" rx="18" fill="#EAF0F6" stroke="#D5DFEB"/>
+    <text x="72" y="591" font-size="25" fill="#397D70" font-weight="700" >Delivered</text>
+    <text x="72" y="637" font-size="19" fill="#56677E" font-weight="400" >Proactive post accepted</text>
+    <text x="72" y="674" font-size="19" fill="#56677E" font-weight="400" >or carried message delivered</text>
+    <text x="72" y="711" font-size="19" fill="#56677E" font-weight="400" >Complete this occurrence</text>
+    <text x="488" y="591" font-size="24" fill="#A7783E" font-weight="700" >Waiting to ride along</text>
+    <text x="488" y="630" font-size="18" fill="#56677E" font-weight="400" >Proactive post refused</text>
+    <text x="488" y="664" font-size="18" fill="#56677E" font-weight="400" >Keep the prepared sentence</text>
+    <text x="488" y="698" font-size="18" fill="#56677E" font-weight="400" >Next group message → deliver</text>
+    <text x="488" y="732" font-size="18" fill="#56677E" font-weight="400" >Over an hour late → drop</text>
+    <text x="904" y="591" font-size="25" fill="#56677E" font-weight="700" >Dropped</text>
+    <text x="904" y="630" font-size="18" fill="#56677E" font-weight="400" >Still undelivered an hour late</text>
+    <text x="904" y="664" font-size="18" fill="#56677E" font-weight="400" >or missed by over an hour</text>
+    <text x="904" y="698" font-size="18" fill="#56677E" font-weight="400" >when the bot restarts</text>
+    <text x="904" y="732" font-size="18" fill="#56677E" font-weight="400" >Do not send a stale reminder</text>
+    <path d="M224 776v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M1056 776v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="48" y="824" width="1184" height="148" rx="18" fill="white" stroke="#D7E0EB"/>
+    <text x="72" y="865" font-size="17" fill="#A7783E" font-weight="700" letter-spacing="1">AFTER DELIVERY OR DROP</text>
+    <rect x="72" y="889" width="528" height="58" rx="12" fill="#EAF4EF" stroke="#EAF4EF"/>
+    <text x="96" y="927" font-size="23" fill="#397D70" font-weight="650" >One-off → remove the job</text>
+    <rect x="632" y="889" width="576" height="58" rx="12" fill="#F0EBF8" stroke="#F0EBF8"/>
+    <text x="656" y="927" font-size="22" fill="#7962A7" font-weight="650" >Daily → schedule the same time tomorrow</text>
+    <text x="48" y="1014" font-size="19" fill="#56677E" font-weight="400" >Delivery and rescheduling are performed by local code.</text>
+  </g>
+</svg>

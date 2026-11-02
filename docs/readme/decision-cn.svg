@@ -1,45 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
-<title id="title">一条群消息，Decisions 怎么用？</title>
-<desc id="desc">一条与机器人相关的群消息和上下文，根据场景将适用的闭集问题提交到 OpenAI Decisions，返回选择和分数，本地代码结合规则和额度执行或回退。</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#8595A9"/></marker></defs>
-<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
-<rect x="1" y="1" width="1198" height="658" rx="20" fill="#F8FAFD" stroke="#DBE3ED"/>
-<text x="36" y="48" font-size="25" fill="#23324A" font-weight="700">一条群消息，Decisions 怎么用？</text>
-<text x="36" y="79" font-size="16" fill="#536782" font-weight="400">先把适用的判断题放在一起，再由本地代码决定怎么做。</text>
-<rect x="36" y="120" width="248" height="218" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
-<text x="54" y="156" font-size="18" fill="#23324A" font-weight="700">群消息与上下文</text>
-<rect x="53" y="179" width="214" height="97" rx="10" fill="#FFFFFF" stroke="#D6E0EE"/>
-<text x="66" y="211" font-size="15" fill="#334766" font-weight="600">「小王，上次说的那家店</text>
-<text x="66" y="237" font-size="15" fill="#334766" font-weight="600">现在还开着吗？」</text>
-<text x="54" y="310" font-size="14" fill="#536782" font-weight="400">结合之前聊过的内容</text>
-<path d="M284 229H316" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="324" y="120" width="438" height="336" rx="14" fill="#E7F5EF" stroke="#93C8B0"/>
-<text x="344" y="156" font-size="18" fill="#23324A" font-weight="700">按场景选题，一次提交</text>
-<rect x="343" y="176" width="400" height="71" rx="9" fill="#FFFFFF" stroke="#CFE5DA"/>
-<text x="359" y="202" font-size="16" fill="#23324A" font-weight="700">是在跟我说话吗？</text>
-<text x="359" y="227" font-size="14" fill="#536782" font-weight="400">回答 · 逗趣 · 顺口提及</text>
-<rect x="343" y="261" width="400" height="71" rx="9" fill="#FFFFFF" stroke="#CFE5DA"/>
-<text x="359" y="287" font-size="16" fill="#23324A" font-weight="700">需要翻群里的旧事吗？</text>
-<text x="359" y="312" font-size="14" fill="#536782" font-weight="400">查找 · 不需要</text>
-<rect x="343" y="346" width="400" height="71" rx="9" fill="#FFFFFF" stroke="#CFE5DA"/>
-<text x="359" y="372" font-size="16" fill="#23324A" font-weight="700">需要查最新信息吗？</text>
-<text x="359" y="397" font-size="14" fill="#536782" font-weight="400">联网查询 · 深入研究 · 不查</text>
-<path d="M762 229H795" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="803" y="120" width="361" height="145" rx="14" fill="#F0EAFC" stroke="#B7A2D7"/>
-<text x="823" y="156" font-size="18" fill="#23324A" font-weight="700">选项与把握程度</text>
-<text x="823" y="195" font-size="15" fill="#536782" font-weight="400">为每道题返回选择和分数</text>
-<text x="823" y="225" font-size="15" fill="#536782" font-weight="400">不确定的题不强行采用</text>
-<path d="M983 265V285" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="803" y="293" width="361" height="163" rx="14" fill="#FFF3DD" stroke="#D9BD83"/>
-<text x="823" y="330" font-size="18" fill="#23324A" font-weight="700">本地代码</text>
-<text x="823" y="370" font-size="15" fill="#536782" font-weight="400">结合规则、额度与判断结果</text>
-<text x="823" y="401" font-size="15" fill="#536782" font-weight="400">决定接话、查找或采用回退方式</text>
-<path d="M983 456V482" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="36" y="490" width="1128" height="96" rx="14" fill="#FFFFFF" stroke="#CCD8E4"/>
-<text x="54" y="530" font-size="16" fill="#23324A" font-weight="700">可能：查旧事或联网</text>
-<text x="424" y="530" font-size="16" fill="#23324A" font-weight="700">资料进入本轮上下文</text>
-<text x="808" y="530" font-size="16" fill="#23324A" font-weight="700">对话模型自然接话</text>
-<path d="M345 526H390" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M728 526H773" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<text x="36" y="627" font-size="14" fill="#536782" font-weight="400">示意：只有适用的题才会提问；实际选择和执行结果取决于上下文与配置。</text>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="790" viewBox="0 0 1280 790" role="img" aria-labelledby="decisions-title decisions-desc" xml:lang="zh-CN">
+  <title id="decisions-title">让判断成为选择题</title>
+  <desc id="decisions-desc">本地代码针对相关群消息选择适用问题，可合并提交到 OpenAI Decisions。接口返回固定选项与分数，本地代码结合规则和额度采用结果或回退；按需取得的资料进入本轮上下文，再由对话模型组织回复。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" markerWidth="8" markerHeight="8" refX="9" refY="5" orient="auto-start-reverse"><path d="M2 1L7 5L2 9" fill="none" stroke="#8794A6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="1" y="1" width="1278" height="788" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+    <text x="48" y="56" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing="1.7">THE REGULAR / DECISIONS</text>
+    <text x="48" y="110" font-size="32" fill="#213249" font-weight="700" text-anchor="start">让判断成为选择题</text>
+    <text x="48" y="148" font-size="21" fill="#56677E" font-weight="400" text-anchor="start">适用题目合并提交，选择结果交回本地代码。</text>
+    <rect x="48" y="184" width="1184" height="76" rx="16" fill="white" stroke="#D7E0EB"/>
+    <g transform="translate(72 205)" fill="none" stroke="#56677E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h30v22H15l-8 8v-8H2z"/><path d="M9 10h16M9 16h11"/></g>
+    <text x="124" y="230" font-size="22" fill="#213249" font-weight="600" text-anchor="start">「小王，上次那家店还开着吗？」</text>
+    <text x="1208" y="230" font-size="18" fill="#56677E" font-weight="400" text-anchor="end">消息 + 最近聊天</text>
+    <path d="M224 260v28" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="48" y="300" width="352" height="270" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <rect x="464" y="300" width="352" height="270" rx="18" fill="#EAF4EF" stroke="#BCD5CA"/>
+    <rect x="880" y="300" width="352" height="270" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <text x="72" y="334" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing=".7">01 / 本地代码</text>
+    <text x="488" y="334" font-size="16" fill="#397D70" font-weight="700" text-anchor="start" letter-spacing=".7">02 / 闭集判断</text>
+    <text x="904" y="334" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing=".7">03 / 本地代码</text>
+    <text x="72" y="376" font-size="26" fill="#213249" font-weight="700" text-anchor="start">按场景选题</text>
+    <text x="488" y="376" font-size="25" fill="#213249" font-weight="700" text-anchor="start">OpenAI Decisions</text>
+    <text x="904" y="376" font-size="25" fill="#213249" font-weight="700" text-anchor="start">采用结果，或回退</text>
+    <circle cx="77" cy="410" r="3" fill="#B78749"/>
+    <text x="90" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">是在跟我说话吗？</text>
+    <circle cx="77" cy="444" r="3" fill="#B78749"/>
+    <text x="90" y="450" font-size="20" fill="#213249" font-weight="400" text-anchor="start">需要翻群里的旧事吗？</text>
+    <circle cx="77" cy="478" r="3" fill="#B78749"/>
+    <text x="90" y="484" font-size="20" fill="#213249" font-weight="400" text-anchor="start">需要查最新信息吗？</text>
+    <text x="72" y="544" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">只问适用题目 · 可合并提交</text>
+    <text x="488" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">从固定选项中选择</text>
+    <rect x="488" y="438" width="304" height="89" rx="12" fill="white" stroke="#C5DACE"/>
+    <text x="508" y="471" font-size="22" fill="#397D70" font-weight="700" text-anchor="start">选择 + 分数</text>
+    <text x="508" y="503" font-size="17" fill="#56677E" font-weight="400" text-anchor="start">比较选项，不当作校准概率</text>
+    <text x="904" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">结合本地规则与额度</text>
+    <text x="904" y="450" font-size="20" fill="#213249" font-weight="400" text-anchor="start">决定接话、查找或回退</text>
+    <text x="904" y="544" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">状态与执行由代码掌握</text>
+    <path d="M406 435h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M822 435h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="432" y="412" font-size="17" fill="#56677E" font-weight="400" text-anchor="middle">提交</text>
+    <text x="848" y="412" font-size="17" fill="#56677E" font-weight="400" text-anchor="middle">返回</text>
+    <path d="M1056 570v20H224v14" fill="none" stroke="#8794A6" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+    <rect x="48" y="610" width="1184" height="108" rx="18" fill="white" stroke="#D7E0EB"/>
+    <rect x="48" y="630" width="4" height="68" rx="2" fill="#397D70"/>
+    <text x="76" y="652" font-size="22" fill="#397D70" font-weight="700" text-anchor="start">按需查资料</text>
+    <text x="76" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">由代码执行查询或搜索</text>
+    <text x="488" y="652" font-size="22" fill="#213249" font-weight="600" text-anchor="start">资料进入本轮上下文</text>
+    <text x="488" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">只作为这一轮的参考证据</text>
+    <text x="910" y="652" font-size="22" fill="#7962A7" font-weight="700" text-anchor="start">对话模型组织回复</text>
+    <text x="910" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">结合资料，自然接话</text>
+    <path d="M406 664h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M822 664h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="48" y="760" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">示意流程：不是每条消息都要分诊，也不是每轮都需要查询。</text>
+  </g>
+</svg>
