@@ -40,6 +40,7 @@ import prompts
 import qqtext
 import recall as recall_mod
 import relations
+import reminders
 import scheduler as scheduler_mod
 import search as search_mod
 import slowwork
@@ -816,7 +817,7 @@ async def resend_queue_loop():
 
 
 def media_rules():
-    """稳定头里的「你会画图 / 你会发语音」：只看开关和凭据，同一进程里逐字节不变，不破缓存。"""
+    """稳定头里的「你会画图 / 你会发语音 / 你能记提醒」：只看开关和凭据，同一进程里逐字节不变，不破缓存。"""
     parts = []
     if image_generation.available():
         parts.append(prompts.PROMPT_DRAW_RULES)
@@ -824,14 +825,16 @@ def media_rules():
         parts.append(prompts.PROMPT_VOICE_RULES)
     if parts:
         parts.append(prompts.PROMPT_MEDIA_RECORD)
+    if config.REMINDER_ENABLED:
+        parts.append(prompts.PROMPT_REMIND_RULES)
     return "".join(parts)
 
 
 class MediaTurn(SimpleNamespace):
-    """这一轮小王能用哪几样（draw / voice）、额度记在谁头上、即时提示里要补的那句（note）。"""
+    """这一轮小王能用哪几样（draw / voice / remind）、额度记在谁头上、即时提示里要补的那句（note）。"""
 
 
-def media_turn(group_id, user_id, score, *, asked):
+def media_turn(group_id, user_id, score, *, asked, remind=False):
     """在生成**之前**定这一轮的画图、语音条件，好让小王写回复时就知道。
 
     asked=True：有人在跟它说话、它在正经回（不是插嘴、短接、喊停、慢活）—— 只有这时才认〔画〕：
@@ -855,8 +858,14 @@ def media_turn(group_id, user_id, score, *, asked):
             notes.append(prompts.PROMPT_VOICE_TIRED)
         else:
             voice = True
+    # 提醒：有人在跟它说话才认（remind=True，没叫它的那几轮不认）。现在几点、TA 记着哪条，
+    # 每轮都写 —— 它得照着算时间，被问「我那条还在吗」也答得上来。
+    remind = remind and config.REMINDER_ENABLED and bool(group_id and user_id)
+    if remind:
+        notes.append(reminders.render_note(
+            runtime.SCHEDULER.tasks.get(reminders.task_id(group_id, user_id)), time.time()))
     return MediaTurn(group=group_id, user=user_id, score=score, draw=draw, voice=voice,
-                     note="\n".join(notes))
+                     remind=remind, note="\n".join(notes))
 
 
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
@@ -895,16 +904,30 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             return "", delta, None
         if said.kind == "image" and not (media is not None and media.draw):
             logger.info("🎨 这一轮不认〔画〕，只发文字（%s）", session_id[-12:])
-            said = expression.Said(None, "", said.text)
+            said = expression.Said(None, "", said.text, said.remind)
         if said.kind == "voice" and not (media is not None and media.voice):
-            said = expression.Said(None, "", said.text)
+            said = expression.Said(None, "", said.text, said.remind)
         body = said.text if generated else (body or _pick_fallback())
+        # 〔提醒 …〕：发出去之前就登记，记不上的原因补在它那句话后面（它已经答应了，得说实话）
+        remind_note = ""
+        if said.remind and getattr(media, "remind", False):
+            remind_note, remind_line = reminders.apply(
+                runtime.SCHEDULER, media.group, media.user, said.remind, time.time(),
+                blocked=wordfilter.has_hit)
+            runtime.STATE.mark_dirty()
+            logger.info("⏰ %s（%s）", remind_note, session_id[-12:])
+            body = "\n".join(part for part in (body, remind_line) if part) or remind_note
         if not body and said.kind != "image":
             return body, delta, None   # 只写了个标记、没写话：当它这轮不说
         hinted = f"{body}\n{OWNER_CLAIM_HINT}"
         # 会话里记的那条：默认就是发出去的字；画了图、发了语音，换成带标记和结果的那条
         # （expression.record）—— 下一轮小王看见的是自己实际做了什么，而不是只看见一句话。
+        # 记了提醒的，再把提醒那行和记没记上包在外面（expression.record_reminder）。
         recorded = {"as": None}
+
+        def as_recorded(text):
+            return (expression.record_reminder(text, said.remind, remind_note)
+                    if remind_note else text)
 
         def prepare():
             return hinted if generated and owner_hint_pending(owner_hint_group) else body
@@ -913,7 +936,7 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             if runtime.SESSIONS.generation(session_id) != generation:
                 return  # a reset action invalidated this old pending reply
             if said.kind != "image":   # 画图那轮等图的结果出来再一起记
-                runtime.SESSIONS.record(session_id, user_text, recorded["as"] or result.text)
+                runtime.SESSIONS.record(session_id, user_text, as_recorded(recorded["as"] or result.text))
             if generated and result.text in (body, hinted):
                 if result.text == hinted:
                     runtime.STATE.data.setdefault("groups", {}).setdefault(owner_hint_group, {})["owner_hint"] = True
@@ -969,7 +992,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                 if status == "delivery_unknown":
                     # 语音可能已经在群里了：不能再补一条文字，会话里按发过记。
                     if runtime.SESSIONS.generation(session_id) == generation:
-                        runtime.SESSIONS.record(session_id, user_text, expression.record(said, True))
+                        runtime.SESSIONS.record(session_id, user_text,
+                                                as_recorded(expression.record(said, True)))
                     return body, delta, DeliveryResult("unknown", body)
                 # 其余情况都确定没发出去（含合成被拒、念的和写的对不上）：同一句话改发文字。
                 # 这句本来就是小王写给群里看的，语音没成不等于这句话不能说。
@@ -1790,12 +1814,79 @@ async def finish_lookup(task):
 
 
 async def deliver_carried(message, group_id):
-    """被动窗口和主动发言都没送出去的跟进，捎在群里下一条消息上发出去。"""
+    """被动窗口和主动发言都没送出去的跟进和提醒，捎在群里下一条消息上发出去。"""
     for task in runtime.SCHEDULER.pending(kind="followup", group=group_id):
         text = task["payload"].get("ready")
         if text and runtime.SCHEDULER.cancel(task["id"]):
             runtime.STATE.mark_dirty()
             await safe_reply(message, text, interaction={"route": "followup"})
+    for task in runtime.SCHEDULER.pending(kind=reminders.KIND, group=group_id):
+        text = task["payload"].pop("ready", None)
+        if text:
+            _reminder_done(task, time.time())
+            runtime.STATE.mark_dirty()
+            _note_own_line(group_id, text)
+            await safe_reply(message, text, interaction={"route": "reminder"})
+
+
+# ── 到点提醒 ──
+
+def _reminder_done(task, now):
+    """这一次提醒了结（送到了、或者过点太久作罢）：每天的排到下一次，一次性的撤掉。"""
+    nxt = reminders.next_occurrence(task["payload"], now)
+    if nxt is None:
+        runtime.SCHEDULER.cancel(task["id"])
+        return None
+    task["payload"]["at"] = nxt
+    runtime.SCHEDULER.at(reminders.KIND, task["group"], nxt, task["payload"], task_id=task["id"])
+    return nxt
+
+
+def _reminder_hold(task, now):
+    """喊停后的收敛期内先按住（主动发言这时本来也发不出去），收敛完再说。"""
+    if runtime.FEEDBACK.quiet(task["group"], now=now):
+        return now + runtime.FEEDBACK.quiet_seconds
+    return None
+
+
+async def reminder_line(group_id, payload):
+    """到点说的那句：让小王照着记下的事说一句；生成不出来就用本地话术，提醒不能因此落空。"""
+    who = _who_label(group_id, payload["member"])
+    when = reminders.describe(payload)
+    what = reminders.spell_out(payload["what"], who)
+    text = None
+    try:
+        text = await call_model(
+            [{"role": "system", "content": naming.render(prompts.SYSTEM_REMIND)},
+             {"role": "user", "content": refresh_names(
+                 group_id, f"要提醒的事：{what}\n（{who} 让你提醒的，定的 {when}）")}],
+            config.AI_MAX_TOKENS_BANTER)
+    except Exception as exc:
+        logger.warning("⏰ 提醒那句没生成出来（%s），用本地话术", type(exc).__name__)
+    text = wordfilter.scrub((text or "").strip().strip('"「」'))
+    return text or f"{who}，到点了：{what}"
+
+
+async def fire_reminder(task):
+    """到点了说一句提醒。主动发不出去就留着，捎在群里下一条消息上；过点一小时还没送到就作罢。
+
+    重启前就过了点的同理：晚一小时以上的提醒多半已经没用了（「九点提醒大家我回来了」下午才发）。
+    """
+    gid, p, now = task["group"], task["payload"], time.time()
+    if now - p["at"] >= reminders.GRACE_SECONDS:   # >=：等捎带那条会正好在这一刻回来
+        logger.info("⏰ 提醒过点太久没送出去，作罢（%s，%s）", reminders.describe(p), gid[-6:])
+        p.pop("ready", None)
+        return _reminder_done(task, now)
+    if p.get("ready"):
+        return p["at"] + reminders.GRACE_SECONDS   # 写好了在等捎带
+    text = await reminder_line(gid, p)
+    if await post_to_group(gid, text, model_generated=True,
+                           history=list(group_buffers.get(gid, ()))[-4:]):
+        logger.info("⏰ 提醒送到了（%s，%s）", reminders.describe(p), gid[-6:])
+        _note_own_line(gid, text)
+        return _reminder_done(task, now)
+    p["ready"] = text
+    return p["at"] + reminders.GRACE_SECONDS
 
 
 # ── 承诺催债 ──
@@ -2705,7 +2796,7 @@ class GroupBot(botpy.Client):
             # （别叫 media：那是读图模块的名字，同一个函数里前面还在用它）
             this_turn = (None if back_off or search_note else
                          media_turn(group_id, sender_openid, resource_score,
-                                    asked=not quip))
+                                    asked=not quip, remind=not unprompted))
             if unprompted:
                 outcome = await reply_unprompted(message, session_id, user_input,
                                                  media=this_turn, callback_note=callback_note,
@@ -2902,6 +2993,8 @@ def _run_bot():
         for gid in list(runtime.PROMISES.items):
             schedule_promises(gid)
     runtime.SCHEDULER.register("followup", finish_lookup)
+    if config.REMINDER_ENABLED:
+        runtime.SCHEDULER.register(reminders.KIND, fire_reminder, hold=_reminder_hold)
     jobs["schedule"] = scheduler_loop
     for name, factory in jobs.items():
         task = loop.create_task(STATUS.run(name, factory))

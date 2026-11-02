@@ -482,6 +482,8 @@ PROMISE_MAX_ITEMS = _env_int("PROMISE_MAX_ITEMS", 12)              # 每群最�
 # 同一个群两次催债至少隔多久（秒）。原来是每小时一圈的检查间隔；改成定时任务后
 # 每条账有自己的闹钟，几条同时到期时靠它错开，别一口气全催出来。
 PROMISE_CHECK_INTERVAL = _env_float("PROMISE_CHECK_INTERVAL", 3600.0)
+# 群友让小王到点提醒（reminders.py，见 docs/reminders.md）：一人一条，小王在回复里写〔提醒 …〕才算记上。
+REMINDER_ENABLED = _env_bool("REMINDER_ENABLED", True)
 # 定时任务（scheduler.py）多久看一次到点的（秒）。
 SCHEDULE_TICK_SECONDS = _env_float("SCHEDULE_TICK_SECONDS", 60.0)
 # 这些小时段内不主动开口（本地时间），免得半夜把群吵醒

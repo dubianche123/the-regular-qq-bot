@@ -25,7 +25,7 @@ It can chat, understand images and voice messages, search for information, recal
 </tr>
 <tr>
 <td width="50%" valign="top"><strong>🌿 Be part of the group</strong><br>It may join a conversation or stay quiet, while remembering names, relationships and shared experiences.</td>
-<td width="50%" valign="top"><strong>🎨 More than text</strong><br>Ask naturally for a picture, a voice reply, a search or an old story. Daily limits apply to search and drawing.</td>
+<td width="50%" valign="top"><strong>🎨 More than text</strong><br>Ask naturally for a picture, a voice reply, a search, an old story or a timed reminder (one per member; a new one replaces the old). Daily limits apply to search and drawing.</td>
 </tr>
 </table>
 
@@ -91,7 +91,7 @@ regular --directory regular-bot panel
 ## Learn more
 
 - [Judgment layer](docs/judgment-layer.md) · [When to reply without being called](docs/when-to-reply.md)
-- [Image and voice replies](docs/media-replies.md) · [Web lookup and follow-ups](docs/slow-work.md)
+- [Image and voice replies](docs/media-replies.md) · [Web lookup and follow-ups](docs/slow-work.md) · [Timed reminders](docs/reminders.md) (Chinese)
 - [Personal memory](docs/personal-memory.md) · [Design notes](docs/DESIGN_NOTES_EN.md)
 
 [MIT License](LICENSE)

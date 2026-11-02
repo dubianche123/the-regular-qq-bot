@@ -1,4 +1,4 @@
-"""小王回复里的「〔画〕」「〔语音〕」「〔不接〕」标记（2026-11-02，见 docs/media-replies.md）。
+"""小王回复里的「〔画〕」「〔语音〕」「〔不接〕」「〔提醒 …〕」标记（2026-11-02，见 docs/media-replies.md）。
 
 画不画、念不念、画什么、用什么语气，都由小王自己在回复里写（提示词见
 prompts.PROMPT_DRAW_RULES / PROMPT_VOICE_RULES）；代码只认标记、管额度、记结果。
@@ -10,6 +10,9 @@ prompts.PROMPT_DRAW_RULES / PROMPT_VOICE_RULES）；代码只认标记、管额�
 〔不接〕是没叫它的那几轮里它说「这句不归我」（prompts.PROMPT_BANTER_NOTE）：出现在哪一行都算，
 整条不发 —— 一边写「不接」一边又写了话，多半是它自己也没想清楚，那就别说。
 
+〔提醒 11-03 09:00〕〔取消提醒〕是它答应了到点提醒、或者不提醒了（docs/reminders.md）：
+单独一行，跟〔画〕〔语音〕不抢位置；时间怎么算、记不记得上在 reminders.py。
+
 认不出标记就当普通文字：宁可少画一张，也不把半截标记发进群里。
 """
 import re
@@ -17,6 +20,8 @@ from dataclasses import dataclass
 
 # 第一行的标记；全角半角括号、方括号都认 —— 模型偶尔换括号，不值得为此丢一张图。
 _TAG = re.compile(r"^\s*[〔【\[［]\s*(画|语音|不接)\s*[〕】\]］]\s*(.*)$")
+# 「〔提醒 11-03 09:00〕提醒什么」「〔取消提醒〕」。设提醒必须带时间：「【提醒】」当小标题用的那种不算。
+_REMIND = re.compile(r"^\s*[〔【\[［]\s*(?:(取消提醒)|提醒\s+([^〕】\]］]+?))\s*[〕】\]］]\s*(.*)$")
 # 会话记录里系统补的那行（见 record）。模型照着写出来的一律删掉：它不许替系统作证。
 _RECORD = re.compile(r"^\s*[（(]\s*系统\s*[:：].*[）)]\s*$")
 _TONE = re.compile(r"^\s*[（(][^（）()]{1,20}[）)]\s*$")
@@ -44,6 +49,7 @@ class Said:
     kind: str | None    # None / "image" / "voice" / "pass"
     spec: str           # image：给画师的描述；voice：语气（可以为空）
     text: str           # 发在群里的那句 / 要念的那句
+    remind: tuple | None = None   # ("set", 时间, 提醒什么) / ("cancel", "", "")；见 reminders.apply
 
 
 PASS = Said("pass", "", "")
@@ -55,6 +61,15 @@ def parse(body):
     if any((m := _TAG.match(line)) and m.group(1) == "不接" for line in lines) \
             or "".join(lines).strip(" 。.！!") == "不接":
         return PASS
+    remind, kept = None, []
+    for line in lines:
+        m = _REMIND.match(line)
+        if m is None:
+            kept.append(line)
+        elif remind is None:   # 只认第一处；后面的整行去掉，别把半截标记发进群
+            remind = (("cancel", "", "") if m.group(1)
+                      else ("set", m.group(2).strip(), m.group(3).strip()))
+    lines = kept
     kind, spec, rest = None, "", []
     for line in lines:
         m = _TAG.match(line)
@@ -76,7 +91,7 @@ def parse(body):
         spec = _LABEL.sub("", spec, count=1)
     if kind == "image" and not spec:
         kind = None   # 只有标记没有描述：没法画，当普通文字
-    return Said(kind, spec, text)
+    return Said(kind, spec, text, remind)
 
 
 def record(said, outcome):
@@ -88,6 +103,12 @@ def record(said, outcome):
         head = "〔语音〕" + (f"（{said.spec}）" if said.spec else "")
         note = VOICE_SENT if outcome else VOICE_AS_TEXT
     return "\n".join(part for part in (head, said.text, f"（系统：{note}）") if part)
+
+
+def record_reminder(recorded, remind, note):
+    """提醒那一行也原样记进会话，补上记没记上 —— 下一轮它看见的是实际结果。"""
+    head = "〔取消提醒〕" if remind[0] == "cancel" else f"〔提醒 {remind[1]}〕{remind[2]}"
+    return "\n".join(part for part in (head, recorded, f"（系统：{note}）") if part)
 
 
 def image_failed_line(outcome):

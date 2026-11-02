@@ -66,7 +66,8 @@ class HeadTest(unittest.TestCase):
         self.assertIn("〔画〕", rules)
         self.assertNotIn("〔语音〕", rules)
         with patch.object(bot.image_generation, "available", return_value=False), \
-             patch.object(bot._VOICE_OUT, "ready", return_value=False):
+             patch.object(bot._VOICE_OUT, "ready", return_value=False), \
+             patch.object(bot.config, "REMINDER_ENABLED", False):
             self.assertEqual(bot.media_rules(), "")
 
     def test_rules_say_it_can_and_records_are_true(self):
