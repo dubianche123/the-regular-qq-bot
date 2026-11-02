@@ -50,14 +50,9 @@ class WhichQuestionsTest(_Base):
         self.assertEqual(await self.tracker.assess(G, A, "今天好热", history=HIST, now=10.0), {})
         self.calls.assert_not_awaited()
 
-    async def test_every_message_asks_only_intervention(self):
-        """群主 2026-10-31：每条群消息都分诊。跟机器人无关的只问「此刻插一句合不合适」。"""
-        await self.tracker.assess(G, A, "今天好热", history=HIST, every_message=True, now=10.0)
-        self.assertEqual(self.asked(), {"intervention"})
-
-    async def test_named_asks_addressed_tone_and_intervention(self):
+    async def test_named_asks_addressed_and_tone(self):
         out = await self.tracker.assess(G, A, "小王傻", named=True, history=HIST, now=10.0)
-        self.assertEqual(self.asked(), {"addressed", "next_move", "intervention", "request_kind"})
+        self.assertEqual(self.asked(), {"addressed", "next_move", "request_kind"})
         self.assertEqual(out["asked"], sorted(self.asked()))
         self.assertIn(out["addressed"], ("answer", "quip", "let_it_pass"))
 
@@ -75,8 +70,9 @@ class WhichQuestionsTest(_Base):
         self.tracker.remember(G, A, "加班到十点？效率堪忧", route="banter",
                               outgoing_id="o1", history=HIST, now=0.0)
         await self.tracker.assess(G, A, "小王你闭嘴", named=True, now=5.0)
-        self.assertTrue({"feedback_target", "next_move", "continuation",
-                         "intervention", "addressed"} <= self.asked())
+        self.assertTrue({"feedback_target", "next_move", "addressed"} <= self.asked())
+        # 「要不要接着回」「插不插嘴」2026-11-02 起归小王自己定，分诊不再问
+        self.assertFalse({"continuation", "intervention"} & self.asked())
         self.assertIn("bot_reply", self.payload())
 
     async def test_quiet_window_still_triages_a_named_message(self):
@@ -102,12 +98,6 @@ class WhichQuestionsTest(_Base):
         with patch.object(wordfilter, "has_hit", side_effect=lambda t: "坏名" in (t or "")):
             await self.tracker.assess(G, A, "叫我好名字", nick_candidate="坏名", now=10.0)
         self.calls.assert_not_awaited()
-
-    async def test_interjection_probability_is_exposed(self):
-        """插嘴用 p(join_briefly) 本身，不是结论（body_for 默认选最后一个 = stay_quiet 0.9）。"""
-        out = await self.tracker.assess(G, A, "今天好热", history=HIST, every_message=True, now=10.0)
-        self.assertEqual(out["intervention"], "stay_quiet")
-        self.assertAlmostEqual(out["intervention_p"], 0.1)
 
     async def test_ids_stay_local(self):
         await self.tracker.assess(G, A, "小王在吗", named=True, history=HIST,
@@ -193,7 +183,7 @@ class ContextualContinuationTest(_Base):
                               outgoing_id="o1", history=HIST, now=0.0)
         self.calls.side_effect = lambda text, qs: body_for(
             qs, addressed="answer", feedback_target="bot_response",
-            continuation="reply_now", next_move="continue_normally")
+            next_move="continue_normally")
         # 正文已经被调用方剥掉小王；named 仍保留原始叫名事实。
         result = await self.tracker.assess(G, B, "这个好像是另一种", named=True, now=5.0)
         self.assertTrue(self.payload()["latest_is_directed"])
@@ -201,20 +191,17 @@ class ContextualContinuationTest(_Base):
         self.assertEqual(self.payload()["bot_reply"]["text"], "我不确定是什么")
         self.assertEqual(result["addressed"], "answer")
         self.assertEqual(result["target"], "bot_response")
-        self.assertEqual(result["continuation"], "reply_now")
         self.assertEqual(self.calls.await_count, 1)
 
-    async def test_unnamed_correction_uses_feedback_and_continuation(self):
+    async def test_unnamed_correction_uses_feedback(self):
         self.tracker.remember(G, A, "这题结果应该是十", route="reply",
                               outgoing_id="o1", history=HIST, now=0.0)
         self.calls.side_effect = lambda text, qs: body_for(
-            qs, feedback_target="bot_response", continuation="reply_now",
-            next_move="repair_briefly")
+            qs, feedback_target="bot_response", next_move="repair_briefly")
         result = await self.tracker.assess(G, B, "少算了两项", now=5.0)
         self.assertFalse(self.payload()["latest_is_directed"])
         self.assertNotIn("addressed", self.asked())
         self.assertEqual(result["target"], "bot_response")
-        self.assertEqual(result["continuation"], "reply_now")
         self.assertEqual(result["action"], "repair_briefly")
         self.assertEqual(self.calls.await_count, 1)
 
@@ -262,7 +249,7 @@ class ContextualContinuationTest(_Base):
         self.calls.side_effect = replacement
         result = await self.tracker.assess(G, B, "也许是另一种", named=True, now=123.0)
         self.assertNotIn("bot_reply_text", result)
-        self.assertEqual(result["intervention"], "stay_quiet")
+        self.assertEqual(result["action"], "stay_quiet")
 
 
 class PlayfulRequestTest(_Base):
@@ -297,9 +284,9 @@ class PlayfulRequestTest(_Base):
                 out = await self.tracker.assess(G, A, "小王看看", named=True, now=10.0)
                 self.assertNotIn("playful_request", out)
 
-    async def test_unrelated_message_does_not_add_question(self):
-        await self.tracker.assess(G, A, "今天好热", every_message=True, now=10.0)
-        self.assertNotIn("request_kind", self.asked())
+    async def test_unrelated_message_asks_nothing(self):
+        self.assertEqual(await self.tracker.assess(G, A, "今天好热", now=10.0), {})
+        self.calls.assert_not_awaited()
 
 
 class NoMediaQuestionTest(_Base):

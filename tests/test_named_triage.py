@@ -6,13 +6,14 @@
 
   · 平台 @ → 一定答，分诊里连 addressed 这题都不问；
   · 正文里有名字 → 分诊 addressed：answer 答 / quip 判断说接得上才短接一句 /
-    let_it_pass 当普通消息（骰子 + 插嘴仲裁）；
+    let_it_pass 当普通消息（2026-11-02 起：交给小王自己定接不接）；
   · 判断不可用 → 照答（被叫到却被无视，比多答一句难受）；
     唯一例外：判断有把握地读出「收敛」，就不回「好的我闭嘴」；
-  · 每条消息最多一次判断调用，骰子掷中时复用同一次的 intervention；
+  · 每条消息最多一次判断调用；
   · 起名：本地模式只提议，判断能否决（诱饵 / 误触发），不能单独批准；
   · 翻旧账：判断说 look_up 才翻；
-  · 沉默权还在，只是从「生成」挪到了「判断」—— 提示词里不再有 SKIP。
+  · 被点名该答的那几类，沉默权在「判断」；没叫它的（含 let_it_pass）沉默权还给小王，
+    写〔不接〕—— 不是旧的 SKIP 兜底：被叫到时提示词里没有这条路。
 """
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -27,7 +28,6 @@ from test_when_to_intervene import A, G, _Base
 # 没指定的题答一个「什么都不改变」的选项。不能默认第一个：next_move 的第一个
 # 选项恰好是 back_off，会让每条消息都像在叫它收敛。
 NEUTRAL = {"feedback_target": "not_feedback", "next_move": "no_adjustment",
-           "continuation": "no_reply_needed", "intervention": "stay_quiet",
            "addressed": "answer", "recall": "no_need", "nickname": "adopt",
            "request_kind": "not_request",
            "lookup": "none"}
@@ -91,33 +91,32 @@ class NamedRoutingTest(_Named):
         self.assertIn("addressed", self.asked())
 
     async def test_let_it_pass_is_an_ordinary_message(self):
-        """「这下小王惨了」：名字出现了，但没人在跟它说话 —— 跟别的消息一样掷骰子。"""
+        """「这下小王惨了」：名字出现了，但没人在跟它说话 —— 跟别的没叫它的消息一样，接不接它自己定。"""
         self.calls.side_effect = answering({"addressed": "let_it_pass"})
-        with patch.object(bot.random, "random", return_value=0.999):
-            msg = await self._drive("这下小王惨了")
+        self.reply_text = "〔不接〕"
+        msg = await self._drive("这下小王惨了")
         self.assertFalse(self.sent(msg))
-        self.assertEqual((self.gate()["route"], self.gate()["reason"]), ("banter", "miss"))
+        self.assertIn(prompts.BANTER_MARK, self.prompts_seen[-1][-1]["content"])
+        self.assertEqual((self.gate()["route"], self.gate()["reason"]), ("banter", "declined"))
 
     async def test_quip_replies_short_whatever_the_interjection_question_says(self):
         """「小王我真的好喜欢你啊」（2026-11-01 被吞）：addressed 已判过短接一句接得上，
-        就短接。intervention 问的是没人请时插不插嘴，管不到冲着它说的话；也不掷骰子。"""
-        self.calls.side_effect = answering({"addressed": "quip",
-                                            "intervention": "stay_quiet"})
+        就短接，不再问小王接不接。"""
+        self.calls.side_effect = answering({"addressed": "quip"})
         msg = await self._drive("小王我真的好喜欢你啊")
         self.assertTrue(self.sent(msg))
         self.assertEqual(self.gate()["reason"], "named_quip")
-        self.assertNotIn("draw", self.gate())
         turn = self.prompts_seen[-1][-1]["content"]
         self.assertIn("有人在逗你", turn)
+        self.assertNotIn(prompts.BANTER_MARK, turn)
 
     async def test_quip_stays_silent_in_the_quiet_window(self):
-        """刚被叫收敛：暂停窗内被逗也不接，同样不掷骰子。"""
+        """刚被叫收敛：暂停窗内被逗也不接。"""
         self.calls.side_effect = answering({"addressed": "quip"})
         with patch.object(self.feedback, "quiet", return_value=True):
             msg = await self._drive("小王你是傻逼")
         self.assertFalse(self.sent(msg))
         self.assertEqual(self.gate()["reason"], "named_quip_quiet")
-        self.assertNotIn("draw", self.gate())
 
     async def test_unavailable_judge_falls_back_to_answering(self):
         self.calls.return_value = None
@@ -133,21 +132,18 @@ class NamedRoutingTest(_Named):
 
     async def test_confident_back_off_beats_the_fallback(self):
         """「小王闭嘴」：判断拿不准该不该答，却有把握是在叫它收敛 —— 不回「好的我闭嘴」。"""
-        self.calls.side_effect = answering({"addressed": None, "next_move": "back_off",
-                                            "intervention": "stay_quiet"})
-        with patch.object(bot.random, "random", return_value=0.999):
-            msg = await self._drive("小王闭嘴")
+        self.calls.side_effect = answering({"addressed": None, "next_move": "back_off"})
+        msg = await self._drive("小王闭嘴")
         self.assertFalse(self.sent(msg))
-        self.assertNotEqual(self.gate()["route"], "direct")
+        self.assertEqual(self.prompts_seen, [])        # 连问都不问它
+        self.assertEqual(self.gate()["reason"], "back_off")
 
-    async def test_one_call_per_message_even_when_the_dice_hit(self):
-        self.calls.side_effect = answering({"addressed": "let_it_pass",
-                                            "intervention": "join_briefly"})
-        with patch.object(bot.random, "random", return_value=0.0):
-            msg = await self._drive("小王这人有意思")
+    async def test_one_call_per_message_even_when_it_chimes_in(self):
+        self.calls.side_effect = answering({"addressed": "let_it_pass"})
+        msg = await self._drive("小王这人有意思")
         self.assertTrue(self.sent(msg))
         self.assertEqual(self.calls.await_count, 1)
-        self.assertIn("intervention", self.asked())
+        self.assertNotIn("intervention", self.asked())
 
 
 class NicknameVetoTest(_Named):

@@ -276,22 +276,6 @@ def usable_choices(body, questions, min_margin=None):
     return choices, scores
 
 
-# 插嘴判断：用 p(join_briefly) 的 SHARPNESS 次方按本群均值归一成乘数，不用结论。
-# 2026-11-01 在归档 296 条未点名消息上实测：p 均值 0.461、p10 0.24、p90 0.75，
-# 结论说 join 的占 37%；同一晚线上全是冲着它说的话，结论 0/37 —— 结论的刻度跟着场景漂。
-# p 挤在中间，直接按 p 归一太平：分数最低的四分之一（「别问了」、表情、敏感话题）
-# 会分到 12% 的插嘴。三次方后是 3%，最高的四分之一拿 64%（原来「掷中再否决」是 65%），
-# 话量 11.1/百条，原来 4.6。BASE 是同一批的 p³ 均值，只用作新群 EMA 的起点。
-INTERVENTION_SHARPNESS = 3
-INTERVENTION_BASE = 0.154
-
-
-def _probability(score, value):
-    """某一题里某个选项的概率；不受弃答闸影响 —— 排序用的是概率，不是结论。"""
-    p = ((score or {}).get("probabilities") or {}).get(value)
-    return float(p) if isinstance(p, (int, float)) and not isinstance(p, bool) else None
-
-
 # ── 反馈观察：只记「确认送达的模型回复」的短命缓存 ──
 
 def _alias_map(senders):
@@ -400,27 +384,24 @@ class FeedbackTracker:
 
     async def assess(self, group, user, text, *, message_id="", is_direct=False,
                      named=False, history=None, nick_candidate=None,
-                     want_recall=False, want_lookup=False,
-                     every_message=False, now=None):
+                     want_recall=False, want_lookup=False, now=None):
         """一条人类消息的**分诊**：本机先决定要问哪几题，然后最多一次原生调用。
 
         为什么是一次调用带一串题（2026-10-31）：这个接口按输入计费、输出不要钱，
         而几道题看的是同一段对话 —— 题目近乎免费，贵的是把对话送过去那一次。
         所以每条消息只建一份 payload，按本机已知的事实挂上用得着的题：
 
-          · 机器人刚说过话（窗口内）  → 反馈四题（冲谁说的 / 下一步 / 要不要接 / 插不插）
+          · 机器人刚说过话（窗口内）  → 反馈两题（冲谁说的 / 下一步）
           · 正文里有它的名字、但不是平台 @ → addressed：answer / quip / let_it_pass
           · 被 @ 或被点名、且没有窗口内的回复 → next_move：只用来判断要不要收敛语气
           · 本轮会正经回复（被 @ / 点名）且开了召回 → recall：要不要翻本群旧账
           · 同上且配了联网查询 → lookup：要不要先上网查（search），或明确要它深挖（research）
           · 本地起名解析提出了候选 → nickname：adopt / refuse / not_a_request
-          · intervention 永远带上：骰子掷中时直接复用，同一条消息不发第二次调用
 
-        every_message=True（群主 2026-10-31 同意，见 config.DECISION_TRIAGE_ALL）时，
-        跟机器人无关的普通消息也问一次 intervention —— 「何时介入」这道题从此每条消息
-        都有数，而不只是骰子掷中的那一成多；骰子掷中时也就不必再发第二次。
+        没叫它的消息接不接，2026-11-02 起由小王自己在回复里定（bot.reply_unprompted），
+        这里不再问「插不插嘴」「要不要接着回」—— 跟它无关又不在反馈窗口里的消息一题都不问。
 
-        一题都用不上（且没要求每条都问）就返回 {}（0 调用）。发起过就记 decision_attempted=True，
+        一题都用不上就返回 {}（0 调用）。发起过就记 decision_attempted=True，
         即使请求失败也不许为同一条消息再发一次。`asked` 记下这次实际问了哪些题。
 
         私聊不走这里：私聊原文是最私密的那一路，不为它新开一条第三方数据流。
@@ -434,8 +415,8 @@ class FeedbackTracker:
             reply = None
         calls_bot = bool(is_direct or named)
         if reply and not is_direct and self.quiet(group, now=now):
-            # 暂停窗内不再评反馈；但被点名的、要起名的、每条都要问的照样要判。
-            if not (named or nick_candidate or every_message):
+            # 暂停窗内不再评反馈；但被点名的、要起名的照样要判。
+            if not (named or nick_candidate):
                 return {}
             reply = None
         questions = []
@@ -475,9 +456,8 @@ class FeedbackTracker:
         candidate = _sanitize(nick_candidate, known) if nick_candidate else ""
         if candidate:
             questions += decision_prompts.nickname_questions()
-        if not questions and not every_message:
+        if not questions:
             return {}
-        questions += decision_prompts.intervention_questions()
 
         # 保留登记回复时的历史，另附 bot 回复后的消息，匿名代号在两段中一致。
         senders = ([row.get("sender") for row in rows_source + after_reply if isinstance(row, dict)]
@@ -532,9 +512,7 @@ class FeedbackTracker:
         result.update(addressed=choices.get("addressed"),
                       nickname=choices.get("nickname"),
                       recall=choices.get("recall"),
-                      lookup=choices.get("lookup"),
-                      intervention_p=_probability(scores.get("intervention"),
-                                                  "join_briefly"))
+                      lookup=choices.get("lookup"))
         # 只用「低真心」的一侧；必须确实选了 playful、三项概率完整且有可比边际。
         # 题面来自本地实验；线上语境和样本不同，不把它当成真实意图的定论。
         request_score = scores.get("request_kind") or {}
@@ -548,34 +526,24 @@ class FeedbackTracker:
             result["playful_request"] = True
         if stale:
             result.update(target=None, suggested_move=None,
-                          action="stay_quiet", intervention="stay_quiet",
-                          intervention_p=0.0, continuation=None, back_off=False)
+                          action="stay_quiet", back_off=False)
             return result
         if not reply:
             result.update(target=None, suggested_move=choices.get("next_move"),
-                          action=None, continuation=None,
-                          intervention=choices.get("intervention"),
+                          action=None,
                           back_off=choices.get("next_move") == "back_off")
             return result
         target = choices.get("feedback_target")
         action = choices.get("next_move")
-        continuation = choices.get("continuation")
-        intervention = choices.get("intervention")
         # 不是冲着 bot 的，就一律不动作：不许拿「别人被开玩笑」的低置信
         # keep_playful 当成继续逗的许可（实测踩过）。
         if target != "bot_response":
             action = "no_adjustment"
-            continuation = "no_reply_needed"
-        # 收敛优先：有效 back_off 一票否决 —— 同题答出的 reply_now /
-        # join_briefly 一律压掉，优先级不靠模型自觉。
+        # 收敛优先：有效 back_off 装上暂停窗，窗内没叫它的消息一律不问小王。
         if target == "bot_response" and action == "back_off":
-            continuation = "no_reply_needed"
-            intervention = "stay_quiet"
-            result["intervention_p"] = 0.0
             self._slot(group)["quiet_until"] = now + self.quiet_seconds
         result.update(target=target, suggested_move=choices.get("next_move"),
-                      action=action, continuation=continuation,
-                      intervention=intervention, back_off=action == "back_off")
+                      action=action, back_off=action == "back_off")
         # 点名接话时，分诊已看到最近一条回复；即使反馈题拿不准，也将原句作为
         # 中性语境交回，否则跨人续谈时当前说话人的 session 根本看不到它。
         # 明确是针对另一人的反馈时不借用；这不改变反馈判定或新增回复资格。
@@ -591,53 +559,6 @@ class FeedbackTracker:
             result["bot_reply_text"] = payload["bot_reply"]["text"]
             result["bot_reply_to"] = reply_to
         return result
-
-    async def consider_banter(self, group, user, *, history=(), now=None,
-                              source_message_id=""):
-        """给一次「要不要插嘴」拍个板：join_briefly / stay_quiet / None（基线照旧）。
-
-        None = 这次判断不可用，维持原有骰子口径，绝不擅自改行为。
-        过期缓存回复不带进请求；等待期间出现更新送达 → 机会已过时，
-        返回 stay_quiet 但**不安装**暂停窗。
-        """
-        if not config.DECISION_ENABLED:
-            return None
-        now = time.time() if now is None else now
-        slot = self._groups.get(group) or {}
-        reply = slot.get("reply")
-        if reply and now - reply["ts"] > self.window_seconds:
-            reply = None  # 旧回复不是这次机会的语境
-        extra_senders = ([reply["user"]] if reply else [])
-        aliases = _alias_map(
-            [row.get("sender") for row in history] + extra_senders + [user])
-        known = self._known_ids(group, reply, history, (user,))
-        rows = self._input_rows(history, aliases, known)
-        if not rows:
-            return None   # 没有可用的对话语境，不浪费一次原生调用
-        payload = {"recent_human_messages": rows}
-        if reply:
-            bot_text = _sanitize(reply["text"], known)
-            if bot_text:
-                payload["bot_reply"] = {
-                    "route": ("invited_reply" if reply["route"] == "reply"
-                              else "unsolicited_interjection"),
-                    "reply_to": (aliases.get(reply["user"], "member")
-                                 if reply["user"] else "group"),
-                    "text": bot_text}
-        _with_aliases(payload)
-        questions = decision_prompts.intervention_questions()
-        snapshot = (self._groups.get(group) or {}).get("reply")
-        body = await providers.call_decision(
-            json.dumps(payload, ensure_ascii=False), questions)
-        if (self._groups.get(group) or {}).get("reply") is not snapshot:
-            return "stay_quiet"   # 上下文已换：这次机会作废，不装暂停窗
-        choices, scores = usable_choices(body, questions)
-        self._log_scores(group, "banter", scores, user=user,
-                         source_message_id=source_message_id)
-        if choices is None:
-            return None
-        return choices.get("intervention")
-
 
     async def consider_callback(self, group, user, *, quote, quote_ts,
                                 history=(), now=None, source_message_id=""):

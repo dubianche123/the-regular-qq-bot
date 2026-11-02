@@ -76,7 +76,7 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
         """群主身份、群聊背景、关系档案、插嘴指令都只能在最后那条 user 里。"""
         msgs = await self.grab(
             "th_order_2", "老张今天来了吗",
-            is_owner=True, is_random_banter=True,
+            is_owner=True, unprompted=True,
             context_hint="- 阿强：今天天气不错",
             relation_note="【你对这位群友的记忆】很熟",
         )
@@ -167,7 +167,7 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
         """随机插嘴、对方喊停、或知识库/旧账/搜索已给了材料：调用方塞了也一律不拼。"""
         note = prompts.MEMORY_MARK + "（测试）】\n- 阿青说过：\"喝咖啡\""
         cases = [
-            ("banter", "咖啡喝什么", dict(is_random_banter=True)),
+            ("banter", "咖啡喝什么", dict(unprompted=True)),
             ("knowledge", "咖啡喝什么",
              dict(knowledge_note=knowledge.KNOWLEDGE_MARK + "（测试）】\n- 群规：不发广告")),
             ("recall", "咖啡喝什么",
@@ -282,7 +282,7 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
         按「插嘴/正经」切会让同一个角色忽聪明忽笨；而且实测插嘴一天 0 次
         （归档消息长度中位数 7 字，够不着 10 字门槛），为它单独换模型纯属白搭。
         """
-        await self.grab("th_tier_banter", "哈哈", is_random_banter=True,
+        await self.grab("th_tier_banter", "哈哈", unprompted=True,
                         relation_note="【记忆】甲")
         self.assertEqual(self.captured["tier"], "chat")
 

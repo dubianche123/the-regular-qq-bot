@@ -77,7 +77,7 @@ class ProductConfigTest(unittest.TestCase):
             self.assertEqual(data["PROVIDER_PRESETS"]["zhipu"]["models_digest"], ["digest"])
 
     def test_documented_defaults_match_example(self):
-        fields = ("BANTER_PROBABILITY", "OWNER_MENTION_PROBABILITY", "BANTER_COOLDOWN_SECONDS", "DAILY_BUDGET", "AI_MAX_ATTEMPTS", "LOG_LEVEL")
+        fields = ("BANTER_COOLDOWN_SECONDS", "DAILY_BUDGET", "AI_MAX_ATTEMPTS", "LOG_LEVEL")
         with tempfile.TemporaryDirectory() as directory:
             actual = config_json(directory, *fields)
         lines = (ROOT / ".env.example").read_text().splitlines()

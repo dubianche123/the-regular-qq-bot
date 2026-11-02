@@ -1,4 +1,4 @@
-"""自然反馈回路：送达缓存资格、收敛暂停、修正话术、插嘴仲裁、一次调用。"""
+"""自然反馈回路：送达缓存资格、收敛暂停、修正话术、一次调用；没叫它的消息交给它自己。"""
 import asyncio
 import collections
 import json
@@ -33,15 +33,12 @@ def _group_message(text="你好", sender="USER_A", group="GID_FB", msg_id=None):
 _VOCAB = {"feedback_target": ["bot_response", "another_person",
                               "not_feedback", "unclear"],
           "next_move": ["back_off", "repair_briefly", "keep_playful",
-                        "continue_normally", "no_adjustment"],
-          "continuation": ["reply_now", "no_reply_needed", "unclear"],
-          "intervention": ["join_briefly", "stay_quiet"]}
+                        "continue_normally", "no_adjustment"]}
 
 
 def _body(**kv):
     """真实原生返回形态：confidence + probabilities 数组。"""
-    base = {"feedback_target": "bot_response", "next_move": "keep_playful",
-            "continuation": "no_reply_needed", "intervention": "join_briefly"}
+    base = {"feedback_target": "bot_response", "next_move": "keep_playful"}
     base.update(kv)
     answers = []
     for name, choice in base.items():
@@ -67,8 +64,15 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         self.feedback = decisions.FeedbackTracker(120.0, 180.0)
         self.calls = AsyncMock(return_value=None)
         self.model_calls = []
+        # 没叫它的那一轮（2026-11-02 起交给它自己定）另记一本；默认它不接，
+        # 这样「只进背景」的那几句不会被当成它的回话，要它接的用例自己改这个值。
+        self.unprompted_calls = []
+        self.unprompted_reply = "〔不接〕"
 
         async def fake_model(messages, max_tokens, **kw):
+            if prompts.BANTER_MARK in messages[-1]["content"]:
+                self.unprompted_calls.append(messages)
+                return self.unprompted_reply
             self.model_calls.append(messages)
             return "（模型应答）"
 
@@ -147,23 +151,18 @@ class AssessFlowTest(_Base):
 
     async def test_back_off_pauses_unsolicited_but_direct_still_answers(self):
         await self._seed_reply()
-        self.calls.return_value = _body(next_move="back_off",
-                                        intervention="stay_quiet")
+        self.calls.return_value = _body(next_move="back_off")
         # 点名嫌烦 → 仍然直接回复（被叫就要应），但挂上收敛话术
         await self._drive("别烦我了", is_at=True)
         self.assertTrue(self.feedback.quiet(self.G))
         self.assertEqual(self.calls.await_count, 1)
         last = self.model_calls[-1][-1]["content"]
         self.assertIn("嫌你打扰", last)   # PROMPT_FEEDBACK_BACK_OFF 已在末尾层
-        # 暂停窗内非点名消息：不再评反馈、不插嘴。每条都分诊时只问 intervention（攒数据），
-        # 关掉每条分诊时连这一次也不问。
-        for triage_all in (True, False):
-            with self.subTest(triage_all=triage_all), \
-                    patch.object(config, "DECISION_TRIAGE_ALL", triage_all):
-                self.calls.reset_mock(); self.model_calls.clear()
-                await self._drive("哈哈哈哈哈")
-                self._assert_only_intervention(triage_all)
-                self.assertEqual(len(self.model_calls), 0)
+        # 暂停窗内非点名消息：不再评反馈，也不问小王接不接
+        self.calls.reset_mock(); self.model_calls.clear()
+        await self._drive("哈哈哈哈哈")
+        self.calls.assert_not_awaited()
+        self.assertEqual((self.model_calls, self.unprompted_calls), ([], []))
 
     async def test_friendly_swearing_does_not_mute_or_penalize(self):
         await self._seed_reply()
@@ -184,19 +183,19 @@ class AssessFlowTest(_Base):
                   ).get("score", 0)
         self.assertGreaterEqual(after2, after)
 
-    async def test_implicit_followup_directs_reply_but_laughter_does_not(self):
+    async def test_unnamed_followup_goes_to_xiaowang_with_its_last_line(self):
+        """没点名的追问不再靠分诊的 reply_now 硬接，交给小王；它看得见自己刚说了什么。"""
         await self._seed_reply()
-        self.calls.return_value = _body(continuation="reply_now",
-                                        next_move="continue_normally")
-        self.model_calls.clear()
-        await self._drive("再来一个呗")
-        self.assertEqual(len(self.model_calls), 1)   # 没点名也照接
-        # 只是笑：不许催出一条额外回复
-        self.calls.return_value = _body(continuation="no_reply_needed")
-        self.model_calls.clear()
-        with patch.object(bot.random, "random", return_value=0.999):
-            await self._drive("哈哈哈哈哈")
-        self.assertEqual(len(self.model_calls), 0)
+        self.calls.return_value = _body(next_move="continue_normally")
+        self.unprompted_reply = "再来一个就再来一个"
+        msg = await self._drive("再来一个呗")
+        self.assertEqual(len(self.unprompted_calls), 1)
+        self.assertIn("- 你：（模型应答）", self.unprompted_calls[-1][-1]["content"])
+        msg.reply.assert_awaited()
+        # 它说不接：一个字都不发
+        self.unprompted_reply = "〔不接〕"
+        msg = await self._drive("哈哈哈哈哈")
+        msg.reply.assert_not_awaited()
 
     async def test_repair_note_is_final_dynamic_layer(self):
         await self._seed_reply()
@@ -207,73 +206,29 @@ class AssessFlowTest(_Base):
         last = self.model_calls[-1][-1]["content"]
         self.assertIn("纠正刚才", last)   # REPAIR 话术进了最后动态层
 
-    def _assert_only_intervention(self, triage_all):
-        """没有可评的反馈时：每条都分诊 → 只问 intervention；关掉 → 0 调用。"""
-        if triage_all:
-            self.assertEqual(self.calls.await_count, 1)
-            self.assertEqual({q["name"] for q in self.calls.await_args.args[1]},
-                             {"intervention"})
-        else:
-            self.assertEqual(self.calls.await_count, 0)
-
     async def test_without_a_live_reply_no_feedback_is_asked(self):
-        for triage_all in (True, False):
-            with self.subTest(triage_all=triage_all), \
-                    patch.object(config, "DECISION_TRIAGE_ALL", triage_all):
-                # 没登记过回复
-                self.feedback._groups.pop(self.G, None)
-                self.calls.reset_mock()
-                with patch.object(bot.random, "random", return_value=0.999):
-                    await self._drive("随便聊两句")
-                self._assert_only_intervention(triage_all)
-                # 登记但已过窗口
-                await self._seed_reply()
-                self.feedback._groups[self.G]["reply"]["ts"] -= 9999
-                with patch.object(bot.random, "random", return_value=0.999):
-                    await self._drive("过了几天再说")
-                self._assert_only_intervention(triage_all)
+        """跟它无关、也不在反馈窗口里的消息：一次分诊都不发，直接问小王。"""
+        self.feedback._groups.pop(self.G, None)       # 没登记过回复
+        self.calls.reset_mock()
+        await self._drive("随便聊两句")
+        self.calls.assert_not_awaited()
+        await self._seed_reply()                      # 登记但已过窗口
+        self.feedback._groups[self.G]["reply"]["ts"] -= 9999
+        await self._drive("过了几天再说")
+        self.calls.assert_not_awaited()
+        self.assertEqual(len(self.unprompted_calls), 2)
 
 
-def _intervention(p_join):
-    return {"answers": [{
-        "name": "intervention", "type": "choice",
-        "choice": "join_briefly" if p_join >= 0.5 else "stay_quiet",
-        "confidence": abs(2 * p_join - 1),
-        "probabilities": [{"value": "join_briefly", "probability": p_join},
-                          {"value": "stay_quiet", "probability": 1 - p_join}]}]}
-
-
-class BanterVetoTest(_Base):
-    async def test_judgment_scales_the_dice_instead_of_vetoing(self):
-        """2026-11-01：判断的 p(join) 折进概率，结论不再一票否决。"""
-        self.addCleanup(lambda: bot.group_last_random_reply.pop(self.G, None))
-        # 有把握地说不合适（p(join)=0）：概率跟着归零，骰子再小也不中
-        with patch.object(bot.random, "random", return_value=0.0):
-            self.calls.return_value = _intervention(0.0)
-            await self._drive("大家在认真讨论正事")
-        self.assertEqual(len(self.model_calls), 0)
-        # 结论是 stay_quiet 但概率不是零：照比例缩小，照样可能命中
-        with patch.object(bot.random, "random", return_value=0.0):
-            self.calls.return_value = _intervention(0.2)
-            await self._drive("这句也许能接", msg_id="m-low")
-        self.assertEqual(len(self.model_calls), 1)
-        # 判断不可用（None）→ 乘数为 1，维持骰子基线
-        bot.group_last_random_reply.pop(self.G, None)
-        with patch.object(bot.random, "random", return_value=0.0):
-            self.calls.return_value = None
-            await self._drive("这句值得接", msg_id="m-baseline")
-        self.assertEqual(len(self.model_calls), 2)
-
+class OneCallTest(_Base):
     async def test_one_native_call_per_incoming_message(self):
         await self._drive("开场", is_at=True)     # 登记回复
         self.calls.reset_mock()
         self.model_calls.clear()
-        self.calls.return_value = _body(intervention="stay_quiet")
-        with patch.object(bot.random, "random", return_value=0.0):
-            await self._drive("骰子也命中了")
-        # assess 已跑过一次 → 判断已折进概率，掷中也不许再发第二次
+        self.calls.return_value = _body(feedback_target="not_feedback")
+        await self._drive("接着聊别的")
+        # 反馈窗口里：分诊一次，然后问小王一次，不再有第二次原生调用
         self.assertEqual(self.calls.await_count, 1)
-        self.assertEqual(len(self.model_calls), 1)
+        self.assertEqual(len(self.unprompted_calls), 1)
 
     async def test_local_search_and_command_paths_bypass(self):
         await self._drive("开场", is_at=True)
@@ -285,17 +240,14 @@ class BanterVetoTest(_Base):
 
 
 class PrecedenceAndSearchTest(_Base):
-    async def test_back_off_overrides_reply_now_and_join_briefly(self):
+    async def test_back_off_means_xiaowang_is_not_even_asked(self):
         await self._drive("开场", is_at=True)
         self.calls.reset_mock()
         self.model_calls.clear()
-        # 矛盾答案：back_off + reply_now + join_briefly —— 收敛一票否决
-        self.calls.return_value = _body(
-            next_move="back_off", continuation="reply_now",
-            intervention="join_briefly")
-        with patch.object(bot.random, "random", return_value=0.0):
-            await self._drive("别烦我了行不行")
-        self.assertEqual(len(self.model_calls), 0)   # 非点名：不多嘴、不掷后续
+        self.calls.return_value = _body(next_move="back_off")
+        await self._drive("别烦我了行不行")
+        # 非点名的嫌烦：装上暂停窗，这一句也不问小王接不接
+        self.assertEqual((self.model_calls, self.unprompted_calls), ([], []))
         self.assertTrue(self.feedback.quiet(self.G))
         # 点名仍然应一句
         self.calls.return_value = _body()
@@ -303,25 +255,23 @@ class PrecedenceAndSearchTest(_Base):
         self.assertGreaterEqual(len(self.model_calls), 1)
 
     async def test_search_command_never_runs_prospective_call(self):
-        # 非点名搜索 + 强制骰子命中：搜索语义照旧，原生插嘴仲裁不许插队
+        # 非点名搜索：搜索语义照旧，分诊不许插队
         self.calls.reset_mock()
-        with patch.object(bot.random, "random", return_value=0.0), \
-                patch.object(bot.search_mod, "search_web",
+        with patch.object(bot.search_mod, "search_web",
                              new=AsyncMock(return_value=[{
                                  "title": "t", "url": "u",
                                  "snippet": "s"}])):
             await self._drive("搜索 咖啡")
         self.assertEqual(self.calls.await_count, 0)
 
-    async def test_failed_assessment_never_retries_on_dice_hit(self):
+    async def test_failed_assessment_never_retries(self):
         await self._drive("开场", is_at=True)
         self.calls.reset_mock()
         self.model_calls.clear()
         self.calls.return_value = None            # 评估失败也算「尝试过」
-        with patch.object(bot.random, "random", return_value=0.0):
-            await self._drive("这句骰子会中")
-        self.assertEqual(self.calls.await_count, 1)   # 没有第二次
-        self.assertEqual(len(self.model_calls), 1)    # 评估失败不否决骰子
+        await self._drive("这句接着说")
+        self.assertEqual(self.calls.await_count, 1)       # 没有第二次
+        self.assertEqual(len(self.unprompted_calls), 1)   # 评估失败不挡着问小王
 
 
 class StaleAndPrivacyTest(_Base):
@@ -338,54 +288,13 @@ class StaleAndPrivacyTest(_Base):
         self.calls.side_effect = slow
         result = await self.feedback.assess(
             self.G, self.A, "刚才那句不对", is_direct=False)
-        self.assertEqual(result["intervention"], "stay_quiet")
+        self.assertEqual(result["action"], "stay_quiet")
         self.assertFalse(self.feedback.quiet(self.G))   # 不安装暂停窗
         self.assertIs(self.feedback._groups[self.G]["reply"],
                       self.feedback._groups[self.G]["reply"])
         self.assertNotEqual(
             self.feedback._groups[self.G]["reply"]["outgoing_id"],
             old_reply["outgoing_id"])
-
-    async def test_stale_reply_during_banter_is_obsolete(self):
-        self.calls.reset_mock()
-
-        async def slow(text, questions):
-            self.feedback.remember(self.G, self.A, "插队回复",
-                                   route="reply", outgoing_id="oid-new")
-            return {"answers": [{"name": "intervention", "type": "choice",
-                                 "choice": "join_briefly",
-                                 "confidence": 0.9,
-                                 "probabilities": [
-                                     {"value": "join_briefly",
-                                      "probability": 0.9},
-                                     {"value": "stay_quiet",
-                                      "probability": 0.1}]}]}
-        self.feedback.remember(self.G, self.A, "旧回复",
-                               route="reply", outgoing_id="oid-old")
-        self.calls.side_effect = slow
-        verdict = await self.feedback.consider_banter(
-            self.G, self.A, history=[{"sender": self.A, "text": "聊"}])
-        self.assertEqual(verdict, "stay_quiet")
-
-    async def test_banter_expired_reply_and_empty_context(self):
-        # 过期回复不带进请求；没有任何人话语境 → 不调原生
-        self.feedback.remember(self.G, self.A, "老黄历回复",
-                               route="reply", outgoing_id="oid-old")
-        self.feedback._groups[self.G]["reply"]["ts"] -= 9999
-        self.calls.reset_mock()
-        verdict = await self.feedback.consider_banter(
-            self.G, self.A, history=[{"sender": self.A, "text": "还在聊"}])
-        self.assertIsNone(verdict)  # 超时回复被排除后这次调用仍允许，
-        # 但 payload 里不许出现旧回复
-        if self.calls.await_count:
-            payload = json.loads(self.calls.await_args.args[0])
-            self.assertNotIn("老黄历回复", payload)
-        self.calls.reset_mock()
-        verdict = await self.feedback.consider_banter(
-            self.G, self.A, history=[{"sender": self.A, "text": ""}])
-        self.assertIsNone(verdict)
-        self.assertEqual(self.calls.await_count, 0)
-
 
 class PromptLayerTest(_Base):
     async def test_feedback_note_suppresses_competing_material(self):
@@ -489,10 +398,10 @@ class ReplyContextTest(_Base):
         await self._drive("说点什么", sender=self.A, is_at=True)
         self.calls.reset_mock()
         self.model_calls.clear()
-        self.calls.return_value = _body(continuation="reply_now",
-                                        next_move="continue_normally")
+        self.calls.return_value = _body(next_move="continue_normally")
+        self.unprompted_reply = "接着说就接着说"
         await self._drive("接着说", sender=self.A)
-        last = self.model_calls[-1][-1]["content"]
+        last = self.unprompted_calls[-1][-1]["content"]
         self.assertIn("（模型应答）", last)
         self.assertIn("本轮说话人", last)
         self.assertNotIn("纠正刚才", last)           # 有语境不等于修话术
@@ -515,7 +424,7 @@ class ReplyContextTest(_Base):
 
 
 class ProactiveLoopTickTest(_Base):
-    """主动巡检一整圈：安静群全段跳过，原生否决/不可用各走各的路。"""
+    """主动巡检一整圈：安静群全段跳过；其余由小王自己定说不说。"""
 
     def _one_tick(self):
         """STATUS.sleep 第一轮放行、第二轮抛 CancelledError 收住循环。"""
@@ -524,7 +433,7 @@ class ProactiveLoopTickTest(_Base):
                                                    asyncio.CancelledError()]))
 
     def _stage(self):
-        """把 proactive_loop 的外部闸门全打开放行，只剩原生裁决一道。"""
+        """把 proactive_loop 的外部闸门全打开放行，只剩小王自己那一道。"""
         bot.group_buffers.clear()
         bot.group_buffers[self.G] = collections.deque(
             [{"sender": self.A, "text": f"第{i}句", "time": time.time()}
@@ -543,48 +452,28 @@ class ProactiveLoopTickTest(_Base):
             ctx.start(); self.addCleanup(ctx.stop)
         return gen, post
 
-    async def test_native_veto_skips_generation_and_post(self):
+    async def test_pass_skips_the_post(self):
+        """主动开口说不说由小王自己定：它写〔不接〕就不发，不再先问一次插嘴判断。"""
         gen, post = self._stage()
-        self.calls.return_value = {"answers": [
-            {"name": "intervention", "type": "choice",
-             "choice": "stay_quiet", "confidence": 0.9,
-             "probabilities": [{"value": "stay_quiet", "probability": 0.9},
-                               {"value": "join_briefly",
-                                "probability": 0.1}]}]}
+        gen.return_value = ("〔不接〕", None)
         with self._one_tick():
             with self.assertRaises(asyncio.CancelledError):
                 await bot.proactive_loop()
-        self.assertEqual(self.calls.await_count, 1)
-        gen.assert_not_awaited()
-        post.assert_not_awaited()
-
-    async def test_native_unavailable_stays_quiet(self):
-        """主动开口是「多出来的一句」：判断不可用就不说（2026-10-31 起不再让生成用 SKIP 兜底）。"""
-        gen, post = self._stage()
-        self.calls.return_value = None
-        with self._one_tick():
-            with self.assertRaises(asyncio.CancelledError):
-                await bot.proactive_loop()
-        self.assertEqual(self.calls.await_count, 1)
-        gen.assert_not_awaited()
-        post.assert_not_awaited()
-
-    async def test_native_join_speaks_once(self):
-        gen, post = self._stage()
-        self.calls.return_value = {"answers": [{
-            "name": "intervention", "type": "choice", "choice": "join_briefly",
-            "confidence": 0.8, "probabilities": [
-                {"value": "join_briefly", "probability": 0.9},
-                {"value": "stay_quiet", "probability": 0.1}]}]}
-        with self._one_tick():
-            with self.assertRaises(asyncio.CancelledError):
-                await bot.proactive_loop()
-        self.assertEqual(self.calls.await_count, 1)
+        self.calls.assert_not_awaited()
         self.assertEqual(gen.await_count, 1)
+        post.assert_not_awaited()
+
+    async def test_it_speaks_once_when_it_has_something(self):
+        gen, post = self._stage()
+        with self._one_tick():
+            with self.assertRaises(asyncio.CancelledError):
+                await bot.proactive_loop()
+        self.calls.assert_not_awaited()
         self.assertEqual(post.await_count, 1)
         kw = post.await_args.kwargs
         self.assertTrue(kw["model_generated"])
         self.assertIn("history", kw)
+        self.assertIn("〔不接〕", gen.await_args.args[1])   # 提示里给了它不说的路
 
     async def test_quiet_group_skips_the_whole_branch(self):
         gen, post = self._stage()
@@ -593,7 +482,7 @@ class ProactiveLoopTickTest(_Base):
         with self._one_tick():
             with self.assertRaises(asyncio.CancelledError):
                 await bot.proactive_loop()
-        self.assertEqual(self.calls.await_count, 0)   # 仲裁都不必问
+        self.assertEqual(self.calls.await_count, 0)
         gen.assert_not_awaited()
         post.assert_not_awaited()
 
@@ -604,11 +493,10 @@ class AssessExceptionTest(_Base):
         self.calls.reset_mock()
         self.model_calls.clear()
         self.calls.side_effect = RuntimeError("native down")
-        with patch.object(bot.random, "random", return_value=0.0):
-            await self._drive("骰子会中")
-        # 异常算「已尝试」：不补发第二次原生，骰子基线照常放行
+        await self._drive("接着说")
+        # 异常算「已尝试」：不补发第二次原生，照常问小王
         self.assertEqual(self.calls.await_count, 1)
-        self.assertEqual(len(self.model_calls), 1)
+        self.assertEqual(len(self.unprompted_calls), 1)
 
 
 class PlayfulRequestRoutingTest(_Base):

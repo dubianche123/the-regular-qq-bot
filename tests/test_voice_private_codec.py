@@ -12,7 +12,7 @@ import voice_amr
     (b'#!AMR\n' + (b'\x04' + bytes(12)) * 50, 8000),
     (b'#!AMR-WB\n' + (b'\x04' + bytes(17)) * 50, 16000),
 ])
-def test_synthetic_amr_with_private_entry(raw, rate):
+def test_synthetic_amr_with_private_entry(raw, rate, require_amr_codec):
     wav = asyncio.run(voice_amr.decode_amr(raw))
     with wave.open(io.BytesIO(wav), 'rb') as audio:
         assert (audio.getframerate(), audio.getnchannels(), audio.getnframes()) == (rate, 1, rate)
@@ -33,7 +33,7 @@ def test_codec_entry_rejects_symlink_escape():
             with pytest.raises(ValueError, match='decoder_unavailable'):
                 voice_amr._codec_entry(24000)
 
-def test_synthetic_wav_encodes_using_private_silk_entry(tmp_path):
+def test_synthetic_wav_encodes_using_private_silk_entry(tmp_path, require_silk_encoder):
     import config
     from voice_outbound import _run
     wav = tmp_path / 'synthetic.wav'

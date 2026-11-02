@@ -392,7 +392,7 @@ class _HandlerBase:
 
 
 class GateAndIncomingTest(_HandlerBase, unittest.IsolatedAsyncioTestCase):
-    """门控决策可区分且不多掷骰子；入口输入完整落日志。"""
+    """门控决策可区分、不重复调用；入口输入完整落日志。"""
 
     async def test_incoming_records_full_text_and_dedup(self):
         long_text = "长消息 " + "字" * 600
@@ -426,37 +426,22 @@ class GateAndIncomingTest(_HandlerBase, unittest.IsolatedAsyncioTestCase):
         routes = [(d["route"], d["selected"], d["reason"]) for d in self.decisions()]
         self.assertIn(("direct", True, "direct_address"), routes)
 
-    async def test_banter_hit_miss_cooldown_without_extra_draws(self):
-        with patch.object(bot, "reply_in_session",
-                          AsyncMock(return_value=("ok", None, None))):
-            with patch.object(bot.random, "random", return_value=0.0) as draw:
-                await self._drive("今天天气不错哦")
-            self.assertEqual(draw.call_count, 1)
-            hit = self.decisions()[-1]
-            self.assertEqual((hit["route"], hit["selected"], hit["reason"]),
-                             ("banter", True, "hit"))
-            self.assertEqual(hit["draw"], 0.0)
-            self.assertIn("gate_probability", hit)
+    async def test_unprompted_turns_record_what_xiaowang_chose(self):
+        """没叫它的消息不掷骰子：每条都问它，记下它接了还是没接；刚接过也照问不误。"""
+        spoke = ("ok", None, delivery.DeliveryResult("delivered", "ok"))
+        with patch.object(bot, "reply_in_session", AsyncMock(return_value=spoke)) as reply:
+            await self._drive("今天天气不错哦")
+            await self._drive("又来一句日常")
+        self.assertEqual(reply.await_count, 2)
+        self.assertEqual([(d["route"], d["selected"], d["reason"]) for d in self.decisions()[-2:]],
+                         [("banter", True, "spoke")] * 2)
+        self.assertNotIn("gate_probability", self.decisions()[-1])
 
-            # 命中刚写过冷却 → 下一条直接 cooldown，不掷骰子
-            with patch.object(bot.random, "random") as draw2:
-                await self._drive("又来一句日常")
-            draw2.assert_not_called()
-            cool = self.decisions()[-1]
-            self.assertEqual((cool["route"], cool["selected"], cool["reason"]),
-                             ("banter", False, "cooldown"))
-            self.assertNotIn("draw", cool)
-
-            bot.group_last_random_reply[self.G] = 0.0  # 冷却过期
-            with patch.object(bot.random, "random", return_value=0.9999):
-                await self._drive("再一句闲话")
-            miss = self.decisions()[-1]
-            self.assertEqual((miss["route"], miss["selected"], miss["reason"]),
-                             ("banter", False, "miss"))
-            self.assertEqual(miss["draw"], 0.9999)
-            self.assertLess(miss["gate_probability"], 0.9999)
-        # 全程零模型调用（gate 是本地判决）
-        self.assertEqual(self.model_calls, [])
+        with patch.object(bot, "reply_in_session", AsyncMock(return_value=("", None, None))):
+            await self._drive("再一句闲话")
+        declined = self.decisions()[-1]
+        self.assertEqual((declined["route"], declined["selected"], declined["reason"]),
+                         ("banter", False, "declined"))
 
     async def test_budget_blocked_is_recorded(self):
         with patch.object(bot.BudgetGate, "check", AsyncMock(return_value=False)):
@@ -584,7 +569,7 @@ class PersonalInjectionFlagTest(_HandlerBase, unittest.IsolatedAsyncioTestCase):
             # 被压制的路径（随机插嘴）即使带了材料也不算注入
             await bot.reply_in_session(
                 self._msg("hi2"), f"{self.G}_{self.A}", "hi2",
-                is_random_banter=True, personal_note="（本轮的个人原话块）")
+                unprompted=True, personal_note="（本轮的个人原话块）")
             row2 = await self._last_delivery()
             self.assertFalse(row2["personal_memory_used"])
             self.assertEqual(row2["route"], "banter")

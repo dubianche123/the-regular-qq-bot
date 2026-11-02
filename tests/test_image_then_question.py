@@ -23,6 +23,7 @@ import config
 import delivery
 import interactions
 import media
+import prompts
 import runtime
 import storage
 from regular import decisions
@@ -49,6 +50,8 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
         state = storage.StateStore(os.path.join(self._tmp.name, "state.json"))
 
         async def fake_model(messages, max_tokens, **kw):
+            if prompts.BANTER_MARK in messages[-1]["content"]:
+                return "〔不接〕"                 # 发图那条没叫它：它不接
             self.prompts.append("\n".join(str(m.get("content")) for m in messages))
             return "（模型应答）"
 
@@ -72,7 +75,6 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
                                      config.GROUP_RATE_REFILL_SECONDS)),
                 (runtime.KNOWLEDGE, "render", lambda *a, **k: ""),
                 (bot, "call_model", fake_model),
-                (bot.random, "random", lambda: 0.999),   # 发图那条不插嘴
                 (media, "_service", self.service),
                 (config, "VISION_ENABLED", True),
                 (config, "VISION_COOLDOWN_SECONDS", 60.0),

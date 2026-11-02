@@ -13,8 +13,8 @@ from archive import MessageArchive
 from voice_input import VoiceAttachment, VoiceResult
 
 
-class ReachedOpening(Exception):
-    pass
+class ReachedRouting(Exception):
+    """转写回填、进了背景缓存之后的第一步（认主检查）：走到这儿就停，不往下发消息。"""
 
 
 async def _check_group_reference_backfilled_once_before_decision(long_text=False, spoken_at=False):
@@ -38,13 +38,12 @@ async def _check_group_reference_backfilled_once_before_decision(long_text=False
                  patch.object(bot, "VOICE", SimpleNamespace(processor=processor)), \
                  patch.object(bot.naming, "bot_names", return_value=["小王"]), \
                  patch.object(bot, "deliver_carried", AsyncMock()), \
-                 patch.object(config, "OPENING_PRIOR_ENABLED", True), \
-                 patch.object(runtime.OPENING, "assess", side_effect=ReachedOpening):
+                 patch.object(bot, "looks_like_claim_attempt", side_effect=ReachedRouting):
                 first = asyncio.create_task(bot.GroupBot.handle_group_msg(client, message))
                 await started.wait()
                 await bot.GroupBot.handle_group_msg(client, message)
                 release.set()
-                with pytest.raises(ReachedOpening):
+                with pytest.raises(ReachedRouting):
                     await first
             rows, _ = archive.pending("group-voice")
             assert len(rows) == 2

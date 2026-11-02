@@ -1,8 +1,9 @@
 """群主指代识别回归测试。
 
-这块的需求是「群友提到群主时更容易被接话」，而实现的关键约束是
+这些词用来认人名（压缩记忆、改写旧称呼时当作已知名字）。关键约束是
 **不许写死具体人名** —— 机器人要开源，换个群、群主改个名都得开箱能用。
-所以指代只能来自三个来源：通用词、群主自己认领的称呼、以及直接 @ 他。
+所以指代只能来自两个来源：通用词、群主自己认领的称呼。
+（2026-11-02 以前还拿它抬高「聊到群主」时的插嘴概率；骰子拆了，那一层也没了。）
 """
 import sys
 import unittest
@@ -11,7 +12,6 @@ sys.path.insert(0, "..")
 import runtime
 
 import bot
-import config
 
 GROUP = "TESTGROUP_OWNERMENTION"
 OWNER = "OWNER_OPENID_FOR_TEST"
@@ -48,41 +48,3 @@ class OwnerReferenceTest(unittest.TestCase):
         """owner 还没识别出来（启动早期）也不能炸。"""
         runtime.OWNER_OPENID = None
         self.assertEqual(bot.owner_reference_terms(GROUP), {"群主", "群管"})
-        self.assertTrue(bot.mentions_owner("群主呢", GROUP))
-
-    def test_detects_generic_mention(self):
-        self.assertTrue(bot.mentions_owner("群主今天来不来", GROUP))
-        self.assertTrue(bot.mentions_owner("群管在吗", GROUP))
-
-    def test_detects_claimed_nick_mention(self):
-        runtime.RELATIONS.get(GROUP, OWNER)["nick"] = "老张"
-        self.assertTrue(bot.mentions_owner("老张又加班了吧", GROUP))
-
-    def test_detects_direct_at(self):
-        """@ 群主时正文里可能一个字都没提他，只能靠 openid 认。"""
-        self.assertTrue(bot.mentions_owner("今天天气不错", GROUP, [OWNER]))
-
-    def test_plain_chat_not_matched(self):
-        for text in ("这游戏好玩", "有人打排位吗", "笑死", ""):
-            with self.subTest(text=text):
-                self.assertFalse(bot.mentions_owner(text, GROUP))
-
-    def test_other_members_nick_not_matched(self):
-        """别人认领的名字不能被当成群主 —— 那会让插嘴变成随机事件。"""
-        self.assertFalse(bot.mentions_owner("阿强来了", GROUP))
-        self.assertFalse(bot.mentions_owner("阿强来了", GROUP, [OTHER]))
-
-
-class OwnerProbabilityTest(unittest.TestCase):
-
-    def test_owner_mention_is_more_likely_than_plain_chat(self):
-        """这个功能的全部意义就在这个不等式上：说到群主该更容易被接话。"""
-        self.assertGreater(config.OWNER_MENTION_PROBABILITY, config.BANTER_PROBABILITY)
-
-    def test_probability_is_sane(self):
-        self.assertGreater(config.OWNER_MENTION_PROBABILITY, 0.0)
-        self.assertLessEqual(config.OWNER_MENTION_PROBABILITY, 1.0)
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)

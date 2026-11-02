@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import difflib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import json
@@ -57,19 +58,44 @@ def _mismatch_reason(actual, expected):
         return 'transcript_punctuation_or_whitespace'
     return 'transcript_characters_differ'
 
-# Only typographic equivalents are folded; do not remove punctuation, words,
-# digits, or internal spaces. In particular 3.14 is never equal to 314.
+# 念出来的字（Realtime 自己给的转写）和小王写的那句对得上才发语音：念串了、念成拒绝、
+# 多念了别的话，都不能当成那句发出去。只放过两类不改意思的差别：
+#   · 标点和空白 —— 念出来本来就没有标点；但数字之间的分隔符照字面比，3.14 永远不等于 314；
+#   · 零星的语气字 —— 2026-11-02 在 Pro 上同一句念了 10 次，3 次多念或少念一个「了」「是」，
+#     整条语音就被打回成文字（老王让它用语音自我介绍，就是这么没发成的）。
+# 换字、多念别的字、超过两个语气字，一律算对不上。
+_FILLERS = frozenset("了是的啊呀吧呢嘛哈嗯哦")
+_MAX_FILLERS = 2
+
+
+def _spoken(value: str) -> str:
+    out = []
+    for i, char in enumerate(value):
+        # A separator between digits may be a decimal, time or thousands
+        # separator; preserve it literally rather than assuming equivalence.
+        between_digits = 0 < i < len(value) - 1 and value[i-1].isdigit() and value[i+1].isdigit()
+        if between_digits or not (char.isspace() or unicodedata.category(char).startswith('P')):
+            out.append(char)
+    return ''.join(out)
+
+
 def _transcript_equivalent(actual: str, expected: str) -> bool:
-    table = {',': '，', '.': '。', '?': '？', '!': '！', ':': '：', ';': '；'}
-    def canonical(value):
-        out = []
-        for i, char in enumerate(value):
-            # A separator between digits may be a decimal, time or thousands
-            # separator; preserve it literally rather than assuming equivalence.
-            between_digits = i > 0 and i + 1 < len(value) and value[i-1].isdigit() and value[i+1].isdigit()
-            out.append(char if between_digits else table.get(char, char))
-        return ' '.join(''.join(out).split())
-    return bool(actual) and canonical(actual) == canonical(expected)
+    if not actual:
+        return False
+    said, meant = _spoken(actual), _spoken(expected)
+    if said == meant:
+        return bool(said)
+    slack = 0
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, meant, said, autojunk=False).get_opcodes():
+        if op == 'equal':
+            continue
+        if op == 'replace':
+            return False
+        extra = meant[i1:i2] if op == 'delete' else said[j1:j2]
+        if not set(extra) <= _FILLERS:
+            return False
+        slack += len(extra)
+    return slack <= _MAX_FILLERS
 
 
 @asynccontextmanager

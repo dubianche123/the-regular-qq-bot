@@ -254,23 +254,11 @@ for _tier in ("chat", "digest", "judge", "vision"):
 # 显式设置 AI_TEMPERATURE 时覆盖供应商预设；不设则沿用预设（智谱 0.7）。
 AI_TEMPERATURE_EXPLICIT = "AI_TEMPERATURE" in os.environ
 
-# ══════════════════ 主动插嘴 / 彩蛋频率 ══════════════════
-# 刻意不设文字长度门槛：群里一句「？」「太蠢了」就是真实的接话信号，拿字数当尺子
-# 只会把能接的挡在外面（实测今天 257 条消息里，10 字门槛只放过 19 条，其中还有
-# 三分之一是表情串）。频率交给概率 + 冷却控制。
-# 实测（113 条候选 / 10.8 小时）8% ≈ 7 次/天，约每 1.5 小时一次。
-# 2026-10-06 群主要求活跃气氛提到 12%（≈ 10~11 次/天，冷却 120s 仍然兜底）。
+# ══════════════════ 没叫它的消息 ══════════════════
+# 接不接由小王自己在回复里定（〔不接〕，见 bot.reply_unprompted）；2026-11-02 以前是
+# 12% 的骰子 × 亲密度 × 作息 × 节奏先验 × 插嘴判断 × 接纳度。这里只剩一个数：
+# 它没被叫就开过口之后多久之内，下一句要提醒它「你刚开过口」（不拦，交代给它）。
 BANTER_COOLDOWN_SECONDS = _env_float("BANTER_COOLDOWN_SECONDS", 120.0)
-BANTER_PROBABILITY = _env_float("BANTER_PROBABILITY", 0.12)
-
-# 群里提到 / @ 群主时的插话概率。比普通插嘴高：群主是群里最现成的梗源，
-# 群友拿他开涮的时候，机器人接一句最像真人（也最容易被人记住）。
-# 「群主」的指代不写死具体人名 —— 通用词 + 群主自己认领的称呼 + 直接 @ 他，
-# 三个来源在 bot.owner_reference_terms 里合起来判断，换个群、群主改个名都不用动代码。
-OWNER_MENTION_PROBABILITY = _env_float("OWNER_MENTION_PROBABILITY", 0.30)
-
-# 插嘴概率乘上「亲密度权重」之后的上限（relations.BANTER_WEIGHTS，熟 1.6× / 生 0.7×）。
-# 权重只调「更愿意接谁」，不该把谁变成刷屏 —— 万一哪天把基数调大，天花板在这儿兜着。
 
 # ── 主动性（2026-10-19，激活度系统的一部分，见 activation.py）──
 # 心情/作息/群温的闸门全过时，自己照着最近的话题开个话头。所有闸门见 activation.proactive_ok：
@@ -322,7 +310,6 @@ IMAGE_USER_EXTRA_FRIEND = _env_int("IMAGE_USER_EXTRA_FRIEND", 2)
 IMAGE_USER_EXTRA_BUDDY = _env_int("IMAGE_USER_EXTRA_BUDDY", 4)
 IMAGE_USER_EXTRA_SOULMATE = _env_int("IMAGE_USER_EXTRA_SOULMATE", 8)
 IMAGE_GENERATION_TIMEOUT_SECONDS = _env_float("IMAGE_GENERATION_TIMEOUT_SECONDS", 150.0)
-BANTER_CHANCE_MAX = _env_float("BANTER_CHANCE_MAX", 0.5)
 
 # ══════════════════ 群友关系档案（见 relations.py）══════════════════
 AFFINITY_ENABLED = _env_bool("AFFINITY_ENABLED", True)
@@ -449,9 +436,6 @@ DECISION_TIMEOUT_SECONDS = _env_float("DECISION_TIMEOUT_SECONDS", 6.0)
 # 判断请求自己的每日次数上限，和聊天的 DAILY_BUDGET 分开记：判断便宜（按输入计费、输出免费），
 # 又是每条群消息都问 —— 共用一份的话，刷屏就能把当天的回复额度烧光。
 DECISION_DAILY_BUDGET = _env_int("DECISION_DAILY_BUDGET", 5000)
-# 每条群消息都分诊（群主 2026-10-31 同意：先多攒数据，够了再收）。关掉则只问跟机器人
-# 有关的消息（叫到它 / 它刚说过话 / 要起名），插嘴仲裁退回「骰子掷中才问」。
-DECISION_TRIAGE_ALL = _env_bool("DECISION_TRIAGE_ALL", True)
 # 反馈评估只覆盖最近一条已送达模型回复（秒）；「收敛」后 unsolicited 暂停时长（秒）。
 DECISION_FEEDBACK_WINDOW_SECONDS = _env_float("DECISION_FEEDBACK_WINDOW_SECONDS", 120.0)
 DECISION_QUIET_SECONDS = _env_float("DECISION_QUIET_SECONDS", 180.0)
@@ -466,23 +450,10 @@ DECISION_MIN_MARGIN = _env_float("DECISION_MIN_MARGIN", 0.25)
 PEOPLE_DURABLE_MAX_AGE_DAYS = _env_float("PEOPLE_DURABLE_MAX_AGE_DAYS", 90.0)
 PEOPLE_MEMORY_MAX_ITEMS = _env_int("PEOPLE_MEMORY_MAX_ITEMS", 24)
 
-# ══════════════════ 何时介入（opening.py / receptive.py）═════════════════
-# 开口时机先验：把插嘴概率按「此刻有没有接话空档」重新分配。乘数按本群分数均值
-# 归一，所以 BANTER_PROBABILITY 仍然决定整体话量，先验只决定落在哪些时刻。
-# 关掉就退回原来那枚与对话无关的骰子。系数与留出结果见 opening.py 的模块说明。
-OPENING_PRIOR_ENABLED = _env_bool("OPENING_PRIOR_ENABLED", True)
-OPENING_SHAPE_MIN = _env_float("OPENING_SHAPE_MIN", 0.40)
-OPENING_SHAPE_MAX = _env_float("OPENING_SHAPE_MAX", 2.00)
-# 插嘴判断：每条群消息分诊时都问了「此刻插一句合不合适」。用的是它给的
-# p(join_briefly)，按本群均值折成乘数（同上一套保量折算），不是它的结论 ——
-# 结论的刻度跟着场景漂（归档里 37% 说 join，冲着它聊的那一晚 0%）。
-# 下限 0：判断有把握地说不合适时可以把这一下压到零；上限只防极端值。
-# 折算细节与实测见 regular/decisions.py 的 INTERVENTION_SHARPNESS。
-INTERVENTION_SHAPE_MIN = _env_float("INTERVENTION_SHAPE_MIN", 0.0)
-INTERVENTION_SHAPE_MAX = _env_float("INTERVENTION_SHAPE_MAX", 3.0)
-
-# 插嘴接纳度：把自然反馈（被嫌烦 / 被接着逗）慢慢折成每人一个乘数。
-# 证据不足时乘数恰为 1.0（照群体口径），不是「先当他讨厌机器人」。
+# ══════════════════ 插嘴接纳度（receptive.py）═════════════════
+# 把自然反馈（被嫌烦 / 被接着逗）慢慢折成每人一个估计。有把握地读出「这人不爱被
+# 没叫就搭话」时，没叫它的那一轮补一句交代（prompts.PROMPT_BANTER_UNWELCOME）；
+# 证据不足时什么都不说，不是「先当他讨厌机器人」。
 RECEPTIVE_ENABLED = _env_bool("RECEPTIVE_ENABLED", True)
 RECEPTIVE_PRIOR_WEIGHT = _env_float("RECEPTIVE_PRIOR_WEIGHT", 4.0)     # 向群体层收缩的伪计数
 RECEPTIVE_HALF_LIFE_DAYS = _env_float("RECEPTIVE_HALF_LIFE_DAYS", 14.0)  # 证据半衰期，不留永久标签
@@ -493,7 +464,7 @@ RECEPTIVE_GAIN = _env_float("RECEPTIVE_GAIN", 1.5)
 RECEPTIVE_MULTIPLIER_MIN = _env_float("RECEPTIVE_MULTIPLIER_MIN", 0.5)
 RECEPTIVE_MULTIPLIER_MAX = _env_float("RECEPTIVE_MULTIPLIER_MAX", 1.5)
 
-# 「居然记得」：主动插嘴里端出一句本人旧话，由原生判断把关是否此刻合适。
+# 「居然记得」：没叫它的那一轮里端出一句本人旧话，由原生判断把关是否此刻合适。
 # 要稀才稀奇 —— 每人冷却 + 每群每天上限；判断不可用时一律不端出。
 DECISION_CALLBACK_ENABLED = _env_bool("DECISION_CALLBACK_ENABLED", True)
 DECISION_CALLBACK_COOLDOWN_SECONDS = _env_float("DECISION_CALLBACK_COOLDOWN_SECONDS", 21600.0)
@@ -534,9 +505,8 @@ RESET_BACKOFF_AFTER = _env_float("RESET_BACKOFF_AFTER", 120.0)  # 稳定运行�
 def validate():
     """启动前校验，缺东西就 fail fast。"""
     errors = list(CONFIG_ERRORS)
-    for name in ("BANTER_PROBABILITY", "OWNER_MENTION_PROBABILITY", "BANTER_CHANCE_MAX", "BUDGET_WARN_RATIO"):
-        if not 0 <= globals()[name] <= 1:
-            errors.append(f"{name} 必须在 0~1 之间")
+    if not 0 <= BUDGET_WARN_RATIO <= 1:
+        errors.append("BUDGET_WARN_RATIO 必须在 0~1 之间")
     for name in ("DAILY_BUDGET", "VISION_DAILY_CAP", "DECISION_DAILY_BUDGET", "IMAGE_GENERATION_DAILY_CAP",
                  "IMAGE_USER_DAILY_CAP", "IMAGE_USER_EXTRA_ACQUAINTANCE", "IMAGE_USER_EXTRA_FRIEND",
                  "IMAGE_USER_EXTRA_BUDDY", "IMAGE_USER_EXTRA_SOULMATE", "SEARCH_USER_DAILY_CAP",
@@ -549,10 +519,6 @@ def validate():
                   for tier in ("ACQUAINTANCE", "FRIEND", "BUDDY", "SOULMATE")]
         if extras != sorted(extras):
             errors.append(f"{prefix}_USER_EXTRA 各档额度必须递增或相等")
-    if not 0 < OPENING_SHAPE_MIN <= 1 <= OPENING_SHAPE_MAX:
-        errors.append("OPENING_SHAPE_MIN/MAX 必须满足 0 < MIN <= 1 <= MAX")
-    if not 0 <= INTERVENTION_SHAPE_MIN <= 1 <= INTERVENTION_SHAPE_MAX:
-        errors.append("INTERVENTION_SHAPE_MIN/MAX 必须满足 0 <= MIN <= 1 <= MAX")
     if not 0 < RECEPTIVE_MULTIPLIER_MIN <= 1 <= RECEPTIVE_MULTIPLIER_MAX:
         errors.append("RECEPTIVE_MULTIPLIER_MIN/MAX 必须满足 0 < MIN <= 1 <= MAX")
     if RECEPTIVE_PRIOR_WEIGHT <= 0 or RECEPTIVE_HALF_LIFE_DAYS <= 0:

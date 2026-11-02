@@ -15,7 +15,6 @@ import knowledge as knowledge_mod
 from regular import decisions as decisions_mod
 from regular import resource_quota
 import naming
-import opening as opening_mod
 import receptive as receptive_mod
 import scheduler as scheduler_mod
 import relations
@@ -122,29 +121,9 @@ INTERACTIONS = interactions_mod.InteractionLog(
     keep_days=config.ARCHIVE_KEEP_DAYS,
 )
 
-# 开口时机先验（2026-10-31）：此刻群里有没有「接话的空档」。纯本地、零模型调用。
-# 它只重新分配插嘴概率落在哪些时刻，不改整体话量 —— 乘数按本群分数均值归一。
-# 系数、留出结果和它**不能**证明的事，都写在 opening.py 的模块说明里。
-OPENING = opening_mod.OpeningPrior(
-    shape_min=config.OPENING_SHAPE_MIN,
-    shape_max=config.OPENING_SHAPE_MAX,
-)
-OPENING.hydrate(STATE.data.get("opening", {}))
-STATE.register_collector(OPENING.dump_into)
-
-# 插嘴判断（2026-11-01）：分诊给的 p(join_briefly) 走同一套保量折算 —— 判断决定
-# 落在哪些时刻，BANTER_PROBABILITY 仍然决定整体话量。只存本群均值和样本数。
-INTERVENTION = opening_mod.OpeningPrior(
-    base=decisions_mod.INTERVENTION_BASE,
-    shape_min=config.INTERVENTION_SHAPE_MIN,
-    shape_max=config.INTERVENTION_SHAPE_MAX,
-    key="intervention",
-)
-INTERVENTION.hydrate(STATE.data.get("intervention", {}))
-STATE.register_collector(INTERVENTION.dump_into)
-
 # 插嘴接纳度：自然反馈的**跨天**那一层（FeedbackTracker.quiet 是即时那一层），
-# 外加「居然记得」的冷却台账。证据不足时乘数恰为 1.0；它永不进提示词。
+# 外加「居然记得」的冷却台账。有把握地读出「这人不爱被搭话」时，没叫它的那一轮
+# 给小王交代一句（bot.reply_unprompted）；证据不足时什么都不说。
 RECEPTIVE = receptive_mod.Receptiveness(
     prior_weight=config.RECEPTIVE_PRIOR_WEIGHT,
     half_life_days=config.RECEPTIVE_HALF_LIFE_DAYS,

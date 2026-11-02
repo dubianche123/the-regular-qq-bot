@@ -19,9 +19,8 @@ class SplitMessageRoutingTest(_Base):
             self.addCleanup(runtime.SESSIONS.drop_session, f"{self.G}_{user}")
 
     async def _quietly_receive(self, text, sender=None):
-        # 无人点名的第一句仅进群聊背景，避免随机插嘴影响场景。
-        with patch.object(bot.random, "random", return_value=0.999):
-            return await self._drive(text, sender=sender)
+        # 无人点名的第一句：小王不接（_Base 里没叫它的那一轮默认〔不接〕），只进群聊背景。
+        return await self._drive(text, sender=sender)
 
     async def test_same_speaker_request_before_name_is_attributed_to_them(self):
         first = await self._quietly_receive("说说海虎的故事？")

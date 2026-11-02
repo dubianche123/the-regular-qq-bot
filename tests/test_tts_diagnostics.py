@@ -38,13 +38,11 @@ class Diagnostics(unittest.IsolatedAsyncioTestCase):
     async def test_safe_completion(self):
         await self.run_case(Socket(events('AI 合成语音。PRIVATE_TEXT')), 'safe_completed')
 
-    async def test_whitespace_mismatch_still_rejected(self):
-        await self.run_case(Socket(events('AI合成语音。PRIVATE_TEXT')),
-                            'transcript_whitespace_only', TranscriptMismatch)
+    async def test_whitespace_difference_is_not_spoken(self):
+        await self.run_case(Socket(events('AI合成语音。PRIVATE_TEXT')), 'safe_completed')
 
-    async def test_punctuation_mismatch_still_rejected(self):
-        await self.run_case(Socket(events('AI 合成语音 PRIVATE_TEXT')),
-                            'transcript_punctuation_or_whitespace', TranscriptMismatch)
+    async def test_punctuation_difference_is_not_spoken(self):
+        await self.run_case(Socket(events('AI 合成语音 PRIVATE_TEXT')), 'safe_completed')
 
     async def test_character_mismatch_still_rejected(self):
         await self.run_case(Socket(events('DIFFERENT_PRIVATE_CONTENT')),

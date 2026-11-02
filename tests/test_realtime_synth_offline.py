@@ -68,6 +68,29 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TranscriptMismatch):
             await self.synth.synthesize('AI 合成语音。3.14', Path(self.tmp.name))
 
+    async def say(self, spoken, written):
+        """一次独立的合成：每次都换新的额度票和连接（这里的假额度票只能用一次）。"""
+        self.budget, self.socket = Budget(), Socket(events(spoken))
+        @asynccontextmanager
+        async def connector(url, key): yield self.socket
+        synth = RealtimeSilkSynth('SECRET_API_KEY', self.budget, '/node', '/entry', '/encoder', connector)
+        with tempfile.TemporaryDirectory() as tmp:
+            return await synth.synthesize(written, Path(tmp))
+
+    async def test_a_stray_filler_word_still_counts_as_the_same_line(self):
+        # 2026-11-02 Pro 实测：同一句念 10 次，3 次多念/少念一个「了」「是」
+        for spoken in ('我叫小王，群里常驻接话的，给我上一课。', '我叫小王，是群里常驻接话的，给我上了一课'):
+            with self.subTest(spoken=spoken):
+                await self.say(spoken, '我叫小王，群里常驻接话的，给我上了一课')
+
+    async def test_changed_or_extra_words_are_still_a_mismatch(self):
+        for spoken in ('我叫小王，群里不常驻接话的，给我上了一课',     # 多念一个「不」，意思反了
+                       '我叫小王，群里常来接话的，给我上了一课',       # 换了字
+                       '啊我叫小王呀，是群里常驻接话的呢，给我上了一课'):  # 语气字超过两个
+            with self.subTest(spoken=spoken):
+                with self.assertRaises(TranscriptMismatch):
+                    await self.say(spoken, '我叫小王，群里常驻接话的，给我上了一课')
+
     async def test_omitted_disclosure_is_mismatch(self):
         with self.assertRaises(TranscriptMismatch):
             await self.synth.synthesize('AI 合成语音。你好', Path(self.tmp.name))

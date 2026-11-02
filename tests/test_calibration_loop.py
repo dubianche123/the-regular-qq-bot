@@ -300,26 +300,27 @@ class JournalStaysOutOfTheDeploymentTest(unittest.IsolatedAsyncioTestCase):
             log = interactions_mod.InteractionLog(tmp, enabled=True,
                                                   keep_days=0)
             self.addCleanup(log.close)
-            body = {"answers": [{"name": "intervention", "type": "choice",
-                                 "choice": "stay_quiet", "confidence": 0.9,
+            body = {"answers": [{"name": "callback", "type": "choice",
+                                 "choice": "hold_it", "confidence": 0.9,
                                  "probabilities": [
-                                     {"value": "join_briefly",
+                                     {"value": "bring_it_up",
                                       "probability": 0.05},
-                                     {"value": "stay_quiet",
+                                     {"value": "hold_it",
                                       "probability": 0.95}]}]}
             with patch.object(runtime, "INTERACTIONS", log), \
                     patch.object(decisions.providers, "call_decision",
                                  AsyncMock(return_value=body)):
-                verdict = await runtime.FEEDBACK.consider_banter(
-                    G, A, history=[{"sender": A, "text": "在聊天",
-                                    "time": 1000.0}], now=1001.0)
-            self.assertEqual(verdict, "stay_quiet")
+                verdict = await runtime.FEEDBACK.consider_callback(
+                    G, A, quote="我只喝手冲", quote_ts=0.0,
+                    history=[{"sender": A, "text": "在聊天",
+                              "time": 1000.0}], now=1001.0)
+            self.assertIs(verdict, False)
             rows = [json.loads(line) for name in os.listdir(tmp)
                     for line in open(os.path.join(tmp, name),
                                      encoding="utf-8")]
             scored = [r for r in rows if r["kind"] == "decision_scores"]
             self.assertTrue(scored, "数值没落到被 patch 的那份日志里")
-            self.assertEqual(scored[0]["site"], "banter")
+            self.assertEqual(scored[0]["site"], "callback")
 
     def test_the_deployment_directory_is_not_the_test_target(self):
         """直接盯住部署目录：全量跑完它必须还是空的（见 conftest 的 fixture）。"""

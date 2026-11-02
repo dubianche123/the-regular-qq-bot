@@ -24,7 +24,7 @@ dev = ["pytest>=8,<10", "build>=1,<2"]
 
 [tool.setuptools]
 packages = ["regular"]
-py-modules = ["activation", "affinity", "archive", "bot", "config", "digest", "knowledge", "naming", "nicking", "panel", "prompts", "providers", "qqtext", "recall", "relations", "runtime", "search", "storage", "wordfilter", "delivery", "media", "health", "interactions", "opening", "receptive", "scheduler", "slowwork", "image_generation", "expression", "voice_input", "voice_event", "voice_runtime", "voice_amr", "realtime_synth", "voice_budget", "voice_outbound", "voice_output_runtime"]
+py-modules = ["activation", "affinity", "archive", "bot", "config", "digest", "knowledge", "naming", "nicking", "panel", "prompts", "providers", "qqtext", "recall", "relations", "runtime", "search", "storage", "wordfilter", "delivery", "media", "health", "interactions", "receptive", "scheduler", "slowwork", "image_generation", "expression", "voice_input", "voice_event", "voice_runtime", "voice_amr", "realtime_synth", "voice_budget", "voice_outbound", "voice_output_runtime"]
 
 [tool.setuptools.dynamic]
 version = {attr = "regular.__version__"}
