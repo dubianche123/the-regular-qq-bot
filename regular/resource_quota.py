@@ -63,3 +63,33 @@ class ResourceQuotas:
             logger.warning("资源额度落盘失败: %s", type(exc).__name__)
             return "unavailable"
         return result
+
+    @property
+    def reservation_day(self):
+        """最近一次预约写入的日历日，供异步操作结束时核对。"""
+        return self._state.get("day")
+
+    def release(self, kind, group, user, day, *, persist=True):
+        """退还同一天的一次预约；不能让跨日的旧请求影响新一天。
+
+        落盘失败时恢复内存计数，避免进程继续运行时意外多发；调用方不应声称已退。
+        """
+        if not day or self._state.get("day") != day or self._today() != day:
+            return True  # 已过日切，旧额度本就不再生效
+        users = self._state.get("counts", {}).get(kind, {}).get(group, {})
+        used = users.get(user, 0)
+        if not isinstance(used, int) or isinstance(used, bool) or used <= 0:
+            logger.warning("资源额度退还失败: 预约不存在")
+            return False
+        users[user] = used - 1
+        self._mark_dirty()
+        if not persist:
+            return True
+        try:
+            self._save()
+        except Exception as exc:
+            users[user] = used
+            self._mark_dirty()
+            logger.warning("资源额度退还落盘失败: %s", type(exc).__name__)
+            return False
+        return True

@@ -295,6 +295,19 @@ VISION_DAILY_CAP = _env_int("VISION_DAILY_CAP", 30)
 # 读图输出上限同样包含思考 token；25 字描述 + 思考需要 300 左右，80 会整轮空正文。
 VISION_MAX_TOKENS = _env_int("VISION_MAX_TOKENS", 300)
 
+# 入站语音转写仅使用已有的官方 OpenAI 配置；预算与普通调用共用。
+VOICE_TRANSCRIPTION_MODEL = _env_str("VOICE_TRANSCRIPTION_MODEL", "gpt-transcribe")
+
+# 出站语音默认关闭；路径须指向可信且预先安装的本机依赖。
+# 什么时候发由小王自己在回复里写〔语音〕（见 expression.py），这里只管开关和日额。
+VOICE_OUTPUT_ENABLED = _env_bool("VOICE_OUTPUT_ENABLED", False)
+VOICE_OUTPUT_DAILY_LIMIT = min(100, max(0, _env_int("VOICE_OUTPUT_DAILY_LIMIT", 10)))
+# Private instance-owned codec installation beside DATA_DIR; no NODE_PATH lookup.
+VOICE_CODEC_DIR = _env_str("VOICE_CODEC_DIR", str(Path(DATA_DIR).parent / ".voice-codecs"))
+VOICE_OUTPUT_NODE = _env_str("VOICE_OUTPUT_NODE", "/opt/homebrew/bin/node")
+VOICE_OUTPUT_SILK_ENTRY = _env_str("VOICE_OUTPUT_SILK_ENTRY", str(
+    Path(VOICE_CODEC_DIR) / "node_modules" / "silk-wasm" / "lib" / "index.cjs"))
+
 # 生图单独开关与额度；缺少凭据时自动不可用。
 IMAGE_GENERATION_ENABLED = _env_bool("IMAGE_GENERATION_ENABLED", True)
 IMAGE_GENERATION_BASE_URL = _env_str("IMAGE_GENERATION_BASE_URL", PROVIDER_PRESETS["openai"]["base_url"] or "https://api.openai.com/v1")

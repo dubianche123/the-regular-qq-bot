@@ -61,6 +61,24 @@ def available():
                 and config.IMAGE_GENERATION_MODEL and _key())
 
 
+def precheck(group_id, user_id, score):
+    """生成回复之前看一眼：normal / exception / extra 能画，tired / busy / off 不能。
+
+    只读不预约 —— 真正的预约在 generate_and_send 里，和这里之间可能被别人抢先，那边会再判一次。
+    exception 是「今天的基础份刚用完、这张开始用好感给的额外份」：小王可以说一句破例。
+    """
+    if not available():
+        return "off"
+    if _lock.locked():
+        return "busy"
+    state = runtime.RESOURCE_QUOTAS.check("image", group_id, user_id, score)
+    if state == "unavailable":
+        return "off"
+    if state == "exhausted" or runtime.IMAGE_GENERATION_BUDGET.remaining <= 0:
+        return "tired"
+    return state
+
+
 def _expired(message):
     age = delivery.message_age_seconds(message)
     return age is not None and age >= delivery.passive_reply_window(message) - 5
@@ -82,7 +100,7 @@ async def _generate(prompt, key):
 
 
 async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_seq=1,
-                            before_send=None, on_reserved=None):
+                            before_send=None):
     """True=确认送达，None=发送结果未知；False=本地不可用。
 
     quota=额度用完、busy=正在画、blocked=模型拒绝、generation_error=生成失败、
@@ -95,54 +113,84 @@ async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_se
     if _lock.locked():
         return "busy"
     async with _lock:
-        # 日额在请求前预约并立即落盘，失败/超时也计入；落盘失败时不发请求。
+        # 请求前预约并立即落盘；个人次数在确定没送出图片时退回。
         state = runtime.RESOURCE_QUOTAS.check("image", group_id, user_id, score)
         if state in ("exhausted", "unavailable"):
             return "quota" if state == "exhausted" else False
         if not runtime.IMAGE_GENERATION_BUDGET.try_consume():
             return "quota"
+        budget_day = runtime.IMAGE_GENERATION_BUDGET.reservation_day
         runtime.STATE.mark_dirty()
         quota = runtime.RESOURCE_QUOTAS.consume("image", group_id, user_id, score)
         if quota in ("exhausted", "unavailable"):
+            # 本地落盘失败时没有调用供应商；恢复两个账本的内存预约。
+            if quota == "unavailable":
+                runtime.RESOURCE_QUOTAS.release(
+                    "image", group_id, user_id,
+                    runtime.RESOURCE_QUOTAS.reservation_day, persist=False)
+            runtime.IMAGE_GENERATION_BUDGET.release(budget_day)
+            runtime.STATE.mark_dirty()
             return False
-        if on_reserved is not None:
-            on_reserved(quota)
+        reservation_day = runtime.RESOURCE_QUOTAS.reservation_day
+        if (budget_day != reservation_day
+                or budget_day != runtime.IMAGE_GENERATION_BUDGET.today()):
+            # 两本账如果恰好跨日，不能让新一天无全局预约地发起请求。
+            runtime.IMAGE_GENERATION_BUDGET.release(budget_day)
+            runtime.STATE.mark_dirty()
+            if not runtime.RESOURCE_QUOTAS.release(
+                    "image", group_id, user_id, reservation_day):
+                logger.warning("跨日生图预约取消时个人额度未能退还")
+            return False
+        request_started = False
+        possible_delivery = False
         try:
-            image_data = await asyncio.wait_for(
-                _generate(prompt, _key()), timeout=config.IMAGE_GENERATION_TIMEOUT_SECONDS)
-        except BadRequestError as exc:
-            code = _log_generation_error(exc)
-            return "blocked" if code in _BLOCKED_CODES else "generation_error"
-        except Exception as exc:
-            _log_generation_error(exc)
-            return "generation_error"
-        if not image_data or _expired(message):
-            return "generation_error"
-        try:
-            # botpy 尚未封装 file_data；与其 post_group_file 使用同一 QQ 路由。
-            route = Route("POST", "/v2/groups/{group_openid}/files", group_openid=group_id)
-            media = await asyncio.wait_for(message._api._http.request(route, json={
-                "file_type": 1, "file_data": image_data, "srv_send_msg": False,
-            }), timeout=30)
-            file_info = media.get("file_info") if isinstance(media, dict) else None
-            if not isinstance(file_info, str) or not file_info or _expired(message):
+            try:
+                request_started = True
+                image_data = await asyncio.wait_for(
+                    _generate(prompt, _key()), timeout=config.IMAGE_GENERATION_TIMEOUT_SECONDS)
+            except BadRequestError as exc:
+                code = _log_generation_error(exc)
+                return "blocked" if code in _BLOCKED_CODES else "generation_error"
+            except Exception as exc:
+                _log_generation_error(exc)
+                return "generation_error"
+            if not image_data or _expired(message):
+                return "generation_error"
+            try:
+                # botpy 尚未封装 file_data；与其 post_group_file 使用同一 QQ 路由。
+                route = Route("POST", "/v2/groups/{group_openid}/files", group_openid=group_id)
+                media = await asyncio.wait_for(message._api._http.request(route, json={
+                    "file_type": 1, "file_data": image_data, "srv_send_msg": False,
+                }), timeout=30)
+                file_info = media.get("file_info") if isinstance(media, dict) else None
+                if not isinstance(file_info, str) or not file_info or _expired(message):
+                    return "upload_error"
+                media = {"file_info": file_info}
+                if before_send is not None:
+                    msg_seq = await before_send()
+                if _expired(message):
+                    return "upload_error"
+            except Exception as exc:
+                logger.warning("图片上传或发送准备失败: type=%s", type(exc).__name__)
                 return "upload_error"
-            media = {"file_info": file_info}
-            if before_send is not None:
-                msg_seq = await before_send()
-            if _expired(message):
-                return "upload_error"
-        except Exception as exc:
-            logger.warning("图片上传或发送准备失败: type=%s", type(exc).__name__)
-            return "upload_error"
-        # 发出请求后，异常或空回执不能证明未送达，不能自动发其他回复。
-        try:
-            receipt = await asyncio.wait_for(
-                message.reply(msg_type=7, media=media, msg_seq=msg_seq), timeout=30)
-        except Exception as exc:
-            logger.warning("图片发送未确认: %s", type(exc).__name__)
-            return None
-        if not receipt:
-            logger.warning("图片发送未确认: empty receipt")
-            return None
-        return True
+            # 发出请求后，异常、取消或空回执都不能证明未送达，保留个人预约。
+            possible_delivery = True
+            try:
+                receipt = await asyncio.wait_for(
+                    message.reply(msg_type=7, media=media, msg_seq=msg_seq), timeout=30)
+            except Exception as exc:
+                logger.warning("图片发送未确认: %s", type(exc).__name__)
+                return None
+            if not receipt:
+                logger.warning("图片发送未确认: empty receipt")
+                return None
+            return True
+        finally:
+            if not possible_delivery:
+                # 没有实际向供应商发出请求时，两本账都撤销；可能已计费的尝试
+                # 全局账保守保留，避免超时或审核造成无限成本。
+                if not request_started:
+                    runtime.IMAGE_GENERATION_BUDGET.release(budget_day)
+                if not runtime.RESOURCE_QUOTAS.release(
+                        "image", group_id, user_id, reservation_day):
+                    logger.warning("未能保存生图个人额度退还")

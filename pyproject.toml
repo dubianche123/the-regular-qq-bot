@@ -24,11 +24,14 @@ dev = ["pytest>=8,<10", "build>=1,<2"]
 
 [tool.setuptools]
 packages = ["regular"]
-py-modules = ["activation", "affinity", "archive", "bot", "config", "digest", "knowledge", "naming", "nicking", "panel", "prompts", "providers", "qqtext", "recall", "relations", "runtime", "search", "storage", "wordfilter", "delivery", "media", "health", "interactions", "opening", "receptive", "scheduler", "slowwork", "image_generation"]
+py-modules = ["activation", "affinity", "archive", "bot", "config", "digest", "knowledge", "naming", "nicking", "panel", "prompts", "providers", "qqtext", "recall", "relations", "runtime", "search", "storage", "wordfilter", "delivery", "media", "health", "interactions", "opening", "receptive", "scheduler", "slowwork", "image_generation", "expression", "voice_input", "voice_event", "voice_runtime", "voice_amr", "realtime_synth", "voice_budget", "voice_outbound", "voice_output_runtime"]
 
 [tool.setuptools.dynamic]
 version = {attr = "regular.__version__"}
 dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.package-data]
+regular = ["voice_amr.mjs", "voice_encode.mjs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

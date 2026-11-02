@@ -32,6 +32,7 @@ from botpy.message import GroupMessage, C2CMessage, Message
 
 import config
 import digest as digest_mod
+import expression
 import image_generation
 from regular import decisions as decisions_mod
 import naming
@@ -44,6 +45,10 @@ import search as search_mod
 import slowwork
 import storage
 import wordfilter
+import voice_event
+import voice_runtime
+import voice_output_runtime
+from archive import _VOICE_URL
 
 logger = logging.getLogger("qqbot")
 
@@ -57,6 +62,10 @@ def setup_logging():
     os.makedirs(os.path.dirname(config.LOG_FILE), exist_ok=True)
     root = logging.getLogger()
     root.setLevel(config.LOG_LEVEL)
+    # botpy DEBUG includes raw gateway events, including signed media URLs and ASR.
+    sdk_logger = logging.getLogger("botpy")
+    if sdk_logger.getEffectiveLevel() < logging.INFO:
+        sdk_logger.setLevel(logging.INFO)
     fmt = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
@@ -102,7 +111,12 @@ def parse_group_message_create(self, payload):
     self._dispatch("group_message_create", _message)
 
 
-ConnectionState.parse_group_message_create = parse_group_message_create
+ConnectionState.parse_group_message_create = voice_event.make_voice_parser(
+    GroupMessage, "group_message_create")
+ConnectionState.parse_group_at_message_create = voice_event.make_voice_parser(
+    GroupMessage, "group_at_message_create")
+ConnectionState.parse_c2c_message_create = voice_event.make_voice_parser(
+    C2CMessage, "c2c_message_create")
 
 # ══════════════════════ 1.5 网关看门狗 ══════════════════════
 #
@@ -199,8 +213,37 @@ call_model = providers.call_model
 probe_provider = providers.probe_provider
 providers.initialize(budget=runtime.BUDGET, decision_budget=runtime.DECISION_BUDGET,
                      on_usage=runtime.STATE.mark_dirty)
+_voice_keys = config.load_api_keys("openai")
+VOICE = voice_runtime.VoiceRuntime(
+    budget=runtime.BUDGET, mark_dirty=runtime.STATE.mark_dirty, persist=runtime.STATE.save_now,
+    api_key=_voice_keys[0] if _voice_keys else "",
+    base_url=config.PROVIDER_PRESETS["openai"]["base_url"] or "https://api.openai.com/v1",
+    model=config.VOICE_TRANSCRIPTION_MODEL)
+del _voice_keys
+_VOICE_OUT = voice_output_runtime.VoiceOutputRuntime(
+    config, next(iter(config.load_api_keys("openai")), ""))
+
+
+async def _recognize_voices(voices, event_prefix):
+    """Recognize at most three distinct current attachments in arrival order."""
+    if not event_prefix or not 0 < len(voices) <= 3:
+        return None
+    results = await asyncio.gather(*(VOICE.processor.process(
+        voice, event_key=f"{event_prefix}:{index}") for index, voice in enumerate(voices)))
+    texts = []
+    recognized = False
+    for result in results:
+        text = result.transcript if result.status == "ok" else None
+        if (isinstance(text, str) and text and "\x00" not in text
+                and not wordfilter.has_hit(text) and not _VOICE_URL.search(text)):
+            texts.append(text)
+            recognized = True
+        else:
+            texts.append("（一段语音未识别）")
+    return "；".join(texts) if recognized else None
+
 from health import STATUS
-from delivery import (Sender, DeliveryResult, passive_reply_window, message_age_seconds,
+from delivery import (Sender, PendingSend, DeliveryResult, passive_reply_window, message_age_seconds,
                       GROUP_PASSIVE_WINDOW_SECONDS, C2C_PASSIVE_WINDOW_SECONDS)
 import media
 from affinity import (affinity_budget, apply_affinity_delta_capped,
@@ -228,7 +271,6 @@ for gid, items in (runtime.STATE.data.get("buffers") or {}).items():
 
 group_last_random_reply = dict(runtime.STATE.data.get("cooldowns") or {})
 processed_msg_ids = collections.deque(maxlen=config.DEDUP_MAX)
-_PROCESS_STARTED_AT = time.time()
 
 
 def _who_label(group_id, oid):
@@ -515,7 +557,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        knowledge_note="", recall_note="", search_note="", allow_fallback=True,
                        personal_note="", feedback_note="", reply_context="",
                        callback_approved=False, back_off=False, quip=False,
-                       lookup_note="", playful_note="", resource_note=""):
+                       lookup_note="", playful_note="", resource_note="",
+                       media_note=""):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
     返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签
@@ -540,7 +583,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         # 人设里的 {bot} / {owner} 在这里换成真名（代码里不写死任何人名，见 naming.py）
         head = (prompts.PROMPT_NORMAL
                 + prompts.PROMPT_SHARED_RULES
-                + prompts.PROMPT_OUTPUT_RULES)
+                + prompts.PROMPT_OUTPUT_RULES
+                + media_rules())
         head = naming.render(head, owner=owner_label)
         if config.AFFINITY_ENABLED and config.CMD_PROTOCOL_ENABLED:
             # 输出协议：只有还让模型自评时才需要
@@ -603,6 +647,9 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
             bits.append(playful_note)
         if resource_note:
             bits.append(resource_note)
+        if media_note:
+            # 这一轮画不了、说不了、或者是破例（见 media_turn）；平时这里是空的
+            bits.append(media_note)
         if private:
             # 放在 owner note **之后**：那一句里有「该损就损」，私聊里得压住它
             bits.append(prompts.PROMPT_PRIVATE_NOTE.strip())
@@ -746,17 +793,65 @@ async def resend_queue_loop():
         await SENDER.drain()
 
 
+def media_rules():
+    """稳定头里的「你会画图 / 你会发语音」：只看开关和凭据，同一进程里逐字节不变，不破缓存。"""
+    parts = []
+    if image_generation.available():
+        parts.append(prompts.PROMPT_DRAW_RULES)
+    if _VOICE_OUT.ready():
+        parts.append(prompts.PROMPT_VOICE_RULES)
+    if parts:
+        parts.append(prompts.PROMPT_MEDIA_RECORD)
+    return "".join(parts)
+
+
+class MediaTurn(SimpleNamespace):
+    """这一轮小王能用哪几样（draw / voice）、额度记在谁头上、即时提示里要补的那句（note）。"""
+
+
+def media_turn(group_id, user_id, score, *, asked):
+    """在生成**之前**定这一轮的画图、语音条件，好让小王写回复时就知道。
+
+    asked=True：有人在跟它说话、它在正经回（不是插嘴、短接、喊停、慢活）—— 只有这时才认〔画〕：
+    没人找它画就不花钱。语音便宜，插嘴也认，但喊停和慢活不认（调用方传 voice=False 的那几种）。
+    画累了、正在画、破例、嗓子用完：都写进 note，小王自己用人话说出来（群主 2026-11-01：
+    「额度用完了也要像人一样说今天累了」）—— 以前这几句是代码里的固定话术。
+    """
+    draw = voice = False
+    notes = []
+    if asked and image_generation.available():
+        state = image_generation.precheck(group_id, user_id, score)
+        draw = state in ("normal", "exception", "extra")
+        if state == "tired":
+            notes.append(prompts.PROMPT_DRAW_TIRED)
+        elif state == "busy":
+            notes.append(prompts.PROMPT_DRAW_BUSY)
+        elif state == "exception":
+            notes.append(prompts.PROMPT_DRAW_EXCEPTION)
+    if _VOICE_OUT.ready():
+        if _VOICE_OUT.tired():
+            notes.append(prompts.PROMPT_VOICE_TIRED)
+        else:
+            voice = True
+    return MediaTurn(group=group_id, user=user_id, score=score, draw=draw, voice=voice,
+                     note="\n".join(notes))
+
+
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
-                           owner_hint_group=None, prepared=None, **context):
+                           owner_hint_group=None, prepared=None, prepared_local=False,
+                           media=None, **context):
     """Serialize generation and send; queued delivery commits through the same callback.
 
-    prepared=(正文, 分值)：话已经提前写好了（慢活边等边写的那句「在查」），只管发和记账。
+    prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
+    media=MediaTurn：这一轮认不认小王写的〔画〕〔语音〕（见 media_turn）；None 时标记一律当文字。
     """
     async with runtime.SESSIONS.lock(session_id):
         generation = runtime.SESSIONS.begin_turn(session_id)
         # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
         # 从这里摘走，别漏进 get_ai_reply 的关键字里。
         history = context.pop("history", ())
+        if media is not None and media.note:
+            context["media_note"] = media.note
         # 本轮的注入痕迹 + 实际应答候选：都先重置再取，被 mock/失败的调用
         # 不会带着上一轮的出处来冒充。
         trace = {"personal_memory_used": False}
@@ -769,9 +864,20 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             completion = providers.completion_meta()
         finally:
             _reply_trace.reset(token)
-        generated = bool(body)
-        body = body or _pick_fallback()
+        generated = bool(body) and not prepared_local
+        said = expression.parse(body) if generated else expression.Said(None, "", body or "")
+        if said.kind == "image" and not (media is not None and media.draw):
+            logger.info("🎨 这一轮不认〔画〕，只发文字（%s）", session_id[-12:])
+            said = expression.Said(None, "", said.text)
+        if said.kind == "voice" and not (media is not None and media.voice):
+            said = expression.Said(None, "", said.text)
+        body = said.text if generated else (body or _pick_fallback())
+        if not body and said.kind != "image":
+            return body, delta, None   # 只写了个标记、没写话：当它这轮不说
         hinted = f"{body}\n{OWNER_CLAIM_HINT}"
+        # 会话里记的那条：默认就是发出去的字；画了图、发了语音，换成带标记和结果的那条
+        # （expression.record）—— 下一轮小王看见的是自己实际做了什么，而不是只看见一句话。
+        recorded = {"as": None}
 
         def prepare():
             return hinted if generated and owner_hint_pending(owner_hint_group) else body
@@ -779,7 +885,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         def commit(result):
             if runtime.SESSIONS.generation(session_id) != generation:
                 return  # a reset action invalidated this old pending reply
-            runtime.SESSIONS.record(session_id, user_text, result.text)
+            if said.kind != "image":   # 画图那轮等图的结果出来再一起记
+                runtime.SESSIONS.record(session_id, user_text, recorded["as"] or result.text)
             if generated and result.text in (body, hinted):
                 if result.text == hinted:
                     runtime.STATE.data.setdefault("groups", {}).setdefault(owner_hint_group, {})["owner_hint"] = True
@@ -807,6 +914,46 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         # 本地命令、主动广播、私聊都不在反馈口径里。
         interaction["feedback_eligible"] = bool(
             getattr(message, "group_openid", None) and member and source_id)
+        if said.kind == "voice":
+            # 发语音持 owner-hint 锁：念出去的那句不能在合成途中被认主提示改掉。
+            async with owner_hint_lock(owner_hint_group):
+                voice_result = receipt = None
+                if not owner_hint_pending(owner_hint_group):
+                    try:
+                        voice_result, receipt = await _VOICE_OUT.attempt(
+                            message, body, SENDER,
+                            lambda: runtime.SESSIONS.generation(session_id) == generation,
+                            tone=said.spec)
+                    except Exception:
+                        # 意外异常可能发生在 QQ 已收下语音之后：保守起见不再补发文字。
+                        logger.warning("语音发送状态不明，停止本轮投递")
+                        return body, delta, DeliveryResult("unknown", body)
+                status = getattr(voice_result, "status", None)
+                if status == "sent":
+                    recorded["as"] = expression.record(said, True)
+                    meta = dict(interaction)
+                    meta.update(source_message_id=source_id, user=member,
+                                policy_id=config.INTERACTION_POLICY_ID)
+                    observer = _delivery_observer(uuid.uuid4().hex, owner_hint_group, meta, member)
+                    item = PendingSend(message, body, time.time(), on_delivered=commit,
+                                       on_outcome=observer)
+                    result = await SENDER._delivered(item, receipt)
+                    return body, delta, result
+                if status == "delivery_unknown":
+                    # 语音可能已经在群里了：不能再补一条文字，会话里按发过记。
+                    if runtime.SESSIONS.generation(session_id) == generation:
+                        runtime.SESSIONS.record(session_id, user_text, expression.record(said, True))
+                    return body, delta, DeliveryResult("unknown", body)
+                # 其余情况都确定没发出去（含合成被拒、念的和写的对不上）：同一句话改发文字。
+                # 这句本来就是小王写给群里看的，语音没成不等于这句话不能说。
+                if status:
+                    logger.info("🔈 语音没发成（%s），改发文字", status)
+                recorded["as"] = expression.record(said, False)
+        if said.kind == "image":
+            return await _reply_with_image(
+                message, session_id, user_text, said, media, generation, delta,
+                commit=commit, interaction=interaction, prepare=prepare,
+                owner_hint_group=owner_hint_group, history=history)
         result = await safe_reply(
             message, body, on_delivered=commit,
             interaction=interaction,
@@ -815,6 +962,61 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
             prepare=prepare if owner_hint_group else None)
         return body, delta, result
+
+
+async def _reply_with_image(message, session_id, user_text, said, media, generation, delta, *,
+                            commit, interaction, prepare, owner_hint_group, history):
+    """小王写了〔画〕：先把它那句话发出去，同时开画；图跟在后面，结果记进会话。
+
+    这句话就是以前那句固定的「好，我画画看，稍等一下」—— 现在是小王照着这单自己说的，
+    不多花一次生成（回复本来就要写）。图没发出去时补的那句仍是本地话术（expression.image_failed_line）。
+    整段持着这个人的会话锁：同一个人追问「画好了吗」，会等图出来再答，答的时候知道结果。
+    """
+    current = lambda: runtime.SESSIONS.generation(session_id) == generation
+    said_first = asyncio.Event()
+
+    async def after_text():
+        await said_first.wait()
+        return SENDER._next_sequence(message)
+
+    task = asyncio.create_task(image_generation.generate_and_send(
+        message, group_id=media.group, user_id=media.user, score=media.score,
+        prompt=said.spec, before_send=after_text))
+    result = None
+    try:
+        if said.text:
+            result = await safe_reply(
+                message, said.text, on_delivered=commit, interaction=interaction,
+                is_current=current, retry_lock=runtime.SESSIONS.lock(session_id),
+                send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
+                prepare=prepare if owner_hint_group else None)
+    finally:
+        said_first.set()
+    try:
+        outcome = await task
+    except Exception:
+        logger.exception("生图处理异常")
+        outcome = False
+    delivered_text = said.text if getattr(result, "status", None) == "delivered" else ""
+    if current():
+        runtime.SESSIONS.record(session_id, user_text, expression.record(
+            expression.Said("image", said.spec, delivered_text), outcome))
+        runtime.STATE.mark_dirty()
+    if outcome is True:
+        outgoing_id = uuid.uuid4().hex
+        # 分诊看得见「它刚画了什么」：「画的什么玩意」是在评这张图，不是新的画图请求。
+        runtime.FEEDBACK.remember(
+            media.group, media.user, f"{delivered_text}\n[图：{said.spec}]".strip(),
+            route="reply", outgoing_id=outgoing_id, history=list(history or [])[-4:])
+        runtime.INTERACTIONS.append(
+            "delivery", media.group, user=media.user, actor="assistant",
+            outgoing_id=outgoing_id, source_message_id=getattr(message, "id", None),
+            status="delivered", route="image", generation="model")
+    elif outcome is not None:
+        line = expression.image_failed_line(outcome)
+        logger.info("🎨 这张没画成（%s）", outcome)
+        await safe_reply(message, line)
+    return said.text, delta, result or DeliveryResult("delivered" if outcome is True else "failed", "")
 
 
 def _throttled_notice_key(group_id, kind):
@@ -1391,6 +1593,8 @@ async def proactive_loop():
                 is_random_banter=True, context_hint=topics,
                 owner_label=owner_label(gid), state_note=activation.state_line("", mood_v),
                 allow_fallback=False)
+            # 主动开口没有可回的那条消息，画不了也发不了语音：写了标记只留正文
+            body = expression.parse(body).text if body else body
             if not body or _garbage_run(body):
                 continue    # 没生成出来 / 又抽风了 —— 这轮不说话
             if await post_to_group(gid, body.strip(),
@@ -1466,18 +1670,8 @@ async def answer_with_lookup(message, session_id, user_input, kind, query, *, re
     handle = await job.start(query)
     if handle is None:
         return None
-    # 「在查」那句边等边写：等不到结果时它已经写好了，第一句话不必再多等一次生成。
-    # 结果当场回来就扔掉它 —— 代价是快查询多一次回复模型调用。
-    ack = asyncio.create_task(get_ai_reply(
-        session_id, user_input, allow_fallback=False,
-        lookup_note=(prompts.PROMPT_RESEARCH_PENDING if kind == "research"
-                     else prompts.PROMPT_LOOKUP_PENDING),
-        **{k: v for k, v in reply_kwargs.items()
-           if k not in ("on_delivered", "owner_hint_group", "history")}))
     state, result = await slowwork.wait(
         job, handle, config.ASYNC_REPLY_SECONDS if job.wait_first else 0.0)
-    if state != slowwork.RUNNING:
-        ack.cancel()
     if state == slowwork.DONE:
         logger.info("🌐 联网查询当场回来了（%s）", kind)
         return await reply_in_session(message, session_id, user_input,
@@ -1486,7 +1680,8 @@ async def answer_with_lookup(message, session_id, user_input, kind, query, *, re
     if state == slowwork.FAILED:
         return None
     outcome = await reply_in_session(message, session_id, user_input,
-                                     prepared=await ack, **reply_kwargs)
+                                     prepared=("我去查查，等我一会儿。", None),
+                                     prepared_local=True, **reply_kwargs)
     now = time.time()
     runtime.SCHEDULER.at("followup", message.group_openid, now + job.poll_every, {
         "job": kind, "handle": handle, "session": session_id, "question": user_input,
@@ -1534,18 +1729,21 @@ async def finish_lookup(task):
     done_note = (prompts.PROMPT_RESEARCH_DONE if p["job"] == "research"
                  else prompts.PROMPT_LOOKUP_DONE)
     history = list(group_buffers.get(gid, ()))[-4:]
+    completed = state == slowwork.DONE
     body, _delta, delivery = await reply_in_session(
         _reply_target(gid, p), p["session"], p["question"],
         is_owner=p.get("is_owner", False),
         owner_label=owner_label(gid),
-        search_note=search_mod.render_brief(result) if state == slowwork.DONE else "",
-        lookup_note=done_note if state == slowwork.DONE else prompts.PROMPT_LOOKUP_FAILED,
+        search_note=search_mod.render_brief(result) if completed else "",
+        lookup_note=done_note if completed else "",
+        prepared=None if completed else ("这次没查成，等会儿再试试。", None),
+        prepared_local=not completed,
         history=history)
     status = getattr(delivery, "status", None)
     logger.info("🌐 慢活跟进（%s，%s，%.0f 秒）：%s", p["job"], state, now - p["started"], status)
     if status != "expired" or not body:
         return None   # 送达、排队补投、被拒，都到此为止
-    if await post_to_group(gid, body, model_generated=True, history=history):
+    if await post_to_group(gid, body, model_generated=completed, history=history):
         runtime.SESSIONS.record(p["session"], p["question"], body)
         return None
     p["ready"] = body
@@ -1861,6 +2059,10 @@ class GroupBot(botpy.Client):
         raw_content = message.content or ""
         group_id = message.group_openid
         sender_openid = message.author.member_openid
+        voices = getattr(message, "_voice_attachments", ())
+        if voices:
+            suffix = "（附件过多，暂未识别）" if len(voices) > 3 else ""
+            raw_content = f"[语音]{suffix} {raw_content}".strip()
 
         # 图片（2026-10-19，克制版读图）：群消息的图走 attachments 字段，content 往往是
         # 空的——以前纯图消息在下面的「读不出人话」闸被整条丢弃，群友发的图它连看都没看过。
@@ -1947,7 +2149,7 @@ class GroupBot(botpy.Client):
         #     带图的不算复读：描述回填前两张图都是「[图片]」，第二张会被当成复读丢掉
         #     （2026-11-01 12:31:53/55 连发两张，问「读这两张图」时背景里只剩一张）。
         buf = group_buffers[group_id]
-        if (not buf or image_url or buf[-1]["sender"] != sender_openid
+        if (not buf or image_url or voices or buf[-1]["sender"] != sender_openid
                 or buf[-1]["text"] != user_input):
             buf.append({"sender": sender_openid, "text": user_input, "time": time.time(), "message_id": message.id})
             runtime.STATE.data["buffers"][group_id] = list(buf)
@@ -1958,6 +2160,26 @@ class GroupBot(botpy.Client):
                               and 0 <= receipt_time - float(row.get("time") or 0)
                               <= config.GROUP_BUFFER_TTL_SECONDS]
         media.remember(group_id, message.id, sender_openid, image_url)
+
+        if voices:
+            transcript = await _recognize_voices(
+                voices, f"group:{group_id}:{message.id}" if message.id else None)
+            row = None
+            if transcript:
+                row = runtime.ARCHIVE.attach_voice_transcript(
+                    group_id, message.id, transcript, sender=sender_openid,
+                    buffers=group_buffers, state=runtime.STATE,
+                    at=bool(is_at or any(n and n in transcript for n in naming.bot_names())))
+            if row:
+                user_input = user_input.replace("[语音]", row["text"], 1)
+                if not at_bot and any(n and n in user_input for n in naming.bot_names()):
+                    named = True
+                    is_at = True
+                    user_input = strip_call(user_input)
+            elif not (message.content or "").strip():
+                if at_bot:
+                    await safe_reply(message, "这条语音我暂时听不清，能发文字吗？")
+                return
 
         # 节奏先验在这里算**一次**，对每条进背景缓存的消息都算（见 opening.py）。
         # ⚠️ 不要挪到插嘴门里去算：那里会被冷却窗和收敛窗跳过，而被跳过的恰好是
@@ -1987,8 +2209,6 @@ class GroupBot(botpy.Client):
                         want_recall=config.MEMORY_RECALL_ENABLED,
                         want_lookup=(config.SEARCH_ENABLED
                                      and providers.research_available()),
-                        want_image=config.IMAGE_GENERATION_ENABLED,
-                        image_history_since=_PROCESS_STARTED_AT,
                         every_message=config.DECISION_TRIAGE_ALL)
                 except Exception:
                     logger.exception("⚠️ 分诊异常（%s）", group_id[-6:])
@@ -2354,7 +2574,6 @@ class GroupBot(botpy.Client):
         if (lookup is None and should_reply and not is_random and not quip
                 and not back_off and config.SEARCH_ENABLED
                 and providers.research_available()
-                and feedback_result.get("image_generation") != "generate"
                 and not wordfilter.has_hit(user_input)):
             kind = feedback_result.get("lookup")
             status = None
@@ -2386,74 +2605,6 @@ class GroupBot(botpy.Client):
 
         if is_at and not user_input and not image_url and not history_at_receipt:
             await safe_reply(message, f"找{naming.bot_name()}啥事？直接说就行。")
-            return
-        if (not lookup and not is_random and not quip and not back_off
-                and feedback_result.get("image_generation") == "generate"):
-            # 分诊与普通回复门都放行后才花图像额度；不同于搜索，图像本身就是回复。
-            # 同人更早的一次判断若已被受理，丢弃过时的并发判断，不能重复发图。
-            if not runtime.FEEDBACK.claim_image(
-                    group_id, sender_openid, message_time=receipt_time,
-                    expected_boundary=feedback_result.get("image_boundary")):
-                logger.info("跳过已过时的生图判断")
-                return
-            ready = asyncio.Event()
-            proceed = asyncio.Event()
-            image_reservation = []
-
-            async def image_sequence():
-                ready.set()
-                await proceed.wait()
-                return SENDER._next_sequence(message)
-
-            image_task = asyncio.create_task(image_generation.generate_and_send(
-                message, group_id=group_id, user_id=sender_openid, score=resource_score,
-                prompt=feedback_result["image_prompt"], before_send=image_sequence,
-                on_reserved=lambda status: image_reservation.append(status)))
-            ready_task = asyncio.create_task(ready.wait())
-            try:
-                done, _ = await asyncio.wait(
-                    (image_task, ready_task), timeout=config.ASYNC_REPLY_SECONDS,
-                    return_when=asyncio.FIRST_COMPLETED)
-                if not done:
-                    await safe_reply(message, "今天的份额用完了，不过这张我再帮你画，稍等。"
-                                     if image_reservation == ["exception"]
-                                     else "好，我画画看，稍等一下。",
-                                     is_current=lambda: not proceed.is_set())
-                proceed.set()
-                sent = await image_task
-            except Exception:
-                logger.exception("生图处理异常")
-                sent = False
-            finally:
-                proceed.set()
-                ready_task.cancel()
-            if sent is True:
-                outgoing_id = uuid.uuid4().hex
-                runtime.FEEDBACK.remember(
-                    group_id, sender_openid, "[已生成并发送图片]", route="reply",
-                    outgoing_id=outgoing_id, history=list(buf or [])[-4:])
-                runtime.INTERACTIONS.append(
-                    "delivery", group_id, user=sender_openid, actor="assistant",
-                    outgoing_id=outgoing_id, source_message_id=message.id,
-                    status="delivered", route="image", generation="model")
-                return
-            if sent is None:
-                # QQ 可能已收到：不能再发一条假定失败的回复。
-                return
-            if sent == "quota":
-                await safe_reply(message, "今天画得有点累啦，明天再帮你画吧。")
-                return
-            if sent == "busy":
-                await safe_reply(message, "我还在画上一张，等我画完你再叫我画这张吧。")
-                return
-            if sent == "blocked":
-                await safe_reply(message, "这张没通过图片服务的审核，换个想法再试试吧。")
-                return
-            if sent == "upload_error":
-                await safe_reply(message, "图画出来了，但这次没能发到群里。")
-                return
-            # 无论是否说过「稍等」，都不依赖聊天预算来说明失败。
-            await safe_reply(message, "这次没画成，等会儿再试试。")
             return
         if not await BudgetGate.check(message, group_id):
             runtime.INTERACTIONS.append(
@@ -2597,8 +2748,15 @@ class GroupBot(botpy.Client):
                 await safe_reply(message, "这次没查成，等会儿再试试。")
                 return
         if outcome is None:
+            # 画不画、说不说语音由小王在回复里自己决定；这里只定它这一轮「能不能」。
+            # 搜索、喊停这轮不画也不念：前者要的是资料，后者对方已经不想听了。
+            # （别叫 media：那是读图模块的名字，同一个函数里前面还在用它）
+            this_turn = (None if back_off or search_note else
+                         media_turn(group_id, sender_openid, resource_score,
+                                    asked=not (is_random or quip)))
             outcome = await reply_in_session(message, session_id, user_input,
-                                             search_note=search_note, **reply_kwargs)
+                                             search_note=search_note, media=this_turn,
+                                             **reply_kwargs)
         reply_text, delta, delivery = outcome
         if delivery is None:
             # 模型行使了不说话的权利：这轮到此为止，好感度/情绪结算全部跳过
@@ -2635,7 +2793,19 @@ class GroupBot(botpy.Client):
 
         user_input = (message.content or "").strip()
         sender_openid = message.author.user_openid
-        logger.info("📩 [私聊] %s | %s", sender_openid, user_input)
+        voices = getattr(message, "_voice_attachments", ())
+        if voices and sender_openid:
+            transcript = await _recognize_voices(
+                voices, f"private:{sender_openid}:{message.id}" if message.id else None)
+            if transcript:
+                user_input = f"{user_input} {transcript}".strip()
+            else:
+                note = "语音附件过多，暂时无法识别" if len(voices) > 3 else "语音暂时无法识别"
+                if not user_input:
+                    await safe_reply(message, f"{note}，能发文字吗？")
+                    return
+                user_input = f"{user_input}\n（{note}）"
+        logger.info("📩 [私聊]%s", " [语音]" if voices else "")
         if not user_input or not sender_openid:
             return
 
@@ -2858,6 +3028,7 @@ async def _shutdown(*, cancel_all=False):
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    await VOICE.close()
     await providers.close()
 
 

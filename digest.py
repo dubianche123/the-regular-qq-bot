@@ -163,6 +163,8 @@ def render_transcript(entries, resolver=None, max_chars=DEFAULT_CHUNK_CHARS):
     lines = []
     used = 0
     for e in entries:
+        if e.get("kind") == "voice_transcript" and e.get("cmd"):
+            continue
         who = (resolver(e["sender"]) if resolver else None) or UNAMED_WHO
         text = (e.get("text") or "").strip().replace("\n", " ")
         if not text:

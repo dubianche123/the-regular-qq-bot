@@ -25,6 +25,10 @@ import uuid
 DEFAULT_ARCHIVE_DIR = "archive"
 DEFAULT_MEMORY_DIR = "memory"
 DATE_FMT = "%Y-%m-%d"
+_VOICE_PLACEHOLDER = "[语音]"
+_VOICE_TRANSCRIPT_KIND = "voice_transcript"
+# Media URLs belong to the transient attachment path, never transcript evidence.
+_VOICE_URL = re.compile(r"(?i)(?<![a-z0-9])[a-z][a-z0-9+.-]{1,20}://|(?<![a-z0-9])www\.|(?<!:)//[a-z0-9.-]+\.[a-z]{2,}|data:audio/")
 
 
 def day_key(ts=None):
@@ -116,7 +120,7 @@ class MessageArchive:
                             continue
                         if (isinstance(row, dict) and row.get("group") == group_id
                                 and row.get("message_id") == message_id
-                                and row.get("kind") != "caption"):
+                                and row.get("kind") not in ("caption", _VOICE_TRANSCRIPT_KIND)):
                             return row
             except OSError:
                 continue
@@ -167,6 +171,95 @@ class MessageArchive:
         self._message_cache[cache_key] = row
         if len(self._message_cache) > 5000:
             self._message_cache.pop(next(iter(self._message_cache)))
+        return row
+
+    def append_voice_transcript(self, group_id, message_id, transcript, *, sender, ts=None, at=False):
+        """Append once-only derived voice text for a known source message.
+
+        The source row stays unchanged. A late transcription is a new event and
+        remains visible past an already-committed digest cursor. Results with a
+        different transcript for the same source reuse the first one: callers
+        cannot silently create contradictory evidence by processing duplicates.
+        The input must be text; raw audio and media URLs are never accepted.
+        """
+        if (not group_id or not sender or not message_id or not isinstance(transcript, str)):
+            return None
+        text = transcript.strip()
+        if not text or "\x00" in text or _VOICE_URL.search(text):
+            return None
+        # Filter the full transcript before clipping, so a hidden suffix cannot
+        # bypass the same sensitive-word gate used for recall and summaries.
+        import wordfilter
+        if wordfilter.has_hit(text):
+            return None
+        message_id = str(message_id)
+        source = self._source_message(group_id, message_id)
+        if (not source or sender != source.get("sender")
+                or not isinstance(source.get("text"), str)
+                or _VOICE_PLACEHOLDER not in source["text"]):
+            return None
+        cache_key = (group_id, message_id, _VOICE_TRANSCRIPT_KIND)
+        if cache_key in self._message_cache:
+            return self._message_cache[cache_key]
+        for name in self._archive_names():
+            try:
+                with open(os.path.join(self.archive_dir, name), encoding="utf-8") as fp:
+                    for line in fp:
+                        try:
+                            existing = json.loads(line)
+                        except (ValueError, TypeError):
+                            continue
+                        if (isinstance(existing, dict) and existing.get("group") == group_id
+                                and existing.get("kind") == _VOICE_TRANSCRIPT_KIND
+                                and existing.get("message_id") == message_id):
+                            self._message_cache[cache_key] = existing
+                            return existing
+            except OSError:
+                continue
+        ts = time.time() if ts is None else ts
+        row = {
+            "ts": round(ts, 3), "day": day_key(ts), "group": group_id,
+            "sender": source["sender"], "kind": _VOICE_TRANSCRIPT_KIND,
+            "message_id": source["message_id"], "source_ts": source.get("ts"),
+            "evidence_id": uuid.uuid4().hex,
+            "text": f"[语音转写：{text[:self.max_text]}]",
+        }
+        # The source is immutable and preceded transcription; identify commands
+        # from the complete transcript before clipping the derived record.
+        import relations
+        if source.get("cmd") or relations.parse_nick_lock_command(text):
+            row["cmd"] = 1
+        if source.get("at") or at:
+            row["at"] = 1
+        self._write_row(row)
+        self._message_cache[cache_key] = row
+        if len(self._message_cache) > 5000:
+            self._message_cache.pop(next(iter(self._message_cache)))
+        return row
+
+    def attach_voice_transcript(self, group_id, message_id, transcript, *, sender,
+                                buffers, state, ts=None, at=False):
+        """Persist the derived row, then backfill its matching live buffer only."""
+        if (not isinstance(buffers, dict) or not isinstance(getattr(state, "data", None), dict)
+                or not callable(getattr(state, "mark_dirty", None))):
+            return None
+        row = self.append_voice_transcript(group_id, message_id, transcript, sender=sender, ts=ts, at=at)
+        if row is None:
+            return None
+        entries = buffers.get(group_id) or []
+        changed = False
+        for entry in entries:
+            if (not isinstance(entry, dict) or str(entry.get("message_id") or "") != str(message_id)
+                    or entry.get("sender") != sender):
+                continue
+            text = entry.get("text")
+            if not isinstance(text, str) or _VOICE_PLACEHOLDER not in text:
+                continue
+            entry["text"] = text.replace(_VOICE_PLACEHOLDER, row["text"], 1)
+            changed = True
+        if changed:
+            state.data.setdefault("buffers", {})[group_id] = [dict(entry) for entry in entries]
+            state.mark_dirty()
         return row
 
     def close(self):
@@ -327,6 +420,8 @@ class MessageArchive:
                         except Exception:
                             continue
                         if group_id and row.get("group") != group_id:
+                            continue
+                        if row.get("kind") == _VOICE_TRANSCRIPT_KIND and row.get("cmd"):
                             continue
                         if since_ts and float(row.get("ts") or 0) < since_ts:
                             continue

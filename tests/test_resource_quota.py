@@ -67,3 +67,42 @@ def test_personal_and_global_reservation_are_saved_together(tmp_path):
     reloaded = StateStore(str(path), 1)
     assert reloaded.data["image_generation_usage"]["used"] == 1
     assert reloaded.data["resource_quotas"]["counts"]["image"]["group"]["user"] == 1
+
+
+def test_refund_is_durable_and_does_not_change_global_budget(tmp_path):
+    path = tmp_path / "state.json"
+    state = StateStore(str(path), 1)
+    budget = DailyBudget(3, state.data.setdefault("image_generation_usage", {}))
+    quota = ResourceQuotas(state.data.setdefault("resource_quotas", {}),
+                           state.mark_dirty, state.save_now, today=DailyBudget.today)
+    assert budget.try_consume()
+    assert quota.consume("image", "group", "user", 0) == "normal"
+    assert quota.release("image", "group", "user", quota.reservation_day)
+    reloaded = StateStore(str(path), 1)
+    assert reloaded.data["image_generation_usage"]["used"] == 1
+    assert reloaded.data["resource_quotas"]["counts"]["image"]["group"]["user"] == 0
+
+
+def test_refund_from_previous_day_does_not_touch_new_day():
+    quota, _, day, _, save = make_quota()
+    assert quota.consume("image", "group", "user", 0) == "normal"
+    old_day = day[0]
+    day[0] = "2026-11-02"
+    assert quota.consume("image", "group", "user", 0) == "normal"
+    assert quota.release("image", "group", "user", old_day)
+    assert quota._used("image", "group", "user") == 1
+    assert save.call_count == 2
+
+
+def test_global_release_only_reverses_same_day():
+    day = ["2026-11-01"]
+    budget = DailyBudget(2, {})
+    with patch.object(budget, "today", side_effect=lambda: day[0]):
+        assert budget.try_consume()
+        assert budget.release(day[0])
+        assert budget.used == 0
+        assert budget.try_consume()
+        day[0] = "2026-11-02"
+        assert budget.try_consume()
+        assert budget.release("2026-11-01")
+        assert budget.used == 1

@@ -98,31 +98,38 @@ def _unit(value):
             and math.isfinite(float(value)))
 
 
-def _answer_row(answer, allowed):
-    """单条答案的严格校验：合规就给出 {choice, confidence, probabilities, p, margin}，否则 None。"""
-    if answer.get("type") != "choice":
-        return None  # refusal / 其他类型都不当选择
+_INVALID_REASONS = frozenset({
+    "missing", "refusal", "invalid_type", "invalid_choice",
+    "invalid_number", "invalid_probabilities",
+})
+
+
+def _answer_row_with_reason(answer, allowed):
+    """保留原有校验，同时只返回固定枚举诊断，不保留回答或拒答正文。"""
+    answer_type = answer.get("type")
+    if answer_type != "choice":
+        return None, "refusal" if answer_type == "refusal" else "invalid_type"
     choice = answer.get("choice")
     if not isinstance(choice, str) or choice not in allowed:
-        return None
+        return None, "invalid_choice"
     for key in ("confidence", "probability"):
         if key in answer and not _unit(answer[key]):
-            return None
+            return None, "invalid_number"
     probs = answer.get("probabilities")
     if probs is not None:
         if not isinstance(probs, list):
-            return None
+            return None, "invalid_probabilities"
         seen_values = set()
         for entry in probs:
             if not isinstance(entry, dict):
-                return None
+                return None, "invalid_probabilities"
             value = entry.get("value")
             if (not isinstance(value, str) or value not in allowed
                     or value in seen_values):
-                return None
+                return None, "invalid_probabilities"
             seen_values.add(value)
             if not _unit(entry.get("probability")):
-                return None
+                return None, "invalid_probabilities"
     table = _prob_map(probs)
     return {"choice": choice,
             "confidence": answer.get("confidence"),
@@ -130,10 +137,15 @@ def _answer_row(answer, allowed):
             # 被选中项自己的概率：离线校准要拿它和真实结果比。
             # 不能从 margin 反推 —— 只有 K=2 时才解得出。
             "p": (table or {}).get(choice),
-            "margin": _margin(choice, probs)}
+            "margin": _margin(choice, probs)}, None
 
 
-def parse_each(body, questions):
+def _answer_row(answer, allowed):
+    """单条答案的严格校验；保持原有返回接口。"""
+    return _answer_row_with_reason(answer, allowed)[0]
+
+
+def parse_each(body, questions, *, invalid_reasons=None):
     """逐题解析：{题名: 答案行 或 None}；**整份返回结构坏了**才整体返回 None。
 
     两种坏法分开对待（2026-10-31，一次分诊会同时带好几道题）：
@@ -150,6 +162,9 @@ def parse_each(body, questions):
         return None
     wanted = _vocab(questions)
     out = {name: None for name in wanted}
+    if invalid_reasons is not None:
+        invalid_reasons.clear()
+        invalid_reasons.update({name: "missing" for name in wanted})
     seen = set()
     for answer in answers:
         if not isinstance(answer, dict):
@@ -158,7 +173,12 @@ def parse_each(body, questions):
         if not isinstance(name, str) or name not in wanted or name in seen:
             return None
         seen.add(name)
-        out[name] = _answer_row(answer, wanted[name])
+        out[name], reason = _answer_row_with_reason(answer, wanted[name])
+        if invalid_reasons is not None:
+            if reason is None:
+                invalid_reasons.pop(name, None)
+            else:
+                invalid_reasons[name] = reason
     return out
 
 
@@ -235,14 +255,15 @@ def usable_choices(body, questions, min_margin=None):
       · 但**越自信不等于越准**：阈值 0.70 时挑对率 0.559，反而低于不弃答。
         所以这是一道**地板**，不是一条越高越好的曲线，更不是行动许可。
     """
-    answers = parse_each(body, questions)
+    invalid_reasons = {}
+    answers = parse_each(body, questions, invalid_reasons=invalid_reasons)
     if answers is None:
         return None, {}
     floor = config.DECISION_MIN_MARGIN if min_margin is None else min_margin
     scores, choices = {}, {}
     for name, row in answers.items():
         if row is None:
-            scores[name] = {"invalid": True}   # 单题坏：只作废这一题，留档复盘
+            scores[name] = {"invalid": True, "invalid_reason": invalid_reasons[name]}
             continue
         margin = row["margin"]
         scores[name] = {"choice": row["choice"], "margin": margin,
@@ -349,25 +370,6 @@ class FeedbackTracker:
             "user": user, "text": text, "route": route,
             "outgoing_id": outgoing_id, "ts": now, "history": human}
 
-    def claim_image(self, group, user, *, message_time, expected_boundary):
-        """为一个画图意图原子划定已处理边界；过时的并发分诊不能再次执行。
-
-        仅保留群内成员的消息时间，不记录文本；明确的新请求仍可由判断选择生成。
-        """
-        if (not group or not user or not isinstance(message_time, (int, float))
-                or isinstance(message_time, bool) or not math.isfinite(message_time)):
-            return False
-        claims = self._slot(group).setdefault("image_claims", {})
-        old = claims.get(user)
-        if old != expected_boundary or (old is not None and message_time <= old):
-            return False
-        claims[user] = float(message_time)
-        # 观察只服务于短窗口；清理其他久未出现的人，避免群成员变动时无限增长。
-        for member, stamp in list(claims.items()):
-            if member != user and message_time - stamp > self.window_seconds:
-                del claims[member]
-        return True
-
     def quiet(self, group, *, now=None):
         """原生反馈判过「收敛一下」之后，插嘴暂停窗内还有没有剩。"""
         if not config.DECISION_ENABLED:
@@ -398,8 +400,8 @@ class FeedbackTracker:
 
     async def assess(self, group, user, text, *, message_id="", is_direct=False,
                      named=False, history=None, nick_candidate=None,
-                     want_recall=False, want_lookup=False, want_image=False,
-                     every_message=False, image_history_since=None, now=None):
+                     want_recall=False, want_lookup=False,
+                     every_message=False, now=None):
         """一条人类消息的**分诊**：本机先决定要问哪几题，然后最多一次原生调用。
 
         为什么是一次调用带一串题（2026-10-31）：这个接口按输入计费、输出不要钱，
@@ -427,9 +429,7 @@ class FeedbackTracker:
             return {}
         now = time.time() if now is None else now
         slot = self._groups.get(group) or {}
-        last_reply = slot.get("reply")
-        image_boundary = (slot.get("image_claims") or {}).get(user)
-        reply = last_reply
+        reply = slot.get("reply")
         if reply and now - reply["ts"] > self.window_seconds:
             reply = None
         calls_bot = bool(is_direct or named)
@@ -453,10 +453,6 @@ class FeedbackTracker:
         # 仅与对机器人说话或跟进它的回复有关时问；与分诊共用一次调用。
         if calls_bot or reply:
             questions += decision_prompts.request_kind_questions()
-        # 对着机器人说话，或在其最近一次送达之后续谈，才有可能提出画图请求。
-        # 与现有分诊合并，不另开一轮判断。
-        if want_image and (calls_bot or reply):
-            questions += decision_prompts.image_questions()
         # 对已有 bot 回复，原历史是该回复的证据；但群友可能在它之后、当前句之前
         # 连发了几条。调用方提供的是接收当前消息时的快照，按时间再排除旧句和未来句。
         # 前后两段分开，避免把“回复之后的发言”错放在 bot 回复之前。
@@ -511,34 +507,6 @@ class FeedbackTracker:
                 "text": bot_text}
             if after_reply:
                 payload["messages_after_bot_reply"] = self._input_rows(after_reply, aliases, known)
-        if want_image and (calls_bot or reply):
-            # 显示当前说话人的近期原话，不把这些句子拼成指令，也不在代码里裁决意图。
-            # 已知上一次 bot 回复时，只考虑它之后的消息，即使该回复已过反馈窗口。
-            prior = []
-            # 回复缓存仅在进程内存在；启动前的持久化消息无法证明是否已答过，
-            # 不把它当成待执行的生图请求。普通聊天背景仍可照常使用。
-            boundaries = [value for value in (
-                last_reply["ts"] if last_reply else None,
-                image_history_since, image_boundary) if value is not None]
-            boundary = max(boundaries) if boundaries else None
-            for row in history:
-                try:
-                    ts = float(row.get("time"))
-                except (TypeError, ValueError):
-                    continue
-                if (user and row.get("sender") == user and math.isfinite(ts)
-                        and 0 < now - ts <= self.window_seconds
-                        and (boundary is None or ts > boundary)
-                        and (not message_id or row.get("message_id") != message_id)):
-                    prior.append(row)
-            own = self._input_rows(prior[-4:], aliases, known)
-            payload["current_speaker_messages"] = [
-                {"text": row["text"]} for row in own
-            ] + [{"text": current}]
-            # 只表明本人的上一项画图请求已处理过，既不暴露身份，也不声称画成或失败。
-            # 让“再试一次”能结合旧内容解析主题，同时区分普通进度询问。
-            payload["previous_image_request_handled"] = bool(
-                image_boundary is not None and 0 <= now - image_boundary <= self.window_seconds)
         if candidate:
             payload["nickname_candidate"] = candidate
         _with_aliases(payload)
@@ -578,27 +546,6 @@ class FeedbackTracker:
                 and abs(sum(probs.values()) - 1) <= 0.01
                 and probs["sincere"] < 0.1):
             result["playful_request"] = True
-        # 生成会花钱；缺少可比较的概率时也视作拿不准，不凭一个裸选项触发。
-        image_score = scores.get("image_generation") or {}
-        if (not stale and choices.get("image_generation") == "generate"
-                and image_score.get("margin") is not None):
-            result["image_generation"] = "generate"
-            # 给本地执行口做乐观并发检查，不进入提示或发送内容。
-            result["image_boundary"] = image_boundary
-            # 复用已经脱敏的分诊输入，只携带紧邻对话，不把群号或本地 ID 送到图像 API。
-            image_context = {"recent_human_messages": payload["recent_human_messages"][-2:],
-                             "latest_message": payload["latest_message"]}
-            if payload.get("bot_reply"):
-                image_context["bot_reply"] = payload["bot_reply"]
-            if payload.get("messages_after_bot_reply"):
-                image_context["messages_after_bot_reply"] = payload["messages_after_bot_reply"]
-            if payload.get("current_speaker_messages"):
-                image_context["current_speaker_messages"] = payload["current_speaker_messages"]
-            result["image_prompt"] = (
-                "根据当前群友的画图请求创建一张图片；同一人可能分多条消息说完，"
-                "结合 speaker 和对话顺序理解请求，不要把其他群友的话误当作他的要求。"
-                "不要把对话、JSON 或这些说明画进图片。\n"
-                + json.dumps(image_context, ensure_ascii=False))
         if stale:
             result.update(target=None, suggested_move=None,
                           action="stay_quiet", intervention="stay_quiet",
@@ -753,6 +700,10 @@ def _log_scores(log, group, site, scores, **extra):
     invalid = sorted(n for n in names if scores[n].get("invalid"))
     if invalid:
         row["invalid"] = invalid[:_MAX_LOGGED_SCORES]
+        row["invalid_reasons"] = {
+            n: scores[n]["invalid_reason"] for n in invalid[:_MAX_LOGGED_SCORES]
+            if scores[n].get("invalid_reason") in _INVALID_REASONS
+        }
         names = [n for n in names if n not in invalid]
     if len(names) <= _MAX_LOGGED_SCORES:
         row["scores"] = {

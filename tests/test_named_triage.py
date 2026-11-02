@@ -29,7 +29,7 @@ from test_when_to_intervene import A, G, _Base
 NEUTRAL = {"feedback_target": "not_feedback", "next_move": "no_adjustment",
            "continuation": "no_reply_needed", "intervention": "stay_quiet",
            "addressed": "answer", "recall": "no_need", "nickname": "adopt",
-           "image_generation": "no_generation", "request_kind": "not_request",
+           "request_kind": "not_request",
            "lookup": "none"}
 
 
