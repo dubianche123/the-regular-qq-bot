@@ -1,54 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="810" viewBox="0 0 1200 810" role="img" aria-labelledby="title desc">
-<title id="title">From group messages to responses</title><desc id="desc">Group messages are evaluated by local rules and closed-set decisions when needed. Local code may stay silent, reply, retrieve evidence before replying, or generate and deliver an image. Text replies are composed by the chat model; code reads and updates local memory, relationships and quotas.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
+<title id="title">From group messages to responses</title>
+<desc id="desc">Group messages and context pass through local rules and, when needed, closed-choice decisions and lookup. The chat model chooses whether to respond and may request an image or voice reply; code checks and carries out permitted actions. The result can be silence, text, an image or voice. Local code manages relationships, memory and quotas.</desc>
 <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#8595A9"/></marker></defs>
 <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
-<rect x="1" y="1" width="1198" height="808" rx="20" fill="#F8FAFD" stroke="#DBE3ED"/>
-<text x="36" y="48" font-size="25" font-weight="700" fill="#23324A">How a group message becomes a response</text>
-<text x="36" y="77" font-size="16" font-weight="400" fill="#536782">Decide first, execute in code, and let the chat model find the words</text>
-<rect x="36" y="110" width="220" height="142" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
-<text x="54" y="146" font-size="19" font-weight="700" fill="#23324A">Group message</text>
-<text x="54" y="185" font-size="15" font-weight="400" fill="#536782">Who spoke and what was said</text>
-<text x="54" y="215" font-size="15" font-weight="400" fill="#536782">Images, quotes, recent chat</text>
-<rect x="310" y="110" width="447" height="142" rx="14" fill="#E7F5EF" stroke="#93C8B0"/>
-<text x="330" y="146" font-size="19" font-weight="700" fill="#23324A">Local rules + decisions as needed</text>
-<text x="330" y="178" font-size="15" font-weight="400" fill="#536782">Consider context and conversation rhythm</text>
-<text x="330" y="205" font-size="15" font-weight="400" fill="#536782">Whether to reply, look something up, or draw</text>
-<text x="330" y="232" font-size="15" font-weight="400" fill="#536782">Routine triage can batch several questions</text>
-<rect x="810" y="110" width="354" height="142" rx="14" fill="#FFF3DD" stroke="#D9BD83"/>
-<text x="830" y="146" font-size="19" font-weight="700" fill="#23324A">Local code</text>
-<text x="830" y="185" font-size="15" font-weight="400" fill="#536782">Combine decisions, rules, and quotas</text>
-<text x="830" y="215" font-size="15" font-weight="400" fill="#536782">Choose and execute the action</text>
-<path d="M256 181H305" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<path d="M757 181H805" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<path d="M987 252V285H160M987 285H1000" fill="none" stroke="#8595A9" stroke-width="2"/>
-<path d="M160 285V314" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="36" y="320" width="248" height="115" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="54" y="358" font-size="18" font-weight="700" fill="#23324A">Stay quiet</text>
-<text x="54" y="395" font-size="14" font-weight="400" fill="#536782">Not the right moment</text>
-<path d="M440 285V314" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="316" y="320" width="248" height="115" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="334" y="358" font-size="18" font-weight="700" fill="#23324A">Reply directly</text>
-<text x="334" y="395" font-size="14" font-weight="400" fill="#536782">Use the current conversation</text>
-<path d="M720 285V314" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="596" y="320" width="248" height="115" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="614" y="358" font-size="18" font-weight="700" fill="#23324A">Look up, then reply</text>
-<text x="614" y="395" font-size="14" font-weight="400" fill="#536782">Search memory, knowledge, or web</text>
-<path d="M1000 285V314" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="876" y="320" width="248" height="115" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="894" y="358" font-size="18" font-weight="700" fill="#23324A">Generate an image</text>
-<text x="894" y="395" font-size="14" font-weight="400" fill="#536782">Call the image service</text>
-<path d="M440 435V500" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<path d="M720 435V500" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<path d="M1000 435V500" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="316" y="506" width="528" height="105" rx="14" fill="#F0EAFC" stroke="#B7A2D7"/>
-<text x="335" y="542" font-size="19" font-weight="700" fill="#23324A">Chat model</text>
-<text x="335" y="578" font-size="15" font-weight="400" fill="#536782">Compose a natural reply using context and any retrieved evidence</text>
-<rect x="876" y="506" width="248" height="105" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
-<text x="894" y="560" font-size="16" font-weight="700" fill="#23324A">Deliver image to the group</text>
-<rect x="36" y="665" width="1070" height="70" rx="14" fill="#F0F3F8" stroke="#BCC9D8"/>
-<text x="55" y="707" font-size="17" font-weight="700" fill="#23324A">Local state</text>
-<text x="190" y="707" font-size="16" font-weight="400" fill="#536782">Relationships &amp; names · Memory · Quotas</text>
-<text x="830" y="707" font-size="15" font-weight="400" fill="#536782">Read and updated by code</text>
-<path d="M1106 700H1175V226H1169" fill="none" stroke="#8595A9" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
-<text x="36" y="779" font-size="14" font-weight="400" fill="#536782">Closed-set decisions currently use OpenAI Decisions; some paths use local rules directly.</text>
+<rect x="1" y="1" width="1198" height="658" rx="20" fill="#F8FAFD" stroke="#DBE3ED"/>
+<text x="36" y="48" font-size="25" font-weight="700" fill="#23324A">From a group message to a response</text>
+<text x="36" y="79" font-size="16" fill="#536782">Local rules, closed-choice decisions and the chat model share the work</text>
+<rect x="36" y="110" width="258" height="156" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
+<text x="53" y="147" font-size="18" font-weight="700" fill="#23324A">Message &amp; context</text>
+<text x="53" y="190" font-size="15" fill="#536782">What someone said</text>
+<text x="53" y="222" font-size="15" fill="#536782">Recent chat, images or voice</text>
+<rect x="326" y="110" width="258" height="156" rx="14" fill="#E7F5EF" stroke="#93C8B0"/>
+<text x="343" y="147" font-size="18" font-weight="700" fill="#23324A">Rules, decisions &amp; lookup</text>
+<text x="343" y="190" font-size="15" fill="#536782">Some messages use decisions</text>
+<text x="343" y="222" font-size="15" fill="#536782">Recall or search when needed</text>
+<rect x="616" y="110" width="258" height="156" rx="14" fill="#F0EAFC" stroke="#B7A2D7"/>
+<text x="633" y="147" font-size="18" font-weight="700" fill="#23324A">Chat model</text>
+<text x="633" y="190" font-size="15" fill="#536782">If unaddressed: reply or not</text>
+<text x="633" y="222" font-size="15" fill="#536782">Compose text or request media</text>
+<rect x="906" y="110" width="258" height="156" rx="14" fill="#FFF3DD" stroke="#D9BD83"/>
+<text x="923" y="147" font-size="18" font-weight="700" fill="#23324A">Local code</text>
+<text x="923" y="190" font-size="15" fill="#536782">Check context, limits and access</text>
+<text x="923" y="222" font-size="15" fill="#536782">Call services and deliver results</text>
+<path d="M294 188H320" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M584 188H610" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M874 188H900" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M1035 266V300H165M1035 300H1035" fill="none" stroke="#8595A9" stroke-width="2"/>
+<path d="M165 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="36" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
+<text x="53" y="371" font-size="18" font-weight="700" fill="#23324A">Stay quiet</text>
+<text x="53" y="407" font-size="15" fill="#536782">Send nothing</text>
+<path d="M455 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="326" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
+<text x="343" y="371" font-size="18" font-weight="700" fill="#23324A">Text</text>
+<text x="343" y="407" font-size="15" fill="#536782">Reply naturally</text>
+<path d="M745 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="616" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
+<text x="633" y="371" font-size="18" font-weight="700" fill="#23324A">Image</text>
+<text x="633" y="407" font-size="15" fill="#536782">Send text and image</text>
+<path d="M1035 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="906" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
+<text x="923" y="371" font-size="18" font-weight="700" fill="#23324A">Voice</text>
+<text x="923" y="407" font-size="15" fill="#536782">Synthesize and send</text>
+<rect x="36" y="492" width="1128" height="70" rx="14" fill="#F0F3F8" stroke="#BCC9D8"/>
+<text x="54" y="534" font-size="17" font-weight="700" fill="#23324A">Local state</text>
+<text x="195" y="534" font-size="16" fill="#536782">Relationships &amp; names · Memory · Quotas</text>
+<text x="830" y="534" font-size="15" fill="#536782">Read and updated by code</text>
+<text x="36" y="618" font-size="14" fill="#536782">Closed-choice decisions use OpenAI Decisions; some messages are handled directly by local rules.</text>
 </g></svg>

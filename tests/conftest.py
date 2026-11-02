@@ -61,6 +61,80 @@ def keys_are_real(provider=None):
 import pytest
 
 
+def _unconfigured_codec_tree_missing(*extra_config):
+    """Only an absent default tree may be treated as an optional dependency."""
+    from pathlib import Path
+    import config
+
+    if any(os.environ.get(key, "").strip() for key in ("VOICE_CODEC_DIR", *extra_config)):
+        return False
+    root = Path(config.VOICE_CODEC_DIR).expanduser()
+    default = Path(config.DATA_DIR).parent / ".voice-codecs"
+    return root == default and not os.path.lexists(root)
+
+
+def _codec_entry_or_skip(rate, label):
+    """Codec-dependent tests run only with an installed private codec tree."""
+    import voice_amr
+
+    try:
+        return voice_amr._codec_entry(rate)
+    except ValueError:
+        message = f"{label} codec is unavailable; install it or set VOICE_CODEC_DIR"
+        if _unconfigured_codec_tree_missing():
+            pytest.skip(message)
+        pytest.fail(message + " to a valid codec directory", pytrace=False)
+
+
+def _decode_node_or_skip():
+    import shutil
+
+    node = shutil.which("node")
+    if not node:
+        node = next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node")
+                     if os.path.isfile(p) and os.access(p, os.X_OK)), None)
+    if not node:
+        message = "Node.js is required for the actual voice codec integration tests"
+        if _unconfigured_codec_tree_missing():
+            pytest.skip(message)
+        pytest.fail(message, pytrace=False)
+    return node
+
+
+@pytest.fixture(scope="session")
+def require_amr_codec():
+    _decode_node_or_skip()
+    return _codec_entry_or_skip(16000, "AMR")
+
+
+@pytest.fixture(scope="session")
+def require_silk_codec():
+    return _decode_node_or_skip(), _codec_entry_or_skip(24000, "SILK")
+
+
+def _silk_encoder_or_skip():
+    import config
+
+    node = config.VOICE_OUTPUT_NODE
+    entry = config.VOICE_OUTPUT_SILK_ENTRY
+    if not os.path.isabs(node) or not os.path.isfile(node) or not os.access(node, os.X_OK):
+        message = "configured VOICE_OUTPUT_NODE is not an executable file"
+        if _unconfigured_codec_tree_missing("VOICE_OUTPUT_NODE", "VOICE_OUTPUT_SILK_ENTRY"):
+            pytest.skip("Node.js is required for the actual SILK encoder integration test")
+        pytest.fail(message, pytrace=False)
+    if not os.path.isabs(entry) or not os.path.isfile(entry):
+        message = "SILK encoder is unavailable; install it or set VOICE_OUTPUT_SILK_ENTRY"
+        if _unconfigured_codec_tree_missing("VOICE_OUTPUT_SILK_ENTRY"):
+            pytest.skip(message)
+        pytest.fail(message + " to a valid file", pytrace=False)
+    return node, entry
+
+
+@pytest.fixture(scope="session")
+def require_silk_encoder():
+    return _silk_encoder_or_skip()
+
+
 @pytest.fixture(autouse=True)
 def _never_write_the_deployment_journal(tmp_path_factory):
     """任何用例都不许往**部署目录**的 interactions/ 里写。

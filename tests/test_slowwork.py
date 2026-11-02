@@ -19,6 +19,7 @@ import runtime
 import scheduler
 import search
 import slowwork
+import storage
 from test_when_to_intervene import A, G, _Base
 from regular.resource_quota import ResourceQuotas
 
@@ -209,6 +210,7 @@ class LookupFlowTest(_Base):
         self.use(fake)
         msg = await self._drive("小王 最近说ai证明了eth是不对的讲讲什么是eth")
         self.assertEqual(msg.reply.await_count, 1)
+        self.assertEqual(len(self.prompts_seen), 1)
         self.assertIn(search.LOOKUP_MARK, self.turn())
         self.assertNotIn("http", self.turn())
         self.assertIn("现在有人问群里的机器人：", fake.started[0])
@@ -219,7 +221,10 @@ class LookupFlowTest(_Base):
         self.use(fake)
         msg = await self._drive("小王 ZO-1 的 mRNA 水平跟什么指标关系密切")
         self.assertEqual(msg.reply.await_count, 1)
-        self.assertIn(prompts.PROMPT_LOOKUP_PENDING.strip(), self.turn())
+        self.assertIn("查查", msg.reply.await_args.kwargs["content"])
+        self.assertEqual(self.prompts_seen, [])
+        delivered = [r for r in self.log.rows if r["kind"] == "delivery" and r["status"] == "delivered"]
+        self.assertEqual(delivered[-1]["generation"], "local_fallback")
         task = next(iter(self.sched.tasks.values()))
         self.assertEqual((task["kind"], task["payload"]["handle"]), ("followup", "resp_1"))
         json.dumps(task)                                    # 能落盘
@@ -228,6 +233,7 @@ class LookupFlowTest(_Base):
         self.assertIsNone(await bot.finish_lookup(task))
         self.assertIn(prompts.PROMPT_LOOKUP_DONE.strip(), self.turn())
         self.assertIn(search.LOOKUP_MARK, self.turn())
+        self.assertEqual(len(self.prompts_seen), 1)
         sent = self.posted[-1]
         self.assertEqual((sent["msg_id"], sent["msg_seq"]), (msg.id, 2))  # 同一条消息的第二句
 
@@ -235,9 +241,10 @@ class LookupFlowTest(_Base):
         self.calls.side_effect = answer({"addressed": "answer", "lookup": "research"})
         fake = FakeJob("research", [slowwork.RUNNING], wait_first=False)
         self.use(fake, FakeJob("search", [slowwork.DONE]))
-        await self._drive("小王 帮我认真调研一下 ETH 被推翻这件事，整理一份")
+        msg = await self._drive("小王 帮我认真调研一下 ETH 被推翻这件事，整理一份")
         self.assertEqual(fake.polls, 1)
-        self.assertIn(prompts.PROMPT_RESEARCH_PENDING.strip(), self.turn())
+        self.assertIn("查查", msg.reply.await_args.kwargs["content"])
+        self.assertEqual(self.prompts_seen, [])
         task = next(iter(self.sched.tasks.values()))
         fake.states = [slowwork.DONE]
         await bot.finish_lookup(task)
@@ -257,7 +264,47 @@ class LookupFlowTest(_Base):
         await self._drive("小王 今天贵阳天气怎么样")
         task = next(iter(self.sched.tasks.values()))
         self.assertIsNone(await bot.finish_lookup(task))
-        self.assertIn(prompts.PROMPT_LOOKUP_FAILED.strip(), self.turn())
+        self.assertEqual(self.prompts_seen, [])
+        self.assertIn("没查成", self.posted[-1]["content"])
+        self.assertEqual(self.posted[-1]["msg_seq"], 2)
+
+    async def test_failed_lookup_expiry_keeps_local_notice_for_carry(self):
+        fake = FakeJob("search", [slowwork.RUNNING] * 3)
+        self.use(fake)
+        await self._drive("小王 查查天气")
+        task = next(iter(self.sched.tasks.values()))
+        task["payload"]["msg_ts"] = "2020-01-01T00:00:00+08:00"
+        fake.states = [slowwork.FAILED]
+        with patch.object(bot, "post_to_group", AsyncMock(return_value=False)) as post:
+            self.assertIsNotNone(await bot.finish_lookup(task))
+        self.assertFalse(post.await_args.kwargs["model_generated"])
+        self.assertEqual(self.prompts_seen, [])
+        self.assertIn("没查成", task["payload"]["ready"])
+        nxt = await self._drive("哈哈", sender="USER_WHEN_B")
+        self.assertIn(task["payload"]["ready"],
+                      [c.kwargs["content"] for c in nxt.reply.await_args_list])
+        self.assertEqual(self.sched.tasks, {})
+
+    async def test_completed_followup_supersedes_queued_progress_notice(self):
+        fake = FakeJob("search", [slowwork.RUNNING] * 3)
+        self.use(fake)
+        sessions = storage.SessionStore()
+        msg = SimpleNamespace(
+            id="queued-lookup", group_openid=G, timestamp=None,
+            author=SimpleNamespace(member_openid=A),
+            reply=AsyncMock(side_effect=[None, None, {"id": "too-late"}]))
+        with patch.object(runtime, "SESSIONS", sessions):
+            await bot.answer_with_lookup(msg, "lookup-session", "查一下", "search", "天气",
+                                         reply_kwargs={})
+            self.assertEqual(len(bot.SENDER.pending), 1)
+            task = next(iter(self.sched.tasks.values()))
+            fake.states = [slowwork.DONE]
+            await bot.finish_lookup(task)
+            await bot.SENDER.drain()
+            self.assertEqual(msg.reply.await_count, 2)
+            history = sessions._sessions["lookup-session"]["messages"]
+            self.assertEqual([m["content"] for m in history], ["查一下", "（模型应答）"])
+            self.assertEqual(len(self.prompts_seen), 1)
 
     async def test_expired_window_tries_a_post_then_rides_the_next_message(self):
         fake = FakeJob("search", [slowwork.RUNNING] * 3)

@@ -1,48 +1,44 @@
-<div align="center">
-
 # The Regular · 老群友
 
-**A QQ group companion that knows when to join in, when to listen, and when to lend a hand.**
+**An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and can join in—or leave room for others.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![Offline checks](https://github.com/dubianche123/the-regular-qq-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/dubianche123/the-regular-qq-bot/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[中文](README.md) · **English** · [Quick start](#quick-start) · [Learn more](#learn-more)
 
-[中文](README.md) · **English** · [Releases](https://github.com/dubianche123/the-regular-qq-bot/releases)
+A group chat is more than a stream of questions. People tease each other, send a thought across several messages, correct each other, and sometimes want the bot to stop talking. The Regular is an experiment in being part of that conversation over time, rather than waiting for commands.
 
-</div>
-
-A group chat is more than a stream of questions. People tease each other, change their minds, send a thought in several messages, and sometimes want the bot to stop talking. The Regular is an experiment in making a long-lived AI companion fit into that conversation: remembering shared context, responding to natural feedback, and leaving space for everyone else.
-
-It can chat, read images, draw, look things up, and recall relevant past conversations. It is designed for a QQ group, not as a general-purpose agent or a computer-use assistant.
-
-## What makes it different
-
-The bot separates **deciding what kind of response is appropriate** from **writing the response**. Instead of asking the chat model to plan and repeatedly call tools in a ReAct loop, the normal group-message flow uses a closed-choice decision interface. It asks questions such as “is this person talking to the bot?”, “is this playful?”, and “would a search or image help?” The application combines those answers with local rules, context and quotas, then executes the appropriate bounded action. The chat model turns the available context and evidence into a natural reply.
-
-![The Regular architecture: messages, closed-choice decisions, local execution, and a conversational reply](docs/readme/flow.svg)
-
-The roles are deliberately distinct:
-
-- **The decision layer interprets the situation.** It chooses among predefined options rather than writing a plan. Relevant questions are normally grouped into one triage call; some situations have separate decisions. A judgment can be uncertain or unavailable, so the application has fallback behavior.
-- **Local code owns state and execution.** It manages relationships, names, memory, budgets and delivery, and decides whether to run a bounded lookup or image request. The decision endpoint does not execute tools or write the bot's ledgers.
-- **Models create content.** The conversation model writes replies from the assembled context; other model calls may handle tasks such as image understanding, image generation and summaries. The chat model does not run an autonomous tool-use loop.
-
-This is inspired by the idea of using fixed-choice judgments for agent decisions, including work by Jev. The implementation currently uses **OpenAI's Decisions API**; Jev is a separate product, not another name for that API. See the [judgment-layer design](docs/judgment-layer.md) and [comparison](docs/decision-calibration.md) for what was measured and where the judgments fall short.
+It can chat, understand images and voice messages, search for information, recall relevant group history, draw, and reply with voice when the corresponding services are configured. These are abilities, not guarantees: the bot can misunderstand a conversation, and external services can fail.
 
 ## Life in the group
 
-- **Join in without taking over.** The bot considers whether it was addressed, the conversation's rhythm and recent feedback. If someone wants it to stop, it can back off from unsolicited remarks while remaining available when addressed.
-- **Follow the conversation.** It can use nearby messages to interpret a request split across several sends, or a correction to something it just said. These are judgments, not guarantees; ambiguous situations can still be misunderstood.
-- **Remember with evidence.** Group summaries and relationships give continuity. Personal details drawn from chat are checked against source messages before they are saved, and relevant memories are used selectively. A maintainer can also provide a local knowledge base.
-- **Help in natural language.** When configured, it can search for current information or draw a requested image. Slow requests can receive a brief local acknowledgment followed by the result. Search and drawing have daily limits; image limits can vary with the relationship, and a confirmed undelivered image does not consume the member's allowance.
-- **Keep cost and control visible.** Local quotas and timeouts bound paid work. Prompts are arranged with stable context before turn-specific material to make prefix caching possible where supported; cache hits and costs depend on the provider and workload.
+- Ask a question in one message and call the bot in the next: it can use the surrounding conversation to understand what you meant.
+- Correct something it said, or tease it with a playful request: it can try to pick up the context. If someone asks it to be quiet, it can step back from unsolicited remarks.
+- It may join a conversation even without being called, or choose to stay quiet. It remembers names, relationships and relevant shared experiences over time.
+- You can ask it naturally to look something up, draw a picture or reply by voice. Search and drawing have daily limits, with additional allowances depending on the relationship.
 
-The bot uses online model services. With the decision layer enabled, group messages are sent to its configured endpoint in a de-identified form by default; group and user identifiers are removed locally, and messages caught by the sensitive-word filter are not sent for that decision. Other enabled model and search features also send the context they need to their configured providers. See [provider configuration](docs/providers.md) before using it in a group.
+## How it works
+
+![The Regular architecture: local rules, closed-choice judgments, conversational decisions, and bounded actions](docs/readme/flow.svg)
+
+A group companion has to do more than write a good sentence: **is this message meant for me, should I answer, and what kind of response fits?** The Regular combines three roles:
+
+- **Closed-choice judgments** help interpret selected situations, such as whether a name mention is addressing the bot, whether someone is responding to its previous message, or whether a reply needs a lookup. Applicable questions can be grouped in one call. The result is a choice, not a plan or permission to execute tools.
+- **The conversation model** uses the surrounding chat to decide whether to respond when nobody explicitly calls it. When it does reply, it writes the response and can indicate that an image or voice reply would fit. It can also choose to say nothing.
+- **Local code** manages names, relationships, memory, budgets and delivery. It combines judgments with rules, checks whether a requested action is available and permitted, and executes the bounded lookup, image or voice task. It records the actual result so subsequent conversation has the right context.
+
+The bot does not need a ReAct-style autonomous planning and repeated tool-use loop. Decisions are shared between the judgment interface, the conversation model and local rules; the code retains control of state and execution. This describes the bot's own orchestration, not the internal workings of external search services.
+
+The project currently uses **OpenAI's Decisions API** for closed-choice judgments. [Jev](https://www.jev-llm.com/) is a separate product; the project draws on the idea of fixed-choice judgments but does not use Jev as that API. Judgments can be uncertain or wrong, and different situations have different fallbacks. See [judgment-layer design](docs/judgment-layer.md) and [decision calibration](docs/decision-calibration.md).
+
+## Memory, privacy and cost
+
+- **Local state:** Names, relationships and quotas are maintained by code rather than written directly by the chat model. Proposed personal memories are checked against local source messages before being saved and used selectively in context.
+- **Bounded resources:** Search and image generation have daily limits. An image that is confirmed not to have been sent does not consume the member's personal allowance. Slow searches may receive a local waiting message and a follow-up when ready.
+- **Online services:** Local storage does not mean the chat stays entirely on the device. Relevant messages and context may be sent to configured conversation and decision services; enabled image, voice and search features also send the content they need to their providers. Group and user identifiers are removed from decision requests locally. Review [provider configuration](docs/providers.md) before using the bot in a group.
+- **Costs depend on use:** The bot may call the conversation model to decide whether to respond even when it ultimately stays quiet. Context is arranged to make prefix caching possible where supported, but actual cache hits and charges depend on the provider and workload.
 
 ## Quick start
 
-You need Python 3.10 or later, a QQ bot with the required permissions, and a compatible model service. Optional capabilities such as decisions, search and image generation need their corresponding service configuration and access.
-
-### 1. Install
+You need Python 3.10 or later, a QQ bot with the required permissions, and a compatible model service. Optional features such as decisions, search, images and voice require the corresponding service access and configuration.
 
 ```bash
 git clone https://github.com/dubianche123/the-regular-qq-bot.git
@@ -50,43 +46,28 @@ cd the-regular-qq-bot
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+regular demo
 ```
 
-To try the local terminal demo without QQ credentials or an API key, run `regular demo`.
-
-### 2. Configure
-
-Prepare the QQ bot's AppID and AppSecret, plus the model endpoint, API key and model name:
+The terminal demo runs without QQ credentials or an API key. To connect a QQ bot, prepare its AppID and AppSecret and your model-service credentials, then run:
 
 ```bash
 regular --directory regular-bot setup
+regular --directory regular-bot run
 ```
 
-The wizard creates `regular-bot` as a local instance directory and guides you through configuration. The decision endpoint can be configured separately through the local panel:
+Enable C2C and group events in the QQ Open Platform console. **The first private message to the running bot claims ownership**; send it yourself before inviting others. After adding the bot to a group, allow it to receive all group messages in the group settings. You can address it with an @ mention or a configured name.
+
+For optional capabilities and settings, see [provider configuration](docs/providers.md) and [.env.example](.env.example). The local panel can configure the decision endpoint separately:
 
 ```bash
 regular --directory regular-bot panel
 ```
 
-See [provider configuration](docs/providers.md) and [.env.example](.env.example) for optional features and settings.
+## Learn more
 
-### 3. Start and invite the bot
+- [Judgment layer](docs/judgment-layer.md) · [When to reply without being called](docs/when-to-reply.md)
+- [Image and voice replies](docs/media-replies.md) · [Web lookup and follow-ups](docs/slow-work.md)
+- [Personal memory](docs/personal-memory.md) · [Design notes](docs/DESIGN_NOTES_EN.md)
 
-Enable C2C and group events in the QQ Open Platform console, check the bot's [usage scope](https://bot.q.qq.com/wiki/#_10-%E4%BD%BF%E7%94%A8%E8%8C%83%E5%9B%B4%E4%B8%8E%E4%BA%BA%E5%91%98%E9%85%8D%E7%BD%AE), then run:
-
-```bash
-regular --directory regular-bot run
-```
-
-The **first private message to the running bot claims ownership**. Send it yourself before inviting others. After adding the bot to a group, set its group message scope to **获取群内全部消息** (receive all group messages). You can address it with an @ mention or a configured name.
-
-## Read more
-
-- [Judgment layer: what the decision interface does](docs/judgment-layer.md) and [how its judgments were evaluated](docs/decision-calibration.md)
-- [When to join in](docs/when-to-intervene.md), [addressing the bot](docs/addressing.md), and [personal memory](docs/personal-memory.md)
-- [Provider configuration](docs/providers.md), [web lookup and follow-ups](docs/slow-work.md), and [image generation](docs/image-generation.md)
-- [Design notes](docs/DESIGN_NOTES_EN.md)
-
-## License
-
-[MIT](LICENSE)
+[MIT License](LICENSE)

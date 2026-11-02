@@ -32,14 +32,19 @@ class NormalModeToneTest(unittest.TestCase):
 
 
 class BanterNoteTest(unittest.TestCase):
-    """插嘴不是回最新一条：窗口里任何一句/整体场面都能成为插嘴由头（2026-09-20 群主要求）。
-
-    旧文案「潜水刷到了上面这句话」把插嘴框死在触发随机的那一条上；实际上插嘴轮里
-    模型能看到【群聊最近背景】（最近几句、带发言人），它想接哪句都行。
+    """没叫它的那一轮：接不接它自己定；真要插话，窗口里任何一句/整体场面都能当由头
+    （2026-09-20 群主要求；2026-11-02 起这段同时管「接不接」，见 docs/when-to-reply.md）。
     """
 
+    def test_it_decides_and_can_say_nothing(self):
+        note = prompts.PROMPT_BANTER_NOTE
+        self.assertIn("接不接你自己定", note)
+        self.assertIn("〔不接〕", note)
+        # 先看背景里自己刚说了什么：冲着它说却没带名字的话，靠这个认出来
+        self.assertIn("你自己（标着「你」）", note)
+
     def test_any_context_line_is_a_valid_target(self):
-        self.assertIn("【群聊最近背景】里列的任何一句", prompts.PROMPT_BANTER_NOTE)
+        self.assertIn("【群聊最近背景】里任何一句", prompts.PROMPT_BANTER_NOTE)
         self.assertIn("不管是谁说的", prompts.PROMPT_BANTER_NOTE)
 
     def test_targets_are_limited_to_recent_lines(self):
@@ -50,13 +55,11 @@ class BanterNoteTest(unittest.TestCase):
         提示词与代码两层说的是同一件事。
         """
         note = prompts.PROMPT_BANTER_NOTE
-        self.assertIn("由头只有这两个来源", note)
-        self.assertIn("眼前这句", note)
+        self.assertIn("由头只从眼前这句和【群聊最近背景】里找", note)
         self.assertIn("不许翻", note)
 
     def test_whole_scene_counts_too(self):
         self.assertIn("场面", prompts.PROMPT_BANTER_NOTE)
-        self.assertIn("气氛", prompts.PROMPT_BANTER_NOTE)
 
     def test_banter_mark_unchanged(self):
         """BANTER_MARK 是缓存分界与测试锚点，改措辞不许动它。"""

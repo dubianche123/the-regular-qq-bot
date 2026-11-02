@@ -55,7 +55,10 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
     async def test_failures_consume_once_but_do_not_send(self):
         self.generate.side_effect = asyncio.TimeoutError()
         self.assertEqual(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"), "generation_error")
+        # 上游可能已经计费，全局成本护栏保留；未收到图片的个人次数退回。
         self.assertEqual(self.budget.used, 1)
+        self.assertEqual(self.quotas._used("image", "g", "u"), 0)
+        self.assertEqual(self.state.save_now.call_count, 2)
         self.upload.assert_not_awaited()
         self.message.reply.assert_not_awaited()
 
@@ -63,6 +66,8 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
         self.upload.side_effect = OSError()
         self.assertEqual(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"), "upload_error")
         self.message.reply.assert_not_awaited()
+        self.assertEqual(self.quotas._used("image", "g", "u"), 0)
+        self.assertEqual(self.budget.used, 1)
 
     async def test_sequence_callback_failure_is_definitely_not_sent(self):
         next_seq = AsyncMock(side_effect=ValueError())
@@ -73,9 +78,12 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
     async def test_unconfirmed_send_must_not_trigger_fallback(self):
         self.message.reply.side_effect = asyncio.TimeoutError()
         self.assertIsNone(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"))
+        # 可能已经送到群里，不能把回执未知当成确定未送达。
+        self.assertEqual(self.quotas._used("image", "g", "u"), 1)
         self.message.reply.side_effect = None
         self.message.reply.return_value = None
         self.assertIsNone(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"))
+        self.assertEqual(self.quotas._used("image", "g", "u"), 2)
 
     async def test_disabled_and_exhausted_do_not_generate(self):
         with patch.object(image.config, "IMAGE_GENERATION_ENABLED", False):
@@ -142,21 +150,97 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
         self.state.save_now.side_effect = OSError()
         self.assertIs(await image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"), False)
         self.generate.assert_not_awaited()
+        self.assertEqual(self.quotas._used("image", "g", "u"), 0)
+        self.assertEqual(self.budget.used, 0)
+
+    async def test_refund_save_failure_keeps_personal_count_conservatively(self):
+        self.state.save_now.side_effect = [None, OSError()]
+        self.generate.side_effect = asyncio.TimeoutError()
+        with self.assertLogs("qqbot", level="WARNING") as captured:
+            result = await image.generate_and_send(
+                self.message, group_id="g", user_id="u", score=0, prompt="cat")
+        self.assertEqual(result, "generation_error")
+        self.assertEqual(self.quotas._used("image", "g", "u"), 1)
+        self.assertTrue(any("退还落盘失败" in line for line in captured.output))
+
+    async def test_cancellation_before_qq_send_refunds_personal(self):
+        started = asyncio.Event()
+        async def pending(*args):
+            started.set()
+            await asyncio.Event().wait()
+        self.generate.side_effect = pending
+        task = asyncio.create_task(image.generate_and_send(
+            self.message, group_id="g", user_id="u", score=0, prompt="cat"))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.quotas._used("image", "g", "u"), 0)
+        self.assertEqual(self.budget.used, 1)
+
+    async def test_cancellation_during_qq_send_keeps_personal(self):
+        started = asyncio.Event()
+        async def pending(**kwargs):
+            started.set()
+            await asyncio.Event().wait()
+        self.message.reply.side_effect = pending
+        task = asyncio.create_task(image.generate_and_send(
+            self.message, group_id="g", user_id="u", score=0, prompt="cat"))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.quotas._used("image", "g", "u"), 1)
+
+    async def test_overnight_failure_does_not_refund_new_day(self):
+        day = ["2026-11-01"]
+        self.quotas._today = lambda: day[0]
+        async def generation(*args):
+            day[0] = "2026-11-02"
+            self.assertEqual(self.quotas.consume("image", "g", "u", 0), "normal")
+            return None
+        self.generate.side_effect = generation
+        with patch.object(self.budget, "today", side_effect=lambda: day[0]):
+            result = await image.generate_and_send(
+                self.message, group_id="g", user_id="u", score=0, prompt="cat")
+        self.assertEqual(result, "generation_error")
+        self.assertEqual(self.quotas._used("image", "g", "u"), 1)
+
+    async def test_midnight_between_budget_and_personal_reservations_never_calls_api(self):
+        day = ["2026-11-01"]
+        self.quotas._today = lambda: day[0]
+        original_consume = self.budget.try_consume
+
+        def cross_midnight():
+            result = original_consume()
+            day[0] = "2026-11-02"
+            return result
+
+        with patch.object(self.budget, "today", side_effect=lambda: day[0]), \
+             patch.object(self.budget, "try_consume", side_effect=cross_midnight):
+            result = await image.generate_and_send(
+                self.message, group_id="g", user_id="u", score=0, prompt="cat")
+            self.assertEqual(self.budget.reservation_day, "2026-11-01")
+            self.assertEqual(self.budget.used, 0)
+        self.assertIs(result, False)
+        self.assertEqual(self.quotas._used("image", "g", "u"), 0)
+        self.generate.assert_not_awaited()
 
     async def test_personal_quota_extra_and_other_member(self):
+        """precheck 在小王写回复之前报状态：第二张起是破例（exception），用满是 tired。"""
         self.budget.limit = 3
-        reserved = []
+        seen = []
         with patch.object(image.config, "IMAGE_USER_DAILY_CAP", 1), \
              patch.object(image.config, "IMAGE_USER_EXTRA_ACQUAINTANCE", 1):
             async def request(user):
+                seen.append(image.precheck("g", user, 10))
                 return await image.generate_and_send(
-                    self.message, group_id="g", user_id=user, score=10,
-                    prompt="cat", on_reserved=reserved.append)
+                    self.message, group_id="g", user_id=user, score=10, prompt="cat")
             self.assertIs(await request("u"), True)
             self.assertIs(await request("u"), True)
             self.assertEqual(await request("u"), "quota")
             self.assertIs(await request("other"), True)
-        self.assertEqual(reserved, ["normal", "exception", "normal"])
+        self.assertEqual(seen, ["normal", "exception", "tired", "normal"])
         self.assertEqual(self.generate.await_count, 3)
         self.assertEqual(self.budget.used, 3)
 

@@ -44,7 +44,8 @@ from regular import decision_prompts, decisions
 GID, A = "GID_ADDR", "USER_ADDR_A"
 
 # 真实冻结返回（2026-10-31，gpt-6-luna，归档 803–808 + bot_is_addressed_as=["小王"]）。
-# 去掉了响应 ID 与用量；answers 逐字保留。
+# 去掉了响应 ID 与用量；只留现在还问的两题（2026-11-02 起分诊不再问 continuation /
+# intervention，严格解析会拒收没问过的题），留下的 answers 逐字保留。
 FROZEN_REAL_BODY = {
     "model": "gpt-6-luna",
     "answers": [
@@ -61,15 +62,6 @@ FROZEN_REAL_BODY = {
                            {"value": "keep_playful", "probability": 0.03},
                            {"value": "continue_normally", "probability": 0.01},
                            {"value": "no_adjustment", "probability": 0.04}]},
-        {"type": "choice", "name": "continuation", "choice": "no_reply_needed",
-         "confidence": 0.45,
-         "probabilities": [{"value": "reply_now", "probability": 0.32},
-                           {"value": "no_reply_needed", "probability": 0.63},
-                           {"value": "unclear", "probability": 0.05}]},
-        {"type": "choice", "name": "intervention", "choice": "stay_quiet",
-         "confidence": 0.96,
-         "probabilities": [{"value": "join_briefly", "probability": 0.02},
-                           {"value": "stay_quiet", "probability": 0.98}]},
     ],
 }
 
@@ -158,11 +150,6 @@ class PayloadCarriesAliasesTest(unittest.IsolatedAsyncioTestCase):
         await self.tracker.assess(GID, "U_WANG", REAL_LATEST, now=1005.0)
         self.assertEqual(self._sent()["bot_is_addressed_as"], ["小王"])
 
-    async def test_consider_banter_declares_the_names(self):
-        await self.tracker.consider_banter(GID, A, history=REAL_HISTORY,
-                                           now=1005.0)
-        self.assertEqual(self._sent()["bot_is_addressed_as"], ["小王"])
-
     async def test_consider_callback_declares_the_names(self):
         await self.tracker.consider_callback(
             GID, A, quote="小王，我要玩原神", quote_ts=0.0,
@@ -171,9 +158,10 @@ class PayloadCarriesAliasesTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_identifiers_are_still_stripped(self):
         """声明叫法**不是**放宽脱敏：群号/openid/消息 ID 照旧抹掉。"""
-        await self.tracker.consider_banter(
-            GID, A, history=[{"sender": A, "text": f"群 {GID} 里 {A} 说话",
-                              "message_id": "mid-1", "time": 1000.0}],
+        await self.tracker.consider_callback(
+            GID, A, quote="我只喝手冲", quote_ts=0.0,
+            history=[{"sender": A, "text": f"群 {GID} 里 {A} 说话",
+                      "message_id": "mid-1", "time": 1000.0}],
             now=1001.0)
         payload = self.calls.await_args.args[0]
         for secret in (GID, A, "mid-1"):
@@ -186,14 +174,44 @@ class QuestionsMentionTheNamesTest(unittest.TestCase):
     """字段给了但问题不提，判断不会去用它。"""
 
     def test_every_addressing_question_explains_the_field(self):
+        # 合并自 CodeX（2026-11-02）：检查关键含义，不硬绑英文措辞
         questions = (decision_prompts.feedback_questions()
-                     + decision_prompts.intervention_questions()
+                     + decision_prompts.addressed_questions()
                      + decision_prompts.callback_questions())
         for question in questions:
-            self.assertIn("bot_is_addressed_as", question["instructions"],
-                          f"{question['name']} 没告诉判断这个字段是什么")
-            self.assertIn("addressed TO THE BOT",
-                          question["instructions"])
+            with self.subTest(question=question["name"]):
+                instructions = question["instructions"]
+                if question["name"] in {"feedback_target", "addressed"}:
+                    # 这两题要结合上下文判断指向，名字出现不等于邀请回复。
+                    self.assertIn(decision_prompts.CONTEXTUAL_ADDRESS, instructions)
+                else:
+                    self.assertIn(decision_prompts.ADDRESSED_AS, instructions)
+
+        direct = decision_prompts.ADDRESSED_AS.lower()
+        contextual = decision_prompts.CONTEXTUAL_ADDRESS.lower()
+        for meaning in (direct, contextual):
+            self.assertIn("bot_is_addressed_as", meaning)
+            self.assertIn("name", meaning)
+            self.assertIn("bot", meaning)
+        self.assertIn("latest_is_directed", contextual)
+        self.assertIn("not", contextual)
+        self.assertIn("invit", contextual)
+
+    def test_contextual_questions_distinguish_target_from_invitation(self):
+        feedback = {q["name"]: q for q in decision_prompts.feedback_questions()}["feedback_target"]
+        addressed = decision_prompts.addressed_questions()[0]
+        # 点名叫停指向机器人；点了名要不要答，由 addressed 结合上下文判断。
+        # （没点名的那种 2026-11-02 起由小王自己定，分诊不再问 continuation。）
+        feedback_instructions = feedback["instructions"].lower()
+        self.assertIn("stop", feedback_instructions)
+        self.assertIn("bot", feedback_instructions)
+        self.assertTrue({"bot_response", "another_person"}.issubset(
+            {choice["value"] for choice in feedback["choices"]}))
+        addressed_instructions = addressed["instructions"].lower()
+        self.assertIn("conversation", addressed_instructions)
+        self.assertIn("invit", addressed_instructions)
+        self.assertEqual({"answer", "quip", "let_it_pass"},
+                         {choice["value"] for choice in addressed["choices"]})
 
     def test_memory_questions_do_not_need_it(self):
         """原话裁决看的是单条引语，不判「在跟谁说话」。"""
@@ -224,20 +242,16 @@ class FrozenRealResponseTest(unittest.IsolatedAsyncioTestCase):
         out = await tracker.assess(GID, "U_WANG", REAL_LATEST, now=1005.0)
         self.assertEqual(out["target"], "bot_response")
         self.assertEqual(out["action"], "back_off")
-        self.assertEqual(out["continuation"], "no_reply_needed")
-        self.assertEqual(out["intervention"], "stay_quiet")
         self.assertTrue(tracker.quiet(GID, now=1006.0),
                         "被当面叫闭嘴却没装暂停窗 —— 这正是 2026-10-31 实测到的那个 bug")
         self.assertEqual(out["source_route"], "banter")
 
     async def test_the_real_body_parses_strictly(self):
         """真实返回带 confidence + probabilities 数组，严格解析必须认它。"""
-        questions = (decision_prompts.feedback_questions()
-                     + decision_prompts.intervention_questions())
+        questions = decision_prompts.feedback_questions()
         self.assertEqual(
             decisions.parse_choices(FROZEN_REAL_BODY, questions),
-            {"feedback_target": "bot_response", "next_move": "back_off",
-             "continuation": "no_reply_needed", "intervention": "stay_quiet"})
+            {"feedback_target": "bot_response", "next_move": "back_off"})
 
     async def test_that_verdict_becomes_intrusion_evidence(self):
         """这一笔必须能喂给跨天的接纳度 —— 不然喊停还是只值三分钟。"""

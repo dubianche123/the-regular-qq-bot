@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import bot
 import config
+import prompts
 import relations
 import runtime
 import search
+import storage
 from regular.resource_quota import ResourceQuotas
 from test_natural_feedback import _Base
 
@@ -107,44 +109,61 @@ class SearchQuotaRoutingTest(_Base):
 
 
 class ImageQuotaRoutingTest(_Base):
-    async def test_busy_blocked_and_upload_errors_have_distinct_messages(self):
-        for status, text in (("busy", "还在画上一张"),
-                             ("blocked", "没通过图片服务的审核"),
-                             ("upload_error", "没能发到群里")):
-            with self.subTest(status=status), \
-                 patch.object(self.feedback, "assess", AsyncMock(return_value={
-                     "image_generation": "generate", "image_prompt": "cat"})), \
-                 patch.object(bot.image_generation, "generate_and_send", AsyncMock(return_value=status)):
-                # A different sender keeps the claims independent across subtests.
-                msg = await self._drive("画一张", sender="user-" + status, is_at=True)
-            self.assertIn(text, msg.reply.await_args.kwargs["content"])
+    """额度在小王写回复之前就告诉它：画累了、破例都由它自己说，不再是代码里的固定话术。"""
 
-    async def test_stale_concurrent_decision_does_not_launch_or_report_failure(self):
-        self.feedback.claim_image(self.G, self.A, message_time=1.0, expected_boundary=None)
-        result = {"image_generation": "generate", "image_prompt": "cat", "image_boundary": None}
-        with patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
-             patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as generate:
-            msg = await self._drive("画一张", is_at=True)
-        generate.assert_not_awaited()
-        msg.reply.assert_not_awaited()
+    def setUp(self):
+        super().setUp()
+        self.quotas = ResourceQuotas({}, Mock(), Mock())
+        self.relations = relations.RelationStore()
+        for target, name, value in (
+                (runtime, "RESOURCE_QUOTAS", self.quotas),
+                (runtime, "RELATIONS", self.relations),
+                (runtime, "IMAGE_GENERATION_BUDGET", storage.DailyBudget(40, {})),
+                (config, "IMAGE_USER_DAILY_CAP", 1),
+                (config, "IMAGE_USER_EXTRA_FRIEND", 1),
+                (bot.image_generation, "available", lambda: True)):
+            ctx = patch.object(target, name, value)
+            ctx.start()
+            self.addCleanup(ctx.stop)
 
-    async def test_exhausted_image_quota_gives_human_reply_without_chat_model(self):
-        result = {"image_generation": "generate", "image_prompt": "cat"}
-        with patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
-             patch.object(bot.image_generation, "generate_and_send", AsyncMock(return_value="quota")):
+    def tail(self):
+        return self.model_calls[-1][-1]["content"]
+
+    async def test_tired_member_is_told_and_marker_is_not_honoured(self):
+        self.assertEqual(self.quotas.consume("image", self.G, self.A, 0), "normal")
+
+        async def model(messages, max_tokens, **kw):
+            self.model_calls.append(messages)
+            return "〔画〕一只猫\n今天画累了"
+        with patch.object(bot, "call_model", model), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as draw:
             msg = await self._drive("画只猫", is_at=True)
-        self.assertIn("累", msg.reply.await_args.kwargs["content"])
-        self.assertEqual(self.model_calls, [])
+        self.assertIn(prompts.PROMPT_DRAW_TIRED, self.tail())
+        draw.assert_not_awaited()
+        self.assertEqual(msg.reply.await_args.kwargs["content"], "今天画累了")
 
-    async def test_exception_wait_message_follows_real_reservation(self):
-        result = {"image_generation": "generate", "image_prompt": "cat"}
-        async def send(_message, **kwargs):
-            kwargs["on_reserved"]("exception")
-            await asyncio.sleep(0.01)
-            await kwargs["before_send"]()
+    async def test_first_extra_share_tells_it_this_one_is_an_exception(self):
+        self.relations.get(self.G, self.A, create=True)["score"] = 30
+        self.assertEqual(self.quotas.consume("image", self.G, self.A, 30), "normal")
+        await self._drive("画只猫", is_at=True)
+        self.assertIn(prompts.PROMPT_DRAW_EXCEPTION, self.tail())
+
+    async def test_marker_draws_through_the_real_message_path(self):
+        async def model(messages, max_tokens, **kw):
+            self.model_calls.append(messages)
+            return "〔画〕一只橘猫趴在键盘上\n给你整一只"
+
+        async def draw(_message, **kw):
+            await kw["before_send"]()
             return True
-        with patch.object(config, "ASYNC_REPLY_SECONDS", 0), \
-             patch.object(self.feedback, "assess", AsyncMock(return_value=result)), \
-             patch.object(bot.image_generation, "generate_and_send", side_effect=send):
+        with patch.object(bot, "call_model", model), \
+             patch.object(bot.image_generation, "generate_and_send", side_effect=draw) as gen:
             msg = await self._drive("画只猫", is_at=True)
-        self.assertIn("再帮你画", msg.reply.await_args.kwargs["content"])
+        self.assertEqual(gen.await_args.kwargs["prompt"], "一只橘猫趴在键盘上")
+        self.assertEqual(msg.reply.await_args_list[0].kwargs["content"], "给你整一只")
+        session = runtime.SESSIONS._sessions[f"{self.G}_{self.A}"]["messages"]
+        self.assertIn("（系统：这张图已经发到群里了）", session[-1]["content"])
+
+    async def test_normal_turn_adds_nothing_to_the_tail(self):
+        await self._drive("画只猫", is_at=True)
+        self.assertNotIn("【画图】", self.tail())

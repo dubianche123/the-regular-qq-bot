@@ -1,54 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="810" viewBox="0 0 1200 810" role="img" aria-labelledby="title desc">
-<title id="title">从群消息到回应</title><desc id="desc">群消息经过本地规则与按需闭集判断，由代码决定保持安静、直接回复、查询后回复或生成并发送图片；文本回复由对话模型生成，本地记忆、关系和额度由代码读取与更新。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
+<title id="title">群消息如何得到回应</title>
+<desc id="desc">群消息与上下文经本地规则、按需闭集判断和查询后进入对话模型；模型决定如何接话以及是否提出画图或语音，代码再检查并执行，结果可能是安静、文字、图片或语音。本地代码管理关系、记忆和额度。</desc>
 <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#8595A9"/></marker></defs>
 <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
-<rect x="1" y="1" width="1198" height="808" rx="20" fill="#F8FAFD" stroke="#DBE3ED"/>
-<text x="36" y="48" font-size="25" font-weight="700" fill="#23324A">群消息如何变成一次自然的回应</text>
-<text x="36" y="77" font-size="16" font-weight="400" fill="#536782">先判断，再由代码执行；对话模型负责组织语言</text>
-<rect x="36" y="110" width="220" height="142" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
-<text x="54" y="146" font-size="19" font-weight="700" fill="#23324A">群消息与上下文</text>
-<text x="54" y="185" font-size="15" font-weight="400" fill="#536782">谁在说话、最近聊了什么</text>
-<text x="54" y="215" font-size="15" font-weight="400" fill="#536782">以及图片、引用等内容</text>
-<rect x="310" y="110" width="447" height="142" rx="14" fill="#E7F5EF" stroke="#93C8B0"/>
-<text x="330" y="146" font-size="19" font-weight="700" fill="#23324A">本地规则 + 按需闭集判断</text>
-<text x="330" y="178" font-size="15" font-weight="400" fill="#536782">考虑聊天节奏和上下文</text>
-<text x="330" y="205" font-size="15" font-weight="400" fill="#536782">判断是否接话、是否需要查找或画图</text>
-<text x="330" y="232" font-size="15" font-weight="400" fill="#536782">常规分诊可在一次调用里合并多道题</text>
-<rect x="810" y="110" width="354" height="142" rx="14" fill="#FFF3DD" stroke="#D9BD83"/>
-<text x="830" y="146" font-size="19" font-weight="700" fill="#23324A">本地代码</text>
-<text x="830" y="185" font-size="15" font-weight="400" fill="#536782">综合判断、规则和配额</text>
-<text x="830" y="215" font-size="15" font-weight="400" fill="#536782">决定是否行动并执行</text>
-<path d="M256 181H305" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<path d="M757 181H805" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<path d="M987 252V285H160M987 285H1000" fill="none" stroke="#8595A9" stroke-width="2"/>
-<path d="M160 285V314" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="36" y="320" width="248" height="115" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="54" y="358" font-size="18" font-weight="700" fill="#23324A">保持安静</text>
-<text x="54" y="395" font-size="14" font-weight="400" fill="#536782">此刻不适合接话</text>
-<path d="M440 285V314" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="316" y="320" width="248" height="115" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="334" y="358" font-size="18" font-weight="700" fill="#23324A">直接回复</text>
-<text x="334" y="395" font-size="14" font-weight="400" fill="#536782">结合当前对话</text>
-<path d="M720 285V314" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="596" y="320" width="248" height="115" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="614" y="358" font-size="18" font-weight="700" fill="#23324A">查询后回复</text>
-<text x="614" y="395" font-size="14" font-weight="400" fill="#536782">查旧账、知识库或联网</text>
-<path d="M1000 285V314" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="876" y="320" width="248" height="115" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="894" y="358" font-size="18" font-weight="700" fill="#23324A">生成图片</text>
-<text x="894" y="395" font-size="14" font-weight="400" fill="#536782">调用图片服务</text>
-<path d="M440 435V500" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<path d="M720 435V500" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<path d="M1000 435V500" fill="none" stroke="#8595A9" stroke-width="2"  marker-end="url(#arrow)"/>
-<rect x="316" y="506" width="528" height="105" rx="14" fill="#F0EAFC" stroke="#B7A2D7"/>
-<text x="335" y="542" font-size="19" font-weight="700" fill="#23324A">对话模型</text>
-<text x="335" y="578" font-size="15" font-weight="400" fill="#536782">结合上下文和需要时查到的资料，自然接话</text>
-<rect x="876" y="506" width="248" height="105" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
-<text x="894" y="560" font-size="16" font-weight="700" fill="#23324A">图片直接送回群聊</text>
-<rect x="36" y="665" width="1070" height="70" rx="14" fill="#F0F3F8" stroke="#BCC9D8"/>
-<text x="55" y="707" font-size="17" font-weight="700" fill="#23324A">本地状态</text>
-<text x="190" y="707" font-size="16" font-weight="400" fill="#536782">关系与称呼 · 群记忆 · 额度</text>
-<text x="830" y="707" font-size="15" font-weight="400" fill="#536782">由代码读取与更新</text>
-<path d="M1106 700H1175V226H1169" fill="none" stroke="#8595A9" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
-<text x="36" y="779" font-size="14" font-weight="400" fill="#536782">闭集判断现用 OpenAI Decisions；部分路径可由本地规则直接处理。</text>
+<rect x="1" y="1" width="1198" height="658" rx="20" fill="#F8FAFD" stroke="#DBE3ED"/>
+<text x="36" y="48" font-size="25" font-weight="700" fill="#23324A">从群消息到回应</text>
+<text x="36" y="79" font-size="16" fill="#536782">本地规则、闭集判断与对话模型各司其职；代码掌握执行边界</text>
+<rect x="36" y="110" width="258" height="156" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
+<text x="53" y="147" font-size="18" font-weight="700" fill="#23324A">群消息与上下文</text>
+<text x="53" y="190" font-size="15" fill="#536782">群友说了什么</text>
+<text x="53" y="222" font-size="15" fill="#536782">最近的对话、图片或语音</text>
+<rect x="326" y="110" width="258" height="156" rx="14" fill="#E7F5EF" stroke="#93C8B0"/>
+<text x="343" y="147" font-size="18" font-weight="700" fill="#23324A">规则 · 按需判断与查询</text>
+<text x="343" y="190" font-size="15" fill="#536782">部分消息使用闭集判断</text>
+<text x="343" y="222" font-size="15" fill="#536782">需要时查群记忆或联网</text>
+<rect x="616" y="110" width="258" height="156" rx="14" fill="#F0EAFC" stroke="#B7A2D7"/>
+<text x="633" y="147" font-size="18" font-weight="700" fill="#23324A">对话模型</text>
+<text x="633" y="190" font-size="15" fill="#536782">未点名时决定接话与否</text>
+<text x="633" y="222" font-size="15" fill="#536782">组织回复，可提出画图或语音</text>
+<rect x="906" y="110" width="258" height="156" rx="14" fill="#FFF3DD" stroke="#D9BD83"/>
+<text x="923" y="147" font-size="18" font-weight="700" fill="#23324A">本地代码</text>
+<text x="923" y="190" font-size="15" fill="#536782">检查场景、额度与权限</text>
+<text x="923" y="222" font-size="15" fill="#536782">调用服务并发送实际结果</text>
+<path d="M294 188H320" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M584 188H610" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M874 188H900" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M1035 266V300H165M1035 300H1035" fill="none" stroke="#8595A9" stroke-width="2"/>
+<path d="M165 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="36" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
+<text x="53" y="371" font-size="18" font-weight="700" fill="#23324A">保持安静</text>
+<text x="53" y="407" font-size="15" fill="#536782">不发送消息</text>
+<path d="M455 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="326" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
+<text x="343" y="371" font-size="18" font-weight="700" fill="#23324A">文字</text>
+<text x="343" y="407" font-size="15" fill="#536782">自然接话</text>
+<path d="M745 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="616" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
+<text x="633" y="371" font-size="18" font-weight="700" fill="#23324A">图片</text>
+<text x="633" y="407" font-size="15" fill="#536782">发文字并送图</text>
+<path d="M1035 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="906" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
+<text x="923" y="371" font-size="18" font-weight="700" fill="#23324A">语音</text>
+<text x="923" y="407" font-size="15" fill="#536782">合成并送达</text>
+<rect x="36" y="492" width="1128" height="70" rx="14" fill="#F0F3F8" stroke="#BCC9D8"/>
+<text x="54" y="534" font-size="17" font-weight="700" fill="#23324A">本地状态</text>
+<text x="195" y="534" font-size="16" fill="#536782">关系与称呼 · 群记忆 · 额度</text>
+<text x="830" y="534" font-size="15" fill="#536782">由代码读取与更新</text>
+<text x="36" y="618" font-size="14" fill="#536782">闭集判断现用 OpenAI Decisions；部分消息直接由本地规则处理。</text>
 </g></svg>

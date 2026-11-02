@@ -464,6 +464,11 @@ class DailyBudget:
         return self._state.get("used", 0) if self._state.get("day") == self.today() else 0
 
     @property
+    def reservation_day(self):
+        """账本实际保存的日历日，避免预约刚好跨日时重新取时钟。"""
+        return self._state.get("day")
+
+    @property
     def remaining(self):
         return max(0, self.limit - self.used)
 
@@ -483,4 +488,19 @@ class DailyBudget:
         if self._state.get("used", 0) + cost > self.limit:
             return False
         self._state["used"] = self._state.get("used", 0) + cost
+        return True
+
+    def release(self, day, cost=1):
+        """撤销尚未发起的预约；旧日预约不得减去新一天的消耗。
+
+        修改由调用者与其余相关状态一同落盘。
+        """
+        if cost < 0:
+            raise ValueError("cost must be non-negative")
+        if self._state.get("day") != day or self.today() != day:
+            return True
+        used = self._state.get("used", 0)
+        if used < cost:
+            return False
+        self._state["used"] = used - cost
         return True

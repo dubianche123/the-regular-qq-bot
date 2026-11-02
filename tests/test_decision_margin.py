@@ -217,7 +217,7 @@ class _Recorder:
 
 
 class ConservativeOnDroppedTest(unittest.IsolatedAsyncioTestCase):
-    """四个调用点对「这一题不可用」的反应必须一律保守。"""
+    """各个调用点对「这一题不可用」的反应必须一律保守。"""
 
     HISTORY = [{"sender": A, "text": "在聊天", "time": 1000.0}]
 
@@ -237,12 +237,7 @@ class ConservativeOnDroppedTest(unittest.IsolatedAsyncioTestCase):
             answer("feedback_target", max(target_probs, key=target_probs.get),
                    target_probs),
             answer("next_move", max(move_probs, key=move_probs.get),
-                   move_probs),
-            answer("continuation", "no_reply_needed",
-                   {"reply_now": 0.1, "no_reply_needed": 0.85,
-                    "unclear": 0.05}),
-            answer("intervention", "stay_quiet",
-                   {"join_briefly": 0.05, "stay_quiet": 0.95}))
+                   move_probs))
 
     async def _assess(self, payload):
         self.calls.return_value = payload
@@ -281,13 +276,6 @@ class ConservativeOnDroppedTest(unittest.IsolatedAsyncioTestCase):
              "continue_normally": 0.03, "no_adjustment": 0.03}))
         self.assertEqual(out.get("action"), "back_off")
         self.assertTrue(self.tracker.quiet(GID, now=1003.0))
-
-    async def test_coin_flip_interjection_falls_back_to_the_dice(self):
-        self.calls.return_value = body(
-            answer("intervention", "join_briefly",
-                   {"join_briefly": 0.52, "stay_quiet": 0.48}))
-        self.assertIsNone(await self.tracker.consider_banter(
-            GID, A, history=self.HISTORY, now=1002.0))
 
     async def test_coin_flip_callback_brings_nothing_up(self):
         self.calls.return_value = body(
@@ -397,20 +385,22 @@ class ScoreLoggingTest(unittest.IsolatedAsyncioTestCase):
         ctx.start()
         self.addCleanup(ctx.stop)
 
+    async def _callback(self, tracker, probs):
+        self.calls.return_value = body(
+            answer("callback", max(probs, key=probs.get), probs))
+        return await tracker.consider_callback(
+            GID, A, quote="我只喝手冲", quote_ts=0.0,
+            history=self.HISTORY, now=1002.0)
+
     async def test_numbers_reach_the_local_log(self):
         log = _Recorder()
         tracker = decisions.FeedbackTracker(600.0, 180.0, log=log)
-        self.calls.return_value = body(
-            answer("intervention", "join_briefly",
-                   {"join_briefly": 0.82, "stay_quiet": 0.18}))
-        await tracker.consider_banter(GID, A, history=self.HISTORY, now=1002.0)
-        row = log.of("banter")[0]
+        await self._callback(tracker, {"bring_it_up": 0.82, "hold_it": 0.18})
+        row = log.of("callback")[0]
         self.assertEqual(row["questions"], 1)
-        self.assertAlmostEqual(row["scores"]["intervention"]["margin"], 0.64)
-        self.assertAlmostEqual(
-            row["scores"]["intervention"]["confidence"], 0.64)
-        self.assertEqual(row["scores"]["intervention"]["choice"],
-                         "join_briefly")
+        self.assertAlmostEqual(row["scores"]["callback"]["margin"], 0.64)
+        self.assertAlmostEqual(row["scores"]["callback"]["confidence"], 0.64)
+        self.assertEqual(row["scores"]["callback"]["choice"], "bring_it_up")
         self.assertEqual(row["min_margin"], config.DECISION_MIN_MARGIN)
         self.assertEqual(row["dropped"], [])
         self.assertEqual(row["actor"], "system")
@@ -418,29 +408,20 @@ class ScoreLoggingTest(unittest.IsolatedAsyncioTestCase):
     async def test_dropped_questions_are_named_in_the_log(self):
         log = _Recorder()
         tracker = decisions.FeedbackTracker(600.0, 180.0, log=log)
-        self.calls.return_value = body(
-            answer("intervention", "join_briefly",
-                   {"join_briefly": 0.51, "stay_quiet": 0.49}))
-        await tracker.consider_banter(GID, A, history=self.HISTORY, now=1002.0)
-        self.assertEqual(log.of("banter")[0]["dropped"], ["intervention"])
+        await self._callback(tracker, {"bring_it_up": 0.51, "hold_it": 0.49})
+        self.assertEqual(log.of("callback")[0]["dropped"], ["callback"])
 
     async def test_nothing_logged_without_a_log(self):
         tracker = decisions.FeedbackTracker(600.0, 180.0)
-        self.calls.return_value = body(
-            answer("intervention", "stay_quiet",
-                   {"join_briefly": 0.1, "stay_quiet": 0.9}))
-        self.assertEqual(await tracker.consider_banter(
-            GID, A, history=self.HISTORY, now=1002.0), "stay_quiet")
+        self.assertIs(await self._callback(
+            tracker, {"bring_it_up": 0.1, "hold_it": 0.9}), False)
 
     async def test_a_broken_log_never_breaks_the_decision(self):
         """观察日志永远不许拖垮判断路径。"""
         tracker = decisions.FeedbackTracker(600.0, 180.0,
                                             log=_Recorder(boom=True))
-        self.calls.return_value = body(
-            answer("intervention", "stay_quiet",
-                   {"join_briefly": 0.1, "stay_quiet": 0.9}))
-        self.assertEqual(await tracker.consider_banter(
-            GID, A, history=self.HISTORY, now=1002.0), "stay_quiet")
+        self.assertIs(await self._callback(
+            tracker, {"bring_it_up": 0.1, "hold_it": 0.9}), False)
 
     async def test_many_questions_log_counts_not_details(self):
         """原话裁决一次能问几十题 —— 明细有界，不把日志撑爆。"""

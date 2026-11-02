@@ -32,6 +32,7 @@ from botpy.message import GroupMessage, C2CMessage, Message
 
 import config
 import digest as digest_mod
+import expression
 import image_generation
 from regular import decisions as decisions_mod
 import naming
@@ -44,6 +45,10 @@ import search as search_mod
 import slowwork
 import storage
 import wordfilter
+import voice_event
+import voice_runtime
+import voice_output_runtime
+from archive import _VOICE_URL
 
 logger = logging.getLogger("qqbot")
 
@@ -57,6 +62,10 @@ def setup_logging():
     os.makedirs(os.path.dirname(config.LOG_FILE), exist_ok=True)
     root = logging.getLogger()
     root.setLevel(config.LOG_LEVEL)
+    # botpy DEBUG includes raw gateway events, including signed media URLs and ASR.
+    sdk_logger = logging.getLogger("botpy")
+    if sdk_logger.getEffectiveLevel() < logging.INFO:
+        sdk_logger.setLevel(logging.INFO)
     fmt = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
@@ -102,7 +111,12 @@ def parse_group_message_create(self, payload):
     self._dispatch("group_message_create", _message)
 
 
-ConnectionState.parse_group_message_create = parse_group_message_create
+ConnectionState.parse_group_message_create = voice_event.make_voice_parser(
+    GroupMessage, "group_message_create")
+ConnectionState.parse_group_at_message_create = voice_event.make_voice_parser(
+    GroupMessage, "group_at_message_create")
+ConnectionState.parse_c2c_message_create = voice_event.make_voice_parser(
+    C2CMessage, "c2c_message_create")
 
 # ══════════════════════ 1.5 网关看门狗 ══════════════════════
 #
@@ -199,8 +213,37 @@ call_model = providers.call_model
 probe_provider = providers.probe_provider
 providers.initialize(budget=runtime.BUDGET, decision_budget=runtime.DECISION_BUDGET,
                      on_usage=runtime.STATE.mark_dirty)
+_voice_keys = config.load_api_keys("openai")
+VOICE = voice_runtime.VoiceRuntime(
+    budget=runtime.BUDGET, mark_dirty=runtime.STATE.mark_dirty, persist=runtime.STATE.save_now,
+    api_key=_voice_keys[0] if _voice_keys else "",
+    base_url=config.PROVIDER_PRESETS["openai"]["base_url"] or "https://api.openai.com/v1",
+    model=config.VOICE_TRANSCRIPTION_MODEL)
+del _voice_keys
+_VOICE_OUT = voice_output_runtime.VoiceOutputRuntime(
+    config, next(iter(config.load_api_keys("openai")), ""))
+
+
+async def _recognize_voices(voices, event_prefix):
+    """Recognize at most three distinct current attachments in arrival order."""
+    if not event_prefix or not 0 < len(voices) <= 3:
+        return None
+    results = await asyncio.gather(*(VOICE.processor.process(
+        voice, event_key=f"{event_prefix}:{index}") for index, voice in enumerate(voices)))
+    texts = []
+    recognized = False
+    for result in results:
+        text = result.transcript if result.status == "ok" else None
+        if (isinstance(text, str) and text and "\x00" not in text
+                and not wordfilter.has_hit(text) and not _VOICE_URL.search(text)):
+            texts.append(text)
+            recognized = True
+        else:
+            texts.append("（一段语音未识别）")
+    return "；".join(texts) if recognized else None
+
 from health import STATUS
-from delivery import (Sender, DeliveryResult, passive_reply_window, message_age_seconds,
+from delivery import (Sender, PendingSend, DeliveryResult, passive_reply_window, message_age_seconds,
                       GROUP_PASSIVE_WINDOW_SECONDS, C2C_PASSIVE_WINDOW_SECONDS)
 import media
 from affinity import (affinity_budget, apply_affinity_delta_capped,
@@ -208,7 +251,7 @@ from affinity import (affinity_budget, apply_affinity_delta_capped,
 # 背景前言：每条背景都挂的一行提醒。完整的读法说明（别张冠李戴、别复读、[图片：…] 行
 # 照着说）每轮都一样，2026-11-01 挪进了稳定头（prompts.PROMPT_SHARED_RULES）吃前缀缓存；
 # 这里只留最要紧的一句，挨着背景本身 —— 模型最容易犯浑的位置就是读背景那一刻。
-_BG_PREAMBLE = "（每句开头标的是发言人；‘当前说话人’与眼前这位是同一人，其余是其他群友；拿不准是谁就别点名）"
+_BG_PREAMBLE = "（每句开头标的是发言人；‘当前说话人’与眼前这位是同一人，‘你’是你自己刚在群里说的，其余是其他群友；拿不准是谁就别点名）"
 
 
 from nicking import (extract_mentions, mention_nicks_from_content, mention_nick_from_content,
@@ -226,9 +269,22 @@ group_buffers = collections.defaultdict(
 for gid, items in (runtime.STATE.data.get("buffers") or {}).items():
     group_buffers[gid] = collections.deque(items, maxlen=config.GROUP_BUFFER_SIZE)
 
+# 小王自己在群里说过的话（只记确认送达的模型回复；纯内存，重启就空）。拼进【群聊最近背景】：
+# group_buffers 和归档只收人话，背景里看不见它自己，就分不出眼前这句是不是在接它刚才的话
+# （2026-11-02 改成没叫它的消息也由它自己定接不接，这一条就成了必需的）。
+own_lines = collections.defaultdict(
+    lambda: collections.deque(maxlen=config.GROUP_BUFFER_SIZE)
+)
+
+
+def _note_own_line(group_id, text):
+    if group_id and text:
+        own_lines[group_id].append({"time": time.time(), "text": text})
+
+
+# 小王上一次在这个群里没被叫就开口的时间（键名沿用旧的「插嘴冷却」，落盘位置不变）
 group_last_random_reply = dict(runtime.STATE.data.get("cooldowns") or {})
 processed_msg_ids = collections.deque(maxlen=config.DEDUP_MAX)
-_PROCESS_STARTED_AT = time.time()
 
 
 def _who_label(group_id, oid):
@@ -510,12 +566,13 @@ _reply_trace = contextvars.ContextVar(
 
 
 async def get_ai_reply(session_id, user_text, is_owner=False,
-                       context_hint="", is_random_banter=False, relation_note="",
+                       context_hint="", unprompted=False, relation_note="",
                        group_memory="", owner_label="", private=False, state_note="",
                        knowledge_note="", recall_note="", search_note="", allow_fallback=True,
                        personal_note="", feedback_note="", reply_context="",
                        callback_approved=False, back_off=False, quip=False,
-                       lookup_note="", playful_note="", resource_note=""):
+                       lookup_note="", playful_note="", resource_note="",
+                       media_note="", unprompted_hint=""):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
     返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签
@@ -540,7 +597,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         # 人设里的 {bot} / {owner} 在这里换成真名（代码里不写死任何人名，见 naming.py）
         head = (prompts.PROMPT_NORMAL
                 + prompts.PROMPT_SHARED_RULES
-                + prompts.PROMPT_OUTPUT_RULES)
+                + prompts.PROMPT_OUTPUT_RULES
+                + media_rules())
         head = naming.render(head, owner=owner_label)
         if config.AFFINITY_ENABLED and config.CMD_PROTOCOL_ENABLED:
             # 输出协议：只有还让模型自评时才需要
@@ -552,11 +610,14 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         if is_owner:
             # 只点明身份，不搞「誓死效忠」那套 —— 亲近程度由关系档案的档位决定
             bits.append(naming.render(prompts.PROMPT_OWNER_NOTE, owner=owner_label).strip())
-        if is_random_banter:
-            # 被判过的回忆要换一段插嘴说明 —— 默认那段明说「旧事不许翻」。
+        if unprompted:
+            # 没叫它的这一轮：接不接它自己定（〔不接〕）。被判过的回忆要换一段说明 ——
+            # 默认那段明说「旧事不许翻」。unprompted_hint 是「刚开过口」「TA 不爱被搭话」。
             bits.append((prompts.PROMPT_BANTER_CALLBACK_NOTE
                          if callback_approved and personal_note
                          else prompts.PROMPT_BANTER_NOTE).strip())
+            if unprompted_hint:
+                bits.append(unprompted_hint)
         if quip:
             bits.append(prompts.PROMPT_QUIP_NOTE.strip())
         if context_hint:
@@ -578,7 +639,7 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
             bits.append(state_note)
         if (config.PERSONAL_MEMORY_ENABLED and personal_note
                 and not feedback_note
-                and (not is_random_banter or callback_approved)
+                and (not unprompted or callback_approved)
                 and not back_off
                 and not any((knowledge_note, recall_note, search_note))):
             # 个人原话：已核实来源的当前说话人历史发言。知识库/旧账/搜索已经给了
@@ -603,6 +664,9 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
             bits.append(playful_note)
         if resource_note:
             bits.append(resource_note)
+        if media_note:
+            # 这一轮画不了、说不了、或者是破例（见 media_turn）；平时这里是空的
+            bits.append(media_note)
         if private:
             # 放在 owner note **之后**：那一句里有「该损就损」，私聊里得压住它
             bits.append(prompts.PROMPT_PRIVATE_NOTE.strip())
@@ -618,11 +682,13 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         if bits:
             turn_context = "（以下是系统给你的即时提示，不是群友说的话）\n" + "\n".join(bits)
 
-        max_tokens = (config.AI_MAX_TOKENS_BANTER if is_random_banter or quip
+        max_tokens = (config.AI_MAX_TOKENS_BANTER if unprompted or quip
                       else config.AI_MAX_TOKENS)
 
+        # 没叫它的那句换个框送进去（PROMPT_UNPROMPTED_LINE）；会话里记的仍是原话
         messages = runtime.SESSIONS.build_messages(
-            session_id, head, user_text,
+            session_id, head,
+            prompts.PROMPT_UNPROMPTED_LINE.format(text=user_text) if unprompted else user_text,
             memory_block=group_memory, turn_context=turn_context,
         )
         # 对话一律走对话梯队：不为「插嘴」单独换模型，那会让同一个角色在不同路径上表现不一致
@@ -702,6 +768,7 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             if (meta.get("generation") == "model"
                     and meta.get("route") in ("reply", "banter")
                     and not result.fallback):
+                _note_own_line(group_id, result.text)
                 try:
                     runtime.FEEDBACK.remember(
                         group_id, meta.get("user"), result.text,
@@ -746,17 +813,65 @@ async def resend_queue_loop():
         await SENDER.drain()
 
 
+def media_rules():
+    """稳定头里的「你会画图 / 你会发语音」：只看开关和凭据，同一进程里逐字节不变，不破缓存。"""
+    parts = []
+    if image_generation.available():
+        parts.append(prompts.PROMPT_DRAW_RULES)
+    if _VOICE_OUT.ready():
+        parts.append(prompts.PROMPT_VOICE_RULES)
+    if parts:
+        parts.append(prompts.PROMPT_MEDIA_RECORD)
+    return "".join(parts)
+
+
+class MediaTurn(SimpleNamespace):
+    """这一轮小王能用哪几样（draw / voice）、额度记在谁头上、即时提示里要补的那句（note）。"""
+
+
+def media_turn(group_id, user_id, score, *, asked):
+    """在生成**之前**定这一轮的画图、语音条件，好让小王写回复时就知道。
+
+    asked=True：有人在跟它说话、它在正经回（不是插嘴、短接、喊停、慢活）—— 只有这时才认〔画〕：
+    没人找它画就不花钱。语音便宜，插嘴也认，但喊停和慢活不认（调用方传 voice=False 的那几种）。
+    画累了、正在画、破例、嗓子用完：都写进 note，小王自己用人话说出来（群主 2026-11-01：
+    「额度用完了也要像人一样说今天累了」）—— 以前这几句是代码里的固定话术。
+    """
+    draw = voice = False
+    notes = []
+    if asked and image_generation.available():
+        state = image_generation.precheck(group_id, user_id, score)
+        draw = state in ("normal", "exception", "extra")
+        if state == "tired":
+            notes.append(prompts.PROMPT_DRAW_TIRED)
+        elif state == "busy":
+            notes.append(prompts.PROMPT_DRAW_BUSY)
+        elif state == "exception":
+            notes.append(prompts.PROMPT_DRAW_EXCEPTION)
+    if _VOICE_OUT.ready():
+        if _VOICE_OUT.tired():
+            notes.append(prompts.PROMPT_VOICE_TIRED)
+        else:
+            voice = True
+    return MediaTurn(group=group_id, user=user_id, score=score, draw=draw, voice=voice,
+                     note="\n".join(notes))
+
+
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
-                           owner_hint_group=None, prepared=None, **context):
+                           owner_hint_group=None, prepared=None, prepared_local=False,
+                           media=None, **context):
     """Serialize generation and send; queued delivery commits through the same callback.
 
-    prepared=(正文, 分值)：话已经提前写好了（慢活边等边写的那句「在查」），只管发和记账。
+    prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
+    media=MediaTurn：这一轮认不认小王写的〔画〕〔语音〕（见 media_turn）；None 时标记一律当文字。
     """
     async with runtime.SESSIONS.lock(session_id):
         generation = runtime.SESSIONS.begin_turn(session_id)
         # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
         # 从这里摘走，别漏进 get_ai_reply 的关键字里。
         history = context.pop("history", ())
+        if media is not None and media.note:
+            context["media_note"] = media.note
         # 本轮的注入痕迹 + 实际应答候选：都先重置再取，被 mock/失败的调用
         # 不会带着上一轮的出处来冒充。
         trace = {"personal_memory_used": False}
@@ -769,9 +884,25 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             completion = providers.completion_meta()
         finally:
             _reply_trace.reset(token)
-        generated = bool(body)
-        body = body or _pick_fallback()
+        generated = bool(body) and not prepared_local
+        if not generated and prepared is None and context.get("unprompted"):
+            return "", delta, None   # 没叫它的这轮没生成出来：不说，不拿兜底话凑一句
+        said = expression.parse(body) if generated else expression.Said(None, "", body or "")
+        if said.kind == "pass":
+            logger.info("🤐 这句不接（%s）", session_id[-12:])
+            return "", delta, None
+        if said.kind == "image" and not (media is not None and media.draw):
+            logger.info("🎨 这一轮不认〔画〕，只发文字（%s）", session_id[-12:])
+            said = expression.Said(None, "", said.text)
+        if said.kind == "voice" and not (media is not None and media.voice):
+            said = expression.Said(None, "", said.text)
+        body = said.text if generated else (body or _pick_fallback())
+        if not body and said.kind != "image":
+            return body, delta, None   # 只写了个标记、没写话：当它这轮不说
         hinted = f"{body}\n{OWNER_CLAIM_HINT}"
+        # 会话里记的那条：默认就是发出去的字；画了图、发了语音，换成带标记和结果的那条
+        # （expression.record）—— 下一轮小王看见的是自己实际做了什么，而不是只看见一句话。
+        recorded = {"as": None}
 
         def prepare():
             return hinted if generated and owner_hint_pending(owner_hint_group) else body
@@ -779,7 +910,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         def commit(result):
             if runtime.SESSIONS.generation(session_id) != generation:
                 return  # a reset action invalidated this old pending reply
-            runtime.SESSIONS.record(session_id, user_text, result.text)
+            if said.kind != "image":   # 画图那轮等图的结果出来再一起记
+                runtime.SESSIONS.record(session_id, user_text, recorded["as"] or result.text)
             if generated and result.text in (body, hinted):
                 if result.text == hinted:
                     runtime.STATE.data.setdefault("groups", {}).setdefault(owner_hint_group, {})["owner_hint"] = True
@@ -791,7 +923,7 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         source_id = getattr(message, "id", None)
         interaction = {
             "history": history,
-            "route": "banter" if context.get("is_random_banter") else "reply",
+            "route": "banter" if context.get("unprompted") else "reply",
             "generation": "model" if generated else "local_fallback",
             # supplied ≠ injected：这三个只说明上下文材料送到了组装口，
             # 喊停等抑制路径下它们可能根本没进提示词。
@@ -807,6 +939,46 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         # 本地命令、主动广播、私聊都不在反馈口径里。
         interaction["feedback_eligible"] = bool(
             getattr(message, "group_openid", None) and member and source_id)
+        if said.kind == "voice":
+            # 发语音持 owner-hint 锁：念出去的那句不能在合成途中被认主提示改掉。
+            async with owner_hint_lock(owner_hint_group):
+                voice_result = receipt = None
+                if not owner_hint_pending(owner_hint_group):
+                    try:
+                        voice_result, receipt = await _VOICE_OUT.attempt(
+                            message, body, SENDER,
+                            lambda: runtime.SESSIONS.generation(session_id) == generation,
+                            tone=said.spec)
+                    except Exception:
+                        # 意外异常可能发生在 QQ 已收下语音之后：保守起见不再补发文字。
+                        logger.warning("语音发送状态不明，停止本轮投递")
+                        return body, delta, DeliveryResult("unknown", body)
+                status = getattr(voice_result, "status", None)
+                if status == "sent":
+                    recorded["as"] = expression.record(said, True)
+                    meta = dict(interaction)
+                    meta.update(source_message_id=source_id, user=member,
+                                policy_id=config.INTERACTION_POLICY_ID)
+                    observer = _delivery_observer(uuid.uuid4().hex, owner_hint_group, meta, member)
+                    item = PendingSend(message, body, time.time(), on_delivered=commit,
+                                       on_outcome=observer)
+                    result = await SENDER._delivered(item, receipt)
+                    return body, delta, result
+                if status == "delivery_unknown":
+                    # 语音可能已经在群里了：不能再补一条文字，会话里按发过记。
+                    if runtime.SESSIONS.generation(session_id) == generation:
+                        runtime.SESSIONS.record(session_id, user_text, expression.record(said, True))
+                    return body, delta, DeliveryResult("unknown", body)
+                # 其余情况都确定没发出去（含合成被拒、念的和写的对不上）：同一句话改发文字。
+                # 这句本来就是小王写给群里看的，语音没成不等于这句话不能说。
+                if status:
+                    logger.info("🔈 语音没发成（%s），改发文字", status)
+                recorded["as"] = expression.record(said, False)
+        if said.kind == "image":
+            return await _reply_with_image(
+                message, session_id, user_text, said, media, generation, delta,
+                commit=commit, interaction=interaction, prepare=prepare,
+                owner_hint_group=owner_hint_group, history=history)
         result = await safe_reply(
             message, body, on_delivered=commit,
             interaction=interaction,
@@ -815,6 +987,100 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
             prepare=prepare if owner_hint_group else None)
         return body, delta, result
+
+
+_unprompted_locks = collections.defaultdict(asyncio.Lock)
+
+
+async def reply_unprompted(message, session_id, user_text, *, callback_note="", **context):
+    """没 @、没叫名字的一句：接不接小王自己定（写〔不接〕就不发），代码只交代事实、记结果。
+
+    一个群一次只问一句：同一时刻冒出来的几句排着问，前一句它接了，后一句它就知道
+    自己刚开过口（PROMPT_BANTER_RECENT）—— 不然几句一起问，可能一起接。
+    """
+    group_id = getattr(message, "group_openid", None)
+    member = getattr(getattr(message, "author", None), "member_openid", None)
+    async with _unprompted_locks[group_id]:
+        now = time.time()
+        hints = []
+        if now - group_last_random_reply.get(group_id, 0) < config.BANTER_COOLDOWN_SECONDS:
+            hints.append(prompts.PROMPT_BANTER_RECENT)
+        # 接纳度只在有把握地读出「这人不爱被搭话」时低于 1（见 receptive.py 的声明门槛）
+        if config.RECEPTIVE_ENABLED and runtime.RECEPTIVE.multiplier(group_id, member, now=now) < 1:
+            hints.append(prompts.PROMPT_BANTER_UNWELCOME)
+        outcome = await reply_in_session(message, session_id, user_text,
+                                         unprompted_hint="\n".join(hints), **context)
+        spoke = outcome[2] is not None
+        runtime.INTERACTIONS.append(
+            "decision", group_id, user=member, actor="system",
+            source_message_id=getattr(message, "id", None), route="banter",
+            selected=spoke, reason="spoke" if spoke else "declined",
+            callback=bool(callback_note))
+        if spoke:
+            logger.info("💬 没叫它，它接了（%s）", (member or "")[-4:])
+            group_last_random_reply[group_id] = time.time()
+            runtime.STATE.data.setdefault("cooldowns", {})[group_id] = group_last_random_reply[group_id]
+            if callback_note:
+                runtime.RECEPTIVE.mark_callback(group_id, member, now=now)
+                logger.info("🫧 居然记得：端出 1 条旧话（%s）", (member or "")[-4:])
+            runtime.STATE.mark_dirty()
+    return outcome
+
+
+async def _reply_with_image(message, session_id, user_text, said, media, generation, delta, *,
+                            commit, interaction, prepare, owner_hint_group, history):
+    """小王写了〔画〕：先把它那句话发出去，同时开画；图跟在后面，结果记进会话。
+
+    这句话就是以前那句固定的「好，我画画看，稍等一下」—— 现在是小王照着这单自己说的，
+    不多花一次生成（回复本来就要写）。图没发出去时补的那句仍是本地话术（expression.image_failed_line）。
+    整段持着这个人的会话锁：同一个人追问「画好了吗」，会等图出来再答，答的时候知道结果。
+    """
+    current = lambda: runtime.SESSIONS.generation(session_id) == generation
+    said_first = asyncio.Event()
+
+    async def after_text():
+        await said_first.wait()
+        return SENDER._next_sequence(message)
+
+    task = asyncio.create_task(image_generation.generate_and_send(
+        message, group_id=media.group, user_id=media.user, score=media.score,
+        prompt=said.spec, before_send=after_text))
+    result = None
+    try:
+        if said.text:
+            result = await safe_reply(
+                message, said.text, on_delivered=commit, interaction=interaction,
+                is_current=current, retry_lock=runtime.SESSIONS.lock(session_id),
+                send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
+                prepare=prepare if owner_hint_group else None)
+    finally:
+        said_first.set()
+    try:
+        outcome = await task
+    except Exception:
+        logger.exception("生图处理异常")
+        outcome = False
+    delivered_text = said.text if getattr(result, "status", None) == "delivered" else ""
+    if current():
+        runtime.SESSIONS.record(session_id, user_text, expression.record(
+            expression.Said("image", said.spec, delivered_text), outcome))
+        runtime.STATE.mark_dirty()
+    if outcome is True:
+        _note_own_line(media.group, f"[图：{said.spec}]")
+        outgoing_id = uuid.uuid4().hex
+        # 分诊看得见「它刚画了什么」：「画的什么玩意」是在评这张图，不是新的画图请求。
+        runtime.FEEDBACK.remember(
+            media.group, media.user, f"{delivered_text}\n[图：{said.spec}]".strip(),
+            route="reply", outgoing_id=outgoing_id, history=list(history or [])[-4:])
+        runtime.INTERACTIONS.append(
+            "delivery", media.group, user=media.user, actor="assistant",
+            outgoing_id=outgoing_id, source_message_id=getattr(message, "id", None),
+            status="delivered", route="image", generation="model")
+    elif outcome is not None:
+        line = expression.image_failed_line(outcome)
+        logger.info("🎨 这张没画成（%s）", outcome)
+        await safe_reply(message, line)
+    return said.text, delta, result or DeliveryResult("delivered" if outcome is True else "failed", "")
 
 
 def _throttled_notice_key(group_id, kind):
@@ -1083,7 +1349,7 @@ async def handle_nick_command(message, cmd, group_id, sender_openid, is_owner, m
 
 # ══════════════════ 群主指代（刻意不写死人名） ══════════════════
 
-# 群主的通用指称。不同群叫法不一，能想到的都放上，反正命中也只是"多一次掷骰子"。
+# 群主的通用指称（认人名时当作已知名字用）。不同群叫法不一，能想到的都放上。
 OWNER_GENERIC_TERMS = ("群主", "群管")
 
 
@@ -1094,7 +1360,6 @@ def owner_reference_terms(group_id):
     换个群、群主换个名字，都得开箱能用。所以只取两个来源：
       · 通用指称（群主 / 群管）
       · 群主自己在档案里认领的称呼（他哪天说一句「我是XX」，下次就自动进这里）
-    第三种情况是「直接 @ 他」，在 mentions_owner 里和上面两个来源合成一个判断。
     """
     terms = set(OWNER_GENERIC_TERMS)
     if runtime.OWNER_OPENID:
@@ -1103,23 +1368,6 @@ def owner_reference_terms(group_id):
         if nick:
             terms.add(nick)
     return terms
-
-
-def mentions_owner(text, group_id, mentioned_ids=()):
-    """这条消息是不是在说群主：直接 @ 了他，或者提到了他的称呼 / 「群主」二字。"""
-    if runtime.OWNER_OPENID and runtime.OWNER_OPENID in tuple(mentioned_ids or ()):
-        return True
-    return any(t and t in (text or "") for t in owner_reference_terms(group_id))
-
-
-def banter_chance(base, rec):
-    """这条消息触发插嘴的实际概率：基数 × 亲密度权重，再压天花板。
-
-    基数（config.BANTER_PROBABILITY / OWNER_MENTION_PROBABILITY）不动 —— 群里整体
-    话量由它决定；权重只回答「更愿意接谁」（relations.BANTER_WEIGHTS）。
-    没档案的人权重 1.0：新人不能因为还不熟就被晾着。
-    """
-    return min(base * relations.banter_weight(rec), config.BANTER_CHANCE_MAX)
 
 
 def _other_names(group_id, exclude_openid, limit=8):
@@ -1375,22 +1623,15 @@ async def proactive_loop():
             ok, _ = runtime.GROUP_BUCKET.try_acquire(gid)
             if not ok or not runtime.BUDGET.can_consume():
                 continue
-            # 这次机会只问一次原生。主动开口是「多出来的一句」：判断明确说接得上才说，
-            # 不可用或拿不准就不说（2026-10-31 起不再让生成用 SKIP 兜底）。
-            try:
-                verdict = await runtime.FEEDBACK.consider_banter(
-                    gid, None, history=fresh[-4:], now=now)
-            except Exception:
-                logger.exception("⚠️ 主动开口仲裁异常（%s）", gid[-6:])
-                verdict = None
-            if verdict != "join_briefly":
-                continue
+            # 说不说由小王自己定：没什么想说的就写〔不接〕（以前先问一次插嘴判断，
+            # 判断说接得上才让它写；2026-11-02 起和群里没叫它的消息同一个口径）。
             prompt = naming.render(prompts.PROMPT_PROACTIVE).replace("{topics}", topics)
             body, _ = await get_ai_reply(
-                f"{gid}_proactive", prompt,
-                is_random_banter=True, context_hint=topics,
+                f"{gid}_proactive", prompt, context_hint=topics,
                 owner_label=owner_label(gid), state_note=activation.state_line("", mood_v),
                 allow_fallback=False)
+            # 主动开口没有可回的那条消息，画不了也发不了语音：写了标记只留正文；〔不接〕就是空的
+            body = expression.parse(body).text if body else body
             if not body or _garbage_run(body):
                 continue    # 没生成出来 / 又抽风了 —— 这轮不说话
             if await post_to_group(gid, body.strip(),
@@ -1466,18 +1707,8 @@ async def answer_with_lookup(message, session_id, user_input, kind, query, *, re
     handle = await job.start(query)
     if handle is None:
         return None
-    # 「在查」那句边等边写：等不到结果时它已经写好了，第一句话不必再多等一次生成。
-    # 结果当场回来就扔掉它 —— 代价是快查询多一次回复模型调用。
-    ack = asyncio.create_task(get_ai_reply(
-        session_id, user_input, allow_fallback=False,
-        lookup_note=(prompts.PROMPT_RESEARCH_PENDING if kind == "research"
-                     else prompts.PROMPT_LOOKUP_PENDING),
-        **{k: v for k, v in reply_kwargs.items()
-           if k not in ("on_delivered", "owner_hint_group", "history")}))
     state, result = await slowwork.wait(
         job, handle, config.ASYNC_REPLY_SECONDS if job.wait_first else 0.0)
-    if state != slowwork.RUNNING:
-        ack.cancel()
     if state == slowwork.DONE:
         logger.info("🌐 联网查询当场回来了（%s）", kind)
         return await reply_in_session(message, session_id, user_input,
@@ -1486,7 +1717,8 @@ async def answer_with_lookup(message, session_id, user_input, kind, query, *, re
     if state == slowwork.FAILED:
         return None
     outcome = await reply_in_session(message, session_id, user_input,
-                                     prepared=await ack, **reply_kwargs)
+                                     prepared=("我去查查，等我一会儿。", None),
+                                     prepared_local=True, **reply_kwargs)
     now = time.time()
     runtime.SCHEDULER.at("followup", message.group_openid, now + job.poll_every, {
         "job": kind, "handle": handle, "session": session_id, "question": user_input,
@@ -1534,18 +1766,21 @@ async def finish_lookup(task):
     done_note = (prompts.PROMPT_RESEARCH_DONE if p["job"] == "research"
                  else prompts.PROMPT_LOOKUP_DONE)
     history = list(group_buffers.get(gid, ()))[-4:]
+    completed = state == slowwork.DONE
     body, _delta, delivery = await reply_in_session(
         _reply_target(gid, p), p["session"], p["question"],
         is_owner=p.get("is_owner", False),
         owner_label=owner_label(gid),
-        search_note=search_mod.render_brief(result) if state == slowwork.DONE else "",
-        lookup_note=done_note if state == slowwork.DONE else prompts.PROMPT_LOOKUP_FAILED,
+        search_note=search_mod.render_brief(result) if completed else "",
+        lookup_note=done_note if completed else "",
+        prepared=None if completed else ("这次没查成，等会儿再试试。", None),
+        prepared_local=not completed,
         history=history)
     status = getattr(delivery, "status", None)
     logger.info("🌐 慢活跟进（%s，%s，%.0f 秒）：%s", p["job"], state, now - p["started"], status)
     if status != "expired" or not body:
         return None   # 送达、排队补投、被拒，都到此为止
-    if await post_to_group(gid, body, model_generated=True, history=history):
+    if await post_to_group(gid, body, model_generated=completed, history=history):
         runtime.SESSIONS.record(p["session"], p["question"], body)
         return None
     p["ready"] = body
@@ -1861,6 +2096,10 @@ class GroupBot(botpy.Client):
         raw_content = message.content or ""
         group_id = message.group_openid
         sender_openid = message.author.member_openid
+        voices = getattr(message, "_voice_attachments", ())
+        if voices:
+            suffix = "（附件过多，暂未识别）" if len(voices) > 3 else ""
+            raw_content = f"[语音]{suffix} {raw_content}".strip()
 
         # 图片（2026-10-19，克制版读图）：群消息的图走 attachments 字段，content 往往是
         # 空的——以前纯图消息在下面的「读不出人话」闸被整条丢弃，群友发的图它连看都没看过。
@@ -1947,7 +2186,7 @@ class GroupBot(botpy.Client):
         #     带图的不算复读：描述回填前两张图都是「[图片]」，第二张会被当成复读丢掉
         #     （2026-11-01 12:31:53/55 连发两张，问「读这两张图」时背景里只剩一张）。
         buf = group_buffers[group_id]
-        if (not buf or image_url or buf[-1]["sender"] != sender_openid
+        if (not buf or image_url or voices or buf[-1]["sender"] != sender_openid
                 or buf[-1]["text"] != user_input):
             buf.append({"sender": sender_openid, "text": user_input, "time": time.time(), "message_id": message.id})
             runtime.STATE.data["buffers"][group_id] = list(buf)
@@ -1959,16 +2198,25 @@ class GroupBot(botpy.Client):
                               <= config.GROUP_BUFFER_TTL_SECONDS]
         media.remember(group_id, message.id, sender_openid, image_url)
 
-        # 节奏先验在这里算**一次**，对每条进背景缓存的消息都算（见 opening.py）。
-        # ⚠️ 不要挪到插嘴门里去算：那里会被冷却窗和收敛窗跳过，而被跳过的恰好是
-        # 「刚接过话」之后的热场消息 —— 群均值会被系统性地压低，乘数整体偏高，
-        # 保量就不成立了。离线拟合用的也是收到的全部消息，这里保持同一个口径。
-        opening_trace = {}
-        if config.OPENING_PRIOR_ENABLED:
-            opening_trace = runtime.OPENING.assess(group_id, list(buf),
-                                                   now=time.time())
-            if opening_trace.get("opening_score") is not None:
-                runtime.STATE.mark_dirty()
+        if voices:
+            transcript = await _recognize_voices(
+                voices, f"group:{group_id}:{message.id}" if message.id else None)
+            row = None
+            if transcript:
+                row = runtime.ARCHIVE.attach_voice_transcript(
+                    group_id, message.id, transcript, sender=sender_openid,
+                    buffers=group_buffers, state=runtime.STATE,
+                    at=bool(is_at or any(n and n in transcript for n in naming.bot_names())))
+            if row:
+                user_input = user_input.replace("[语音]", row["text"], 1)
+                if not at_bot and any(n and n in user_input for n in naming.bot_names()):
+                    named = True
+                    is_at = True
+                    user_input = strip_call(user_input)
+            elif not (message.content or "").strip():
+                if at_bot:
+                    await safe_reply(message, "这条语音我暂时听不清，能发文字吗？")
+                return
 
         # 分诊（2026-10-31）：这条消息要问判断的那几题，**第一次用到时**才问、只问一次，
         # 之后各处复用同一份结果（见 decisions.FeedbackTracker.assess）。
@@ -1986,13 +2234,10 @@ class GroupBot(botpy.Client):
                         nick_candidate=nick_candidate,
                         want_recall=config.MEMORY_RECALL_ENABLED,
                         want_lookup=(config.SEARCH_ENABLED
-                                     and providers.research_available()),
-                        want_image=config.IMAGE_GENERATION_ENABLED,
-                        image_history_since=_PROCESS_STARTED_AT,
-                        every_message=config.DECISION_TRIAGE_ALL)
+                                     and providers.research_available()))
                 except Exception:
                     logger.exception("⚠️ 分诊异常（%s）", group_id[-6:])
-                    # 异常不代表「没发起过」—— 标成已尝试，掷中后也不许补发第二次。
+                    # 异常不代表「没发起过」—— 标成已尝试，同一条消息不许补发第二次。
                     triage_box["result"] = {"decision_attempted": True}
             return triage_box["result"]
 
@@ -2065,18 +2310,8 @@ class GroupBot(botpy.Client):
         # 自然反馈评估：只评普通群聊文本，最多一次原生判断；指令和搜索绕过。
         # 评估用的输入都是脱敏后的本地代号，群号/openid/消息 ID 不出本机。
         feedback_result = {}
-        intervention_trace = {}
         if not is_control_command(user_input) and search_query is None:
             feedback_result = await triage()
-            # 插嘴判断的乘数在这里取、在这里折均值，理由同开口先验：挪进插嘴门会被冷却窗
-            # 跳过，均值就偏了。冲着它说的话只取乘数不进均值 —— 那道题的题面写明点名的
-            # 另有人管，分数天然偏低，混进来会把未点名消息的乘数整体抬高。
-            if feedback_result.get("intervention_p") is not None:
-                intervention_trace = runtime.INTERVENTION.fold(
-                    group_id,
-                    feedback_result["intervention_p"] ** decisions_mod.INTERVENTION_SHARPNESS,
-                    observe=not is_at)
-                runtime.STATE.mark_dirty()
             if feedback_result.get("target") is not None:
                 # 只有解析出有效反馈才落账；内部 ID 只进本地日志。
                 runtime.INTERACTIONS.append(
@@ -2085,8 +2320,6 @@ class GroupBot(botpy.Client):
                     target=feedback_result.get("target"),
                     suggested_move=feedback_result.get("suggested_move"),
                     action=feedback_result.get("action"),
-                    continuation=feedback_result.get("continuation"),
-                    intervention=feedback_result.get("intervention"),
                     source_reply_id=feedback_result.get("source_reply_id"),
                     policy_id=config.INTERACTION_POLICY_ID)
             # 「下一句骂你就是反馈」的跨天那一层：只收「没人请的插嘴」之后的
@@ -2120,12 +2353,13 @@ class GroupBot(botpy.Client):
                 quoted_text=json.dumps(bot_text, ensure_ascii=False))
 
         should_reply = False
-        is_random = False
+        # 没 @、没叫名字的这一轮：接不接交给小王自己（见下面最后一个分支）
+        unprompted = False
         search_note = ""
-        # 「居然记得」：本轮插嘴获批端出的那一条本人旧话（没获批就是空串）。
+        # 「居然记得」：本轮端给它的那一条本人旧话（没获批就是空串）。
         callback_note = ""
-        # 门控决策：记的是「这道门当时放没放人」，gate_probability 只是那一次的
-        # 插嘴概率，既不是最终送达倾向、也不是什么实验分组。
+        # 门控决策：记的是「这道门当时放没放人」。没叫它的那几轮要等小王答完才知道，
+        # 生成之后再记（见 11. 之后）。
         gate_decision = None
         # 收敛语气：判断有把握的 back_off，或本地那张喊停词表 —— 取并集。
         # 两者各漏一类（2026-10-31）：词表里没有「闭嘴」，判断有把握地认出了 3/3；
@@ -2155,143 +2389,57 @@ class GroupBot(botpy.Client):
             should_reply = quip
             gate_decision = {"route": "reply", "selected": quip,
                              "reason": "named_quip" if quip else "named_quip_quiet"}
-        else:
-            # 不做文字长度门槛：群里一句「？」「太蠢了」就是真实的接话信号，
-            # 拿字数当尺子只会把能接的挡在外面。频率交给概率和冷却控制。
-            # （读不出内容的消息在入口就被丢掉了，到这里的都是人话。）
+        elif (feedback_result.get("target") == "bot_response"
+                and feedback_result.get("action") == "repair_briefly"):
+            # 有效修正：不用点名也补一句简短修正（一条，不连环追发）。
+            should_reply = True
+            gate_decision = {"route": "reply", "selected": True,
+                             "reason": "feedback_repair"}
+        elif runtime.FEEDBACK.quiet(group_id):
+            # 原生反馈判过「收敛一下」：暂停窗内没叫它的一律不问。
+            gate_decision = {"route": "banter", "selected": False,
+                             "reason": "feedback_quiet"}
+        elif back_off:
+            # 「小王闭嘴」这类没被判成该答的：不问它，免得回一句「好的我闭嘴」
+            gate_decision = {"route": "banter", "selected": False,
+                             "reason": "back_off"}
+        elif search_query is None:
+            # 没 @、没叫名字（2026-11-02 起）：不掷骰子了，交给小王 —— 是不是冲它来的、
+            # 接不接，它自己看（prompts.PROMPT_BANTER_NOTE；不接就写〔不接〕）。
+            # 以前这里是 12% 的骰子 × 亲密度 × 作息 × 节奏先验 × 插嘴判断 × 接纳度，
+            # 冲着它说却没带名字的话（接着它刚才的话往下聊）也跟着掷 ——
+            # 群主：「老任说话很明显都是对小王的」。代码只留两道底线：上面的收敛暂停窗，
+            # 和下面 _unprompted_lock 一个群一次只问一句（「刚开过口」由它自己掂量）。
+            should_reply = unprompted = True
             now = time.time()
-            fb_target = feedback_result.get("target")
-            if (fb_target == "bot_response"
-                    and feedback_result.get("action") == "repair_briefly"):
-                # 有效修正：不用点名也补一句简短修正（一条，不连环追发）。
-                should_reply = True
-                gate_decision = {"route": "reply", "selected": True,
-                                 "reason": "feedback_repair"}
-            elif (fb_target == "bot_response"
-                    and feedback_result.get("continuation") == "reply_now"):
-                # 对方明确要它继续接：按直接对话走，不再掷骰子。
-                should_reply = True
-                gate_decision = {"route": "reply", "selected": True,
-                                 "reason": "feedback_followup"}
-            elif runtime.FEEDBACK.quiet(group_id, now=now):
-                # 原生反馈判过「收敛一下」：暂停窗内 unsolicited 一律不掷不评。
-                gate_decision = {"route": "banter", "selected": False,
-                                 "reason": "feedback_quiet"}
-            elif now - group_last_random_reply.get(group_id, 0) >= config.BANTER_COOLDOWN_SECONDS:
-                # 聊到群主时更容易被点着：这是群里最现成的梗源，也是它刷存在感最自然的位置。
-                # 判断「是不是在说群主」不看写死的人名 —— 见 owner_reference_terms。
-                if mentions_owner(user_input, group_id, mentioned_others):
-                    chance = config.OWNER_MENTION_PROBABILITY
-                else:
-                    chance = config.BANTER_PROBABILITY
-                # 亲密度权重：越熟的人说话越容易被接（2026-09-21 群主提的机制）。
-                # 权重不是概率 —— 基数不动，熟人 1.6×、生人 0.7×，整体话量不变。
-                rec = runtime.RELATIONS.get(group_id, sender_openid, create=False)
-                chance = banter_chance(chance, rec)
-                # 激活度（2026-10-19）：作息 × 心情折进插嘴意愿——凌晨被吵醒不太想搭话，
-                # 心情好更愿意接梗。这是纯乘数，基数与亲密度权重的语义都不动。
-                tier = relations.level_key((rec or {}).get("score", 0))
-                act_willingness, _act_turns, _act_line = activation.profile(tier)
-                chance = min(chance * act_willingness, config.BANTER_CHANCE_MAX)
-                # 何时介入（2026-10-31）：原来这枚骰子**与对话无关** —— 冷了二十分钟的
-                # 死群和三个人你一句我一句的热场，掷的是同一个概率。先验按本群分数
-                # 均值归一，所以整体话量不变，只是把这些话挪到有空档的时刻。
-                if opening_trace.get("opening_score") is not None:
-                    chance = min(chance * opening_trace["opening_shape"],
-                                 config.BANTER_CHANCE_MAX)
-                # 插嘴判断（2026-11-01）：每条消息分诊时都问过「此刻插一句合不合适」，
-                # 它的 p(join_briefly) 按本群均值折成乘数。原来是先掷骰子、掷中了再让判断
-                # 一票否决 —— 判断只能减不能加，而它的结论在冲着机器人聊的场合几乎总是
-                # stay_quiet，群主看到的就是「插话这事沉默得太多」。现在判断决定落在哪些时刻，
-                # 话量仍由 BANTER_PROBABILITY 定。判断不可用时乘数为 1，退回原来的骰子。
-                if intervention_trace:
-                    chance = min(chance * intervention_trace["intervention_shape"],
-                                 config.BANTER_CHANCE_MAX)
-                # 接纳度：证据够了才允许偏离群体口径，否则乘数恰为 1.0。
-                receptive_trace = {}
-                if config.RECEPTIVE_ENABLED:
-                    receptive_trace = runtime.RECEPTIVE.assess(
-                        group_id, sender_openid, now=now)
-                    chance = min(chance * receptive_trace["receptive_multiplier"],
-                                 config.BANTER_CHANCE_MAX)
-                draw = random.random()
-                hit = draw < chance
-                intervention = feedback_result.get("intervention")
-                if (hit and not feedback_result.get("decision_attempted")
-                        and search_query is None):
-                    # 没分诊过的消息（DECISION_TRIAGE_ALL=false 时的普通消息）：掷中后
-                    # 单问一次，按结论拦。分诊过的判断已经折进了概率，不再一票否决；
-                    # 同一条消息绝不发起第二次原生调用。
+            # 「居然记得」（2026-10-31 群主：「有时候让人觉得意想不到居然
+            # 记得」）：本地话题闸先挑出本人旧话，再问一次原生判断 ——
+            # 此刻端出来是「居然记得」还是「翻档案」。判断不可用就不端，
+            # 新增的惊喜不许靠失败兜底。要稀才稀奇：每人冷却 + 每天上限。
+            if (config.DECISION_CALLBACK_ENABLED
+                    and config.PERSONAL_MEMORY_ENABLED
+                    and config.DIGEST_ENABLED
+                    and runtime.RECEPTIVE.callback_allowed(
+                        group_id, sender_openid, now=now)):
+                who, sources = digest_mod.match_people(
+                    runtime.DIGESTS.get(group_id), group_id=group_id,
+                    sender=sender_openid, text=user_input,
+                    resolver=_resolve_name(group_id))
+                if sources:
                     try:
-                        intervention = await runtime.FEEDBACK.consider_banter(
+                        approved = await runtime.FEEDBACK.consider_callback(
                             group_id, sender_openid,
-                            history=list(buf or [])[-4:],
+                            quote=sources[0]["quote"],
+                            quote_ts=sources[0]["ts"],
+                            history=list(buf or [])[-4:], now=now,
                             source_message_id=message.id)
                     except Exception:
-                        logger.exception("⚠️ 插嘴仲裁异常（%s）", group_id[-6:])
-                        intervention = None
-                vetoed = (hit and intervention == "stay_quiet"
-                          and not feedback_result.get("decision_attempted"))
-                gate_decision = {"route": "banter",
-                                 "selected": bool(hit and not vetoed),
-                                 "reason": ("decision_quiet" if vetoed else
-                                            "hit" if hit else "miss"),
-                                 "gate_probability": chance, "draw": draw,
-                                 **opening_trace, **intervention_trace,
-                                 **receptive_trace}
-                if vetoed:
-                    gate_decision["decision_action"] = "stay_quiet"
-                elif intervention in ("join_briefly", "stay_quiet"):
-                    gate_decision["decision_action"] = intervention
-                if hit and not vetoed:
-                    should_reply = True
-                    is_random = True
-                    logger.info("🎲 插嘴命中（激活度 %.2f × 亲密度权重 %.2f → 概率 %.3f，%s）",
-                                act_willingness, relations.banter_weight(rec),
-                                chance, sender_openid[-4:])
-                    group_last_random_reply[group_id] = now
-                    runtime.STATE.data["cooldowns"][group_id] = now
-                    runtime.STATE.mark_dirty()
-                    # 「居然记得」（2026-10-31 群主：「有时候让人觉得意想不到居然
-                    # 记得」）：本地话题闸先挑出本人旧话，再问一次原生判断 ——
-                    # 此刻端出来是「居然记得」还是「翻档案」。判断不可用就不端，
-                    # 新增的惊喜不许靠失败兜底。要稀才稀奇：每人冷却 + 每天上限。
-                    if (config.DECISION_CALLBACK_ENABLED
-                            and config.PERSONAL_MEMORY_ENABLED
-                            and config.DIGEST_ENABLED
-                            and runtime.RECEPTIVE.callback_allowed(
-                                group_id, sender_openid, now=now)):
-                        who, sources = digest_mod.match_people(
-                            runtime.DIGESTS.get(group_id), group_id=group_id,
-                            sender=sender_openid, text=user_input,
-                            resolver=_resolve_name(group_id))
-                        if sources:
-                            try:
-                                approved = await runtime.FEEDBACK.consider_callback(
-                                    group_id, sender_openid,
-                                    quote=sources[0]["quote"],
-                                    quote_ts=sources[0]["ts"],
-                                    history=list(buf or [])[-4:], now=now,
-                                    source_message_id=message.id)
-                            except Exception:
-                                logger.exception("⚠️ 回忆判断异常（%s）",
-                                                 group_id[-6:])
-                                approved = None
-                            if approved is not None:
-                                gate_decision["callback"] = bool(approved)
-                            if approved:
-                                callback_note = refresh_names(
-                                    group_id,
-                                    digest_mod.render_matched(who, sources[:1]))
-                            if callback_note:
-                                runtime.RECEPTIVE.mark_callback(
-                                    group_id, sender_openid, now=now)
-                                runtime.STATE.mark_dirty()
-                                logger.info("🫧 居然记得：端出 1 条旧话（%s）",
-                                            sender_openid[-4:])
-            else:
-                gate_decision = {"route": "banter", "selected": False,
-                                 "reason": "cooldown"}
+                        logger.exception("⚠️ 回忆判断异常（%s）", group_id[-6:])
+                        approved = None
+                    if approved:
+                        callback_note = refresh_names(
+                            group_id,
+                            digest_mod.render_matched(who, sources[:1]))
         if gate_decision is not None:
             runtime.INTERACTIONS.append(
                 "decision", group_id, user=sender_openid, actor="system",
@@ -2325,7 +2473,6 @@ class GroupBot(botpy.Client):
             if providers.research_available():
                 lookup = ("search", search_query)
                 should_reply = True
-                is_random = False
                 runtime.INTERACTIONS.append(
                     "decision", group_id, user=sender_openid, actor="system",
                     source_message_id=message.id, route="search", selected=True,
@@ -2340,7 +2487,6 @@ class GroupBot(botpy.Client):
                     return
                 search_note = search_mod.render_note(results)
                 should_reply = True
-                is_random = False
                 logger.info("🌐 按需搜索：%d 条结果（%s）", len(results), group_id[-6:])
                 # 搜索成功会改写上面的门控结果 —— 单独记一条，而不是回头涂改插嘴记录。
                 runtime.INTERACTIONS.append(
@@ -2351,10 +2497,9 @@ class GroupBot(botpy.Client):
         # 9.6 判断触发的联网查询：只在本轮本来就要正经回话时才查（插嘴、短接、喊停都不查）。
         #     research 是隐藏彩蛋：今天的次数用完或刚用过，就退回普通查询。
         #     自动查询不吃「搜索」命令的冷却，只算进每日上限。
-        if (lookup is None and should_reply and not is_random and not quip
+        if (lookup is None and should_reply and not unprompted and not quip
                 and not back_off and config.SEARCH_ENABLED
                 and providers.research_available()
-                and feedback_result.get("image_generation") != "generate"
                 and not wordfilter.has_hit(user_input)):
             kind = feedback_result.get("lookup")
             status = None
@@ -2387,87 +2532,21 @@ class GroupBot(botpy.Client):
         if is_at and not user_input and not image_url and not history_at_receipt:
             await safe_reply(message, f"找{naming.bot_name()}啥事？直接说就行。")
             return
-        if (not lookup and not is_random and not quip and not back_off
-                and feedback_result.get("image_generation") == "generate"):
-            # 分诊与普通回复门都放行后才花图像额度；不同于搜索，图像本身就是回复。
-            # 同人更早的一次判断若已被受理，丢弃过时的并发判断，不能重复发图。
-            if not runtime.FEEDBACK.claim_image(
-                    group_id, sender_openid, message_time=receipt_time,
-                    expected_boundary=feedback_result.get("image_boundary")):
-                logger.info("跳过已过时的生图判断")
-                return
-            ready = asyncio.Event()
-            proceed = asyncio.Event()
-            image_reservation = []
-
-            async def image_sequence():
-                ready.set()
-                await proceed.wait()
-                return SENDER._next_sequence(message)
-
-            image_task = asyncio.create_task(image_generation.generate_and_send(
-                message, group_id=group_id, user_id=sender_openid, score=resource_score,
-                prompt=feedback_result["image_prompt"], before_send=image_sequence,
-                on_reserved=lambda status: image_reservation.append(status)))
-            ready_task = asyncio.create_task(ready.wait())
-            try:
-                done, _ = await asyncio.wait(
-                    (image_task, ready_task), timeout=config.ASYNC_REPLY_SECONDS,
-                    return_when=asyncio.FIRST_COMPLETED)
-                if not done:
-                    await safe_reply(message, "今天的份额用完了，不过这张我再帮你画，稍等。"
-                                     if image_reservation == ["exception"]
-                                     else "好，我画画看，稍等一下。",
-                                     is_current=lambda: not proceed.is_set())
-                proceed.set()
-                sent = await image_task
-            except Exception:
-                logger.exception("生图处理异常")
-                sent = False
-            finally:
-                proceed.set()
-                ready_task.cancel()
-            if sent is True:
-                outgoing_id = uuid.uuid4().hex
-                runtime.FEEDBACK.remember(
-                    group_id, sender_openid, "[已生成并发送图片]", route="reply",
-                    outgoing_id=outgoing_id, history=list(buf or [])[-4:])
-                runtime.INTERACTIONS.append(
-                    "delivery", group_id, user=sender_openid, actor="assistant",
-                    outgoing_id=outgoing_id, source_message_id=message.id,
-                    status="delivered", route="image", generation="model")
-                return
-            if sent is None:
-                # QQ 可能已收到：不能再发一条假定失败的回复。
-                return
-            if sent == "quota":
-                await safe_reply(message, "今天画得有点累啦，明天再帮你画吧。")
-                return
-            if sent == "busy":
-                await safe_reply(message, "我还在画上一张，等我画完你再叫我画这张吧。")
-                return
-            if sent == "blocked":
-                await safe_reply(message, "这张没通过图片服务的审核，换个想法再试试吧。")
-                return
-            if sent == "upload_error":
-                await safe_reply(message, "图画出来了，但这次没能发到群里。")
-                return
-            # 无论是否说过「稍等」，都不依赖聊天预算来说明失败。
-            await safe_reply(message, "这次没画成，等会儿再试试。")
-            return
         if not await BudgetGate.check(message, group_id):
             runtime.INTERACTIONS.append(
                 "decision", group_id, user=sender_openid, actor="system",
                 source_message_id=message.id,
-                route="banter" if is_random else "reply",
+                route="banter" if unprompted else "reply",
                 selected=False, reason="budget_blocked")
             return
         if image_url:
+            # 没叫它的那一轮按后台口径读图（吃冷却）：没人问的图不值得破一次冷却，
+            # 读不成也不提示它「说明看不到」—— 没人在等它看这张图。
             caption = await media.caption_for(
-                group_id, message.id, sender_openid, image_url, foreground=True)
+                group_id, message.id, sender_openid, image_url, foreground=not unprompted)
             if caption:
                 user_input = f"{user_input}\n[图片：{caption}]"
-            else:
+            elif not unprompted:
                 user_input += "\n（本轮图片暂不可读；明确说明这一点，不猜测图中内容。）"
 
         # 11. 组装群聊背景 + session，走 AI
@@ -2491,15 +2570,21 @@ class GroupBot(botpy.Client):
                 # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被
                 # 冷却挡掉没读。不然模型只看见裸 [图片]，答「没看到图」——2026-11-01
                 # 12:32 连着三次，都是冷却挡掉的那两张（实测见 docs/image-before-reply.md）。
-                await media.settle(group_id, [b.get("message_id") for b in prev],
-                                   config.ASYNC_REPLY_SECONDS)
+                # 没叫它的那一轮不补读：补读走前台、不吃冷却，每条闲聊都补就把冷却架空了
+                if not unprompted:
+                    await media.settle(group_id, [b.get("message_id") for b in prev],
+                                       config.ASYNC_REPLY_SECONDS)
                 # 必须标出发言人。之前只给一串裸文本，模型分不清哪句是谁说的，
                 # 于是把别人认领的名字安到了当前这位头上 —— 叫错人就是这么来的
                 # （_who_label 已提为模块级：读图上下文共用，两处渲染不许漂移）
-                context_hint = refresh_names(
-                    group_id,
-                    "\n".join(f"- {'当前说话人' if b['sender'] == sender_openid else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}"
-                              for b in prev))
+                rows = [(float(b.get("time") or 0),
+                         f"- {'当前说话人' if b['sender'] == sender_openid else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}")
+                        for b in prev]
+                # 同一段时间里它自己说过的话按时间插进去（见 own_lines）
+                rows += [(o["time"], f"- 你：{o['text']}") for o in own_lines.get(group_id, ())
+                         if rows[0][0] <= o["time"] <= now_ts]
+                rows.sort(key=lambda row: row[0])
+                context_hint = refresh_names(group_id, "\n".join(line for _, line in rows))
                 # ⚠️ 这行是对着「爱翻旧账的模型」写的（实测 Gemini 会把背景里别人的言行安到
                 # 当前说话人头上，一晚上把「当猫娘」安给了三个人）。所以要点名三件事：
                 # 每句都有主，当前说话人与其他人按 ID 区分，引用前先核对标记。
@@ -2533,7 +2618,7 @@ class GroupBot(botpy.Client):
 
         # 可编辑知识库：维护者改文件、下一轮即生效；只按关键词取少量进动态层。
         knowledge_note = ""
-        if (not is_random and not quip and not back_off
+        if (not unprompted and not quip and not back_off
                 and not feedback_note and config.KNOWLEDGE_ENABLED):
             knowledge_note = refresh_names(
                 group_id, runtime.KNOWLEDGE.render(group_id, user_input))
@@ -2545,7 +2630,7 @@ class GroupBot(botpy.Client):
         # 以前靠「上次 / 之前 / 答应」这类线索词触发，真实语料里点名消息上命中的 5 条全是误触发
         # （「之前那个模型更有趣」「我叫王红闻你就要答应」），判断全判对了。
         recall_note = ""
-        if (not is_random and not quip and not back_off
+        if (not unprompted and not quip and not back_off
                 and not feedback_note and config.MEMORY_RECALL_ENABLED
                 and feedback_result.get("recall") == "look_up"):
             recall_note = refresh_names(group_id, recall_mod.build_note(
@@ -2562,7 +2647,7 @@ class GroupBot(botpy.Client):
         # 插嘴轮：只认门控里被原生判断放行的那一条（callback_note）；
         # 普通接话轮照旧按本人 + 当前话题现挑。两条路都走同一道准入闸。
         personal_note = callback_note
-        if (summary and not is_random and not quip and not back_off
+        if (summary and not unprompted and not quip and not back_off
                 and not feedback_note
                 and not any((knowledge_note, recall_note, search_note, lookup))):
             personal_note = refresh_names(group_id, digest_mod.render_people(
@@ -2575,7 +2660,7 @@ class GroupBot(botpy.Client):
         reply_kwargs = dict(
             on_delivered=commit_milestone, owner_hint_group=group_id,
             is_owner=is_owner,
-            context_hint=context_hint, is_random_banter=is_random,
+            context_hint=context_hint, unprompted=unprompted,
             relation_note=relation_note, group_memory=group_memory,
             owner_label=owner_label(group_id), state_note=state_note,
             knowledge_note=knowledge_note, recall_note=recall_note,
@@ -2597,8 +2682,20 @@ class GroupBot(botpy.Client):
                 await safe_reply(message, "这次没查成，等会儿再试试。")
                 return
         if outcome is None:
-            outcome = await reply_in_session(message, session_id, user_input,
-                                             search_note=search_note, **reply_kwargs)
+            # 画不画、说不说语音由小王在回复里自己决定；这里只定它这一轮「能不能」。
+            # 搜索、喊停这轮不画也不念：前者要的是资料，后者对方已经不想听了。
+            # （别叫 media：那是读图模块的名字，同一个函数里前面还在用它）
+            this_turn = (None if back_off or search_note else
+                         media_turn(group_id, sender_openid, resource_score,
+                                    asked=not quip))
+            if unprompted:
+                outcome = await reply_unprompted(message, session_id, user_input,
+                                                 media=this_turn, callback_note=callback_note,
+                                                 **reply_kwargs)
+            else:
+                outcome = await reply_in_session(message, session_id, user_input,
+                                                 search_note=search_note, media=this_turn,
+                                                 **reply_kwargs)
         reply_text, delta, delivery = outcome
         if delivery is None:
             # 模型行使了不说话的权利：这轮到此为止，好感度/情绪结算全部跳过
@@ -2635,7 +2732,19 @@ class GroupBot(botpy.Client):
 
         user_input = (message.content or "").strip()
         sender_openid = message.author.user_openid
-        logger.info("📩 [私聊] %s | %s", sender_openid, user_input)
+        voices = getattr(message, "_voice_attachments", ())
+        if voices and sender_openid:
+            transcript = await _recognize_voices(
+                voices, f"private:{sender_openid}:{message.id}" if message.id else None)
+            if transcript:
+                user_input = f"{user_input} {transcript}".strip()
+            else:
+                note = "语音附件过多，暂时无法识别" if len(voices) > 3 else "语音暂时无法识别"
+                if not user_input:
+                    await safe_reply(message, f"{note}，能发文字吗？")
+                    return
+                user_input = f"{user_input}\n（{note}）"
+        logger.info("📩 [私聊]%s", " [语音]" if voices else "")
         if not user_input or not sender_openid:
             return
 
@@ -2858,6 +2967,7 @@ async def _shutdown(*, cancel_all=False):
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    await VOICE.close()
     await providers.close()
 
 
