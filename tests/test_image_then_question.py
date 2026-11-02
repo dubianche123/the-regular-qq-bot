@@ -10,6 +10,7 @@
 两种都走真实的 handle_group_msg，只把读图和回话模型换成假的。
 """
 import asyncio
+import json
 import os
 import tempfile
 import time
@@ -30,6 +31,7 @@ from regular import decisions
 
 G = "GID_IMAGE_Q"
 A = "USER_IMAGE_A"
+B = "USER_IMAGE_B"
 URL = "https://image.invalid/cat.jpg"
 URL2 = "https://image.invalid/calendar.jpg"
 CAPTION = "一只橘猫趴在键盘上"
@@ -46,11 +48,13 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
             os.path.join(self._tmp.name, "ix"), enabled=True, keep_days=0)
         self.addCleanup(self.log.close)
         self.prompts = []
+        self.unprompted = []
         self.vision_calls = []
         state = storage.StateStore(os.path.join(self._tmp.name, "state.json"))
 
         async def fake_model(messages, max_tokens, **kw):
             if prompts.BANTER_MARK in messages[-1]["content"]:
+                self.unprompted.append(messages[-1]["content"])
                 return "〔不接〕"                 # 发图那条没叫它：它不接
             self.prompts.append("\n".join(str(m.get("content")) for m in messages))
             return "（模型应答）"
@@ -86,16 +90,17 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(lambda: bot.group_last_random_reply.pop(G, None))
         self.addCleanup(bot.processed_msg_ids.clear)
         self.addCleanup(lambda: runtime.RELATIONS.records.pop(f"{G}|{A}", None))
+        self.addCleanup(lambda: runtime.RELATIONS.records.pop(f"{G}|{B}", None))
 
     async def asyncTearDown(self):
         await asyncio.gather(*bot._media_tasks, return_exceptions=True)
         await self.service.drain()
 
-    async def _drive(self, text, *, image=None, is_at=False):
+    async def _drive(self, text, *, image=None, is_at=False, sender=A):
         fake_self = SimpleNamespace(robot=SimpleNamespace(id="BOT_IMAGE_Q", name="regular"))
         msg = SimpleNamespace(
             id="msg-" + os.urandom(5).hex(), content=text, group_openid=G,
-            author=SimpleNamespace(member_openid=A), mentions=[], timestamp=None,
+            author=SimpleNamespace(member_openid=sender), mentions=[], timestamp=None,
             attachments=[SimpleNamespace(content_type="image/jpeg", url=image)] if image else [],
             reply=AsyncMock(return_value={"id": "rcpt-" + os.urandom(3).hex()}))
         await bot.GroupBot.handle_group_msg(fake_self, msg, is_at=is_at)
@@ -130,6 +135,54 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
         for caption in CAPTIONS.values():
             self.assertIn(f"[图片：{caption}]", background)
 
+
+    def _cooled_down(self):
+        """上一张图刚读过：后台读图被冷却挡掉。"""
+        self.service.usage.update(day=time.strftime("%Y-%m-%d"), count=1, last=time.time())
+
+    async def test_unread_image_nobody_asked_about_is_not_put_to_it(self):
+        """2026-11-02 21:04：没叫它的纯图，冷却挡掉没读，它看着裸 [图片] 答「我这边看不到」，
+        群友连发几张就连答几遍。没读成的纯图没东西可接，不问它。"""
+        self._cooled_down()
+        await self._drive("", image=URL)
+        self.assertEqual(self.unprompted, [])
+        self.log.close()
+        rows = [json.loads(line) for name in sorted(os.listdir(self.log.log_dir))
+                for line in open(os.path.join(self.log.log_dir, name), encoding="utf-8")]
+        gate = [r for r in rows if r["kind"] == "decision"][-1]
+        self.assertEqual((gate["route"], gate["selected"], gate["reason"]),
+                         ("banter", False, "image_unread"))
+
+    async def test_read_image_nobody_asked_about_is_still_its_call(self):
+        await self._drive("", image=URL)
+        self.assertEqual(len(self.unprompted), 1)
+        self.assertIn(f"[图片：{CAPTION}]", self.unprompted[0])
+
+    async def test_unread_image_beside_words_is_left_out_of_the_reply(self):
+        self._cooled_down()
+        await self._drive("哈哈哈这个", image=URL)
+        self.assertEqual(len(self.unprompted), 1)
+        self.assertIn("这张图你没看；没人问你，别提它", self.unprompted[0])
+
+    async def test_own_image_stays_in_background_past_the_turn_limit(self):
+        """2026-11-02 21:05：生人发图，中间别人插了两句，再问「这张怎么样」——亲密度只给
+        它看最后几条，图被挤出背景，它答「没看到画面」。"""
+        await self._drive("", image=URL)
+        turns = bot.activation.context_turns(
+            bot.relations.level_key(0))
+        for i in range(turns):
+            await self._drive(f"别人插的第 {i} 句", sender=B)
+        await self._drive("这张怎么样", is_at=True)
+        self.assertIn(f"[图片：{CAPTION}]", self._background())
+
+    async def test_reply_waits_for_a_slow_read_beyond_the_lookup_wait(self):
+        """读一张图线上要 2–10 秒；回话前等图不再借用联网查询那 6 秒。"""
+        self._cooled_down()
+        await self._drive("", image=URL)
+        with patch.object(config, "ASYNC_REPLY_SECONDS", 0.01), \
+                patch.object(config, "VISION_SETTLE_SECONDS", 2.0):
+            await self._drive("读一下这张", is_at=True)
+        self.assertIn(f"[图片：{CAPTION}]", self._background())
 
 if __name__ == "__main__":
     unittest.main()

@@ -280,6 +280,9 @@ if VISION_INPUT_MODE not in ("url", "download"):
     CONFIG_ERRORS.append("VISION_INPUT_MODE 必须是 url 或 download")
 VISION_COOLDOWN_SECONDS = _env_float("VISION_COOLDOWN_SECONDS", 60.0)
 VISION_DAILY_CAP = _env_int("VISION_DAILY_CAP", 30)
+# 回话前最多等背景里没读完的图多久（media.settle）。线上从开始下载到描述回来 2–10 秒，
+# 原先借用 ASYNC_REPLY_SECONDS 的 6 秒，2026-11-02 21:04 差 4 秒，答了「看不到」。
+VISION_SETTLE_SECONDS = _env_float("VISION_SETTLE_SECONDS", 15.0)
 # 读图输出上限同样包含思考 token；25 字描述 + 思考需要 300 左右，80 会整轮空正文。
 VISION_MAX_TOKENS = _env_int("VISION_MAX_TOKENS", 300)
 

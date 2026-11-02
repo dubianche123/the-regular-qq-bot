@@ -251,6 +251,8 @@ from affinity import (affinity_budget, apply_affinity_delta_capped,
 # 背景前言：每条背景都挂的一行提醒。完整的读法说明（别张冠李戴、别复读、[图片：…] 行
 # 照着说）每轮都一样，2026-11-01 挪进了稳定头（prompts.PROMPT_SHARED_RULES）吃前缀缓存；
 # 这里只留最要紧的一句，挨着背景本身 —— 模型最容易犯浑的位置就是读背景那一刻。
+# 回话时，这人多久之内自己发的图一定放进背景，不受亲密度条数限制（见 on_group_message）
+OWN_IMAGE_SECONDS = 120.0
 _BG_PREAMBLE = "（每句开头标的是发言人；‘当前说话人’与眼前这位是同一人，‘你’是你自己刚在群里说的，其余是其他群友；拿不准是谁就别点名）"
 
 
@@ -2548,6 +2550,16 @@ class GroupBot(botpy.Client):
                 user_input = f"{user_input}\n[图片：{caption}]"
             elif not unprompted:
                 user_input += "\n（本轮图片暂不可读；明确说明这一点，不猜测图中内容。）"
+            elif user_input == "[图片]":
+                # 没人问、又没读成的纯图：没有可接的东西，不问它。问了它只看见裸 [图片]，
+                # 就答「我这边看不到」—— 2026-11-02 21:04 群友连发几张图，张张这么答。
+                runtime.INTERACTIONS.append(
+                    "decision", group_id, user=sender_openid, actor="system",
+                    source_message_id=message.id, route="banter",
+                    selected=False, reason="image_unread")
+                return
+            else:
+                user_input += "\n（这张图你没看；没人问你，别提它。）"
 
         # 11. 组装群聊背景 + session，走 AI
         context_hint = ""
@@ -2565,7 +2577,13 @@ class GroupBot(botpy.Client):
             _rec = runtime.RELATIONS.get(group_id, sender_openid, create=False)
             _tier = relations.level_key((_rec or {}).get("score", 0))
             _willingness, _turns, state_note = activation.profile(_tier)
-            prev = [b for b in fresh if b["text"] != user_input][-_turns:]
+            earlier = [b for b in fresh if b["text"] != user_input]
+            prev = earlier[-_turns:]
+            # 这人刚发的图是他这句话的一部分：条数限的是能看多少别人的话，不该把他
+            # 递过来的图挤掉（2026-11-02 21:05 生人发图，隔两句问「这张怎么样」，图不在背景里）
+            prev = [b for b in earlier[:-_turns]
+                    if b["sender"] == sender_openid and "[图片" in b["text"]
+                    and now_ts - float(b.get("time") or 0) <= OWN_IMAGE_SECONDS] + prev
             if prev:
                 # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被
                 # 冷却挡掉没读。不然模型只看见裸 [图片]，答「没看到图」——2026-11-01
@@ -2573,7 +2591,7 @@ class GroupBot(botpy.Client):
                 # 没叫它的那一轮不补读：补读走前台、不吃冷却，每条闲聊都补就把冷却架空了
                 if not unprompted:
                     await media.settle(group_id, [b.get("message_id") for b in prev],
-                                       config.ASYNC_REPLY_SECONDS)
+                                       config.VISION_SETTLE_SECONDS)
                 # 必须标出发言人。之前只给一串裸文本，模型分不清哪句是谁说的，
                 # 于是把别人认领的名字安到了当前这位头上 —— 叫错人就是这么来的
                 # （_who_label 已提为模块级：读图上下文共用，两处渲染不许漂移）
