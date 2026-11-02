@@ -161,18 +161,22 @@ class CaptionService:
         while len(self._owed) > self.cache_size:
             self._owed.pop(next(iter(self._owed)))
 
-    async def settle(self, group_id, message_ids, timeout):
-        """要回话了：把这些背景消息里还没读成的图读掉，最多等 timeout 秒。
+    def reads_owed(self, group_id, message_ids):
+        """要回话了：这些背景消息里还没读成的图，各给一个读它的协程，由调用方决定等多久。
 
-        在途的等同一个任务；被冷却挡掉的按前台补读（前台不吃冷却）。超时只是不等了——
+        在途的等同一个任务；被冷却挡掉的按前台补读（前台不吃冷却）。等的人不等了，
         读图本身被 shield 护着，读完照常回填缓冲和归档，下一轮就能用上。
         """
         owed = [(str(mid), *self._owed[(group_id, str(mid))]) for mid in message_ids
                 if (group_id, str(mid)) in self._owed]
-        if not owed:
+        return [self.caption_for(group_id, mid, sender, url, foreground=True)
+                for mid, sender, url in owed]
+
+    async def settle(self, group_id, message_ids, timeout):
+        """把 reads_owed 读完，最多等 timeout 秒。"""
+        reads = self.reads_owed(group_id, message_ids)
+        if not reads:
             return
-        reads = [self.caption_for(group_id, mid, sender, url, foreground=True)
-                 for mid, sender, url in owed]
         try:
             await asyncio.wait_for(asyncio.gather(*reads), timeout)
         except asyncio.TimeoutError:
@@ -213,6 +217,10 @@ async def caption_for(group_id, message_id, sender, image_url, *, foreground=Fal
 def remember(group_id, message_id, sender, image_url):
     if _service is not None:
         _service.remember(group_id, message_id, sender, image_url)
+
+
+def reads_owed(group_id, message_ids):
+    return _service.reads_owed(group_id, message_ids) if _service is not None else []
 
 
 async def settle(group_id, message_ids, timeout):

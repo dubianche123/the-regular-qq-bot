@@ -252,8 +252,16 @@ from affinity import (affinity_budget, apply_affinity_delta_capped,
 # 背景前言：每条背景都挂的一行提醒。完整的读法说明（别张冠李戴、别复读、[图片：…] 行
 # 照着说）每轮都一样，2026-11-01 挪进了稳定头（prompts.PROMPT_SHARED_RULES）吃前缀缓存；
 # 这里只留最要紧的一句，挨着背景本身 —— 模型最容易犯浑的位置就是读背景那一刻。
-# 回话时，这人多久之内自己发的图一定放进背景，不受亲密度条数限制（见 on_group_message）
+# 回话时，这人多久之内自己发的图一定放进背景，不受亲密度条数限制（见 on_group_message）；
+# 这些图和他这条自己带的图还没读完，就先回 IMAGE_HOLD_LINE（见 await_images）
 OWN_IMAGE_SECONDS = 120.0
+IMAGE_HOLD_LINE = "我看看图，等我一下。"
+
+
+def _own_recent_image(row, sender, now):
+    """背景里这一条是不是这人两分钟内自己发的图。"""
+    return (row["sender"] == sender and "[图片" in row["text"]
+            and now - float(row.get("time") or 0) <= OWN_IMAGE_SECONDS)
 _BG_PREAMBLE = "（每句开头标的是发言人；‘当前说话人’与眼前这位是同一人，‘你’是你自己刚在群里说的，其余是其他群友；拿不准是谁就别点名）"
 
 
@@ -1724,6 +1732,35 @@ def _reserve_search(group_id, user_id, score, *, deep=False, cooldown=False):
     return result
 
 
+async def await_images(message, own, others):
+    """回话要看的图还没读完。own：这人自己递过来的图（这条带的、两分钟内他发的）；others：背景里别人的。
+
+    跟联网查询一个节奏（answer_with_lookup）：线上等 ASYNC_REPLY_SECONDS，等得到就一条回复；
+    他自己的图还没读完，先回一句在看图，读完再正经答（读图自己最多 AI_TOTAL_TIMEOUT）——
+    以前是闷着等，等不到就答「看不到」，可图还在路上（2026-11-02 21:05）。
+    别人的图不为它先开口（这句多半不是在问那张），照旧最多闷等 VISION_SETTLE_SECONDS。
+    不等了也不取消读图：读图被 shield 护着，读完照常回填，下一轮能用。
+    """
+    mine = asyncio.ensure_future(asyncio.gather(*own, return_exceptions=True)) if own else None
+    theirs = asyncio.ensure_future(asyncio.gather(*others, return_exceptions=True)) if others else None
+    waits = [t for t in (mine, theirs) if t is not None]
+    if not waits:
+        return
+    started = time.monotonic()
+    await asyncio.wait(waits, timeout=config.ASYNC_REPLY_SECONDS)
+    if mine is not None and not mine.done():
+        logger.info("🖼 图还没读完，先回一句在看（%s）", message.group_openid[-6:])
+        await safe_reply(message, IMAGE_HOLD_LINE)
+        await asyncio.wait([mine], timeout=config.AI_TOTAL_TIMEOUT)
+    left = config.VISION_SETTLE_SECONDS - (time.monotonic() - started)
+    if theirs is not None and not theirs.done() and left > 0:
+        await asyncio.wait([theirs], timeout=left)
+    for task in waits:
+        if not task.done():
+            task.cancel()
+            logger.info("🖼 背景里的图没读完，先回话")
+
+
 async def answer_with_lookup(message, session_id, user_input, kind, query, *, reply_kwargs):
     """先查再答。线上等得到就一条回复；等不到先回一句在查，把手交给定时任务跟进。
 
@@ -2632,15 +2669,18 @@ class GroupBot(botpy.Client):
                 route="banter" if unprompted else "reply",
                 selected=False, reason="budget_blocked")
             return
-        if image_url:
+        current_read = None
+        if image_url and not unprompted:
+            # 这条自己带的图：读图先起着，跟背景里欠着的图一起等（见下面 await_images）
+            current_read = asyncio.ensure_future(media.caption_for(
+                group_id, message.id, sender_openid, image_url, foreground=True))
+        elif image_url:
             # 没叫它的那一轮按后台口径读图（吃冷却）：没人问的图不值得破一次冷却，
             # 读不成也不提示它「说明看不到」—— 没人在等它看这张图。
             caption = await media.caption_for(
-                group_id, message.id, sender_openid, image_url, foreground=not unprompted)
+                group_id, message.id, sender_openid, image_url, foreground=False)
             if caption:
                 user_input = f"{user_input}\n[图片：{caption}]"
-            elif not unprompted:
-                user_input += "\n（本轮图片暂不可读；明确说明这一点，不猜测图中内容。）"
             elif user_input == "[图片]":
                 # 没人问、又没读成的纯图：没有可接的东西，不问它。问了它只看见裸 [图片]，
                 # 就答「我这边看不到」—— 2026-11-02 21:04 群友连发几张图，张张这么答。
@@ -2655,12 +2695,13 @@ class GroupBot(botpy.Client):
         # 11. 组装群聊背景 + session，走 AI
         context_hint = ""
         state_note = ""
+        prev = []
+        now_ts = time.time()
         buf = group_buffers.get(group_id)
         if history_at_receipt:
             # ⚠️ 必须按时间过滤（2026-10-06 实测）：buffer 是落盘的、跨重启保留，
             # 机器睡了 12 天再醒来的第一条消息，配到的还是 12 天前的对话 ——
             # 那不叫「最近背景」，叫考古。
-            now_ts = time.time()
             fresh = [b for b in history_at_receipt if 0 <= now_ts - float(b.get("time") or 0)
                      <= config.GROUP_BUFFER_TTL_SECONDS]
             # 关注度（2026-10-19）：亲密度决定背景条数——越熟的人它记得越多，
@@ -2668,36 +2709,44 @@ class GroupBot(botpy.Client):
             _rec = runtime.RELATIONS.get(group_id, sender_openid, create=False)
             _tier = relations.level_key((_rec or {}).get("score", 0))
             _willingness, _turns, state_note = activation.profile(_tier)
-            earlier = [b for b in fresh if b["text"] != user_input]
+            # 带图的这条还没回填描述，别拿「[图片]」去比，把背景里别的没读的图也筛掉
+            same = None if image_url else user_input
+            earlier = [b for b in fresh if b["text"] != same]
             prev = earlier[-_turns:]
             # 这人刚发的图是他这句话的一部分：条数限的是能看多少别人的话，不该把他
             # 递过来的图挤掉（2026-11-02 21:05 生人发图，隔两句问「这张怎么样」，图不在背景里）
-            prev = [b for b in earlier[:-_turns]
-                    if b["sender"] == sender_openid and "[图片" in b["text"]
-                    and now_ts - float(b.get("time") or 0) <= OWN_IMAGE_SECONDS] + prev
-            if prev:
-                # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被
-                # 冷却挡掉没读。不然模型只看见裸 [图片]，答「没看到图」——2026-11-01
-                # 12:32 连着三次，都是冷却挡掉的那两张（实测见 docs/image-before-reply.md）。
-                # 没叫它的那一轮不补读：补读走前台、不吃冷却，每条闲聊都补就把冷却架空了
-                if not unprompted:
-                    await media.settle(group_id, [b.get("message_id") for b in prev],
-                                       config.VISION_SETTLE_SECONDS)
-                # 必须标出发言人。之前只给一串裸文本，模型分不清哪句是谁说的，
-                # 于是把别人认领的名字安到了当前这位头上 —— 叫错人就是这么来的
-                # （_who_label 已提为模块级：读图上下文共用，两处渲染不许漂移）
-                rows = [(float(b.get("time") or 0),
-                         f"- {'当前说话人' if b['sender'] == sender_openid else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}")
-                        for b in prev]
-                # 同一段时间里它自己说过的话按时间插进去（见 own_lines）
-                rows += [(o["time"], f"- 你：{o['text']}") for o in own_lines.get(group_id, ())
-                         if rows[0][0] <= o["time"] <= now_ts]
-                rows.sort(key=lambda row: row[0])
-                context_hint = refresh_names(group_id, "\n".join(line for _, line in rows))
-                # ⚠️ 这行是对着「爱翻旧账的模型」写的（实测 Gemini 会把背景里别人的言行安到
-                # 当前说话人头上，一晚上把「当猫娘」安给了三个人）。所以要点名三件事：
-                # 每句都有主，当前说话人与其他人按 ID 区分，引用前先核对标记。
-                context_hint = _BG_PREAMBLE + "\n" + context_hint
+            prev = [b for b in earlier[:-_turns] if _own_recent_image(b, sender_openid, now_ts)] + prev
+        if not unprompted:
+            # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被冷却挡掉没读。
+            # 不然模型只看见裸 [图片]，答「没看到图」——2026-11-01 12:32 连着三次
+            # （实测见 docs/image-before-reply.md）。他自己的图等不到先回一句在看（await_images）。
+            # 没叫它的那一轮不补读：补读走前台、不吃冷却，每条闲聊都补就把冷却架空了
+            own = [b.get("message_id") for b in prev if _own_recent_image(b, sender_openid, now_ts)]
+            await await_images(
+                message, ([current_read] if current_read else []) + media.reads_owed(group_id, own),
+                media.reads_owed(group_id, [b.get("message_id") for b in prev
+                                            if b.get("message_id") not in own]))
+            if current_read is not None:
+                caption = (current_read.result()
+                           if current_read.done() and not current_read.cancelled() else None)
+                user_input += (f"\n[图片：{caption}]" if caption
+                               else "\n（本轮图片暂不可读；明确说明这一点，不猜测图中内容。）")
+        if prev:
+            # 必须标出发言人。之前只给一串裸文本，模型分不清哪句是谁说的，
+            # 于是把别人认领的名字安到了当前这位头上 —— 叫错人就是这么来的
+            # （_who_label 已提为模块级：读图上下文共用，两处渲染不许漂移）
+            rows = [(float(b.get("time") or 0),
+                     f"- {'当前说话人' if b['sender'] == sender_openid else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}")
+                    for b in prev]
+            # 同一段时间里它自己说过的话按时间插进去（见 own_lines）
+            rows += [(o["time"], f"- 你：{o['text']}") for o in own_lines.get(group_id, ())
+                     if rows[0][0] <= o["time"] <= now_ts]
+            rows.sort(key=lambda row: row[0])
+            context_hint = refresh_names(group_id, "\n".join(line for _, line in rows))
+            # ⚠️ 这行是对着「爱翻旧账的模型」写的（实测 Gemini 会把背景里别人的言行安到
+            # 当前说话人头上，一晚上把「当猫娘」安给了三个人）。所以要点名三件事：
+            # 每句都有主，当前说话人与其他人按 ID 区分，引用前先核对标记。
+            context_hint = _BG_PREAMBLE + "\n" + context_hint
 
         # 每人每群一份独立 session，彻底隔离会话，绝不串台
         session_id = f"{group_id}_{sender_openid}"

@@ -104,6 +104,7 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
             attachments=[SimpleNamespace(content_type="image/jpeg", url=image)] if image else [],
             reply=AsyncMock(return_value={"id": "rcpt-" + os.urandom(3).hex()}))
         await bot.GroupBot.handle_group_msg(fake_self, msg, is_at=is_at)
+        return [c.kwargs.get("content") for c in msg.reply.await_args_list]
 
     def _background(self):
         """回话提示词里的「群聊最近背景」那一段。"""
@@ -175,13 +176,37 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
         await self._drive("这张怎么样", is_at=True)
         self.assertIn(f"[图片：{CAPTION}]", self._background())
 
-    async def test_reply_waits_for_a_slow_read_beyond_the_lookup_wait(self):
-        """读一张图线上要 2–10 秒；回话前等图不再借用联网查询那 6 秒。"""
+    async def test_quick_read_is_one_reply(self):
         self._cooled_down()
         await self._drive("", image=URL)
-        with patch.object(config, "ASYNC_REPLY_SECONDS", 0.01), \
+        sent = await self._drive("读一下这张", is_at=True)       # 读图 0.5 秒，线上等得到
+        self.assertEqual(sent, ["（模型应答）"])
+        self.assertIn(f"[图片：{CAPTION}]", self._background())
+
+    async def test_own_slow_image_gets_a_holding_line_then_the_answer(self):
+        """群主 2026-11-02：自己发了图紧接着问，等不到就先说一句在读图，读出来再答 ——
+        跟联网查询先回「我去查查」一个节奏。以前是闷着等，等不到答「看不到」，可图还在路上。"""
+        self._cooled_down()
+        await self._drive("", image=URL)
+        with patch.object(config, "ASYNC_REPLY_SECONDS", 0.05):
+            sent = await self._drive("读一下这张", is_at=True)
+        self.assertEqual(sent, [bot.IMAGE_HOLD_LINE, "（模型应答）"])
+        self.assertIn(f"[图片：{CAPTION}]", self._background())
+
+    async def test_image_in_the_question_itself_gets_the_holding_line(self):
+        with patch.object(config, "ASYNC_REPLY_SECONDS", 0.05):
+            sent = await self._drive("这是啥", image=URL, is_at=True)
+        self.assertEqual(sent, [bot.IMAGE_HOLD_LINE, "（模型应答）"])
+        self.assertIn(f"[图片：{CAPTION}]", self.prompts[0])
+
+    async def test_someone_elses_slow_image_is_waited_for_quietly(self):
+        """别人的图不为它先开口：这句多半不是在问那张。闷等最多 VISION_SETTLE_SECONDS。"""
+        self._cooled_down()
+        await self._drive("", image=URL, sender=B)
+        with patch.object(config, "ASYNC_REPLY_SECONDS", 0.05), \
                 patch.object(config, "VISION_SETTLE_SECONDS", 2.0):
-            await self._drive("读一下这张", is_at=True)
+            sent = await self._drive("读一下这张", is_at=True)
+        self.assertEqual(sent, ["（模型应答）"])
         self.assertIn(f"[图片：{CAPTION}]", self._background())
 
 if __name__ == "__main__":
