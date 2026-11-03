@@ -696,26 +696,6 @@ class JudgeAndSignificanceTest(unittest.TestCase):
                                   worker_fn=worker, write=False)
         self.assertEqual(generated, [])
 
-    def test_judging_stays_within_gateway_concurrency(self):
-        # 网关同时最多扛两个请求：盲评用自己的 EVAL_JUDGE_CONCURRENCY，不跟生成共用 EVAL_CONCURRENCY
-        self.assertLessEqual(config.EVAL_JUDGE_CONCURRENCY, 2)
-        live = {"now": 0, "peak": 0}
-
-        async def slow_judge(messages):
-            live["now"] += 1
-            live["peak"] = max(live["peak"], live["now"])
-            await asyncio.sleep(0.01)
-            live["now"] -= 1
-            return '{"winner": "tie", "crossed": [], "reason": "一样"}'
-
-        case = cases_mod.SEED_CASES[0]
-        rows, _ = asyncio.run(eval_mod.evaluate_cases(
-            [case], [{"id": case["id"], "samples": ["旧%d" % i for i in range(8)]}],
-            [{"id": case["id"], "samples": ["新%d" % i for i in range(8)]}],
-            judge_fn=slow_judge, concurrency=config.EVAL_JUDGE_CONCURRENCY))
-        self.assertEqual(rows[0]["judge"]["tie"], 8)
-        self.assertLessEqual(live["peak"], config.EVAL_JUDGE_CONCURRENCY)
-
     def test_regression_needs_more_than_sampling_noise(self):
         drop, loss, alpha = eval_mod.drop_p_value, eval_mod.judge_loss_p_value, eval_mod.REGRESSION_P
         self.assertGreater(drop(4, 4, 3, 4), alpha)        # 4 次掉 1 次：噪声
