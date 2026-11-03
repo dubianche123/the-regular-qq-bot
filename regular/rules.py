@@ -4,6 +4,9 @@
 标记写法（挂在 prompts.py 里那段规则的字符串字面量前面）：
     # rule: deflect-in-place | 2026-11-03 | docs/deflection.md | cases: deflect-*
 
+日期写这段规则核心措辞第一次进仓库的那天（`git log -S"<措辞>"` 能查到），不凭印象估；
+cases 至少要匹配上一条用例，不然拿掉它重跑时没有东西可比，消融只能报「判断不了」。
+
 为什么直接挂在相邻字符串字面量上：
     Python 编译期就把相邻字面量拼成同一条 str，运行时零开销、稳定头逐字节不变；
     tokenize 扫一遍源码就能拿到每条规则的精确正文，--ablate 时从 prompts.* 里把它抽掉即可。

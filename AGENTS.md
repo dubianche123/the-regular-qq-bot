@@ -86,27 +86,37 @@ launchctl kickstart -k gui/$(id -u)/com.qqbot.xiaowang
 
 代理（Claude Code / CodeX）排查线上问题与迭代提示词/代码时，统一通过以下只读和评测命令操作，**严禁自动上线或重启线上机器人**：
 
+**在代码仓库里执行，数据目录指向部署目录。** 下面的 `$DEPLOY` 是部署目录（线上 `.env` 和 `data/` 所在，
+Pro 上是 `~/Code_repository/regular-bot`）。仓库自己的 `data/` 和 `.env` 都不是线上那份，
+写成 `--directory .` 体检什么都看不见，评测用的也不是线上配置。`--base` / `--cand` 指的才是代码：
+`.` 是当前工作区，`HEAD` 之类的 git 版本会临时检出。命令统一用 `.venv/bin/python -m regular`
+（`.venv/bin/regular` 可能是旧安装，没有这些子命令）。
+
+```bash
+DEPLOY=~/Code_repository/regular-bot
+```
+
 1. **读每日体检，挑最严重的候选**：
    ```bash
-   regular --directory . checkup --day today
-   regular --directory . checkup --label <finding_id> yes|no
+   .venv/bin/python -m regular --directory "$DEPLOY" checkup --day today
+   .venv/bin/python -m regular --directory "$DEPLOY" checkup --label <finding_id> yes|no
    ```
 2. **定位原因（先分清是代码问题还是提示词问题）**：
-   对照 `data/turns/YYYY-MM-DD.jsonl`（按 `turn_id` 查当轮原样入参）、`data/interactions/YYYY-MM-DD.jsonl` 和 `data/archive/YYYY-MM-DD.jsonl` 定位根因。代码能解决的（如 `@` 识别、引用拼接、冷却边界）不往提示词里堆刹车。
+   对照部署目录下的 `data/turns/YYYY-MM-DD.jsonl`（按 `turn_id` 查当轮原样入参）、`data/interactions/YYYY-MM-DD.jsonl` 和 `data/archive/YYYY-MM-DD.jsonl` 定位根因。代码能解决的（如 `@` 识别、引用拼接、冷却边界）不往提示词里堆刹车。
 3. **提两种范围的改法（Harness² 分范围对比）**：
    - 通用改法（不绑特定话题/句式）；
    - 针对本群与人设的改法；
-   若改 `prompts.py`，在对应字符串前挂 `# rule: <id> | <date> | <doc> | cases: <pattern>`（可用 `regular rules` 查看账本与稳定头字数）。
+   若改 `prompts.py`，在对应字符串前挂 `# rule: <id> | <date> | <doc> | cases: <pattern>`（可用 `.venv/bin/python -m regular rules` 查看账本与稳定头字数；日期写这段措辞第一次进仓库的那天，`git log -S` 可查）。
 4. **存成回归用例，跑全量评测与整天回放**：
    ```bash
-   # 从体检输出的 turn_id 存成用例（或初始化种子用例）
-   regular --directory . case add --turn <turn_id> --id <case_id> --incident docs/xxx.md --must-not "刚醒|洗衣"
-   regular --directory . case seed
+   # 从体检输出的 turn_id 存成用例（或初始化种子用例）；分诊用例要用 --choice / --choice-not 写明该判成什么
+   .venv/bin/python -m regular --directory "$DEPLOY" case add --turn <turn_id> --id <case_id> --incident docs/xxx.md --must-not "刚醒|洗衣"
+   .venv/bin/python -m regular --directory "$DEPLOY" case seed
 
    # 对比旧版本与当前改法（全量用例 + 整天回放 + 规则消融）
-   regular --directory . eval --base HEAD --cand . --cases all -n 4 --allow-paid
-   regular --directory . eval --base HEAD --cand . --day today --allow-paid
-   regular --directory . eval --ablate <rule_id> --allow-paid
+   .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
+   .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
+   .venv/bin/python -m regular --directory "$DEPLOY" eval --ablate <rule_id> --allow-paid
    ```
 5. **写报告与事故记录，交由人决定上不上线**：
-   检查 `data/evals/` 下的报告（退步用例排最前，上线前任何退步都必须交代原因；稳定头字数不许无故只增不减），补充 `docs/` 事故记录与离线测试。上线永远由维护者手动执行。
+   检查 `$DEPLOY/data/evals/` 下的报告（退步用例排最前，上线前任何退步都必须交代原因；「噪声内下降」加大 `-n` 只跑那几条再看；规则消融的结论分「可删除 / 仍需保留 / 说不准 / 判断不了」四种；稳定头字数不许无故只增不减），补充 `docs/` 事故记录与离线测试。上线永远由维护者手动执行。
