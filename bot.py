@@ -566,7 +566,17 @@ def looks_like_back_off(text):
 
 
 
-CMD_TAG = re.compile(r"<CMD>(.*?)</CMD>", re.S)
+# 记账标签。协议写法是 <CMD>{"aff": 0}</CMD>（prompts.CMD_PROTOCOL），模型会把它写歪：
+# 2026-11-03 下午 gpt-6-luna 四条原样进了群——「〔CMD>{"aff":0}」「换行后 < CMD>{"aff":1}」
+# 「〈CMD>{"aff":0}」，收尾的 </CMD> 全丢了。同一份提示词里〔画〕〔不接〕〔提醒〕用全角括号，
+# 会话历史里也留着这些标记（expression.record），两套写法串到了一起。
+# 所以认「CMD + 右括号 + {…}」这副骨架，左括号、收尾标签写成什么样都一并拿走：
+# 正常说话写不出 CMD>{，单独的括号文字（〈红楼梦〉、【公告】、<3）碰不到。
+_LB, _RB = r"[<＜〈《〔【\[［]", r"[>＞〉》〕】\]］]"
+CMD_TAG = re.compile(
+    rf"(?:{_LB}\s*)?CMD\s*{_RB}\s*(\{{[^{{}}]*\}})(?:\s*{_LB}\s*/\s*CMD\s*{_RB})?")
+# 连骨架都没写全的残片（2026-10-15「<CMD!」），见 split_cmd
+_CMD_STUB = re.compile(r"<\s*CMD")
 
 
 # 采样乱码特征（2026-10-15 <CMD! 残片、2026-10-19 0A9F%F5，均出自 glm-4.7）：
@@ -605,17 +615,20 @@ def split_cmd(raw):
     if not raw:
         return "", None
     match = CMD_TAG.search(raw)
-    if not match:
+    if match and not (match.group(0).startswith("<CMD>") and match.group(0).endswith("</CMD>")):
+        logger.warning("🧯 记账标签写歪了，已按协议拆掉：%s", match.group(0)[:40])
+    body = CMD_TAG.sub("", raw)
+    stub = _CMD_STUB.search(body)
+    if stub:
         # ⚠️ 容错第二层（2026-10-15 实测）：模型偶尔把标签**打坏**——群里出现过
-        # 「想卖&*%"#$#想<CMD!卖了…」，`<CMD!` 不匹配正规标签就整个漏进了群里。
+        # 「想卖&*%"#$#想<CMD!卖了…」，`<CMD!` 连骨架都不全，整个漏进了群里。
         # 协议规定标签永远在最末尾，所以正文里残留任何 <CMD 片段，从那里砍到结尾，
         # 并把原文记进日志——一次是模型抽风，两次以上就是新失败模式。
-        idx = raw.find("<CMD")
-        if idx != -1:
-            logger.warning("🧯 模型输出含打坏的协议标签，已截断。原文: %s", raw[:160])
-            return _MARKUP.sub("", raw[:idx]).strip(), None
-        return _MARKUP.sub("", raw).strip(), None
-    body = _MARKUP.sub("", CMD_TAG.sub("", raw)).strip()
+        logger.warning("🧯 模型输出含打坏的协议标签，已截断。原文: %s", raw[:160])
+        body = body[:stub.start()]
+    body = _MARKUP.sub("", body).strip()
+    if not match:
+        return body, None
     try:
         payload = json.loads(match.group(1))
     except Exception:
