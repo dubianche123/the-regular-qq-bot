@@ -116,12 +116,13 @@ def context_turns(tier):
 def state_line(label, mood_v):
     """把作息 + 心情渲染成一段注入提示词的状态自述。没什么可说时返回空串。"""
     bits = []
+    # 只写「话该怎么说」，不写「你刚醒」这种它能念出来的情节（2026-11-03）：luna 照着状态自述
+    # 开口「我这刚醒，脑内地图还在转圈」，还拿它躲问题；11-01 到 11-03 一共 27 句。
+    # 早上（刚睡醒）不再写状态，只留插嘴意愿打折（_CIRCADIAN）。
     if label == "凌晨被吵醒":
-        bits.append("你是刚被这条消息吵醒的：回复要短、带着起床气或不耐烦的困，别展开任何话题")
+        bits.append("夜很深了：回复要短，带点不耐烦的困，别展开任何话题")
     elif label == "熬到半夜":
         bits.append("夜深了，你有点撑不住了：回复更短更含糊，别开新话题")
-    elif label == "刚睡醒":
-        bits.append("你刚醒没多久，脑子还没完全转起来")
     mw = _mood_word(mood_v)
     if mw == "烦透了":
         bits.append("你今天烦透了：说话冲、带火气，可以发几句牢骚、小小发个疯，"
@@ -132,7 +133,8 @@ def state_line(label, mood_v):
         bits.append("你今天心情不错：更愿意接梗闲聊两句")
     if not bits:
         return ""
-    return "【小王当前状态】" + "；".join(bits) + "。（这是你的真实体感，顺着它说话，别念出来）"
+    return ("【小王当前状态】" + "；".join(bits)
+            + "。（这是你的真实体感，只管你说话的劲头；别念出来，也别拿它当不回答的理由）")
 
 
 def profile(tier, hour=None, now=None):

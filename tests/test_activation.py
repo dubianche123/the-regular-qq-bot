@@ -81,10 +81,16 @@ class ContextTurnsTest(unittest.TestCase):
 
 class StateLineTest(unittest.TestCase):
 
-    def test_deep_night_carries_wakeup_flavor(self):
+    def test_deep_night_shapes_length_not_a_story(self):
         line = activation.state_line("凌晨被吵醒", 0.0)
-        self.assertIn("吵醒", line)
         self.assertIn("短", line)
+        # 2026-11-03：写「你刚被吵醒」，它就开口「我这刚醒」，还拿它躲问题
+        self.assertNotIn("醒", line)
+        self.assertIn("别拿它当不回答的理由", line)
+
+    def test_morning_writes_no_state(self):
+        """早上只留插嘴意愿打折；「你刚醒没多久」被它念成了躲问题的借口。"""
+        self.assertEqual(activation.state_line("刚睡醒", 0.0), "")
 
     def test_bad_mood_is_visible(self):
         line = activation.state_line("", -0.5)

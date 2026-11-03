@@ -6,7 +6,7 @@
 
 **An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and knows when to join in and when to leave room for others.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1312-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1326-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 [中文](README.md) · **English** · [Highlights](#design-highlights) · [Architecture](#architecture) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
@@ -18,7 +18,7 @@ The hard part is not getting a model to produce a sentence. It is the chain of j
 
 <table>
 <tr>
-<td align="center"><strong>1312</strong><br><sub>offline regression tests</sub></td>
+<td align="center"><strong>1326</strong><br><sub>offline regression tests</sub></td>
 <td align="center"><strong>17 / 20</strong><br><sub>messages clearly aimed at it without its name, answered (3 / 20 under the old dice)</sub></td>
 <td align="center"><strong>75.6%</strong><br><sub>of reply input tokens served from the prefix cache (261 live calls in one day)</sub></td>
 <td align="center"><strong>0.71 s</strong><br><sub>median closed-set triage latency (908 calls)</sub></td>
@@ -291,7 +291,7 @@ Every design decision traces back to a live incident and a set of data. The docs
 ```mermaid
 flowchart LR
     A["live incident"] --> B["reconstruct<br/>logs · archive"] --> C["replay real data<br/>score variants"]
-    C --> D["change prompt<br/>or code"] --> E["offline regression<br/>1312 tests"] --> F["release & deploy<br/>check startup log"]
+    C --> D["change prompt<br/>or code"] --> E["offline regression<br/>1326 tests"] --> F["release & deploy<br/>check startup log"]
     F -.-> A
 ```
 
@@ -342,7 +342,7 @@ Decisions, search, vision, voice and drawing need the corresponding services. Se
 | Topic | Docs (Chinese unless noted) |
 | --- | --- |
 | Who judges what | [Judgment layer](docs/judgment-layer.md) · [Calibration study](docs/decision-calibration.md) · [Called ≠ must answer](docs/addressing.md) · [Quotes and @](docs/quotes.md) |
-| When to speak | [When to reply](docs/when-to-reply.md) · [When to intervene (archived)](docs/when-to-intervene.md) · [Real request or a bit](docs/request-sincerity.md) |
+| When to speak | [When to reply](docs/when-to-reply.md) · [When to intervene (archived)](docs/when-to-intervene.md) · [Real request or a bit](docs/request-sincerity.md) · [Deflect in place](docs/deflection.md) |
 | Capabilities and actions | [Image and voice](docs/media-replies.md) · [Image generation](docs/image-generation.md) · [Read images before replying](docs/image-before-reply.md) · [Reminders](docs/reminders.md) |
 | Async | [Slow work: answer first, follow up later](docs/slow-work.md) |
 | Memory and observation | [Personal memory](docs/personal-memory.md) · [Interaction observations](docs/interaction-observations.md) |

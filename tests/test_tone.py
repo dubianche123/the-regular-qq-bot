@@ -94,3 +94,26 @@ class QuoteOnceKeepItShortTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class DeflectionStaysOnTheAskerTest(unittest.TestCase):
+    """2026-11-03 17:04「喜不喜欢搞男同」→「我这车刚打火就拐进洗衣房了，今晚先给袜子配个对」。
+    钓鱼那段原来写着「把话题拽回群里的柴米油盐」「反转落在哪件家务、哪样通勤、哪门手艺上」、
+    黄段子「用不着边际的假车加一次反转」—— luna 照字面办，每次岔开都落到家务上，生硬。"""
+
+    def test_no_chore_landing_spot(self):
+        for old in ("柴米油盐", "哪件家务", "假车加一次反转"):
+            self.assertNotIn(old, prompts.PROMPT_NORMAL)
+
+    def test_deflect_on_the_spot(self):
+        self.assertIn("就地拆台，不是换台", prompts.PROMPT_NORMAL)
+        self.assertIn("冲着眼前这个人、这句话接", prompts.PROMPT_NORMAL)
+        # 回放里冒出来的两种新毛病：一本正经说「不接」像官方拒答；歪着接时谐音回原词、留脑补口子、
+        # 歪到带暗示的东西上（「蘑菇，顶天立地」）
+        self.assertIn("那是官方拒答，不是群友", prompts.PROMPT_NORMAL)
+        self.assertIn("他用的那个词也别拿来谐音", prompts.PROMPT_NORMAL)
+        self.assertIn("歪到的东西本身也不能带暗示", prompts.PROMPT_NORMAL)
+        # 三条红线不动
+        for rule in ("1. 不复述", "2. 不联想", "3. 不认身份"):
+            self.assertIn(rule, prompts.PROMPT_NORMAL)
+
