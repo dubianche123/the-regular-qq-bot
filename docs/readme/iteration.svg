@@ -1,67 +1,73 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="940" viewBox="0 0 1280 940" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="en">
-<title id="iteration-title">Turn one incident into a lasting regression case</title><desc id="iteration-desc">Record the scene, check for suspicious behavior, let a coding agent diagnose and propose changes, save a regression case, compare old and new versions in independent replays, and let a maintainer decide what ships. Base and cand select code; directory selects real configuration and data.</desc>
-<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
-<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
-<rect x="1" y="1" width="1278" height="938" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
-<text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1.7">THE REGULAR / SELF-ITERATION</text>
-<text x="48" y="98" font-size="32" fill="#213249" font-weight="700" >Turn one incident into a lasting regression case</text>
-<text x="48" y="137" font-size="20" fill="#56677E" font-weight="400" >Fixed commands replay evidence; a coding agent proposes fixes; a person decides what ships.</text>
-<rect x="48" y="184" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<rect x="68" y="204" width="42" height="30" rx="9" fill="#EAF0F6"/>
-<text x="89" y="225" font-size="16" fill="#5375A1" font-weight="700" text-anchor="middle">01</text>
-<text x="124" y="224" font-size="14" fill="#5375A1" font-weight="650" >LIVE · AUTOMATIC</text>
-<text x="70" y="269" font-size="23" fill="#213249" font-weight="700" >Keep the original scene</text>
-<text x="70" y="305" font-size="18" fill="#56677E" font-weight="400" >Inputs · history · raw output</text>
-<text x="70" y="335" font-size="18" fill="#56677E" font-weight="400" >Skip private chats · retain 30 days</text>
-<rect x="464" y="184" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<rect x="484" y="204" width="42" height="30" rx="9" fill="#EAF4EF"/>
-<text x="505" y="225" font-size="16" fill="#397D70" font-weight="700" text-anchor="middle">02</text>
-<text x="540" y="224" font-size="14" fill="#397D70" font-weight="650" >COMMAND · READ-ONLY</text>
-<text x="486" y="269" font-size="23" fill="#213249" font-weight="700" >Find, then verify</text>
-<text x="486" y="305" font-size="18" fill="#56677E" font-weight="400" >checkup → context and findings</text>
-<text x="486" y="335" font-size="18" fill="#56677E" font-weight="400" >A judge model labels candidates</text>
-<rect x="880" y="184" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<rect x="900" y="204" width="42" height="30" rx="9" fill="#F0EBF8"/>
-<text x="921" y="225" font-size="16" fill="#7962A7" font-weight="700" text-anchor="middle">03</text>
-<text x="956" y="224" font-size="14" fill="#7962A7" font-weight="650" >CODING AGENT · EDITS</text>
-<text x="902" y="269" font-size="23" fill="#213249" font-weight="700" >Find the cause</text>
-<text x="902" y="305" font-size="18" fill="#56677E" font-weight="400" >Code issue or prompt issue?</text>
-<text x="902" y="335" font-size="18" fill="#56677E" font-weight="400" >General fix + group-specific fix</text>
-<rect x="880" y="422" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<rect x="900" y="442" width="42" height="30" rx="9" fill="#EAF0F6"/>
-<text x="921" y="463" font-size="16" fill="#5375A1" font-weight="700" text-anchor="middle">04</text>
-<text x="956" y="462" font-size="14" fill="#5375A1" font-weight="650" >CASE LIBRARY · CHECKS</text>
-<text x="902" y="507" font-size="23" fill="#213249" font-weight="700" >Save a regression case</text>
-<text x="902" y="543" font-size="18" fill="#56677E" font-weight="400" >Generation / triage / message</text>
-<text x="902" y="573" font-size="18" fill="#56677E" font-weight="400" >State the intended behavior</text>
-<rect x="464" y="422" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<rect x="484" y="442" width="42" height="30" rx="9" fill="#EAF4EF"/>
-<text x="505" y="463" font-size="16" fill="#397D70" font-weight="700" text-anchor="middle">05</text>
-<text x="540" y="462" font-size="14" fill="#397D70" font-weight="650" >COMMAND · EXECUTION</text>
-<text x="486" y="507" font-size="23" fill="#213249" font-weight="700" >Compare old and new</text>
-<text x="486" y="543" font-size="18" fill="#56677E" font-weight="400" >Checks + shuffled pairwise judging</text>
-<text x="486" y="573" font-size="18" fill="#56677E" font-weight="400" >Full cases · day replay · ablation</text>
-<rect x="48" y="422" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<rect x="68" y="442" width="42" height="30" rx="9" fill="#FFF4E4"/>
-<text x="89" y="463" font-size="16" fill="#A7783E" font-weight="700" text-anchor="middle">06</text>
-<text x="124" y="462" font-size="14" fill="#A7783E" font-weight="650" >MAINTAINER · RELEASE</text>
-<text x="70" y="507" font-size="23" fill="#213249" font-weight="700" >A person decides to ship</text>
-<text x="70" y="543" font-size="18" fill="#56677E" font-weight="400" >Read the report and its limits</text>
-<text x="70" y="573" font-size="18" fill="#56677E" font-weight="400" >Deploy, check startup, observe</text>
-<path d="M408 270h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M824 270h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M1056 364v50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M872 508h-48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M456 508h-48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M224 602v40H24V270h16" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
-<text x="270" y="648" font-size="18" fill="#56677E" font-weight="400" >New feedback after a human-approved release starts the next round</text>
-<rect x="48" y="690" width="576" height="166" rx="17" fill="#EAF0F6" stroke="#D5DFEB"/>
-<text x="72" y="729" font-size="23" fill="#213249" font-weight="650" >Source checkout</text>
-<text x="72" y="774" font-size="21" fill="#5375A1" font-weight="600" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">--base HEAD / --cand .</text>
-<text x="72" y="819" font-size="20" fill="#56677E" font-weight="400" >Code, prompt rules and seed cases</text>
-<rect x="656" y="690" width="576" height="166" rx="17" fill="#EAF0F6" stroke="#D5DFEB"/>
-<text x="680" y="729" font-size="23" fill="#213249" font-weight="650" >Deployment directory</text>
-<text x="680" y="774" font-size="21" fill="#5375A1" font-weight="600" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">--directory &quot;$DEPLOY&quot;</text>
-<text x="680" y="819" font-size="20" fill="#56677E" font-weight="400" >.env + data/turns · cases · evals</text>
-<text x="48" y="905" font-size="18" fill="#56677E" font-weight="400" >Evaluation requires --allow-paid. Ablation supplies evidence; a person always decides what ships.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1410" viewBox="0 0 1280 1410" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="en">
+<title id="iteration-title">From a live failure to the next version</title><desc id="iteration-desc">Record live inputs, judgments and actual delivery. Read-only checkup proposes findings; a separate judge model labels them. Cases fix the scene and intended behavior. An external coding agent edits a candidate. The same scene inputs feed independent baseline and candidate workers; expected outcomes stay on the evaluation side for code checks and separate blind judging. Regressions or insufficient evidence send work back for edits or more tests. A maintainer decides whether to deploy. New feedback and accumulated cases and incident notes feed the next round.</desc>
+<defs>
+<marker id="arrow-line" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="arrow-purple" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#7962A7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="arrow-amber" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#A7783E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="arrow-blue" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#5375A1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs><g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+<rect x="1" y="1" width="1278" height="1408" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+<text x="64" y="47" font-size="16" fill="#A7783E" font-weight="700">THE REGULAR / SELF-ITERATION</text>
+<text x="64" y="98" font-size="32" fill="#213249" font-weight="700">From a live failure to the next version</text>
+<text x="64" y="138" font-size="21" fill="#56677E" font-weight="400">Compare each proposal on the same scene, including failures already fixed.</text>
+<rect x="64" y="180" width="1152" height="100" rx="17" fill="#213249" stroke="#213249"/>
+<text x="88" y="207" font-size="14" font-weight="700" fill="#EDC792">LIVE · AUTOMATIC RECORDS</text>
+<text x="88" y="239" font-size="24" font-weight="650" fill="#FFFFFF">Original inputs, judgments, actual outcomes and delivery</text>
+<text x="88" y="266" font-size="18" fill="#D4DFEB">Keep what really happened; turn_id links the input to its outcome</text>
+<rect x="64" y="320" width="520" height="178" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="88" y="348" font-size="13" fill="#397D70" font-weight="700">READ-ONLY COMMAND + SEPARATE JUDGE</text>
+<text x="88" y="384" font-size="23" fill="#213249" font-weight="650">Turn a finding into a fixed case</text>
+<text x="88" y="418" font-size="17" fill="#56677E" font-weight="400">checkup flags findings; a judge labels separately</text>
+<text x="88" y="450" font-size="19" fill="#5375A1" font-weight="600">case = recorded scene + intended behavior</text>
+<text x="88" y="480" font-size="18" fill="#56677E" font-weight="400">Include earlier cases and incident lessons</text>
+<rect x="696" y="320" width="520" height="178" rx="17" fill="#F0EBF8" stroke="#DCD2EE"/>
+<text x="720" y="348" font-size="13" fill="#7962A7" font-weight="700">EXTERNAL CODING AGENT · CANDIDATE EDITS</text>
+<text x="720" y="384" font-size="23" fill="#213249" font-weight="650">Find the cause, then propose a fix</text>
+<text x="720" y="418" font-size="17" fill="#56677E" font-weight="400">Code, prompts, Decisions questions or inputs</text>
+<text x="720" y="450" font-size="16.5" fill="#56677E" font-weight="400">Read incident notes; try general / group-specific fixes</text>
+<text x="720" y="480" font-size="17" fill="#56677E" font-weight="400">Edit a candidate while the live version stays put</text>
+<rect x="64" y="562" width="1152" height="436" rx="19" fill="#EAF0F6" stroke="#D5DFEB"/>
+<text x="88" y="599" font-size="18" fill="#213249" font-weight="650">FIXED COMMANDS · CONTROLLED REPLAY</text>
+<rect x="350" y="624" width="580" height="42" rx="11" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="640" y="651" font-size="17" fill="#5375A1" font-weight="600" text-anchor="middle">Same scene inputs: this incident + earlier cases</text>
+<rect x="120" y="708" width="440" height="116" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="144" y="748" font-size="25" fill="#5375A1" font-weight="700">Baseline</text>
+<text x="144" y="787" font-size="18" fill="#56677E" font-weight="400">Original code / prompts in its own worker</text>
+<rect x="720" y="708" width="440" height="116" rx="17" fill="#F8F5FC" stroke="#DCD2EE"/>
+<text x="744" y="748" font-size="25" fill="#7962A7" font-weight="700">Candidate</text>
+<text x="744" y="787" font-size="18" fill="#56677E" font-weight="400">Tested code / questions / input strategy</text>
+<rect x="120" y="866" width="1040" height="108" rx="15" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="144" y="901" font-size="21" fill="#213249" font-weight="650">Expected outcomes stay here: code checks + independent blind judging</text>
+<text x="144" y="934" font-size="17" fill="#56677E" font-weight="400">Full cases find regressions · day replay finds repetition · rules can be ablated</text>
+<text x="144" y="960" font-size="16" fill="#56677E" font-weight="400">Day replay regenerates recorded replies; it does not simulate later member reactions</text>
+<rect x="64" y="1052" width="688" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="88" y="1087" font-size="23" fill="#213249" font-weight="650">Comparison report: gains and costs</text>
+<text x="88" y="1125" font-size="18" fill="#397D70" font-weight="600">Improvements · regressions · noisy drops · unfinished work</text>
+<text x="88" y="1156" font-size="18" fill="#56677E" font-weight="400">Regressions first; one boundary violation counts</text>
+<rect x="816" y="1052" width="400" height="126" rx="17" fill="#FFF4E4" stroke="#EAD6B8"/>
+<text x="840" y="1087" font-size="22" fill="#A7783E" font-weight="700">Maintainer decides whether to ship</text>
+<text x="840" y="1125" font-size="16.5" fill="#56677E" font-weight="400">Review regressions, noise and coverage</text>
+<text x="840" y="1156" font-size="17" fill="#56677E" font-weight="400">Deploy manually, then observe real feedback</text>
+<rect x="64" y="1234" width="688" height="92" rx="15" fill="#EAF4EF" stroke="#C9DFD5"/>
+<text x="88" y="1269" font-size="21" fill="#397D70" font-weight="650">Assets that accumulate: cases + incident lessons</text>
+<text x="88" y="1304" font-size="17" fill="#56677E" font-weight="400">Keep the case and the cause; the next edit reuses both</text>
+<text x="64" y="1345" font-size="17" fill="#A7783E" font-weight="600">New feedback returns to live records</text>
+<text x="64" y="1390" font-size="16.5" fill="#56677E" font-weight="400">Commands reproduce and compare; the agent proposes edits. Accumulated evidence carries into the next round.</text>
+<path d="M324 280v32" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M592 412h96" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<text x="640" y="396" font-size="12" fill="#56677E" font-weight="500" text-anchor="middle">Evidence &amp; checks</text>
+<path d="M324 498v38h316v80" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M640 666v20H340v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M640 686h300v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M1184 498v268h-16" fill="none" stroke="#7962A7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-purple)"/>
+<text x="1184" y="537" font-size="15" fill="#7962A7" font-weight="600" text-anchor="end">Candidate code</text>
+<path d="M340 824v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M940 824v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M340 974v70" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M760 1115h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M696 1052v-24h544V410h-16" fill="none" stroke="#A7783E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-amber)" stroke-dasharray="6 6"/>
+<text x="1216" y="1019" font-size="14" fill="#A7783E" font-weight="600" text-anchor="end">Regressions / weak evidence → edit or test again</text>
+<path d="M408 1178v48" fill="none" stroke="#5375A1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M64 1280H44V466h12" fill="none" stroke="#5375A1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-blue)" stroke-dasharray="6 6"/>
+<path d="M1016 1178v184H24V230h32" fill="none" stroke="#A7783E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-amber)" stroke-dasharray="6 6"/>
 </g></svg>

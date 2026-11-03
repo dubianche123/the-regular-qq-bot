@@ -83,7 +83,20 @@ A reminder is another use of the same job table. The model writes a fixed time t
 
 ## Self-iteration: the loop as commands
 
-The inputs, judgments and execution outcomes above are the scene for improvement. Checkup lists candidates offline, a separate judge model labels them, a coding agent edits code or prompts from that evidence, and fixed commands replay old and new versions and report the difference. **A model labels and blind-judges; a maintainer decides what ships.**
+Each iteration produces **a candidate change, new regression cases and an old/new comparison report**. The live bot records inputs, judgments and actual delivery. `checkup` reads those records and flags suspicious scenes; a separate judge model labels them in another maintenance step. An external coding agent diagnoses and edits, evaluation commands replay and compare, and a maintainer decides what ships.
+
+![Self-iteration: freeze the scene and expectation, compare baseline and candidate, revisit regressions, then observe released behavior](docs/readme/iteration.svg)
+
+Continue the synthetic teacup scene. **Suppose** "Atuan, I think it looks like a teacup" was classified as `let_it_pass` and went unanswered. Follow that failure through the iteration:
+
+| Part of this iteration | What is saved or compared |
+| --- | --- |
+| Freeze the problem | save the scene with expected `addressed=answer`; keep the mistaken choice only as a reference |
+| Locate the change | edit the question and use triage replay if it misread a contribution; fix input construction and use message replay if the earlier turn was missing |
+| Check the fix and its side effects | run both versions on the same scene and old cases such as members merely mentioning Atuan, guarding against answering every name mention |
+| Follow the report | revisit the edit if an old case regresses; take more samples for drops within noise; give the maintainer the results and coverage gaps |
+
+New cases join later regression runs. Incident notes and rule provenance inform the next edit. **Code, prompts, cases and the reasons for changes accumulate**, while feedback after release enters the same path again. A person currently starts the coding-agent maintenance workflow. Code edits need relevant offline tests; regressions need explanations and coverage gaps must be listed before a maintainer decides whether to release manually. See the [worked iteration](docs/self-iteration.md#iteration-example).
 
 Wording is only one editable surface. The replay needed depends on where the change takes effect:
 
@@ -96,7 +109,9 @@ Wording is only one editable surface. The replay needed depends on where the cha
 | Memory, recall and evidence selection and injection | [`digest.py`](digest.py), [`recall.py`](recall.py), [`knowledge.py`](knowledge.py) | message replay plus focused tests; summary generation and actual tool execution need separate validation |
 | Models, reasoning parameters and task configuration | [`config.py`](config.py), [`providers.py`](providers.py) | comparisons with controlled configuration; replay and task probes have different coverage |
 
-The three replay depths are **generation**, which reruns recorded arguments; **triage**, which reruns recorded input with the tested questions; and **message**, which feeds archived events to the real handler with fake sending. A message case with preset `triage_choices` freezes those choices; use cases without preset answers to test the full decision path. Message replay also replaces some evidence rendering and media execution, so it does not replace a real-service smoke check.
+The three replay depths are **generation**, which reruns recorded arguments; **triage**, which reruns recorded input with the tested questions; and **message**, which feeds archived events to the real handler with fake sending. Day replay regenerates the day's recorded replies to reveal patterns such as repeated phrases; it cannot simulate how members would react to changed replies.
+
+A message case with preset `triage_choices` freezes those choices; use cases without preset answers to test the full decision path. Message replay also replaces some evidence rendering and media execution, so it does not replace a real-service smoke check.
 
 Built-in wording search currently has only `remind` and `banter` targets. The latter edits the chat model's reply-or-pass instruction; native Decisions questions are edited by a coding agent and then evaluated. Safety, privacy, state ownership and call budgets remain code-enforced constraints. See [editable surfaces and validation boundaries](docs/self-iteration.md#iteration-surfaces).
 
