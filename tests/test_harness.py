@@ -270,6 +270,30 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body[1]["content"].startswith(ENVELOPE_MARK))
         self.assertTrue(body[1]["content"].rstrip().endswith("第二句"))
 
+    async def test_skewed_cmd_tag_reaches_neither_group_nor_history(self):
+        """2026-11-03 写歪的记账标签发进群后，又留在会话历史和群聊背景里，后面几条照着抄
+        （14:27、14:50 是一模一样的「换行 + < CMD>」）。发出去的、记进会话的都得是干净正文。"""
+        sid = "th_hist_cmd"
+        runtime.SESSIONS.drop_session(sid)
+        self.addCleanup(lambda: runtime.SESSIONS.drop_session(sid))
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        fake = self.bot.call_model
+
+        async def skewed(messages, max_tokens, tier="chat"):
+            return '好，这版只留四张侧脸，脖子往下直接裁掉\n< CMD>{"aff":0}'
+
+        self.bot.call_model = skewed
+        message = SimpleNamespace(id="cmd-skewed", reply=AsyncMock(return_value={"id": "ok"}))
+        body, delta, _ = await self.bot.reply_in_session(message, sid, "小王，衣领以下都不要")
+        self.assertEqual(body, "好，这版只留四张侧脸，脖子往下直接裁掉")
+        self.assertEqual(delta, 0)
+        self.assertNotIn("CMD", message.reply.await_args.kwargs["content"])
+        self.bot.call_model = fake
+        msgs = await self.grab(sid, "下一句")
+        said = [m["content"] for m in msgs if m["role"] == "assistant"]
+        self.assertEqual(said, ["好，这版只留四张侧脸，脖子往下直接裁掉"])
+
 
     async def test_chat_uses_chat_tier(self):
         """对话一律走对话梯队。"""

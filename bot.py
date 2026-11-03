@@ -567,7 +567,17 @@ def looks_like_back_off(text):
 
 
 
-CMD_TAG = re.compile(r"<CMD>(.*?)</CMD>", re.S)
+# 记账标签。协议写法是 <CMD>{"aff": 0}</CMD>（prompts.CMD_PROTOCOL），模型会把它写歪：
+# 2026-11-03 下午 gpt-6-luna 四条原样进了群——「〔CMD>{"aff":0}」「换行后 < CMD>{"aff":1}」
+# 「〈CMD>{"aff":0}」，收尾的 </CMD> 全丢了。同一份提示词里〔画〕〔不接〕〔提醒〕用全角括号，
+# 会话历史里也留着这些标记（expression.record），两套写法串到了一起。
+# 所以认「CMD + 右括号 + {…}」这副骨架，左括号、收尾标签写成什么样都一并拿走：
+# 正常说话写不出 CMD>{，单独的括号文字（〈红楼梦〉、【公告】、<3）碰不到。
+_LB, _RB = r"[<＜〈《〔【\[［]", r"[>＞〉》〕】\]］]"
+CMD_TAG = re.compile(
+    rf"(?:{_LB}\s*)?CMD\s*{_RB}\s*(\{{[^{{}}]*\}})(?:\s*{_LB}\s*/\s*CMD\s*{_RB})?")
+# 连骨架都没写全的残片（2026-10-15「<CMD!」），见 split_cmd
+_CMD_STUB = re.compile(r"<\s*CMD")
 
 
 # 采样乱码特征（2026-10-15 <CMD! 残片、2026-10-19 0A9F%F5，均出自 glm-4.7）：
@@ -606,17 +616,20 @@ def split_cmd(raw):
     if not raw:
         return "", None
     match = CMD_TAG.search(raw)
-    if not match:
+    if match and not (match.group(0).startswith("<CMD>") and match.group(0).endswith("</CMD>")):
+        logger.warning("🧯 记账标签写歪了，已按协议拆掉：%s", match.group(0)[:40])
+    body = CMD_TAG.sub("", raw)
+    stub = _CMD_STUB.search(body)
+    if stub:
         # ⚠️ 容错第二层（2026-10-15 实测）：模型偶尔把标签**打坏**——群里出现过
-        # 「想卖&*%"#$#想<CMD!卖了…」，`<CMD!` 不匹配正规标签就整个漏进了群里。
+        # 「想卖&*%"#$#想<CMD!卖了…」，`<CMD!` 连骨架都不全，整个漏进了群里。
         # 协议规定标签永远在最末尾，所以正文里残留任何 <CMD 片段，从那里砍到结尾，
         # 并把原文记进日志——一次是模型抽风，两次以上就是新失败模式。
-        idx = raw.find("<CMD")
-        if idx != -1:
-            logger.warning("🧯 模型输出含打坏的协议标签，已截断。原文: %s", raw[:160])
-            return _MARKUP.sub("", raw[:idx]).strip(), None
-        return _MARKUP.sub("", raw).strip(), None
-    body = _MARKUP.sub("", CMD_TAG.sub("", raw)).strip()
+        logger.warning("🧯 模型输出含打坏的协议标签，已截断。原文: %s", raw[:160])
+        body = body[:stub.start()]
+    body = _MARKUP.sub("", body).strip()
+    if not match:
+        return body, None
     try:
         payload = json.loads(match.group(1))
     except Exception:
@@ -701,8 +714,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        media_note="", unprompted_hint=""):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
-    返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签
-    —— 默认就不再要求模型记账了，好感度改由每日压缩评估（见 config.CMD_PROTOCOL_ENABLED）。
+    返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签（协议关了，
+    或者它没写/写坏了），调用方退回本地词表（见 config.CMD_PROTOCOL_ENABLED，默认开着）。
 
     owner_label 是群里对群主的称呼（档案里认领的那个，没认领就是通用词）。它只在
     人设里出现「别总提群主」这类句子里，对**同一个群**是常数，所以不影响下面这条不变量。
@@ -1724,7 +1737,7 @@ async def run_digest(group_id, reason=""):
             schedule_promises(group_id)
 
         # 好感度结算：这一整段时间里谁更亲近、谁在抬杠，一次性落库
-        # （每轮不再让模型自评，见 config.CMD_PROTOCOL_ENABLED）
+        # （每轮那一票是回复里的记账标签，见 config.CMD_PROTOCOL_ENABLED；这里是看全天的那一道）
         if config.AFFINITY_ENABLED:
             n_aff, detail = apply_digest_affinity(
                 group_id, (result.get("data") or {}).get("affinity"))
