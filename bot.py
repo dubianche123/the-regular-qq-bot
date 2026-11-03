@@ -38,6 +38,7 @@ from regular import decisions as decisions_mod
 import naming
 import prompts
 import qqtext
+import quotes
 import recall as recall_mod
 import relations
 import reminders
@@ -112,10 +113,19 @@ def parse_group_message_create(self, payload):
     self._dispatch("group_message_create", _message)
 
 
+class SceneGroupMessage(GroupMessage):
+    """SDK 丢掉的引用索引（message_scene.ext）挂在 _scene 上，原始事件不留（见 quotes.py）。"""
+    __slots__ = ("_scene",)
+
+    def __init__(self, api, event_id, data):
+        super().__init__(api, event_id, data)
+        self._scene = quotes.scene_of(data)
+
+
 ConnectionState.parse_group_message_create = voice_event.make_voice_parser(
-    GroupMessage, "group_message_create")
+    SceneGroupMessage, "group_message_create")
 ConnectionState.parse_group_at_message_create = voice_event.make_voice_parser(
-    GroupMessage, "group_at_message_create")
+    SceneGroupMessage, "group_at_message_create")
 ConnectionState.parse_c2c_message_create = voice_event.make_voice_parser(
     C2CMessage, "c2c_message_create")
 
@@ -291,6 +301,50 @@ own_lines = collections.defaultdict(
 def _note_own_line(group_id, text):
     if group_id and text:
         own_lines[group_id].append({"time": time.time(), "text": text})
+
+
+# ── 认出「这是在跟小王说话」：引用它的话、@ 它（2026-11-03，见 quotes.py）──
+_recent_at_ids = collections.OrderedDict()   # 消息 ID -> 正文里的 @（@ 事件晚到时拿来比）
+_sent_ref_missing = []
+
+
+def _self_openids(group_id, bot_id):
+    """小王的几个 ID：robot.id，加上认出来的它在这个群的成员 openid。"""
+    slot = (runtime.STATE.data.get("groups") or {}).get(group_id) or {}
+    return {oid for oid in (bot_id, slot.get("self_openid")) if oid}
+
+
+def _learn_self(group_id, oid, how):
+    if not (group_id and oid):
+        return
+    slot = observe_group(group_id)
+    if slot.get("self_openid") != oid:
+        slot["self_openid"] = oid
+        runtime.STATE.mark_dirty()
+        logger.info("🪪 认出小王在这个群的 @（%s，%s）", oid[-4:], how)
+
+
+def _learn_self_from_late_at(message):
+    """@ 事件比全量那条晚到（那条已经按没叫它处理过了）：@ 事件的正文去掉了 @机器人，
+    跟先到那条的 @ 一比，少掉的那一个就是小王。这一条补不回来，下一条认得。"""
+    if _self_openids(message.group_openid, "") or message.id not in _recent_at_ids:
+        return
+    before = _recent_at_ids[message.id]
+    logger.info("📨 @ 事件晚到（先到的全量那条没认出 @小王）")
+    if before:
+        gone = [oid for oid in before if oid not in quotes.at_ids(message.content)]
+        if len(gone) == 1:
+            _learn_self(message.group_openid, gone[0], "@ 事件晚到时比出来的")
+
+
+def _remember_sent(group_id, receipt, text):
+    """小王发出去的话记进引用索引：群友引用它，才认得出是在回小王、回的哪句。"""
+    ref = quotes.receipt_ref(receipt)
+    if ref:
+        runtime.QUOTES.remember(group_id, ref, quotes.SELF, text)
+    elif receipt and not _sent_ref_missing:
+        _sent_ref_missing.append(True)
+        logger.warning("⚠️ 发送回执里没有引用索引（ext_info.ref_idx），群友引用小王的话认不出来")
 
 
 # 小王上一次在这个群里没被叫就开口的时间（键名沿用旧的「插嘴冷却」，落盘位置不变）
@@ -769,6 +823,7 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             # 只存最终真正发出去的正文 —— prepare 后的 owner hint、
             # 平台拒收后的兜底文案，都算「实际送达」；被拒的原稿不算。
             fields["text"] = result.text
+            _remember_sent(group_id, result.receipt, result.text)
             rid = result.receipt
             rid = rid.get("id") if isinstance(rid, dict) else getattr(rid, "id", None)
             if isinstance(rid, (str, int)):
@@ -1975,6 +2030,7 @@ async def post_to_group(group_id, text, *, model_generated=False, history=()):
             journal("unconfirmed", reason="empty receipt")
             return False
         logger.info("📢 [主动发言] 群 %s | %s", group_id[-6:], text.replace("\n", " ")[:150])
+        _remember_sent(group_id, sent, text)
         # 确认送达的模型生成群发才登记反馈缓存：静态模式播报/本地文案不算。
         if model_generated:
             try:
@@ -2220,6 +2276,8 @@ class GroupBot(botpy.Client):
 
         # 1. 去重：同一条消息可能被多个事件重复投递
         if message.id in processed_msg_ids:
+            if is_at:
+                _learn_self_from_late_at(message)
             return
         processed_msg_ids.append(message.id)
 
@@ -2249,7 +2307,22 @@ class GroupBot(botpy.Client):
         #    被 @ 的其他群友优先信事件体的 mentions。
         bot_id = getattr(self.robot, "id", "")
         bot_name = getattr(self.robot, "name", "")
-        mentioned_others = extract_mentions(message, bot_id)
+        # 引用了哪条、@ 的是不是小王（2026-11-03，见 quotes.py）：群友引用小王的话时 QQ 自动 @ 它，
+        # 从这里认出小王在这个群的成员 openid，以后单点 @ 也认得。
+        scene = getattr(message, "_scene", None) or {}
+        quoted = runtime.QUOTES.find(group_id, scene.get("ref_msg_idx"))
+        if scene.get("ref_msg_idx") and quoted is None:
+            logger.info("🔗 引用了一条没记着的消息（%s）", scene["ref_msg_idx"][:16])
+        quotes_self = bool(quoted and quoted["who"] == quotes.SELF)
+        if quotes_self:
+            _learn_self(group_id, quotes.self_in(
+                raw_content, [getattr(u, "member_openid", None) for u in (getattr(message, "mentions", None) or ())],
+                scene.get("bots")), "群友引用它的话时带的 @")
+        me = _self_openids(group_id, bot_id)
+        _recent_at_ids[message.id] = quotes.at_ids(raw_content)
+        while len(_recent_at_ids) > config.DEDUP_MAX:
+            _recent_at_ids.popitem(last=False)
+        mentioned_others = [m for m in extract_mentions(message, bot_id) if m not in me]
         if mentioned_others:
             logger.info("🔗 捕捉到艾特对象 %s", "、".join(m[-4:] for m in mentioned_others))
             # 事件体只给 openid，正文里留下的明文 @昵称 是唯一能知道「群里怎么
@@ -2260,10 +2333,11 @@ class GroupBot(botpy.Client):
 
         # 规范化时把 @ 翻成人话（@ 了谁由档案回答）—— @ 不再被清掉，见 qqtext 的说明
         user_input = qqtext.normalize(
-            raw_content, mention_label=mention_label_for(group_id, bot_id, bot_name))
+            raw_content, mention_label=mention_label_for(group_id, me, bot_name))
         # 名字全部按当前配置取，代码里不写死任何人名（见 naming.py）
-        has_name_call = any(n and n in user_input for n in naming.bot_names())
-        bot_tags = (f"<@{bot_id}>", f"<@!{bot_id}>") if bot_id else ()
+        # 引用小王的话、又把自动带的 @ 删了：跟喊名字一样算叫到它，接不接交给分诊。
+        has_name_call = quotes_self or any(n and n in user_input for n in naming.bot_names())
+        bot_tags = tuple(tag for oid in me for tag in (f"<@{oid}>", f"<@!{oid}>"))
         # 平台 @ 是显性信号，一定回。正文里出现名字只是**本地提议**：
         # 「小王傻」「小王怎么样了」不等于欠它一句，要不要答交给分诊（decisions.assess）。
         at_bot = is_at or any(tag in raw_content for tag in bot_tags)
@@ -2281,15 +2355,24 @@ class GroupBot(botpy.Client):
             return
         if not user_input and image_url:
             user_input = "[图片]"
+        runtime.QUOTES.remember(group_id, scene.get("msg_idx"), sender_openid, user_input)
+        # 回的是哪句：拼在前面给背景、分诊和小王看；指令解析照旧只看他自己说的（user_input）
+        quote_note = ""
+        if quoted or scene.get("quoted"):
+            quote_note = quotes.render(
+                None if quoted is None else naming.bot_name() if quotes_self
+                else "自己" if quoted["who"] == sender_openid else _who_label(group_id, quoted["who"]),
+                (quoted or {}).get("text") or scene.get("quoted"))
+        heard = quote_note + user_input
 
-        logger.info("📩 [%s] %s | %s", "@艾特" if is_at else "群消息", sender_openid, user_input)
+        logger.info("📩 [%s] %s | %s", "@艾特" if is_at else "群消息", sender_openid, heard)
 
         # 3. 归档（这是查证用的底稿）
         # ⚠️ 本地控制指令（「猫娘模式」这类）照样落盘留痕，但打上 cmd 标记 ——
         #    压缩长期记忆时会跳过它们。它们是操作不是聊天，进了压缩就变成
         #    「这人想变猫娘」这种人物事实（2026-09-21 实测事故）。
         archived = runtime.ARCHIVE.append(
-            group_id, sender_openid, user_input, at=is_at,
+            group_id, sender_openid, heard, at=is_at,
             cmd=is_control_command(user_input), message_id=message.id)
         if config.DIGEST_ENABLED:
             runtime.DIGESTS.touch(group_id)
@@ -2301,7 +2384,7 @@ class GroupBot(botpy.Client):
         # 3.4 交互观察：完整规范化输入落独立日志（只进不出，不进任何提示词路径）。
         runtime.INTERACTIONS.append(
             "incoming", group_id, user=sender_openid, actor="user",
-            message_id=message.id, text=user_input,
+            message_id=message.id, text=heard,
             at=bool(is_at), cmd=is_control_command(user_input))
 
         # 3.45 慢活跟进没送出去（被动窗口过了、主动发言也被拒）：捎在这条消息上。
@@ -2317,8 +2400,8 @@ class GroupBot(botpy.Client):
         #     （2026-11-01 12:31:53/55 连发两张，问「读这两张图」时背景里只剩一张）。
         buf = group_buffers[group_id]
         if (not buf or image_url or voices or buf[-1]["sender"] != sender_openid
-                or buf[-1]["text"] != user_input):
-            buf.append({"sender": sender_openid, "text": user_input, "time": time.time(), "message_id": message.id})
+                or buf[-1]["text"] != heard):
+            buf.append({"sender": sender_openid, "text": heard, "time": time.time(), "message_id": message.id})
             runtime.STATE.data["buffers"][group_id] = list(buf)
         # 记录消息到达时已存在的近期上下文，后续异步处理不把更晚消息倒插到这轮。
         receipt_time = time.time()
@@ -2358,7 +2441,7 @@ class GroupBot(botpy.Client):
                 try:
                     triage_box["result"] = await runtime.FEEDBACK.assess(
                         group_id, sender_openid,
-                        user_input or (f"@{naming.bot_name()}" if at_bot else ""),
+                        (quote_note + (user_input or (f"@{naming.bot_name()}" if at_bot else ""))).strip(),
                         message_id=message.id, is_direct=bool(at_bot), named=named,
                         history=history_at_receipt[-4:],
                         nick_candidate=nick_candidate,
@@ -2648,7 +2731,7 @@ class GroupBot(botpy.Client):
                 if status == "exception":
                     resource_note = "【本轮状态】今天的基础查询次数已用完，这次实际用了额外次数。可以自然地说这次破例帮他查，不要声称以后无限破例。"
                 lookup = (kind, _lookup_query(
-                    user_input or (f"@{naming.bot_name()}" if at_bot else ""),
+                    (quote_note + (user_input or (f"@{naming.bot_name()}" if at_bot else ""))).strip(),
                     history_at_receipt, message.id, sender_openid=sender_openid))
 
         if not should_reply:
@@ -2659,7 +2742,7 @@ class GroupBot(botpy.Client):
                 task.add_done_callback(_media_tasks.discard)
             return
 
-        if is_at and not user_input and not image_url and not history_at_receipt:
+        if is_at and not user_input and not image_url and not quote_note and not history_at_receipt:
             await safe_reply(message, f"找{naming.bot_name()}啥事？直接说就行。")
             return
         if not await BudgetGate.check(message, group_id):
@@ -2691,6 +2774,9 @@ class GroupBot(botpy.Client):
                 return
             else:
                 user_input += "\n（这张图你没看；没人问你，别提它。）"
+
+        # 回的是哪句拼到前面（指令都在上面认完了，这一截碍不着它们）
+        user_input = quote_note + user_input
 
         # 11. 组装群聊背景 + session，走 AI
         context_hint = ""

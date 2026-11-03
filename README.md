@@ -328,7 +328,7 @@ regular --directory regular-bot run
 
 | 主题 | 文档 |
 | --- | --- |
-| 判断交给谁 | [判断层](docs/judgment-layer.md) · [概率校准实测](docs/decision-calibration.md) · [叫到我不等于要我答](docs/addressing.md) |
+| 判断交给谁 | [判断层](docs/judgment-layer.md) · [概率校准实测](docs/decision-calibration.md) · [叫到我不等于要我答](docs/addressing.md) · [引用和 @](docs/quotes.md) |
 | 什么时候开口 | [没叫它的时候](docs/when-to-reply.md) · [何时介入（旧方案存档）](docs/when-to-intervene.md) · [真托付还是整活](docs/request-sincerity.md) |
 | 能力与动作 | [画图与语音](docs/media-replies.md) · [图像生成配置](docs/image-generation.md) · [先读图再回话](docs/image-before-reply.md) · [到点提醒](docs/reminders.md) |
 | 异步 | [慢活：先回一句，做完再跟进](docs/slow-work.md) |

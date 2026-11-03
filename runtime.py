@@ -15,6 +15,7 @@ import knowledge as knowledge_mod
 from regular import decisions as decisions_mod
 from regular import resource_quota
 import naming
+import quotes as quotes_mod
 import receptive as receptive_mod
 import scheduler as scheduler_mod
 import relations
@@ -25,6 +26,8 @@ logger = logging.getLogger("qqbot")   # 与 bot.py 同一个命名 logger，共�
 # ══════════════════════ 3. 持久化状态 ══════════════════════
 
 STATE = storage.StateStore(config.STATE_FILE, config.STATE_SAVE_INTERVAL)
+# 群友引用了哪条：最近几百条「引用索引 → 谁说的、开头几句」，见 quotes.py
+QUOTES = quotes_mod.QuoteBook(STATE)
 SESSIONS = storage.SessionStore(
     max_turns=config.CONTEXT_MAX_TURNS,
     max_chars=config.CONTEXT_MAX_CHARS,

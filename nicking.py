@@ -116,22 +116,24 @@ def learn_display_names(group_id, openids, content, bot_names=()):
     return learned
 
 
-def mention_label_for(group_id, bot_id="", bot_display=""):
+def mention_label_for(group_id, bot_ids=(), bot_display=""):
     """把 <@!openid> 翻成「群里怎么叫他」——给 qqtext.normalize 用的解析器。
 
     为什么需要它：@ 是「谁在跟谁说话」里最关键的信息，以前 normalize 把它整个清掉，
     于是群友 @ 了人再问「这是谁」，机器人这边只剩一句没头没脑的话，答不上来。
     现在 @ 会渲染成「@某人」，是谁由这里回答：
-      · 机器人自己 → 它的名字（群里看见的本来就是「@机器人名」）
+      · 机器人自己 → 它的名字（群里看见的本来就是「@机器人名」）。bot_ids 是它的几个 ID：
+                      robot.id 和它在这个群的成员 openid（后者要认，见 quotes.py）
       · 群主        → 他的称呼（没认领就是通用词「群主」），「@群主 这是谁」才答得上来
       · 其他群友    → 档案里认领过的称呼；没认领就退回他群里挂的显示名（QQ 群昵称），
                       再没有才由 qqtext 退成「@群友」
     刻意 create=False：被 @ 一下不该给谁凭空建一份档案。
     """
     owner = runtime.OWNER_OPENID
+    bot_ids = {bot_ids} if isinstance(bot_ids, str) else set(bot_ids or ())
 
     def resolve(openid):
-        if bot_id and openid == bot_id:
+        if openid in bot_ids:
             return bot_display or naming.bot_name()
         if owner and openid == owner:
             return owner_label(group_id)

@@ -9,6 +9,7 @@ from openai import AsyncOpenAI, BadRequestError
 
 import config
 import delivery
+import quotes
 import runtime
 from regular import decision_settings
 
@@ -184,6 +185,8 @@ async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_se
             if not receipt:
                 logger.warning("图片发送未确认: empty receipt")
                 return None
+            # 群友常引用这张图说话（「这图反了」）：记进引用索引，认得出是在回小王的图
+            runtime.QUOTES.remember(group_id, quotes.receipt_ref(receipt), quotes.SELF, f"[图：{prompt}]")
             return True
         finally:
             if not possible_delivery:
