@@ -469,15 +469,17 @@ def case_command(config, args):
             if getattr(args, "turn", None):
                 case = cases_mod.create_case_from_turn(
                     config.TURN_LOG_DIR, args.turn, args.id,
-                    incident=args.incident or "", tags=tags, checks=checks, day=args.day)
+                    incident=args.incident or "", tags=tags, checks=checks, day=args.day,
+                    expect_recorded=args.expect_recorded)
             else:
                 case = cases_mod.create_case_from_message(
                     config.ARCHIVE_DIR, args.message, args.id,
                     interaction_dir=config.INTERACTION_LOG_DIR,
                     turn_dir=config.TURN_LOG_DIR, day=args.day,
                     context_messages=getattr(args, "context", 6),
-                    incident=args.incident or "", tags=tags, checks=checks)
-        except KeyError as err:
+                    incident=args.incident or "", tags=tags, checks=checks,
+                    state_file=config.STATE_FILE)
+        except (KeyError, ValueError) as err:
             print(str(err), file=sys.stderr)
             return 1
         path = cases_mod.save_case(config.CASES_DIR, case)
@@ -508,10 +510,14 @@ def eval_command(config, args):
             raise ValueError(f"invalid --pattern {item!r}; expected NAME=REGEX")
         patterns[name.strip()] = rx
 
-    out = eval_mod.run_eval(
-        config, base=args.base, cand=args.cand, cases_selector=args.cases,
-        day=args.day, n=args.n, ablate=args.ablate or "",
-        patterns=patterns or None, write=not args.no_write)
+    try:
+        out = eval_mod.run_eval(
+            config, base=args.base, cand=args.cand, cases_selector=args.cases,
+            day=args.day, n=args.n, ablate=args.ablate or "",
+            patterns=patterns or None, write=not args.no_write)
+    except RuntimeError as err:   # 盲评预检没过：原因原样说出来，别吞成一句泛泛的 doctor 提示
+        print(str(err), file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
@@ -568,6 +574,9 @@ def main(argv=None):
     cs_add.add_argument("--choice", action="append", help="triage choice check QUESTION=VALUE")
     cs_add.add_argument("--choice-not", action="append", help="triage choice_not check QUESTION=VALUE")
     cs_add.add_argument("--judge", action="append", help="pairwise blind judge question")
+    cs_add.add_argument("--expect-recorded", action="store_true",
+                        help="triage case: use the recorded live answer as the expected one "
+                             "(default: you must give --choice/--choice-not)")
     cs_seed = cs_sub.add_parser("seed", help="write built-in seed cases into data/cases")
     cs_seed.add_argument("--overwrite", action="store_true")
     cs_list = cs_sub.add_parser("list", help="list available cases")

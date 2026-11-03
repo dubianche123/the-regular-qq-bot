@@ -249,7 +249,18 @@ async def _run_triage_once(runtime, config, triage_spec, retries=1):
     return None
 
 
-async def _run_message_once(bot, runtime, config, messages, retries=1):
+async def _no_voice(*args, **kwargs):
+    return None, None
+
+
+async def _no_image(*args, **kwargs):
+    return False
+
+
+async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset_quotes=(),
+                            self_openid=None):
+    """preset_quotes / self_openid 见 regular/cases.create_case_from_message：窗口外被引用的原句、
+    线上已认出的小王的 @，回放开始前预置进这份临时状态。"""
     import archive as archive_mod
     import delivery
     import providers as providers_mod
@@ -342,6 +353,21 @@ async def _run_message_once(bot, runtime, config, messages, retries=1):
                                                                              config.GROUP_RATE_REFILL_SECONDS)))
                         stack.enter_context(patch.object(runtime.KNOWLEDGE, "render", lambda *a, **k: ""))
                         stack.enter_context(patch.object(bot, "call_model", tracked_model))
+                        # 它写了〔语音〕〔画〕也不真合成、不真画：那会花钱，语音还会记进部署目录里
+                        # 线上那份语音额度（voice-outbound-budget.sqlite3）。回放里一律当没发成。
+                        if hasattr(bot, "_VOICE_OUT"):
+                            stack.enter_context(patch.object(
+                                bot._VOICE_OUT, "attempt", _no_voice))
+                        if hasattr(bot.image_generation, "generate_and_send"):
+                            stack.enter_context(patch.object(
+                                bot.image_generation, "generate_and_send", _no_image))
+                        if self_openid:
+                            state.data.setdefault("groups", {}).setdefault(gid, {})[
+                                "self_openid"] = self_openid
+                        if hasattr(runtime, "QUOTES"):
+                            for q in preset_quotes or ():
+                                runtime.QUOTES.remember(gid, q.get("ref"), q.get("who"),
+                                                        q.get("text") or "")
                         try:
                             fake_self = SimpleNamespace(
                                 robot=SimpleNamespace(id="REPLAY_BOT_ID", name="regular"))
@@ -394,7 +420,8 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
     for _ in range(max(1, int(n))):
         if depth == "message":
             out = await _run_message_once(bot, runtime, config, item.get("messages") or (),
-                                          retries=retries)
+                                          retries=retries, preset_quotes=item.get("quotes") or (),
+                                          self_openid=item.get("self_openid"))
         elif depth == "triage":
             spec = item.get("triage") or item.get("turn") or item
             out = await _run_triage_once(runtime, config, spec, retries=retries)

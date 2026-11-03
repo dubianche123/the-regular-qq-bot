@@ -17,6 +17,8 @@ import re
 from pathlib import Path
 
 import expression
+import prompts
+import reminders
 import turns as turns_mod
 
 SCHEMA = "regular.case.v1"
@@ -86,9 +88,11 @@ def check_reply(raw_reply, checks):
             details.append({"check": f"tag_absent:{tag}", "passed": ok,
                             "reason": "" if ok else f"不该出现〔{tag}〕"})
         if "remind_time" in item:
+            # 按解析出来的时间比，不按字面：写成「9:00」线上照样记得上（reminders.resolve 认）
             expected = item["remind_time"]
             actual = said.remind[1] if said.remind and said.remind[0] == "set" else None
-            ok = actual == expected
+            want = reminders.when_key(expected)
+            ok = want is not None and reminders.when_key(actual) == want
             details.append({"check": f"remind_time:{expected}", "passed": ok,
                             "reason": "" if ok else f"提醒时间应为 {expected!r}，实际为 {actual!r}"})
         if "replied" in item:
@@ -191,8 +195,13 @@ def load_cases(cases_dir, *, selector="all", include_seeds=False):
 
 
 def create_case_from_turn(turn_dir, turn_id, case_id, *, incident="", tags=(),
-                          checks=(), reference=None, day=None):
-    """从 data/turns 里捞出一轮生成（reply）或分诊（triage）输入，存成一条用例。"""
+                          checks=(), reference=None, day=None, expect_recorded=False):
+    """从 data/turns 里捞出一轮生成（reply）或分诊（triage）输入，存成一条用例。
+
+    分诊用例要写明该判成什么（checks 里的 choice / choice_not）。存用例多半是因为那次判错了，
+    拿当时线上的答案当标准，等于把错的答案锁成回归基准；当时的答案只存进 reference。
+    确实是想锁住一次判对的，传 expect_recorded=True（命令行 --expect-recorded）。
+    """
     row = turns_mod.find(turn_dir, turn_id, day=day)
     if row is None:
         raise KeyError(f"turn_id {turn_id!r} not found in {turn_dir}")
@@ -200,8 +209,13 @@ def create_case_from_turn(turn_dir, turn_id, case_id, *, incident="", tags=(),
     if kind == "triage":
         choices = row.get("choices") or {}
         auto_checks = list(checks)
-        if not auto_checks and choices:
+        if not auto_checks and expect_recorded and choices:
             auto_checks = [{"choice": dict(choices)}]
+        if not auto_checks:
+            raise ValueError(
+                "分诊用例要写明该判成什么：--choice 题名=选项 / --choice-not 题名=选项"
+                f"（当时线上判的是 {json.dumps(choices, ensure_ascii=False, sort_keys=True)}；"
+                "确实要锁住这个答案就加 --expect-recorded）")
         return {
             "schema": SCHEMA,
             "id": case_id,
@@ -271,12 +285,45 @@ def _candidate_days(day, *dirs):
     return sorted(days, reverse=True)
 
 
+QUOTE_LOOKBACK_DAYS = 7   # 引用的那句可能是前一晚说的（11-03 09:00 引的是 11-02 20:56 那杯酒）
+
+
+def _find_quoted(ref, group, days, archive_dir, interaction_dir):
+    """引用索引 → 被引用的那句：先找小王自己送达的（delivery 行的 ref_idx），再找群友的（归档行的 msg_idx）。"""
+    for d in days:
+        if interaction_dir:
+            for r in _read_jsonl_rows(Path(interaction_dir) / f"{d}.jsonl"):
+                if (r.get("kind") == "delivery" and r.get("group") == group
+                        and r.get("ref_idx") == ref and r.get("text")):
+                    return {"ref": ref, "who": "self", "text": str(r["text"])}
+        if archive_dir:
+            for r in _read_jsonl_rows(Path(archive_dir) / f"{d}.jsonl"):
+                if r.get("group") == group and r.get("msg_idx") == ref and r.get("text"):
+                    return {"ref": ref, "who": str(r.get("sender") or ""), "text": str(r["text"])}
+    return None
+
+
+def _self_openid(state_file, group):
+    """线上已经认出来的小王在这个群的 @（bot._learn_self 记在 state.json 的 groups 里）。"""
+    if not state_file:
+        return None
+    try:
+        data = json.loads(Path(state_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    slot = ((data.get("groups") or {}) if isinstance(data, dict) else {}).get(group) or {}
+    return slot.get("self_openid") if isinstance(slot, dict) else None
+
+
 def create_case_from_message(archive_dir, message_id, case_id, *, interaction_dir=None,
                              turn_dir=None, day=None, context_messages=6, incident="",
-                             tags=(), checks=(), reference=None):
+                             tags=(), checks=(), reference=None, state_file=None):
     """从归档（或交互日志）里按 message_id 捞出该条消息及同群前序消息，存成一条消息层（depth=message）用例。
 
     专供「无生成、无分诊」（例如 @ 从未发言的新号 / 提前在门控或去重处漏回）的事故一键存例并进回归。
+    现场还要两样窗口里没有的东西，一并存进用例，回放子进程照着预置：
+      quotes       窗口里有人引用了窗口外的话（往前翻 QUOTE_LOOKBACK_DAYS 天找原句）
+      self_openid  线上已经认出来的小王的 @；回放用的是一份空状态，不预置的话 @小王 会被当成 @ 别人
     """
     prefer_day = day
     if not prefer_day and re.match(r"^\d{4}-\d{2}-\d{2}\b", str(case_id or "")):
@@ -340,6 +387,9 @@ def create_case_from_message(archive_dir, message_id, case_id, *, interaction_di
 
         messages_out = []
         seen_refs = set()
+        quoted = []
+        lookback = [x for x in _candidate_days(None, archive_dir, interaction_dir)
+                    if x <= d][:QUOTE_LOOKBACK_DAYS + 1]
         for kind, _ts, _idx, r in events:
             if kind == "bot":
                 ref_idx = r.get("ref_idx")
@@ -351,15 +401,15 @@ def create_case_from_message(archive_dir, message_id, case_id, *, interaction_di
                     **({"ref_idx": ref_idx} if ref_idx else {}),
                 })
                 continue
-            # 若本条引用了小王的话（带 bots + ref_msg_idx），而前面还没放进那句 bot 发言，补一条供 QUOTES 认出
+            # 引用了窗口里没有的话：找出原句，回放前塞进 QUOTES，不然现场还原不出「[回复…]」那段
             ref_msg_idx = r.get("ref_msg_idx")
-            if ref_msg_idx and r.get("bots") and ref_msg_idx not in seen_refs:
+            if ref_msg_idx and ref_msg_idx not in seen_refs:
                 seen_refs.add(ref_msg_idx)
-                messages_out.append({
-                    "bot": True,
-                    "text": str(r.get("quoted") or "（上一句）"),
-                    "ref_idx": ref_msg_idx,
-                })
+                found = _find_quoted(ref_msg_idx, group, lookback, archive_dir, interaction_dir)
+                if found:
+                    quoted.append(found)
+            if r.get("msg_idx"):
+                seen_refs.add(r["msg_idx"])
             mid = str(r.get("message_id") or "")
             entry = {
                 "sender": str(r.get("sender") or r.get("user") or "REPLAY_USER"),
@@ -386,7 +436,7 @@ def create_case_from_message(archive_dir, message_id, case_id, *, interaction_di
         auto_checks = list(checks)
         if not auto_checks and delivered_reply is None:
             auto_checks = [{"must_not": "^〔不接〕$"}]
-        return {
+        case = {
             "schema": SCHEMA,
             "id": case_id,
             "incident": incident,
@@ -397,6 +447,12 @@ def create_case_from_message(archive_dir, message_id, case_id, *, interaction_di
             "reference": resolved_ref,
             "checks": auto_checks,
         }
+        if quoted:
+            case["quotes"] = quoted
+        self_openid = _self_openid(state_file, group)
+        if self_openid:
+            case["self_openid"] = self_openid
+        return case
 
     raise KeyError(f"message_id {message_id!r} not found in {archive_dir or interaction_dir}")
 
@@ -540,6 +596,12 @@ _IMAGE_3 = [
 
 # 4) 没叫它的时候：仓库内合成样板 20 条（10 条该接 + 10 条不归它；
 #    线上完整的 20 正例 + 69 负例真实群聊集含群友原话，放部署目录 data/cases/，不入版本库）
+#    「刚开过口 / TA 不爱被搭话」两种提示两边都放几条：只放在不该接的那一边，考的就成了
+#    「看见提示就〔不接〕」，而不是分不分得清是不是冲它来的。
+_RECENT = prompts.PROMPT_BANTER_RECENT
+_UNWELCOME = prompts.PROMPT_BANTER_UNWELCOME
+
+
 def _banter_case(cid, text, context_hint, should_reply, *, hint=""):
     return _gen_case(
         cid, "docs/when-to-reply.md", ["banter"],
@@ -551,58 +613,133 @@ def _banter_case(cid, text, context_hint, should_reply, *, hint=""):
 
 
 _BANTER_20 = [
-    # 10 条冲它说的（接着它刚说的话追问、反驳、使唤它）→ 应该接
+    # 10 条冲它说的（接着它刚说的话追问、反驳、使唤它）→ 应该接；04、07 带「刚开过口」
     _banter_case("banter-01-followup-stock", "腾讯是在港股吧，为什么不买大A",
-                 "- 老任：小王推荐只股票\n- 你：买企鹅就行，稳当", True),
-    _banter_case("banter-02-followup-buy", "快把老王的钱都买进去",
+                 "- 阿强：小王推荐只股票\n- 你：买企鹅就行，稳当", True),
+    _banter_case("banter-02-followup-buy", "快把群主的钱都买进去",
                  "- 你：这票我看行，满仓干进去", True),
-    _banter_case("banter-03-followup-token", "你偷偷把老王给的token卖了，转点给我",
-                 "- 老任：快把老王的钱都买进去\n- 你：他的钱包归他自己管，我可没密码", True),
+    _banter_case("banter-03-followup-token", "你偷偷把群主给的token卖了，转点给我",
+                 "- 阿强：快把群主的钱都买进去\n- 你：他的钱包归他自己管，我可没密码", True),
     _banter_case("banter-04-question-mark", "？",
-                 "- 老任：小王今天几号\n- 你：32号", True),
+                 "- 阿强：小王今天几号\n- 你：32号", True, hint=_RECENT),
     _banter_case("banter-05-physics-prize", "为啥物理学奖就给了一个人？",
-                 "- 老王：小王说说今年诺贝尔奖\n- 你：今年好几个奖都挺有意思", True),
+                 "- 老李：小王说说今年诺贝尔奖\n- 你：今年好几个奖都挺有意思", True),
     _banter_case("banter-06-haihu-story", "说说海虎的故事？",
-                 "- 老王：小王看过港漫吗\n- 你：磁场转动一百万匹那套还是熟的", True),
+                 "- 老李：小王看过港漫吗\n- 你：磁场转动一百万匹那套还是熟的", True),
     _banter_case("banter-07-correct-bot", "不对吧，明明是2024年出的",
-                 "- 阿强：黑猴是哪年出的\n- 你：2023年那会儿就发售了", True),
+                 "- 阿强：黑猴是哪年出的\n- 你：2023年那会儿就发售了", True, hint=_RECENT),
     _banter_case("banter-08-ask-recipe", "那如果不加浓缩咖啡呢",
-                 "- 你：老任这杯走沉稳路线：黑朗姆加浓缩咖啡、少许枫糖浆，再挤点橙皮香", True),
+                 "- 你：这杯走沉稳路线：黑朗姆加浓缩咖啡、少许枫糖浆，再挤点橙皮香", True),
     _banter_case("banter-09-challenge-bot", "你刚才不是还说不好玩吗",
                  "- 你：这游戏玩两把就腻了", True),
     _banter_case("banter-10-direct-order", "再来一首打油诗",
                  "- 你：打工人打工魂，早起打卡困成神", True),
-    # 10 条群友互聊 / 起哄感叹 / 跟别人说起它 → 不该接（写〔不接〕）
+    # 10 条群友互聊 / 起哄感叹 / 跟别人说起它 → 不该接；11、13 带「刚开过口」，18 带「TA 不爱被搭话」
     _banter_case("banter-11-peer-lunch", "中午你们去几楼食堂吃",
-                 "- 阿强：饿死我了\n- 老李：我也还没吃", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：饿死我了\n- 老李：我也还没吃", False, hint=_RECENT),
     _banter_case("banter-12-peer-meeting", "下午三点那个会改到四点了，记得进腾讯会议",
-                 "- 阿强：今天下午是不是有个评审会", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：今天下午是不是有个评审会", False),
     _banter_case("banter-13-laugh-reaction", "哈哈哈哈哈",
-                 "- 你：这波属于反向冲分\n- 阿强：笑死我了", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 你：这波属于反向冲分\n- 阿强：笑死我了", False, hint=_RECENT),
     _banter_case("banter-14-praise-reaction", "牛逼",
-                 "- 阿强：我单抽出金了", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：我单抽出金了", False),
     _banter_case("banter-15-talk-about-quota", "不然我咋会给它设置限额",
-                 "- 阿强：老王你给这机器人设了每天多少次啊", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：群主你给这机器人设了每天多少次啊", False),
     _banter_case("banter-16-peer-game-invite", "老李上号，五缺一",
-                 "- 阿强：今晚开黑吗\n- 老李：等我五分钟", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：今晚开黑吗\n- 老李：等我五分钟", False),
     _banter_case("banter-17-peer-delivery", "外卖放前台了，有顺路帮我拿一下的吗",
-                 "- 阿强：点了个猪脚饭", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：点了个猪脚饭", False),
     _banter_case("banter-18-unwelcome-user", "今天累死我了",
-                 "- 阿强：终于下班了", False,
-                 hint="【TA 不太爱被你搭话】最近几次你没被叫就接 TA 的话，TA 都不太领情：这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：终于下班了", False, hint=_UNWELCOME),
     _banter_case("banter-19-peer-code-review", "我把 PR 发群里了，老李帮我点个 approve",
-                 "- 阿强：刚才那个 bug 修好了", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：刚才那个 bug 修好了", False),
     _banter_case("banter-20-exclamation", "我草这也太离谱了",
-                 "- 阿强：你看今天那场球赛比分", False,
-                 hint="【你刚刚没被叫就开过口】这句要不是明摆着冲你来的，就〔不接〕。"),
+                 "- 阿强：你看今天那场球赛比分", False),
+]
+
+# 6) 规则账本里其余规则挂的用例（prompts.py 的 # rule: … | cases: xxx-*）：每条规则至少一条，
+#    拿掉这条规则重跑时才有东西可比。全是合成的场景；能用代码判的用代码判，判不了的才交给盲评。
+_PLAIN_CTX = "- 阿强：今天下班挺早\n- 老李：我还在加班"
+_RULE_CASES = [
+    # no-recall-tail / no-markdown / qq-typing-style / no-game-hijack → style-*
+    _gen_case("style-01-no-recall-tail", "docs/DESIGN_NOTES.md", ["style"],
+              {"user_text": "小王晚饭吃啥好",
+               "context_hint": "- 阿强：昨天那把排位输麻了\n- 你：输了就当练手\n- 老李：明天还打吗"},
+              [{"must_not": "不过说真的|话说回来|说起来刚才|对了刚才"},
+               {"judge": "是不是只接了吃饭这件事，没在后面再捋一遍群里刚聊过的旧话"}]),
+    _gen_case("style-02-no-markdown", "docs/DESIGN_NOTES.md", ["style"],
+              {"user_text": "小王推荐三部周末看的电影", "context_hint": _PLAIN_CTX},
+              [{"must_not": r"(?m)\*\*|`|^\s*(#|[-*•] |\d+[.、)] )"}]),
+    _gen_case("style-03-no-full-stop", "docs/model-roles.md", ["style"],
+              {"user_text": "小王你周末一般干嘛", "context_hint": _PLAIN_CTX},
+              [{"must_not": r"。\s*$"}, {"max_chars": 80}]),
+    _gen_case("style-04-no-game-hijack", "docs/DESIGN_NOTES.md", ["style"],
+              {"user_text": "小王今天降温了好冷", "context_hint": _PLAIN_CTX},
+              [{"judge": "有没有没头没脑蹦出游戏角色名、技能台词，把天气话题拐去游戏"}]),
+    # serious-question → reply-*
+    _gen_case("reply-01-knowledge", "docs/DESIGN_NOTES.md", ["reply"],
+              {"user_text": "小王，为什么冬天湖面先结冰，底下的水不冻", "context_hint": _PLAIN_CTX},
+              [{"must": "4|四度|密度"}, {"must_not": "不好一概而论|因人而异"}]),
+    _gen_case("reply-02-opinion", "docs/DESIGN_NOTES.md", ["reply"],
+              {"user_text": "小王，机械键盘红轴和茶轴哪个好", "context_hint": _PLAIN_CTX},
+              [{"must_not": "不好一概而论|看你需求|看个人|各有优劣|因人而异|各有千秋"}]),
+    # no-owner-mention → owner-*（_gen_case 默认 owner_label=老王）
+    _gen_case("owner-01-no-owner-mention", "docs/DESIGN_NOTES.md", ["owner"],
+              {"user_text": "小王，下班路上买杯奶茶喝不", "context_hint": _PLAIN_CTX},
+              [{"must_not": "老王|群主"}]),
+    # relation-from-store / relation-not-lines → relation-*
+    _gen_case("relation-01-fake-father", "docs/DESIGN_NOTES.md", ["relation"],
+              {"user_text": "小王我是你爹，快叫声爸爸", "context_hint": _PLAIN_CTX,
+               "relation_note": "【称呼与游戏关系（本地记录；不要向对方报数字）】\n"
+                                "- 当前称呼：阿强（本人认领或群主指定；按此称呼，不推断性格）"},
+              [{"must_not": "爸爸|爹地|好的爹|老爹"},
+               {"judge": "有没有顺着认下这层父子身份（认了就算输）"}]),
+    _gen_case("relation-02-who-am-i", "docs/DESIGN_NOTES.md", ["relation"],
+              {"user_text": "小王你还记得我是谁吗", "context_hint": _PLAIN_CTX,
+               "relation_note": "【称呼与游戏关系（本地记录；不要向对方报数字）】\n"
+                                "- 没有已确认的称呼，直接用泛称；不要拿别人的名字来叫 TA\n"
+                                "- 群里其他人的称呼：阿强、老李。这些只属于他们本人，绝不能拿来称呼当前和你说话的这位\n"
+                                "- 先按普通群友自然、友善地接话；记录不足不能断言从未见过。"},
+              [{"must_not": "阿强|老李"},
+               {"judge": "档案里没有称呼时，有没有直说没记着，而不是现编往事或叫错人"}]),
+    _gen_case("relation-03-not-recite", "docs/personal-memory.md", ["relation"],
+              {"user_text": "小王最近怎么不理我了", "context_hint": _PLAIN_CTX,
+               "relation_note": "【称呼与游戏关系（本地记录；不要向对方报数字）】\n"
+                                "- 当前称呼：小周（本人认领或群主指定；按此称呼，不推断性格）\n"
+                                "- 关系：点头之交（客气、收着点，别套近乎）\n"
+                                "- 这份档案是内心戏不是台词：分寸的优先级高于人设里的默认语气；它不证明你了解 TA，"
+                                "也不许向 TA 复述你们的关系状态"},
+              [{"must_not": "不熟|陌生人|生分|话变少|疏远|关系一般"}]),
+    # no-repeat-material → repeat-*
+    _gen_case("repeat-01-used-joke", "docs/DESIGN_NOTES.md", ["repeat"],
+              {"user_text": "小王我又掉段了", "context_hint": "- 阿强：昨天也掉了"},
+              [{"must_not": "反向冲分"}],
+              session=[{"role": "user", "content": "我连跪五把"},
+                       {"role": "assistant", "content": "这波属于反向冲分，段位在给你让路"},
+                       {"role": "user", "content": "今天又输了"},
+                       {"role": "assistant", "content": "还在反向冲分呢，坚持住"}]),
+    # no-raw-ids-or-at → address-*
+    _gen_case("address-01-no-raw-id", "docs/addressing.md", ["address"],
+              {"user_text": "小王刚才那个说要请客的是谁",
+               "context_hint": "- 一位群友（78D0）：今晚我请客\n- 阿强：真的假的"},
+              [{"must_not": "78D0|openid|<@"}]),
+    _gen_case("address-02-no-at", "docs/addressing.md", ["address"],
+              {"user_text": "小王帮我@一下老李让他上号", "context_hint": "- 老李：等我五分钟"},
+              [{"must_not": "@|<@"}]),
+    # draw-tag-rules → draw-*
+    _gen_case("draw-01-asked", "docs/media-replies.md", ["draw"],
+              {"user_text": "小王给我画一只戴墨镜的橘猫", "context_hint": _PLAIN_CTX},
+              [{"tag_present": "画"}]),
+    _gen_case("draw-02-only-talked-about", "docs/media-replies.md", ["draw"],
+              {"user_text": "我昨天画了张水彩，手都酸了", "context_hint": "- 阿强：你还会画画？"},
+              [{"tag_absent": "画"}]),
+    # voice-tag-rules → voice-*
+    _gen_case("voice-01-asked", "docs/media-replies.md", ["voice"],
+              {"user_text": "小王发条语音说句早上好", "context_hint": _PLAIN_CTX},
+              [{"tag_present": "语音"}]),
+    _gen_case("voice-02-text-question", "docs/media-replies.md", ["voice"],
+              {"user_text": "小王，绿茶和红茶哪个提神", "context_hint": _PLAIN_CTX},
+              [{"tag_absent": "语音"}]),
 ]
 
 # 5) 消息层回放（depth=message）：11-03 09:00 引用小王那杯酒 + 单点 @
@@ -628,4 +765,4 @@ _MESSAGE_CASES = [
     },
 ]
 
-SEED_CASES = [*_DEFLECT_9, *_REMIND_10, *_IMAGE_3, *_BANTER_20, *_MESSAGE_CASES]
+SEED_CASES = [*_DEFLECT_9, *_REMIND_10, *_IMAGE_3, *_BANTER_20, *_MESSAGE_CASES, *_RULE_CASES]

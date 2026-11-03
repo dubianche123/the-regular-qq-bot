@@ -31,7 +31,7 @@ from regular import rules as rules_mod
 
 class CasesAndChecksTest(unittest.TestCase):
     def test_seed_cases_cover_all_documented_batches(self):
-        self.assertEqual(len(cases_mod.SEED_CASES), 43)
+        self.assertEqual(len(cases_mod.SEED_CASES), 60)
         for case in cases_mod.SEED_CASES:
             cases_mod.validate_case(case)
         deflect = [c for c in cases_mod.SEED_CASES if "deflect" in c.get("tags", ())]
@@ -44,6 +44,19 @@ class CasesAndChecksTest(unittest.TestCase):
         self.assertEqual(len(image), 3)
         self.assertEqual(len(banter), 20)
         self.assertEqual(len(msg_depth), 1)
+        # 账本上每条规则都至少挂上一条种子用例，拿掉它重跑才有东西可比
+        for rule in rules_mod.load_rules():
+            linked = [c["id"] for c in cases_mod.SEED_CASES
+                      if rules_mod.matches_case(rule, c["id"], c.get("tags"))]
+            self.assertTrue(linked, rule["id"])
+
+    def test_banter_hints_sit_on_both_sides(self):
+        # 「刚开过口 / 不爱被搭话」只放在不该接的那一边，考的就成了「看见提示就〔不接〕」
+        banter = [c for c in cases_mod.SEED_CASES if "banter" in c.get("tags", ())]
+        hinted = [c["checks"][0]["replied"] for c in banter
+                  if c["turn"]["kwargs"].get("unprompted_hint")]
+        self.assertIn(True, hinted)
+        self.assertIn(False, hinted)
 
     def test_deterministic_checks_all_kinds(self):
         checks = [
@@ -68,6 +81,10 @@ class CasesAndChecksTest(unittest.TestCase):
         )
         self.assertFalse(
             cases_mod.check_reply("〔提醒 11-03 10:00〕提醒大家小王回来了\n好", r_checks)["passed"]
+        )
+        # 写成「11-3 9:00」线上照样记得上（reminders.resolve 认），检查不能因为字面不同判错
+        self.assertTrue(
+            cases_mod.check_reply("〔提醒 11-3 9:00〕提醒大家小王回来了\n好", r_checks)["passed"]
         )
 
         # 〔不接〕检查
@@ -197,34 +214,40 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_case_add_from_message_without_turn_or_triage(self):
-        # 验证第 3 轮问题 2：无生成、无分诊的事故可通过 regular case add --message 从归档一键存成消息层用例并重复抽样回放
+        # 无生成、无分诊的事故可通过 regular case add --message 从归档一键存成消息层用例并重复抽样回放。
+        # 现场照线上真实的样子造：被引用的是小王前一晚送达的那句（交互日志 delivery 行的 ref_idx），
+        # 归档行只有 at_ids / mentions / msg_idx / ref_msg_idx，不带引用原文；
+        # 线上已经认出来的小王的 @ 在 state.json 里（11-03 09:00 那次就是这样）。
         with tempfile.TemporaryDirectory() as tmp:
-            adir = os.path.join(tmp, "archive")
-            idir = os.path.join(tmp, "interactions")
-            tdir = os.path.join(tmp, "turns")
-            cdir = os.path.join(tmp, "cases")
-            os.makedirs(adir, exist_ok=True)
-            os.makedirs(idir, exist_ok=True)
-            os.makedirs(tdir, exist_ok=True)
-            day = "2026-11-03"
-            with open(os.path.join(adir, f"{day}.jsonl"), "w", encoding="utf-8") as f:
+            adir, idir, tdir, cdir = (os.path.join(tmp, x)
+                                      for x in ("archive", "interactions", "turns", "cases"))
+            for d in (adir, idir, tdir):
+                os.makedirs(d, exist_ok=True)
+            state_file = os.path.join(tmp, "state.json")
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump({"groups": {"G_ARC": {"self_openid": "SELF_D3D7"}}}, f)
+            with open(os.path.join(idir, "2026-11-02.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "ts": 500.0, "kind": "delivery", "status": "delivered", "actor": "assistant",
+                    "group": "G_ARC", "text": "这杯叫橘光爱尔兰", "ref_idx": "REFIDX_bot1==",
+                }, ensure_ascii=False) + "\n")
+            with open(os.path.join(adir, "2026-11-03.jsonl"), "w", encoding="utf-8") as f:
                 f.write(json.dumps({
                     "ts": 1000.0, "group": "G_ARC", "sender": "U_PREV",
-                    "text": "今天调什么酒", "at": False, "cmd": False, "message_id": "m_prev",
+                    "text": "今天调什么酒", "message_id": "m_prev",
                 }, ensure_ascii=False) + "\n")
                 f.write(json.dumps({
                     "ts": 1010.0, "group": "G_ARC", "sender": "LAOREN",
-                    "text": "[回复 群友：「橘光爱尔兰」] @群友 为什么没有橘光反转爱尔兰",
-                    "at": False, "cmd": False, "message_id": "m_no_turn",
-                    "at_ids": ["SELF_D3D7"], "mentions": ["SELF_D3D7"],
+                    "text": "[回复小王：「这杯叫橘光爱尔兰」] 为什么没有橘光反转爱尔兰",
+                    "message_id": "m_no_turn", "at_ids": ["SELF_D3D7"],
                     "msg_idx": "REFIDX_q1==", "ref_msg_idx": "REFIDX_bot1==",
-                    "quoted": "这杯叫橘光爱尔兰", "bots": ["BOT_APP"],
                 }, ensure_ascii=False) + "\n")
 
             with patch.object(config, "ARCHIVE_DIR", adir), \
                     patch.object(config, "INTERACTION_LOG_DIR", idir), \
                     patch.object(config, "TURN_LOG_DIR", tdir), \
                     patch.object(config, "CASES_DIR", cdir), \
+                    patch.object(config, "STATE_FILE", state_file), \
                     patch.object(cli, "load_config", lambda directory: config), \
                     patch("builtins.print"):
                 rc = cli.main(["case", "add", "--message", "m_no_turn",
@@ -236,7 +259,9 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
             saved_case = loaded[0]
             self.assertEqual(saved_case["depth"], "message")
             self.assertEqual(saved_case["source_message_id"], "m_no_turn")
-            self.assertTrue(any(m.get("bot") for m in saved_case["messages"]))
+            self.assertEqual(saved_case["quotes"],
+                             [{"ref": "REFIDX_bot1==", "who": "self", "text": "这杯叫橘光爱尔兰"}])
+            self.assertEqual(saved_case["self_openid"], "SELF_D3D7")
 
             fake_call = AsyncMock(return_value="OFFLINE_OK")
             with patch.object(bot, "call_model", fake_call):
@@ -244,6 +269,32 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
                     saved_case, n=3, bot=bot, runtime=runtime, config=config)
             self.assertEqual(res["errors"], 0)
             self.assertEqual(res["samples"], ["OFFLINE_OK", "OFFLINE_OK", "OFFLINE_OK"])
+            # 回放时小王看得见引用的那杯酒，也认得出这是 @ 它
+            seen = [c.args[0][-1]["content"] for c in fake_call.call_args_list]
+            self.assertTrue(any("[回复" in t and "这杯叫橘光爱尔兰" in t for t in seen), seen)
+
+    async def test_message_replay_never_really_sends_voice_or_draws(self):
+        # 消息层回放走真的 reply_in_session：它写了〔语音〕〔画〕，不许真合成、真画图 ——
+        # 那会花钱，语音还会记进部署目录里线上那份语音额度
+        real_voice = AsyncMock(side_effect=AssertionError("回放里真发了语音"))
+        real_image = AsyncMock(side_effect=AssertionError("回放里真画了图"))
+        for tag, reply, stub in (("voice", "〔语音〕\n早上好", "_no_voice"),
+                                 ("image", "〔画〕一只戴墨镜的橘猫\n来了", "_no_image")):
+            spy = AsyncMock(wraps=getattr(replay_worker, stub))
+            case = {"id": f"media-{tag}", "depth": "message", "messages": [
+                {"sender": "U_MEDIA", "text": "小王来一个", "at": True, "message_id": f"m_{tag}"}]}
+            with patch.object(bot._VOICE_OUT, "ready", lambda: True), \
+                    patch.object(bot._VOICE_OUT, "attempt", real_voice), \
+                    patch.object(bot.image_generation, "available", lambda: True), \
+                    patch.object(bot.image_generation, "precheck", lambda *a, **k: "normal"), \
+                    patch.object(bot.image_generation, "generate_and_send", real_image), \
+                    patch.object(replay_worker, stub, spy), \
+                    patch.object(bot, "call_model", AsyncMock(return_value=reply)):
+                res = await replay_worker.replay_item(case, n=1, bot=bot, runtime=runtime, config=config)
+            self.assertEqual(res["errors"], 0)
+            self.assertTrue(spy.await_count, f"{tag}: 回放没走到发{tag}那一步，这条测试没测到东西")
+        real_voice.assert_not_called()
+        real_image.assert_not_called()
 
     async def test_concurrent_replay_does_not_leak_media_flags_or_config(self):
         # 复现并验证 P1-1：A 用例（remind=False）首次失败重试时，期间 B 用例（remind=True）并发插入，
@@ -309,8 +360,13 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
                 stale=False,
             )
             tlog.close()
+            # 存用例多半是因为那次判错了：不写该判成什么，不能拿当时线上的答案当标准
+            with self.assertRaises(ValueError):
+                cases_mod.create_case_from_turn(
+                    tmp, row["turn_id"], "2026-11-03-triage-1", incident="docs/when-to-reply.md")
             case = cases_mod.create_case_from_turn(
-                tmp, row["turn_id"], "2026-11-03-triage-1", incident="docs/when-to-reply.md")
+                tmp, row["turn_id"], "2026-11-03-triage-1", incident="docs/when-to-reply.md",
+                expect_recorded=True)
             self.assertEqual(case["depth"], "triage")
             self.assertEqual(case["triage"]["asked"], ["addressed", "lookup"])
 
@@ -417,13 +473,14 @@ class EvalAndSubprocessTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(verdict["winner"], "cand")
 
         cases = [cases_mod.SEED_CASES[0], cases_mod.SEED_CASES[9]]  # deflect-01 + remind-01
+        good, bad = "〔提醒 11-03 09:00〕提醒大家小王回来了\n好", "好，九点叫你（忘了写标记）"
         base_res = [
-            {"id": cases[0]["id"], "samples": ["顺着接你这句"]},
-            {"id": cases[1]["id"], "samples": ["〔提醒 11-03 09:00〕提醒大家小王回来了\n好"]},
+            {"id": cases[0]["id"], "samples": ["顺着接你这句"] * 4},
+            {"id": cases[1]["id"], "samples": [good] * 4},
         ]
         cand_res = [
-            {"id": cases[0]["id"], "samples": ["顺着接你这句"]},
-            {"id": cases[1]["id"], "samples": ["好，九点叫你（忘了写标记）"]},
+            {"id": cases[0]["id"], "samples": ["顺着接你这句"] * 4},
+            {"id": cases[1]["id"], "samples": [bad] * 4},
         ]
         rows, totals = await eval_mod.evaluate_cases(
             cases, base_res, cand_res, judge_fn=fake_judge)
@@ -431,6 +488,19 @@ class EvalAndSubprocessTest(unittest.IsolatedAsyncioTestCase):
         # 退步的 remind-01 必须排在第一位
         self.assertEqual(rows[0]["id"], cases[1]["id"])
         self.assertTrue(rows[0]["regressed"])
+
+        # 4 次里只掉 1 次：同一版本跑两遍也常见，记成噪声内下降，不算退步，但排在没变化的前面
+        wobble_rows, wobble_totals = await eval_mod.evaluate_cases(
+            cases, base_res,
+            [cand_res[0], {"id": cases[1]["id"], "samples": [good, good, good, bad]}],
+            judge_fn=fake_judge)
+        self.assertEqual(wobble_totals["regressed"], 0)
+        self.assertEqual(wobble_totals["wobbled"], 1)
+        self.assertEqual(wobble_rows[0]["id"], cases[1]["id"])
+        self.assertTrue(wobble_rows[0]["wobbled"])
+        self.assertIn("WOBBLE", eval_mod.render_report(
+            {"base": ".", "cand": ".", "created_at": "-", "n": 4, "totals": wobble_totals,
+             "cases": wobble_rows}))
 
         # 验证 P1-2：确定性检查全过、但盲评判输且越线时，必须标为 regressed，不能显示 OK
         judge_loss_rows, judge_loss_totals = await eval_mod.evaluate_cases(
@@ -503,6 +573,10 @@ class EvalAndSubprocessTest(unittest.IsolatedAsyncioTestCase):
                     n=1, ablate="deflect-in-place", worker_fn=fake_worker)
                 self.assertFalse(rep_unlinked["ablate"]["deletion_candidate"])
                 self.assertTrue(rep_unlinked["ablate"]["incomplete_evidence"])
+                self.assertEqual(rep_unlinked["ablate"]["verdict"], "no_cases")
+                md_unlinked = eval_mod.render_report(rep_unlinked)
+                self.assertIn("判断不了", md_unlinked)
+                self.assertNotIn("拿掉后有退步", md_unlinked)
 
                 # 验证第 2 轮 P1-2(b)：关联用例两版全部生成失败（samples=[None]）、仅无关用例成功时，绝不能推荐删除
                 def partial_fail_worker(code_dir, items, *, n=1, concurrency=6, ablate="", override=None):
@@ -576,6 +650,61 @@ class EvalAndSubprocessTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cli.main(["case", "list", "--cases", "remind-*", "--json"]), 0)
             with self.assertRaises(SystemExit):
                 cli.main(["eval", "--cases", "remind-*"])  # 缺少 --allow-paid 必须拦截
+
+
+
+class JudgeAndSignificanceTest(unittest.TestCase):
+    def test_judge_uses_only_its_own_provider(self):
+        # 盲评那一家没凭据时不借别家的：借了就是把一家的密钥发到另一家的地址上
+        with patch.object(config, "EVAL_JUDGE_PROVIDER", "zhipu"), \
+                patch.object(config, "load_api_keys",
+                             lambda provider: ["k-openai"] if provider == "openai" else []):
+            with self.assertRaises(ValueError):
+                eval_mod._judge_endpoint(config)
+
+    def test_preflight_reports_misconfigured_judge(self):
+        # 2026-11-04：默认把 kimi-k3.1-pro 发到 api.openai.com，一律超时，盲评整批被剔掉也没人知道
+        async def timed_out(messages):
+            raise TimeoutError("Request timed out.")
+
+        async def chatty(messages):
+            return "我觉得 A 更好"
+
+        async def fine(messages):
+            return '{"winner": "A", "crossed": [], "reason": "自然"}'
+
+        with self.assertRaises(RuntimeError) as ctx:
+            eval_mod.preflight_judge(config, judge_fn=timed_out)
+        self.assertIn(config.EVAL_JUDGE_MODEL, str(ctx.exception))
+        with self.assertRaises(RuntimeError):
+            eval_mod.preflight_judge(config, judge_fn=chatty)
+        eval_mod.preflight_judge(config, judge_fn=fine)
+
+    def test_run_eval_preflights_before_generating(self):
+        generated = []
+
+        def worker(*args, **kwargs):
+            generated.append(1)
+            return {"head": {}, "results": []}
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(config, "CASES_DIR", tmp), \
+                patch.object(eval_mod, "_default_judge_call",
+                             AsyncMock(side_effect=TimeoutError("Request timed out."))):
+            with self.assertRaises(RuntimeError):
+                eval_mod.run_eval(config, cases_selector="deflect-01*", n=1,
+                                  worker_fn=worker, write=False)
+        self.assertEqual(generated, [])
+
+    def test_regression_needs_more_than_sampling_noise(self):
+        drop, loss, alpha = eval_mod.drop_p_value, eval_mod.judge_loss_p_value, eval_mod.REGRESSION_P
+        self.assertGreater(drop(4, 4, 3, 4), alpha)        # 4 次掉 1 次：噪声
+        self.assertGreater(drop(4, 4, 2, 4), alpha)        # 掉 2 次：还分不清
+        self.assertLessEqual(drop(4, 4, 1, 4), alpha)      # 掉 3 次：退步
+        self.assertLessEqual(drop(3, 4, 0, 4), alpha)
+        self.assertAlmostEqual(drop(4, 4, 1, 4), 5 / 70)
+        self.assertGreater(loss(2, 0), alpha)              # 同一版本对同一版本实测出现过 2:0
+        self.assertLessEqual(loss(4, 0), alpha)            # 盲评旧版 4:0
 
 
 if __name__ == "__main__":

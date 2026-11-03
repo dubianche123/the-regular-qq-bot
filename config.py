@@ -440,9 +440,11 @@ TURN_LOG_KEEP_DAYS = _env_int("TURN_LOG_KEEP_DAYS", 30)   # 0 = 永不清理
 CHECKUP_DIR = data_path("CHECKUP_DIR", "checkups")
 CASES_DIR = data_path("CASES_DIR", "cases")
 EVAL_DIR = data_path("EVAL_DIR", "evals")
-# 盲评：不参赛的评审模型（网关上的 kimi-k3.1-pro），走哪一家的凭据
-EVAL_JUDGE_PROVIDER = _env_str("EVAL_JUDGE_PROVIDER", "openai")
-EVAL_JUDGE_MODEL = _env_str("EVAL_JUDGE_MODEL", "kimi-k3.1-pro")
+# 盲评：不参赛的评审模型。kimi-k3.1-pro 只在本机网关上有（模型名带 cn: 前缀），
+# 网关是 ZHIPU_BASE_URL 指向的 127.0.0.1:17863，所以走 zhipu 这一家的地址和凭据。
+# 2026-11-04 实测：发到 api.openai.com 的 kimi-k3.1-pro 一律超时，盲评整批被剔掉。
+EVAL_JUDGE_PROVIDER = _env_str("EVAL_JUDGE_PROVIDER", "zhipu")
+EVAL_JUDGE_MODEL = _env_str("EVAL_JUDGE_MODEL", "cn:kimi-k3.1-pro")
 EVAL_CONCURRENCY = _env_int("EVAL_CONCURRENCY", 6)
 
 # ══════════════════ 判断 API（原生 GPT Decisions，见 providers.call_decision）═════════════════

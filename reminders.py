@@ -22,6 +22,16 @@ _WHEN = re.compile(
     r"\s*(?P<H>\d{1,2})[:：](?P<M>\d{2})$")
 
 
+def when_key(when):
+    """标记里的时间归一成可比的 (每天?, 月, 日, 时:分)：「11-3 9:00」和「11-03 09:00」是同一个。
+    认不出返回 None。回放检查用（regular/cases.py），不算到点时间、不看过没过。"""
+    m = _WHEN.match((when or "").strip())
+    if not m:
+        return None
+    return (bool(m["daily"]), int(m["m"]) if m["m"] else None, int(m["d"]) if m["d"] else None,
+            f"{int(m['H']):02d}:{m['M']}")
+
+
 class Rejected(ValueError):
     """这条提醒记不了；args[0] 是说给群友听的原因。"""
 

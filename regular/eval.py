@@ -6,6 +6,7 @@
      同一份用例 / 同一天的 turns 喂给两边，不在同一进程里用 exec 换提示词。
   2. 能用代码判的检查算通过率（pass_rate）；带 judge 的用例把新旧回复打乱顺序交给不参赛的
      kimi-k3.1-pro 盲评，算胜率（win_rate）并标越线；网络错误自动重试一次，仍失败的那对剔除并单独计数。
+     盲评跑之前先预检一次（preflight_judge），并发跑。下降要过单侧检验才算退步，够不上的记「噪声内下降」。
   3. 整天回放（--day）对比整体分布：口头禅片段次数、〔不接〕比例、平均字数、碰敏感词次数、
      家务 / 假车 / 刚醒等套路正则。
   4. 报告写到 data/evals/<时间>.md：退步的用例排最前，稳定头长度每次必记。
@@ -23,6 +24,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
+from math import comb
 from pathlib import Path
 
 import expression
@@ -120,38 +122,72 @@ def _parse_judge_json(raw):
     return {"winner": winner, "crossed": crossed, "reason": str(data.get("reason") or "")[:80]}
 
 
+def _judge_endpoint(config):
+    """盲评走哪一家：(base_url, key, model)。没配好抛 ValueError，说清楚缺什么。
+
+    只用 EVAL_JUDGE_PROVIDER 自己那一家的地址和凭据，不借别家的 —— 借了就是把一家的
+    密钥发到另一家的地址上。
+    """
+    provider = config.EVAL_JUDGE_PROVIDER
+    preset = config.PROVIDER_PRESETS.get(provider)
+    if preset is None:
+        raise ValueError(f"EVAL_JUDGE_PROVIDER={provider!r} 不是已知的供应商")
+    keys = config.load_api_keys(provider)
+    if not keys or not preset.get("base_url"):
+        raise ValueError(f"盲评供应商 {provider} 没有地址或凭据")
+    return preset["base_url"], keys[0], config.EVAL_JUDGE_MODEL
+
+
 async def _default_judge_call(messages):
-    """直接调配置的盲评模型（默认网关上的 kimi-k3.1-pro），失败返回 None。"""
+    """直接调配置的盲评模型（默认网关上的 cn:kimi-k3.1-pro）。"""
     import config
     import httpx
     from openai import AsyncOpenAI
 
-    provider = config.EVAL_JUDGE_PROVIDER or config.AI_PROVIDER
-    preset = config.PROVIDER_PRESETS.get(provider) or config.PROVIDER_PRESETS[config.AI_PROVIDER]
-    keys = config.load_api_keys(provider) or config.load_api_keys(config.AI_PROVIDER)
-    if not keys or not preset.get("base_url"):
-        return None
-    model = config.EVAL_JUDGE_MODEL
+    base_url, key, model = _judge_endpoint(config)
     async with httpx.AsyncClient(verify=config.SSL_VERIFY,
                                  mounts={"all://127.0.0.1": None, "all://localhost": None},
                                  timeout=config.AI_TIMEOUT_SECONDS) as http:
-        client = AsyncOpenAI(api_key=keys[0], base_url=preset["base_url"],
+        client = AsyncOpenAI(api_key=key, base_url=base_url,
                              http_client=http, max_retries=0)
         res = await client.chat.completions.create(
-            model=model, messages=messages, max_tokens=200, temperature=0.0)
+            model=model, messages=messages, max_tokens=400, temperature=0.0)
         if res and res.choices:
             return (res.choices[0].message.content or "").strip()
     return None
 
 
-async def judge_pair(case, base_reply, cand_reply, *, judge_fn=None, rng=None, retries=1):
-    """打乱顺序盲评一对新旧回复。返回 {"winner": "base"|"cand"|"tie"|None, "crossed": [...], "reason": ...}。"""
+def preflight_judge(config, judge_fn=None):
+    """跑之前先让盲评答一道送分题：配错了（比如模型名在那一家根本没有）当场报错，
+    不要等几百次生成跑完才发现盲评整批被剔掉。"""
+    probe = [{"role": "system", "content": JUDGE_SYSTEM},
+             {"role": "user", "content": "【群友说】\n在吗\n\n【本条关注点】\n自然\n\n"
+                                         "【回复 A】\n在呢\n\n【回复 B】\n您好，请问有什么可以帮您"}]
+    call = judge_fn or _default_judge_call
+    try:
+        raw = asyncio.run(call(probe))
+    except Exception as err:   # noqa: BLE001 —— 什么错都要原样告诉跑评测的人
+        raise RuntimeError(
+            f"盲评调不通（{config.EVAL_JUDGE_PROVIDER} / {config.EVAL_JUDGE_MODEL}）："
+            f"{type(err).__name__} {err}") from None
+    if _parse_judge_json(raw) is None:
+        raise RuntimeError(
+            f"盲评答的不是要的 JSON（{config.EVAL_JUDGE_PROVIDER} / {config.EVAL_JUDGE_MODEL}）："
+            f"{str(raw)[:80]!r}")
+
+
+async def judge_pair(case, base_reply, cand_reply, *, judge_fn=None, rng=None, retries=1,
+                     swap=None):
+    """打乱顺序盲评一对新旧回复。返回 {"winner": "base"|"cand"|"tie"|None, "crossed": [...], "reason": ...}。
+
+    swap 给了就照它摆 A/B（并发评时先统一抽好，结果才可复现），不给就现抽。
+    """
     if base_reply is None or cand_reply is None:
         return {"winner": None, "crossed": [], "reason": "generation_error", "error": True}
     if base_reply.strip() == cand_reply.strip():
         return {"winner": "tie", "crossed": [], "reason": "identical", "error": False}
-    rng = rng or random
-    swap = bool(rng.getrandbits(1))
+    if swap is None:
+        swap = bool((rng or random).getrandbits(1))
     a_text, b_text = (cand_reply, base_reply) if swap else (base_reply, cand_reply)
     turn_kw = (case.get("turn") or {}).get("kwargs") or {}
     user_text = turn_kw.get("user_text") or ""
@@ -192,14 +228,65 @@ async def judge_pair(case, base_reply, cand_reply, *, judge_fn=None, rng=None, r
 
 # ── 用例对比与整天指标 ──
 
-async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rng=None):
-    """汇总每条用例的确定性通过率、盲评胜率，并标出退步（regressed）与改进（improved）。"""
+# 退步要过一道单侧检验：每条只抽几次，同一版本跑两遍也会这次 4:0、那次 3:1。
+# 0.1 的意思：每条抽 4 次时，至少掉 3 次（4→1、3→0）才算退步；盲评旧版 4:0（平局不计）才算判输。
+# 2026-11-04 在 Pro 上拿同一版本对同一版本跑（-n 2），盲评 2:0 就出现了 —— 0.25 会把它报成退步。
+# 够不上的下降不藏起来，单列成「噪声内下降」，排在退步后面。越线不看次数，一次就算退步。
+REGRESSION_P = 0.1
+
+
+def drop_p_value(b_pass, b_total, c_pass, c_total):
+    """新版通过数少到这个程度的单侧概率（Fisher 精确检验）：两版其实一样好时，碰巧抽成这样的可能性。"""
+    if not b_total or not c_total:
+        return 1.0
+    passed, total = b_pass + c_pass, b_total + c_total
+    return sum(comb(passed, k) * comb(total - passed, c_total - k)
+               for k in range(c_pass + 1)) / comb(total, c_total)
+
+
+def judge_loss_p_value(base_wins, cand_wins):
+    """盲评里旧版赢这么多场的单侧符号检验（平局不计）。"""
+    n = base_wins + cand_wins
+    if not n:
+        return 1.0
+    return sum(comb(n, k) for k in range(base_wins, n + 1)) / 2 ** n
+
+
+async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rng=None,
+                         concurrency=6):
+    """汇总每条用例的确定性通过率、盲评胜率，标出退步（regressed）、噪声内下降（wobbled）与改进。
+
+    盲评先把每一对的 A/B 抽好，再并发跑（同时最多 concurrency 个）。
+    """
+    rng = rng or random
     base_map = {r["id"]: r for r in base_results}
     cand_map = {r["id"]: r for r in cand_results}
+    plan = []
+    for case in cases:
+        cid = case["id"]
+        b_samples = (base_map.get(cid) or {}).get("samples") or []
+        c_samples = (cand_map.get(cid) or {}).get("samples") or []
+        pairs = list(zip(b_samples, c_samples))
+        plan.append((case, b_samples, c_samples, bool(cases_mod.judge_prompts(case.get("checks"))),
+                     pairs, [bool(rng.getrandbits(1)) for _ in pairs]))
+    sem = asyncio.Semaphore(max(1, int(concurrency)))
+
+    async def judge_one(case, b_s, c_s, swap):
+        if b_s is None or c_s is None:
+            return None
+        async with sem:
+            return await judge_pair(case, b_s, c_s, judge_fn=judge_fn, swap=swap)
+
+    verdicts = iter(await asyncio.gather(*(
+        judge_one(case, b_s, c_s, swap)
+        for case, _, _, has_judge, pairs, swaps in plan if has_judge
+        for (b_s, c_s), swap in zip(pairs, swaps))))
+
     rows = []
     totals = {
         "cases": len(cases),
         "regressed": 0,
+        "wobbled": 0,
         "improved": 0,
         "base_passed_samples": 0,
         "base_total_samples": 0,
@@ -208,14 +295,13 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         "judge_cand_wins": 0,
         "judge_base_wins": 0,
         "judge_ties": 0,
+        "judge_errors": 0,
         "dropped_pairs": 0,
         "cand_crossed": 0,
         "base_crossed": 0,
     }
-    for case in cases:
+    for case, b_samples, c_samples, has_judge, pairs, _ in plan:
         cid = case["id"]
-        b_samples = (base_map.get(cid) or {}).get("samples") or []
-        c_samples = (cand_map.get(cid) or {}).get("samples") or []
         checks = case.get("checks") or []
         b_checks = [cases_mod.check_reply(s, checks) for s in b_samples if s is not None]
         c_checks = [cases_mod.check_reply(s, checks) for s in c_samples if s is not None]
@@ -228,21 +314,21 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         totals["cand_passed_samples"] += c_pass
         totals["cand_total_samples"] += len(c_checks)
 
-        has_judge = bool(cases_mod.judge_prompts(checks))
         j_wins = {"cand": 0, "base": 0, "tie": 0, "dropped": 0}
         j_reasons = []
         c_crossed = b_crossed = 0
-        for b_s, c_s in zip(b_samples, c_samples):
+        for b_s, c_s in pairs:
+            verdict = next(verdicts) if has_judge else None
             if b_s is None or c_s is None:
                 j_wins["dropped"] += 1
                 totals["dropped_pairs"] += 1
                 continue
             if not has_judge:
                 continue
-            verdict = await judge_pair(case, b_s, c_s, judge_fn=judge_fn, rng=rng)
-            if verdict.get("error") or verdict["winner"] is None:
+            if verdict is None or verdict.get("error") or verdict["winner"] is None:
                 j_wins["dropped"] += 1
                 totals["dropped_pairs"] += 1
+                totals["judge_errors"] += 1
                 continue
             j_wins[verdict["winner"]] += 1
             if verdict["winner"] == "cand":
@@ -272,16 +358,23 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             and (not has_judge or (judged_pairs > 0 and j_wins["dropped"] == 0))
         )
 
-        # 退步判定：确定性检查下降、新版生成全部失败、盲评判越线、或盲评判旧版赢，任一命中都算退步
+        # 退步：新版全部生成失败、盲评判越线、或者下降过了单侧检验；够不上检验的下降记成噪声内下降
         gen_regressed = bool(b_valid > 0 and c_valid == 0)
-        det_regressed = bool(b_checks and (c_rate < b_rate or (b_rate == 1.0 and c_rate < 1.0))) or gen_regressed
-        judge_regressed = bool(has_judge and (c_crossed > 0 or j_wins["base"] > j_wins["cand"]))
-        regressed = det_regressed or judge_regressed
+        det_dropped = bool(b_checks and c_checks and c_rate < b_rate)
+        det_p = drop_p_value(b_pass, b_valid, c_pass, c_valid) if det_dropped else 1.0
+        judge_lost = bool(has_judge and j_wins["base"] > j_wins["cand"])
+        judge_p = judge_loss_p_value(j_wins["base"], j_wins["cand"]) if judge_lost else 1.0
+        regressed = bool(gen_regressed or c_crossed > 0
+                         or (det_dropped and det_p <= REGRESSION_P)
+                         or (judge_lost and judge_p <= REGRESSION_P))
+        wobbled = (not regressed) and (det_dropped or judge_lost)
         det_improved = bool(c_checks and c_rate > b_rate)
         judge_improved = bool(has_judge and j_wins["cand"] > j_wins["base"] and c_crossed == 0)
-        improved = (not regressed) and (det_improved or judge_improved)
+        improved = (not regressed) and (not wobbled) and (det_improved or judge_improved)
         if regressed:
             totals["regressed"] += 1
+        elif wobbled:
+            totals["wobbled"] += 1
         elif improved:
             totals["improved"] += 1
         failed_reasons = [d["reason"] for r in c_checks for d in r["details"]
@@ -292,9 +385,11 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             failed_reasons.append("样本或盲评不完整")
         if c_crossed > 0:
             failed_reasons.append(f"盲评判越线×{c_crossed}")
-        if has_judge and j_wins["base"] > j_wins["cand"]:
+        if judge_lost:
             failed_reasons.append(f"盲评判输 ({j_wins['cand']}/{j_wins['base']}/{j_wins['tie']})")
             failed_reasons.extend(j_reasons)
+        if wobbled:
+            failed_reasons.insert(0, f"抽样噪声内（p={min(det_p, judge_p):.2f}）")
         rows.append({
             "id": cid,
             "incident": case.get("incident") or "",
@@ -305,7 +400,10 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             "base_pass_rate": round(b_rate, 3),
             "cand_pass_rate": round(c_rate, 3),
             "regressed": regressed,
+            "wobbled": wobbled,
             "improved": improved,
+            "p_drop": round(det_p, 3) if det_dropped else None,
+            "p_judge_loss": round(judge_p, 3) if judge_lost else None,
             "evidence_complete": evidence_complete,
             "judge": j_wins if has_judge else None,
             "judge_reasons": j_reasons[:3],
@@ -314,8 +412,9 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             "cand_sample": next((s for s in c_samples if s is not None), ""),
         })
 
-    # 退步排最前，其次改进，其余按 id
-    rows.sort(key=lambda r: (0 if r["regressed"] else 1 if r["improved"] else 2, r["id"]))
+    # 退步排最前，其次噪声内下降，再次改进，其余按 id
+    rows.sort(key=lambda r: (0 if r["regressed"] else 1 if r["wobbled"] else 2 if r["improved"] else 3,
+                             r["id"]))
     totals["incomplete_cases"] = sum(1 for r in rows if not r.get("evidence_complete"))
     totals["base_pass_rate"] = round(
         totals["base_passed_samples"] / totals["base_total_samples"], 3
@@ -393,14 +492,20 @@ def render_report(report):
     ]
     if report.get("ablate"):
         ab = report["ablate"]
-        verdict = "可删除候选（拿掉后无退步）" if ab.get("deletion_candidate") else "仍需保留（拿掉后有退步）"
+        verdict = {
+            "delete": "可删除候选（拿掉后挂的用例和全量用例都没变差）",
+            "keep": "仍需保留（拿掉后有退步）",
+            "unsure": "说不准（拿掉后有下降，但都在抽样噪声内；加大 -n 再跑）",
+            "no_cases": f"判断不了（评测集里没有这条规则挂的用例：{', '.join(ab.get('cases') or ()) or '—'}）",
+            "incomplete": "判断不了（有用例没生成出来，或盲评没跑完）",
+        }.get(ab.get("verdict"), "—")
         lines.append(f"- 规则消融：`{ab['id']}`（-{ab.get('chars', '?')} 字）→ **{verdict}**")
     t = report.get("totals") or {}
     if t.get("cases"):
         lines.append(
             f"- 用例：{t['cases']} 条（每条抽 {report.get('n', 1)} 次）| "
             f"通过率：`{t.get('base_pass_rate')}` → `{t.get('cand_pass_rate')}` | "
-            f"退步：**{t['regressed']}** 条 | 改进：{t['improved']} 条"
+            f"退步：**{t['regressed']}** 条 | 噪声内下降：{t.get('wobbled', 0)} 条 | 改进：{t['improved']} 条"
         )
         if t.get("cand_win_rate") is not None:
             lines.append(
@@ -408,15 +513,21 @@ def render_report(report):
                 f"（新胜率 `{t['cand_win_rate']:.0%}`，越线 新 {t['cand_crossed']} / 旧 {t['base_crossed']}）"
             )
         if t.get("dropped_pairs"):
-            lines.append(f"- 网络/生成错误剔除对数：{t['dropped_pairs']}")
+            lines.append(f"- 网络/生成错误剔除对数：{t['dropped_pairs']}"
+                         + (f"（其中盲评失败 {t['judge_errors']} 对）" if t.get("judge_errors") else ""))
 
     case_rows = report.get("cases") or []
-    regressed = [r for r in case_rows if r["regressed"]]
-    if regressed:
-        lines += ["", "## 退步用例（旧版过、新版不过，上线前必须交代）", "",
+    for flag, title in (
+            ("regressed", "退步用例（旧版过、新版不过，上线前必须交代）"),
+            ("wobbled", f"噪声内下降（掉了，但每条只抽 {report.get('n', 1)} 次，分不清是不是抽样噪声；"
+                        "要定论就加大 -n 只跑这几条）")):
+        picked = [r for r in case_rows if r.get(flag)]
+        if not picked:
+            continue
+        lines += ["", f"## {title}", "",
                   "| 用例 | 事故出处 | 旧通过 | 新通过 | 失败原因 |",
                   "| --- | --- | --- | --- | --- |"]
-        for r in regressed:
+        for r in picked:
             why = "；".join(r["failed_reasons"]) or "—"
             lines.append(f"| `{r['id']}` | {r['incident'] or '—'} | {r['base_pass']} | {r['cand_pass']} | {why} |")
 
@@ -425,7 +536,8 @@ def render_report(report):
                   "| 状态 | 用例 | 旧通过 | 新通过 | 盲评 (新/旧/平) | 备注 |",
                   "| --- | --- | --- | --- | --- | --- |"]
         for r in case_rows:
-            state = "REGRESSED" if r["regressed"] else ("IMPROVED" if r["improved"] else "OK")
+            state = ("REGRESSED" if r["regressed"] else "WOBBLE" if r.get("wobbled")
+                     else "IMPROVED" if r["improved"] else "OK")
             j = r["judge"]
             j_str = f"{j['cand']}/{j['base']}/{j['tie']}" if j else "—"
             note = "；".join(r["failed_reasons"] or r["judge_reasons"]) or "—"
@@ -482,6 +594,8 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
         if not day or cases_selector != "all":
             cases = cases_mod.load_cases(config.CASES_DIR, selector=cases_selector,
                                          include_seeds=True)
+    if judge_fn is None and any(cases_mod.judge_prompts(c.get("checks")) for c in cases):
+        preflight_judge(config)
 
     with checkout_version(base) as base_dir, checkout_version(cand) as cand_dir:
         base_head = cand_head = None
@@ -491,18 +605,15 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
             c_out = worker(cand_dir, cases, n=n, concurrency=concurrency, ablate=ablate)
             base_head, cand_head = b_out.get("head"), c_out.get("head")
             case_rows, totals = asyncio.run(
-                evaluate_cases(cases, b_out["results"], c_out["results"], judge_fn=judge_fn))
+                evaluate_cases(cases, b_out["results"], c_out["results"], judge_fn=judge_fn,
+                               concurrency=concurrency))
             if ablate_info is not None:
                 rule_obj = rules_mod.get_rule(ablate)
-                linked_rows = [
-                    r for r in case_rows
-                    if rules_mod.matches_case(rule_obj, r["id"], r.get("tags"))
-                ]
-                has_linked = bool(linked_rows)
+                has_linked = any(rules_mod.matches_case(rule_obj, r["id"], r.get("tags"))
+                                 for r in case_rows)
                 all_evidence_complete = bool(case_rows) and all(
                     r.get("evidence_complete") for r in case_rows
                 )
-                linked_regressed = any(r["regressed"] for r in linked_rows)
                 per_case_judge_ok = all(
                     r["judge"]["base"] <= r["judge"]["cand"]
                     for r in case_rows if r.get("judge")
@@ -515,16 +626,20 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
                     judged_total > 0
                     and totals.get("judge_base_wins", 0) <= totals.get("judge_cand_wins", 0)
                 ))
-                ablate_info["incomplete_evidence"] = not (has_linked and all_evidence_complete)
-                ablate_info["deletion_candidate"] = bool(
-                    totals.get("cases", 0) > 0
-                    and has_linked
-                    and all_evidence_complete
-                    and totals["regressed"] == 0
-                    and totals.get("cand_crossed", 0) == 0
-                    and not linked_regressed
-                    and judge_ok
-                )
+                # 删规则宁严勿松：任何一条掉了（哪怕在噪声内）都不推荐删，只是说法不同
+                if not has_linked:
+                    verdict = "no_cases"
+                elif not all_evidence_complete:
+                    verdict = "incomplete"
+                elif totals["regressed"] or totals.get("cand_crossed", 0) or not judge_ok:
+                    verdict = "keep"
+                elif totals.get("wobbled", 0):
+                    verdict = "unsure"
+                else:
+                    verdict = "delete"
+                ablate_info["verdict"] = verdict
+                ablate_info["incomplete_evidence"] = verdict in ("no_cases", "incomplete")
+                ablate_info["deletion_candidate"] = verdict == "delete"
 
         day_eval = None
         if day:
