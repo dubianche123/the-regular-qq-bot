@@ -6,9 +6,9 @@
 
 **An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and knows when to join in and when to leave room for others.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1326-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1376-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
-[中文](README.md) · **English** · [Highlights](#design-highlights) · [Architecture](#architecture) · [Quick start](#quick-start) · [Design docs](#design-docs)
+[中文](README.md) · **English** · [Highlights](#design-highlights) · [Architecture](#architecture) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
 </div>
 
@@ -18,7 +18,7 @@ The hard part is not getting a model to produce a sentence. It is the chain of j
 
 <table>
 <tr>
-<td align="center"><strong>1326</strong><br><sub>offline regression tests</sub></td>
+<td align="center"><strong>1376</strong><br><sub>offline regression tests</sub></td>
 <td align="center"><strong>17 / 20</strong><br><sub>messages clearly aimed at it without its name, answered (3 / 20 under the old dice)</sub></td>
 <td align="center"><strong>75.6%</strong><br><sub>of reply input tokens served from the prefix cache (261 live calls in one day)</sub></td>
 <td align="center"><strong>0.71 s</strong><br><sub>median closed-set triage latency (908 calls)</sub></td>
@@ -55,6 +55,7 @@ These are illustrative scenarios and design goals, not a guarantee for every rep
 | 🧠 | **Memory must not be invented.** | Code owns relationships, nicknames, ledgers and quotas; the model cannot write them. A personal quote is only kept if it is bound verbatim to the archive (speaker, message id and time all match). It is only brought in when the current topic matches. | [Personal memory](docs/personal-memory.md) |
 | 💰 | **Bounded cost.** | A four-layer prompt ordered by stability keeps the cached prefix long. SDK auto-retry is off; candidates are explicit, with attempt caps, a whole-turn timeout, and global and per-feature daily budgets. | **75.6%** of live input tokens cached, [providers](docs/providers.md) |
 | 🔬 | **Prompt changes by gut feeling break things.** | Every change is first replayed on the real archive in production format and scored. Conclusions and limits are written down. | [9 variants compared](docs/when-to-reply.md), [three providers, one job each](docs/model-roles.md) |
+| 🔁 | **Fixed bugs come back; replays only cover the latest incident.** | Every turn's inputs are recorded verbatim, an incident becomes a case with one command, and every change is compared old vs new on all cases, blind-judged and significance-tested. Coding agents work only through these commands; a person always ships. | [Self-iteration](#self-iteration-the-loop-as-commands) |
 
 ## Architecture
 
@@ -180,6 +181,32 @@ A few examples:
 
 The detailed design docs are in Chinese.
 
+## Self-iteration: the loop as commands
+
+The loop above used to be done by hand. A problem surfaced only when someone posted a screenshot; every incident meant rebuilding the scene from logs; replay scripts were thrown away afterwards; and a change was replayed only against the incident that prompted it.
+The mechanical parts are now commands, and people keep two decisions: **what to change, and whether to ship it**. The approach borrows from two papers:
+[Dream-RSI](https://arxiv.org/abs/2609.14858) uses recorded history as a replay simulator, and [Harness²](https://arxiv.org/abs/2610.14224) compares instead of scoring when there is no ground truth.
+
+| Step | What it does | Command |
+| --- | --- | --- |
+| Record | At the `get_ai_reply` entry, every input of a turn is kept verbatim: the call arguments, the session history at the time, media switches and the raw model output. Triage inputs are kept too. Private chats are skipped; 30 days by default | automatic, `data/turns/` |
+| Daily checkup | Read-only, offline, no model calls. Seven signals: called but no reply, the same question asked again, corrected by members, a confused reaction, promised but not done, catchphrases, sensitive-word hits. Each finding comes with context and a one-line command to save it as a case; people label yes / no, and precision is tracked per signal | `regular checkup` |
+| Case library | One command turns a recorded turn or an archived message into a case, at one of three depths: generation, triage or message. What code can check, code checks (regex, `〔画〕`/`〔提醒〕` tags, reminder times); the rest goes to the blind judge | `regular case add` |
+| Evaluation | The old and new versions each run in their own subprocess (the old one from a temporary `git worktree`), sampling every case n times. kimi-k3.1-pro, which never competes, judges shuffled pairs. A drop counts as a regression only if it passes a one-sided test; smaller drops are listed separately as within noise. Whole-day replay compares patterns no single turn shows, such as catchphrase counts and how often it passes | `regular eval` |
+| Rule ledger | Every rule in the prompt records where it came from (which incident, which day) and which cases cover it. Removing one and rerunning gives one of four verdicts: deletable, keep, unsure, cannot tell. This keeps the prompt from only ever growing | `regular eval --ablate` |
+
+**Two layers.** The execution layer is the fixed commands above, calling the chat API directly. Results are repeatable, testable and costed, and every iterator is measured with the same ruler.
+The improvement layer is an off-the-shelf coding agent (Claude Code or CodeX) that follows the runbook in [AGENTS.md](AGENTS.md) and works only through these commands: read the checkup, find the cause, propose a general fix and a group-specific one, save cases, run the full evaluation, write the report.
+There is no home-grown "read report → edit prompt" loop. Half the problems live in code (an unrecognised @, an unseen quote); a prompt-only loop cannot fix those and would add one more brake to the prompt instead.
+
+**No automatic shipping.** Scores come from one judge model and a few dozen cases, so fully automatic selection would pick whatever pleases the judge, and a bad line in the group cannot be taken back. The one exception is a narrow slot that code can check (the reminder time format, the wording of the reply-or-pass instruction): there, a dozen rewordings can be searched automatically and the best one handed to a person for approval.
+
+Measured:
+- **The same version against itself** (4 cases, 4 samples each): 0 regressions and 2 drops within noise. That is why a single drop does not count as a regression.
+- **The first checkup on a real day** showed, under "corrected", a reply that had leaked a malformed bookkeeping tag into the group. Following it turned up 4 such replies that day; fixed.
+
+See [self-iteration](docs/self-iteration.md) (in Chinese).
+
 ## Quick start
 
 You need Python 3.10 or later, a QQ bot, and a compatible model service. The terminal demo runs without QQ credentials or an API key:
@@ -221,7 +248,7 @@ Decisions, search, vision, voice and drawing need the corresponding services. Se
 | When to speak | [When to reply](docs/when-to-reply.md) · [When to intervene (archived)](docs/when-to-intervene.md) · [Real request or a bit](docs/request-sincerity.md) · [Deflect in place](docs/deflection.md) |
 | Capabilities and actions | [Image and voice](docs/media-replies.md) · [Image generation](docs/image-generation.md) · [Read images before replying](docs/image-before-reply.md) · [Reminders](docs/reminders.md) |
 | Async | [Slow work: answer first, follow up later](docs/slow-work.md) |
-| Memory and observation | [Personal memory](docs/personal-memory.md) · [Interaction observations](docs/interaction-observations.md) · [Self-iteration (design draft)](docs/self-iteration.md) |
+| Memory and observation | [Personal memory](docs/personal-memory.md) · [Interaction observations](docs/interaction-observations.md) · [Self-iteration](docs/self-iteration.md) |
 | Models and providers | [Three providers, one job each](docs/model-roles.md) · [Provider configuration](docs/providers.md) |
 | Overview | [Design notes (English)](docs/DESIGN_NOTES_EN.md) · [设计笔记](docs/DESIGN_NOTES.md) |
 

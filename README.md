@@ -6,9 +6,9 @@
 
 **一个住在 QQ 群里的 AI 群友：认识大家、记得群里的事，也知道什么时候该接话，什么时候该安静。**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1326-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1376-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
-**中文** · [English](README_EN.md) · [设计亮点](#设计亮点) · [架构](#架构总览) · [快速开始](#开始使用) · [设计文档](#设计文档)
+**中文** · [English](README_EN.md) · [设计亮点](#设计亮点) · [架构](#架构总览) · [自己迭代](#自己迭代把这一圈做成命令) · [快速开始](#开始使用) · [设计文档](#设计文档)
 
 </div>
 
@@ -18,7 +18,7 @@
 
 <table>
 <tr>
-<td align="center"><strong>1326</strong><br><sub>离线回归测试</sub></td>
+<td align="center"><strong>1376</strong><br><sub>离线回归测试</sub></td>
 <td align="center"><strong>17 / 20</strong><br><sub>没带名字却冲它说的话，接住的条数（骰子时代 3 / 20）</sub></td>
 <td align="center"><strong>75.6%</strong><br><sub>回复调用的输入 token 命中前缀缓存（线上一天 261 次）</sub></td>
 <td align="center"><strong>0.71 s</strong><br><sub>闭集分诊中位延迟（908 次）</sub></td>
@@ -55,6 +55,7 @@
 | 🧠 | **记忆不能编** | 代码持有关系、称呼、账本和额度，模型不能写；个人原话必须逐字绑回归档（发言人、消息标识、时间都对上才收），只在当前话题命中时带进来 | [交情与个人证据](docs/personal-memory.md) |
 | 💰 | **成本可控** | 四层提示词按稳定度排序吃前缀缓存；关掉 SDK 自动重试，显式候选、尝试上限、整轮超时、全局和分项日额度 | 线上 **75.6%** 输入命中缓存，[供应商与成本](docs/providers.md) |
 | 🔬 | **改提示词凭感觉会翻车** | 每次改动先用线上真实归档按生产格式回放、打分，再上线；结论和局限写进文档 | [何时接话的 9 种写法对比](docs/when-to-reply.md#回放luna-low)、[三家模型分工实测](docs/model-roles.md) |
+| 🔁 | **修好的又坏了，回放只管这一次** | 每轮输入原样记录，事故一条命令存成用例，每次改动拿全部用例新旧对比、盲评、过显著性检验；编码代理只通过这些命令干活，上线永远是人 | [自己迭代](#自己迭代把这一圈做成命令) |
 
 ## 架构总览
 
@@ -167,6 +168,32 @@
 - **[三家模型各司其职](docs/model-roles.md)**：本机网关、OpenAI、Gemini 用同一批真实提示词比回复和起名审核，定下分工和每个模型的调用参数。
 - **[群里叫它办事是真托付还是整活](docs/request-sincerity.md)**：1082 条对它说的话，事后标签对照实时判断。
 
+## 自己迭代：把这一圈做成命令
+
+上面这一圈以前全靠手：截了图才知道出事，每次翻日志手拼现场，回放脚本用完就扔，改一处只回放这一次的事故。
+现在把机械的部分做成了几条命令，人只留下两件事：**改哪个、上不上线**。思路来自两篇论文：
+[Dream-RSI](https://arxiv.org/abs/2609.14858) 把跑过的历史当回放模拟器，[Harness²](https://arxiv.org/abs/2610.14224) 在没有标准答案时用「对比」代替「打分」。
+
+| 环节 | 做什么 | 命令 |
+| --- | --- | --- |
+| 记现场 | 在 `get_ai_reply` 入口把一轮的全部入参、当时的会话历史、媒体开关、模型原始输出原样记下；分诊看到的那份输入也记。私聊不记，默认留 30 天 | 线上自动，`data/turns/` |
+| 每日体检 | 只读、不联网、不调模型，扫出七种可疑信号：叫了没回、同一句问好几遍、被纠正、群里反应不对、只说不做、口头禅、碰了敏感词。每条附前后文和一行存成用例的命令；人工标「是 / 不是」，按信号统计准确率 | `regular checkup` |
+| 用例库 | 一条命令把一轮记录或一条归档消息存成用例，分生成层、分诊层、消息层三种深度；能用代码判的用代码判（正则、〔画〕〔提醒〕标记、提醒时间），判不了的才交给盲评 | `regular case add` |
+| 评测 | 新旧两个版本各起一个子进程（旧版本用 `git worktree` 临时检出），同一批用例各抽 n 次；不参赛的 kimi-k3.1-pro 打乱顺序两两盲评；下降要过单侧检验才算退步，够不上的单列「噪声内下降」；整天回放比口头禅、〔不接〕比例这类单拎一轮看不出的套路 | `regular eval` |
+| 规则账本 | 提示词里每段规则标明出处（哪次事故、哪天加的）和挂的用例；拿掉一条重跑，结论分可删除 / 仍需保留 / 说不准 / 判断不了，盯住提示词别只增不减 | `regular eval --ablate` |
+
+**两层分工。** 执行层就是上面这些固定的命令，直接调对话 API：结果可重复、能进测试、花多少钱算得清，换谁来迭代都用同一把尺子。
+改进层交给现成的编码代理（Claude Code / CodeX），照 [AGENTS.md](AGENTS.md) 里的流程只通过这些命令干活：读体检、定位原因、提通用和针对本群两种改法、存用例、跑全量评测、写报告。
+不自己写一个「读报告 → 改提示词」的循环 —— 一半的问题在代码里（认不出 @、看不见引用），只会改提示词的循环修不了，还会再往提示词里补一条刹车。
+
+**不自动上线。** 分数来自一个评审模型和几十条用例，全自动选优会挑出迎合评审的版本；群里说错一句收不回来。唯一的例外是有代码能判对错的窄口子（提醒的时间格式、插嘴判断的措辞），可以自动搜十几版措辞，挑出最好的交给人批准。
+
+实测：
+- **同一版本对同一版本**跑一遍（4 条用例各抽 4 次）：0 条退步，2 条噪声内下降 —— 掉一次不算退步，就是这么定的。
+- **体检第一次拿真实的一天跑**，「被纠正」那一栏就露出一条把写歪的记账标签发进群的回复，顺着查出当天有 4 条，已修。
+
+详见[自己迭代](docs/self-iteration.md)。
+
 ## 开始使用
 
 需要 Python 3.10 或以上、QQ 机器人账号，以及可用的模型服务。可以先在终端体验，不需要 QQ 账号或 API Key：
@@ -208,7 +235,7 @@ regular --directory regular-bot run
 | 什么时候开口 | [没叫它的时候](docs/when-to-reply.md) · [何时介入（旧方案存档）](docs/when-to-intervene.md) · [真托付还是整活](docs/request-sincerity.md) · [岔开话题别换台](docs/deflection.md) |
 | 能力与动作 | [画图与语音](docs/media-replies.md) · [图像生成配置](docs/image-generation.md) · [先读图再回话](docs/image-before-reply.md) · [到点提醒](docs/reminders.md) |
 | 异步 | [慢活：先回一句，做完再跟进](docs/slow-work.md) |
-| 记忆与观察 | [交情与个人证据](docs/personal-memory.md) · [互动观察](docs/interaction-observations.md) · [自己迭代（设计稿）](docs/self-iteration.md) |
+| 记忆与观察 | [交情与个人证据](docs/personal-memory.md) · [互动观察](docs/interaction-observations.md) · [自己迭代](docs/self-iteration.md) |
 | 模型与供应商 | [三家模型各司其职](docs/model-roles.md) · [供应商配置](docs/providers.md) |
 | 总览 | [设计笔记](docs/DESIGN_NOTES.md) |
 
