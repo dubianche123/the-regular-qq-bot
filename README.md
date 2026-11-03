@@ -6,7 +6,7 @@
 
 **一个住在 QQ 群里的 AI 群友：认识大家、记得群里的事，也知道什么时候该接话，什么时候该安静。**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1376-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1429-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 **中文** · [English](README_EN.md) · [信息流](#一句话进来之后) · [Decisions 输入](#decisions-究竟看到了什么) · [自己迭代](#自己迭代把这一圈做成命令) · [快速开始](#开始使用) · [设计文档](#设计文档)
 
@@ -106,16 +106,22 @@ Decisions 收到的是**现场 `input` + 一组 `questions`**。`input` 装当�
 | Decisions 的题面、选项描述与语义例子 | [`regular/decision_prompts.py`](regular/decision_prompts.py) | 分诊层按待测版本重新取题，检查期望选项 |
 | 分诊阈值与选项处理 | [`regular/decisions.py`](regular/decisions.py) | 分诊层检查有效选择；收敛等后续状态用消息层 |
 | 输入字段、上下文裁剪、@ / 引用与路由 | [`regular/decisions.py`](regular/decisions.py)、[`bot.py`](bot.py)、[`storage.py`](storage.py)、[`quotes.py`](quotes.py) | 消息层回放与直接相关的离线测试 |
-| 记忆、召回和资料的选择与注入 | [`digest.py`](digest.py)、[`recall.py`](recall.py)、[`knowledge.py`](knowledge.py) | 消息层与定向测试；摘要生成和真实工具执行另做验证 |
+| 本地体检的信号、阈值与时间窗 | [`regular/checkup.py`](regular/checkup.py)、[`regular/tune.py`](regular/tune.py) | 冻结日志和独立正负标注，对比误报、漏报；训练与验证分开 |
+| 旧账检索的匹配、排序与时效 | [`recall.py`](recall.py)、[`regular/tune.py`](regular/tune.py) | 检索层重跑冻结语料，对照完整相关消息集合；承诺另用专门判据 |
+| 记忆与其他资料的选择、注入 | [`digest.py`](digest.py)、[`knowledge.py`](knowledge.py) | 消息层与定向测试；摘要生成和真实工具执行另做验证 |
 | 模型、推理参数和任务配置 | [`config.py`](config.py)、[`providers.py`](providers.py) | 控制实验配置做对照，回放与任务探针各有覆盖范围 |
 
-三种回放分别是：**生成层**重跑记下来的完整入参，**分诊层**重跑当时的输入与待测题目，**消息层**把归档消息交给真实入口、使用假发送。整天回放把当天记录过的回复逐条重新生成，用来找口头禅等整体模式；它不会模拟群友听到新回复后会怎样反应。
+四种回放分别是：**生成层**重跑记下来的完整入参，**分诊层**重跑当时的输入与待测题目，**检索层**在冻结归档与承诺快照上重选证据，**消息层**把归档消息交给真实入口、使用假发送。整天回放把当天记录过的回复逐条重新生成，用来找口头禅等整体模式；它不会模拟群友听到新回复后会怎样反应。
+
+**体检器和旧账检索器本身也接受考核。** 新旧策略在同一份独立完整标注上比较：误报是多报了问题或选入无关证据，漏报是没找到已标明的问题或相关证据。报告给出 TP / FP / FN / TN、查准率与召回率，并列出具体错误。只给已检出候选标 `yes/no`、只指定某条证据必须取到，都不足以计算总体漏报率；未标注、快照不全和分母为空会单列，避免把“没有证据”写成“零漏报”。
+
+`tune checkup` 和 `tune recall` 在本地搜索有界的策略参数，0 token；评测与搜索使用的标注保持独立，验证集用于核对改动效果。它们只出报告与提案，维护者执行 `policy apply` 后策略才生效，旧策略保留供回退。范围和数据格式见[本地策略评测](docs/self-iteration.md#local-strategy-evaluation)。
 
 消息用例若预置了 `triage_choices`，会固定那些选择；验证分诊整条链要使用没有预置答案的用例。消息回放也替换了部分资料渲染和媒体执行，不能代替真实服务的 smoke。
 
 内置的自动措辞搜索目前只有 `remind` 和 `banter` 两个目标；后者改的是聊天生成的接话说明，Decisions 题面需要编码代理修改后再评测。安全、隐私、状态归属和调用预算仍是代码守住的硬约束。详细边界见[可迭代对象](docs/self-iteration.md#iteration-surfaces)。
 
-[Harness² 的八类组件](docs/self-iteration.md#harness2-components)与这里的四层提示词、三种回放是不同维度。按机器人运行时严格对应，系统提示、约束、记忆、工具说明四类有直接对应；脚本和插件的部分职责由固定本地代码承担，不代表开放了模型执行脚本或插件循环；机器人内部没有再放一套子代理与技能系统。
+[Harness² 的八类组件](docs/self-iteration.md#harness2-components)与这里的四层提示词、四种回放是不同维度。按机器人运行时严格对应，系统提示、约束、记忆、工具说明四类有直接对应；脚本和插件的部分职责由固定本地代码承担，不代表开放了模型执行脚本或插件循环；机器人内部没有再放一套子代理与技能系统。
 
 <details>
 <summary>维护者：回放命令、统计判定与已有验证</summary>
@@ -128,11 +134,17 @@ DEPLOY=/path/to/regular-bot
 .venv/bin/python -m regular --directory "$DEPLOY" case add --turn <turn_id> --id <case_id> --must-not "刚醒|洗衣"
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
+
+# 本地策略评测和调参：不请求模型
+.venv/bin/python -m regular --directory "$DEPLOY" tune checkup --benchmark docs/examples/checkup-benchmark.example.json
+.venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases retrieve -n 1
+.venv/bin/python -m regular --directory "$DEPLOY" tune recall
+.venv/bin/python -m regular --directory "$DEPLOY" policy show
 ```
 
-没有 `turn_id` 时可用 `case add --message <message_id> --id <case_id>`；分诊用例要用 `--choice addressed=answer` 这类判据写明应该怎样。`checkup` 只读本地日志、不调模型；标注另由独立评审模型完成。`eval` 调用模型并消耗额度，需要 `--allow-paid`。
+没有 `turn_id` 时可用 `case add --message <message_id> --id <case_id>`；分诊用例要用 `--choice addressed=answer` 这类判据写明应该怎样。`checkup` 只读本地日志、不调模型；标注另由独立评审模型完成。生成、分诊、盲评等会调用模型的 `eval` 需要 `--allow-paid`；仅含本地检索且没有模型评审的评测无需授权付费。上面的体检示例是合成数据，用来体验命令，不代表线上效果。
 
-下降要过单侧检验才算退步，够不上的单列「噪声内下降」，可加大 `-n` 再看；越线一次就算退步。规则消融给出「可删除 / 仍需保留 / 说不准 / 判断不了」四种结论，缺用例或没跑完都不能建议删除。人设和规则的修改不会自动上线。
+生成与盲评的下降要过单侧检验才算退步，够不上的单列「噪声内下降」，可加大 `-n` 再看；越线一次就算退步。检索是确定性计算，判据通过率下降或完整标注下 FP / FN 增加直接记退步，不用重复抽样消噪。规则消融给出「可删除 / 仍需保留 / 说不准 / 判断不了」四种结论，缺用例或没跑完都不能建议删除。人设和规则的修改不会自动上线。
 
 已有小规模验证：同一版本对同一版本（4 条用例各抽 4 次），0 条退步、2 条噪声内下降；第一次体检真实一天，顺着「被纠正」找到当天 4 条记账标签泄漏并修复。完整历史用例集与更长时间的线上观察仍待验收。设计借鉴 [Dream-RSI](https://arxiv.org/abs/2609.14858) 的历史回放和 [Harness²](https://arxiv.org/abs/2610.14224) 的新旧对比，完整流程见[自迭代设计](docs/self-iteration.md)。
 
@@ -158,7 +170,8 @@ DEPLOY=/path/to/regular-bot
 
 | 已有证据 | 测量范围 |
 | --- | --- |
-| 1376 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
+| 1429 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
+| 旧账检索 8 / 8 用例判据通过，相关证据取回 7 / 9 | [合成完整标注集](docs/self-iteration.md#local-strategy-evaluation)；新旧结果一致，预算约束造成的 2 条漏检如实计入 |
 | 接住 17 / 20 条没带名字但冲它说的话，旧方案 3 / 20 | [141 条消息、9 种写法回放](docs/when-to-reply.md)；「该接 / 不该接」由独立评审模型标注 |
 | 回复输入 token 的 75.6% 命中前缀缓存 | [线上一天 261 次调用](docs/providers.md)，与该模型和当时流量有关 |
 | 闭集分诊中位延迟 0.71 秒 | [908 次判断](docs/judgment-layer.md)，不作为服务时延保证 |

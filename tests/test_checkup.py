@@ -283,6 +283,33 @@ class CheckupSignalsTest(unittest.TestCase):
         self.assertEqual(out["findings"], [])
         self.assertIn("没有可疑", checkup.render(out))
 
+    def test_recall_empty_signal_and_policy_validation(self):
+        self.write([
+            _incoming(0, "LAOREN", "小王 阿强之前说的奶茶是什么来着", "m_empty", at=True),
+            _incoming(20, "LAOREN", "小王 之前说的显卡怎么了", "m_hit", at=True),
+            _delivery(3, "我真记不清了", source="m_empty", user="LAOREN", turn="rep1"),
+            _delivery(23, "显卡驱动崩了", source="m_hit", user="LAOREN", turn="rep2"),
+        ], turns=[
+            {"turn_id": "rec_empty", "kind": "recall", "group": G, "user": "LAOREN",
+             "message_id": "m_empty", "query": "阿强之前说的奶茶是什么来着",
+             "picked": [], "promise": None, "skipped": ""},
+            {"turn_id": "rec_hit", "kind": "recall", "group": G, "user": "LAOREN",
+             "message_id": "m_hit", "query": "之前说的显卡怎么了",
+             "picked": [{"message_id": "arch1", "score": 10}], "promise": None, "skipped": ""},
+        ])
+        out = self.run_report()
+        rec_findings = [f for f in out["findings"] if f["signal"] == "recall_empty"]
+        self.assertEqual(len(rec_findings), 1)
+        self.assertEqual(rec_findings[0]["turn_ids"], ["rec_empty"])
+        self.assertIn("一条都没翻到", rec_findings[0]["detail"])
+        # 策略边界校验：不许越界数值，不许往词表里加新词
+        with self.assertRaises(ValueError):
+            checkup.validate_policy({"reaction_seconds": 9999})
+        with self.assertRaises(ValueError):
+            checkup.validate_policy({"confused_markers": [*checkup.CONFUSED_MARKERS, "新加的词"]})
+        with self.assertRaises(ValueError):
+            checkup.validate_policy({"unknown_key": 1})
+
 
 class CheckupCliTest(unittest.TestCase):
     def test_cli_writes_report_and_labels(self):

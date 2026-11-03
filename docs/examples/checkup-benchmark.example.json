@@ -1,0 +1,194 @@
+{
+  "schema": "regular.checkup-benchmark.v1",
+  "description": "合成接口示例；标注预先固定。包含原策略未检出的正例，不代表真实线上准确率。",
+  "samples": [
+    {
+      "id": "train-day",
+      "split": "train",
+      "day": "2026-11-02",
+      "now": 1793664000,
+      "signal": "bad_reaction",
+      "group": "G",
+      "complete": true,
+      "data": {
+        "incoming": [
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793577610,
+            "text": "你这答非所问啊",
+            "message_id": "train-positive"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793577810,
+            "text": "这个词什么意思",
+            "message_id": "train-negative"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793578010,
+            "text": "这句我完全接不上",
+            "message_id": "train-missed"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793578210,
+            "text": "今天晴天",
+            "message_id": "train-normal"
+          }
+        ],
+        "delivery": [
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793577600,
+            "text": "一段机器人回复",
+            "outgoing_id": "train-out-positive",
+            "turn_id": "train-turn-positive"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793577800,
+            "text": "一段机器人回复",
+            "outgoing_id": "train-out-negative",
+            "turn_id": "train-turn-negative"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793578000,
+            "text": "一段机器人回复",
+            "outgoing_id": "train-out-missed",
+            "turn_id": "train-turn-missed"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793578200,
+            "text": "一段机器人回复",
+            "outgoing_id": "train-out-normal",
+            "turn_id": "train-turn-normal"
+          }
+        ]
+      },
+      "baseline": {},
+      "labels": [
+        {
+          "anchor": "train-positive",
+          "positive": true
+        },
+        {
+          "anchor": "train-negative",
+          "positive": false
+        },
+        {
+          "anchor": "train-missed",
+          "positive": true
+        },
+        {
+          "anchor": "train-normal",
+          "positive": false
+        }
+      ]
+    },
+    {
+      "id": "held-day",
+      "split": "validation",
+      "day": "2026-11-03",
+      "now": 1793750400,
+      "signal": "bad_reaction",
+      "group": "G",
+      "complete": true,
+      "data": {
+        "incoming": [
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793664010,
+            "text": "你这答非所问啊",
+            "message_id": "held-positive"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793664210,
+            "text": "这个词什么意思",
+            "message_id": "held-negative"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793664410,
+            "text": "这句我完全接不上",
+            "message_id": "held-missed"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793664610,
+            "text": "今天晴天",
+            "message_id": "held-normal"
+          }
+        ],
+        "delivery": [
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793664000,
+            "text": "一段机器人回复",
+            "outgoing_id": "held-out-positive",
+            "turn_id": "held-turn-positive"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793664200,
+            "text": "一段机器人回复",
+            "outgoing_id": "held-out-negative",
+            "turn_id": "held-turn-negative"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793664400,
+            "text": "一段机器人回复",
+            "outgoing_id": "held-out-missed",
+            "turn_id": "held-turn-missed"
+          },
+          {
+            "group": "G",
+            "user": "U",
+            "ts": 1793664600,
+            "text": "一段机器人回复",
+            "outgoing_id": "held-out-normal",
+            "turn_id": "held-turn-normal"
+          }
+        ]
+      },
+      "baseline": {},
+      "labels": [
+        {
+          "anchor": "held-positive",
+          "positive": true
+        },
+        {
+          "anchor": "held-negative",
+          "positive": false
+        },
+        {
+          "anchor": "held-missed",
+          "positive": true
+        },
+        {
+          "anchor": "held-normal",
+          "positive": false
+        }
+      ]
+    }
+  ]
+}

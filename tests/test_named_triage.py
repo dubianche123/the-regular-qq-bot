@@ -193,8 +193,9 @@ class RecallGateTest(_Named):
     async def test_recall_only_when_triage_says_look_up(self):
         for verdict, expected in (("look_up", 1), ("no_need", 0)):
             with self.subTest(verdict=verdict), \
-                    patch.object(bot.recall_mod, "build_note",
-                                 side_effect=lambda *a, **k: "") as build:
+                    patch.object(bot.recall_mod, "select",
+                                 side_effect=lambda *a, **k: {"picked": [], "promise": None,
+                                                              "policy": None}) as build:
                 self.calls.side_effect = answering({"addressed": "answer",
                                                     "recall": verdict})
                 await self._drive("小王 上次阿强说的那家店叫啥")

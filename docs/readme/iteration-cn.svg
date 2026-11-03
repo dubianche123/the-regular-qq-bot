@@ -38,7 +38,7 @@
 <text x="744" y="787" font-size="18" fill="#56677E" font-weight="400">待测代码 / 题面 / 输入策略</text>
 <rect x="120" y="866" width="1040" height="108" rx="15" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="144" y="901" font-size="21" fill="#213249" font-weight="650">期望判据留在评测侧：代码检查 + 独立盲评</text>
-<text x="144" y="934" font-size="19" fill="#56677E" font-weight="400">全量用例找回归 · 整天生成回放看重复套路 · 单条规则可消融</text>
+<text x="144" y="934" font-size="19" fill="#56677E" font-weight="400">历史回归 · 本地策略误报 / 漏报 · 整天模式 · 规则消融</text>
 <text x="144" y="960" font-size="16" fill="#56677E" font-weight="400">整天回放重跑已记录的回复，不模拟群友后续反应</text>
 <rect x="64" y="1052" width="688" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="88" y="1087" font-size="23" fill="#213249" font-weight="650">对比报告：改善与代价</text>

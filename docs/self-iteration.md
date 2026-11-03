@@ -124,7 +124,8 @@
 | Decisions 判断题 | [regular/decision_prompts.py](../regular/decision_prompts.py)：`instructions`、题面中的语义例子、`choices[].description` | 分诊层重新加载候选版本的题目；`name` 和 `value` 是代码协议，改名须同步调用方和用例 |
 | Decisions 的信息输入 | [regular/decisions.py](../regular/decisions.py) 的 `FeedbackTracker.assess`：取哪些上下文、怎样截断和匿名、何时问哪道题 | 消息层重新执行输入构造；分诊层沿用当时记录的 payload |
 | 判断结果怎样成为动作 | `usable_choices` 的解析与弃答；反馈短修、收敛窗口、过期处理及 [bot.py](../bot.py) 路由 | 选项解析可用分诊层；时间窗口、状态变化和最终路由需消息层及定向测试 |
-| 上下文、记忆与资料 | [storage.py](../storage.py)、[digest.py](../digest.py)、[recall.py](../recall.py)、[knowledge.py](../knowledge.py)：裁剪、证据选择、注入时机与格式 | 生成层可比较已记录材料的使用；材料如何选出、摘要如何生成，还需模块测试 |
+| 上下文、记忆与资料 | [storage.py](../storage.py)、[digest.py](../digest.py)、[recall.py](../recall.py)、[knowledge.py](../knowledge.py)：裁剪、证据选择、注入时机与格式；旧账检索打分与时效可由 `regular tune recall` 离线调参 | 生成层可比较已记录材料的使用；旧账挑哪几条由检索层（`depth=retrieve`）直接验证 |
+| 本地体检信号 | [regular/checkup.py](../regular/checkup.py)：各信号的时间窗、重合度、口头禅门槛与筛子词表；可由 `regular tune checkup` 按独立标注离线调参 | 完整 benchmark 固定正负单元与 train / validation，比较误报漏报；旧候选 yes/no 仅作局部确认依据 |
 | 本地执行与异步 | [expression.py](../expression.py)、[reminders.py](../reminders.py)、[slowwork.py](../slowwork.py)、[delivery.py](../delivery.py)：解析、时间计算、任务状态与发送降级 | 消息层及模块测试；真实查询、画图、语音和平台投递另做 smoke |
 | 模型与调用参数 | [providers.py](../providers.py)、[config.py](../config.py)：候选模型、推理强度、token 上限、超时与成本边界 | 同条件回放加供应商测试；两版默认共用部署配置，不等于比较了两套配置 |
 | 改进与评测流程 | [regular/eval.py](../regular/eval.py)、[regular/cases.py](../regular/cases.py)、[AGENTS.md](../AGENTS.md)：判据、评审题面、统计与经验复用 | 固定验证集及独立检查；修改评审后，不能只凭它自己的分数证明它更好 |
@@ -280,9 +281,9 @@ body = {
 
 严格说是**四类直接对应，另两类的部分职责由本地代码承担，两类刻意不做**。
 Decisions 不是另加的一层：题面属于可编辑判断说明，输入结构属于上下文构造。
-八类组件、缓存用的四层提示词、评测用的三种回放深度，描述的是三个不同维度。
+八类组件、缓存用的四层提示词、评测用的四种回放深度，描述的是三个不同维度。
 
-## 5. 四个组件
+## 5. 五个组件
 
 ### ① 记下每轮的模型输入
 
@@ -305,17 +306,22 @@ Decisions 不是另加的一层：题面属于可编辑判断说明，输入结�
 - 主要分诊的输入（`decisions.FeedbackTracker.assess` 拼的那份 payload）也记在 `data/turns/`，
   连同题目名和选择，供分诊层回放。旧账 callback 仍只有交互日志中的结果和分数（`decision_scores`），
   没有完整原始输入，不属于这条回放链的完整覆盖范围。
+- 旧账检索（分诊判了 `recall=look_up` 之后 `recall.select` 跑的那一次）也记一行 `kind=recall`：
+  问题、人名词典、时刻、挑中的消息编号和分数（正文不重复存，归档里有），供检索用例存例、体检报「翻旧账落空」和策略漂移对比。
 - `private=True` 的不记。
 - 存 `data/turns/日期.jsonl`，过了当天压缩，默认留 30 天（`TURN_LOG_KEEP_DAYS`），开关 `TURN_LOG_ENABLED`。
   量：11-03 一天 107 次送达，每轮输入的大头是背景和会话历史，估计每天 1MB 上下。
 
-**回放的三种深度。**
+**回放的四种深度。**
 
-- **生成层回放**：拿记下的入参再调一次 `get_ai_reply`，稳定头用待测代码现拼。
+- **生成层回放（`generate`）**：拿记下的入参再调一次 `get_ai_reply`，稳定头用待测代码现拼。
   覆盖提示词措辞、换模型、换推理强度 —— 迄今大部分修改都在这一层。便宜，一轮一次调用。
-- **分诊层回放**：保持当时的 payload，按待测版本重新构造题目并检查选项。
+- **分诊层回放（`triage`）**：保持当时的 payload，按待测版本重新构造题目并检查选项。
   适合改题面、选项说明和有效选择的阈值；输入字段与上下文构造的变化要交给消息层验证。
-- **消息层回放**：把一段归档消息按原顺序喂给真的 `handle_group_msg`（假发送，模型真假可选），
+- **检索层回放（`retrieve`）**：保持当时的归档切片、承诺账本和人名词典，重跑 `recall.select`，
+  检查挑出了哪几条消息编号（`retrieved` / `not_retrieved` / `retrieved_none` / `promise` / `max_picked`）。
+  纯本地计算、0 token、确定性无抽样噪声，适合改切词、打分权重、时效与说话人去重。
+- **消息层回放（`message`）**：把一段归档消息按原顺序喂给真的 `handle_group_msg`（假发送，模型真假可选），
   覆盖分诊、背景怎么拼、@ 和引用怎么认这些代码。11-03 的引用改动就属于这一层：
   生成层回放只会重放当时那份「看不见引用」的背景。现有的 `tests/test_image_then_question.py`、
   `regular demo` 也是这种跑法。旧归档缺原始的 @ 和引用索引，新归档已经记录这些字段供消息层还原；
@@ -335,6 +341,7 @@ Decisions 不是另加的一层：题面属于可编辑判断说明，输入结�
 | 只说不做 | 小王说了「我去查」「找到再告诉你」「记下了」「到点叫你」，一分钟内没有查询、提醒的记录 | 11-01 02:49 提醒、11-03 09:05「我去搜搜看」 |
 | 口头禅 | 小王当天自己的话里，4–6 字片段在不同对话里出现三次以上，且比前七天明显多 | 「刚醒 / 开机」三天 27 句、「车刚打火」、「这锅我背」 |
 | 碰了敏感词 | 小王的输出被敏感词表拦下或改写过 | |
+| 翻旧账落空 | 分诊判了要翻旧账（`recall=look_up`），检索却一条都没挑到 | 检索策略自迭代 |
 
 每条列出前五句、后三句和对应的 `turn_id`，附一行把它存成用例的命令。
 报告写到 `data/checkups/日期.md`，维护面板（`regular panel`）加一页看。
@@ -379,9 +386,9 @@ regular eval --base 948ea63 --cand . --day 11-03 --allow-paid
 - 两个版本各起一个子进程，`PYTHONPATH` 指向各自的代码（`--base` 用 `git worktree` 临时检出），
   用同一份记录回放，避免像 11-03 那样在一个进程里拿 `exec` 换提示词。
 - 每条用例每个版本抽 n 次：能直接判的算通过率；盲评算胜率；网络错误自动重试，重试不成的那对剔掉、单独计数。
-  下降要过一道单侧检验才算退步（每条抽 4 次时，至少掉 3 次；盲评旧版 4:0）——
+  生成与盲评的下降要过一道单侧检验才算退步（每条抽 4 次时，至少掉 3 次；盲评旧版 4:0）——
   同一版本对同一版本跑，盲评 2:0 实测就出现过。够不上的单列成「噪声内下降」，加大 `-n` 只跑那几条再定。
-  越线不看次数，一次就算退步。
+  越线不看次数，一次就算退步。确定性检索不靠重复抽样：检查通过率下降、完整标注下 FP / FN 增加直接列退步。
 - 盲评走本机网关上的 `cn:kimi-k3.1-pro`（`EVAL_JUDGE_PROVIDER=zhipu`，网关就是 `ZHIPU_BASE_URL`）；
   跑之前先答一道送分题，配错了当场报错，不等几百次生成跑完才发现盲评整批被剔掉。
 - **整天回放**（`--day`）：把某天记下的每一轮都按两个版本重新生成一遍，比整体指标 ——
@@ -412,6 +419,115 @@ OpenAI 额度够用，瓶颈是时间，所以要并发、要能只跑某个标�
 - 换模型、换推理强度时，所有规则逐条拿掉跑一遍。GLM → luna 那次如果有这个，
   「拽回柴米油盐」「你刚醒没多久」会在换模型当天就暴露，而不是等群主嫌生硬。
 - 稳定头长度记进每次评测报告，看它是不是还在只增不减。
+
+<a id="local-strategy-evaluation"></a>
+
+### ⑤ 体检与检索策略的自迭代
+
+本地体检和旧账检索都是可迭代对象：可以修改检测信号、时间窗、阈值，也可以修改检索匹配、排序、
+时效和去重策略。它们在固定输入、时间、配置和候选语料上可确定性重跑，不联网、不调用模型。
+`regular tune` 对允许的数值与词表子集做有界坐标搜索，最多三轮；这是有限候选搜索，
+不保证遍历所有参数组合或找到全局最优。敏感词、身份脱敏、单步工具与人工生效边界不能被调参放宽。
+当前专用检索评测覆盖旧账归档消息；承诺用单独判据验证，知识库匹配仍走模块与消息层测试。
+
+**先固定尺子，再修改策略。** 标注由独立评审模型结合完整上下文完成，可由维护者复核，
+被调的策略不能自己生成正确答案。正例是应报告的问题或应取出的相关消息；负例是明确不应报告、
+或不相关的候选。要检查旧策略漏掉的问题，必须让标注覆盖未被旧策略检出的样本。
+
+| 指标 | 体检 | 检索 |
+| --- | --- | --- |
+| TP | 标为问题且被检出 | 标为相关且被选中 |
+| FP（误报） | 标为非问题却被检出 | 不相关消息被选中 |
+| FN（漏报） | 标为问题却没检出 | 相关消息没有被选中 |
+| TN | 标为非问题且未检出 | 不相关消息未被选中 |
+
+查准率 `TP / (TP + FP)`，召回率 `TP / (TP + FN)`，误报率 `FP / (FP + TN)`，
+漏报率 `FN / (TP + FN)`；分母为空显示不可计算，不能写成 0%。多个样本先累加计数再计算总体率，
+而不是平均各样本的百分比。报告保留逐条错误和覆盖范围，指标只代表已完整标注的冻结样本。
+
+**体检有两种证据范围。**
+
+- 原有 `data/checkups/labels.jsonl` 只标了被体检挑出来的候选，继续用于确认比例和局部调参。
+  报告标记为 `candidate_only`；可以观察已标候选的 TP / FP 和丢失的已确认项，
+  不能据此报告总体 FN、TN、召回率或漏报率。跨天留一验证也不会补出这些缺失的答案。
+- 完整 benchmark 使用 `regular.checkup-benchmark.v1`，冻结检测输入、基线统计和 `now`，
+  每个样本指定 `train` 或 `validation`，写明待测信号、群、完整评测单元及正负标注。
+  标注键使用原始事件锚点，不使用随检测结果变化的 finding 哈希；重复消息按首条消息锚点严格匹配，
+  口头禅按日期与片段匹配。聚类边界变化会形成具体的 FP / FN，需结合错误列表审阅。
+  搜索只看训练集，候选锁定后在验证集检查；新出现的未标单元、缺正负样本或缺验证集都单列为证据不足。
+
+可运行的[合成 benchmark 示例](examples/checkup-benchmark.example.json)只用于体验命令、验证实现，
+不代表真实群聊中的误报率或漏报率。生产标注集应放在部署目录 `data/`，不提交真实群聊。
+
+```bash
+DEPLOY=/path/to/regular-bot
+.venv/bin/python -m regular --directory "$DEPLOY" tune checkup \
+  --benchmark docs/examples/checkup-benchmark.example.json
+```
+
+**检索用例固定语料与完整相关集。** `depth=retrieve` 保存查询、当时的人名、时间、归档切片和承诺快照，
+基线版和候选版在各自子进程里重跑检索。快照包含未命中的干扰消息，避免先被旧策略筛掉，
+导致新策略的误报无法观察。消息身份使用归档编号；同文消息仍是不同证据，不能从渲染文本反推唯一编号。
+
+普通 `retrieved` / `not_retrieved` 检查只回答指定约束有没有通过。完整误报漏报评测还需要：
+
+```json
+{
+  "split": "validation",
+  "retrieval_labels": {"complete": true, "relevant_ids": ["m_relevant"]},
+  "retrieve": {
+    "coverage": {"complete": true},
+    "rows": [
+      {"message_id": "m_relevant", "sender": "member_a", "text": "露营天幕放在储藏室", "ts": 1793600000},
+      {"message_id": "m_noise", "sender": "member_b", "text": "今天晚饭吃什么", "ts": 1793600001}
+    ]
+  }
+}
+```
+
+这是字段节选；完整用例还要有查询、冻结时间、schema、id 与判据。`relevant_ids` 声明的是该冻结语料中
+**全部**相关消息，剩余消息才作为负例。显式声明标注完整与语料覆盖完整后才给完整混淆矩阵；
+截断、缺档、旧记录缺承诺候选等不足写入 `coverage`，不把未知消息当负例。承诺的选择单列，
+不混进归档消息的 precision / recall。支持从检索记录存例后检查全部候选再声明完整标注：
+
+```bash
+.venv/bin/python -m regular --directory "$DEPLOY" case add \
+  --turn <recall_turn_id> --id recall-example --relevant <message_id> --complete-relevance
+
+# 纯本地检索不需要 --allow-paid；含生成、分诊或模型评审则仍需要
+.venv/bin/python -m regular --directory "$DEPLOY" eval \
+  --base HEAD --cand . --cases retrieve -n 1
+.venv/bin/python -m regular --directory "$DEPLOY" tune recall
+```
+
+检索用例顶层 `split` 可写 `train` 或 `validation`，缺省为 `train`。`case add` 存例后，维护者可编辑
+`$DEPLOY/data/cases/<case_id>.json` 将独立留出的用例标为 `validation`；不要把同一事故复制到两组。
+上面的 JSON 节选展示验证用例，另需独立的训练用例供搜索。
+`tune recall` 保留既有用例约束，同时报告完整标注子集的新旧 TP / FP / FN / TN 与覆盖缺口。
+显式验证用例用于检查锁定候选；没有显式验证集时，K 折只检查搜索流程，不能称为最终候选的独立验证。
+训练通过率不代表未见数据质量。
+真实检索记录上的漂移对比只说明选出的消息变了，不代表哪个版本正确；这些查询应另存例、独立标注。
+
+**提案与生效分开。** `tune` 将报告写入 `data/evals/tune-*.md` / `.json`，不改正在使用的策略。
+维护者审阅训练与验证结果、逐条错误和未覆盖项后，才执行：
+
+```bash
+.venv/bin/python -m regular --directory "$DEPLOY" policy show
+.venv/bin/python -m regular --directory "$DEPLOY" policy apply <报告.json>
+.venv/bin/python -m regular --directory "$DEPLOY" policy reset recall
+```
+
+生效文件为 `data/policies/checkup.json` 或 `recall.json`，历史版本保存在 `data/policies/history/`；
+发布使用同目录临时文件与原子替换，写入失败保留当前策略，历史文件使用独立名称。
+归档的策略文件可再次 `policy apply` 恢复；`reset` 回到代码默认值。没有策略文件时保持代码默认行为。
+
+2026-11-04 本轮验收：全量离线测试 **1429 项通过、9 项跳过**，另有 207 个子测试通过。
+Python 3.11 解析器按 Python 3.10 语法检查改动文件通过。
+真实 CLI 在临时数据目录完成体检 benchmark、检索调参和旧版 / 当前版子进程回放，未调用模型。
+8 条合成检索用例的新旧判据均为 8 / 8，通过完整相关集计算却是 `TP=7, FP=0, FN=2, TN=29`：
+条数预算导致的漏检保留下来，说明“用例通过”不能替代召回率。
+合成体检集的训练与验证各从 `TP=1, FP=1, FN=1, TN=1` 变为 `TP=1, FP=0, FN=1, TN=2`，
+未检出的正例仍计 FN。以上验证的是工具实现与对照流程，真实线上误报漏报仍需独立完整标注集。
 
 ## 6. 谁来跑：两层分工
 

@@ -395,7 +395,8 @@ def checkup(config, *, day=None, as_json=False, write=True, label=None, note="")
     out = checkup_mod.report(
         checkup_mod.resolve_day(day), interaction_dir=config.INTERACTION_LOG_DIR,
         turn_dir=config.TURN_LOG_DIR, archive_dir=config.ARCHIVE_DIR,
-        state_file=config.STATE_FILE, checkup_dir=config.CHECKUP_DIR)
+        state_file=config.STATE_FILE, checkup_dir=config.CHECKUP_DIR,
+        policy=checkup_mod.load_policy(config.CHECKUP_POLICY_FILE))
     path = checkup_mod.write(out, config.CHECKUP_DIR) if write else None
     if as_json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
@@ -464,13 +465,30 @@ def case_command(config, args):
             if not sep or not qname.strip() or not val.strip():
                 raise ValueError(f"invalid --choice-not {c_item!r}; expected QUESTION=VALUE")
             checks.append({"choice_not": {qname.strip(): val.strip()}})
+        for mid in getattr(args, "relevant", None) or ():
+            checks.append({"retrieved": mid.strip()})
+        for mid in getattr(args, "irrelevant", None) or ():
+            checks.append({"not_retrieved": mid.strip()})
+        if getattr(args, "expect_none", False) and getattr(args, "relevant", None):
+            raise ValueError("--expect-none cannot be combined with --relevant")
+        if getattr(args, "expect_none", False):
+            checks.append({"retrieved_none": True})
+        if getattr(args, "expect_promise", False):
+            checks.append({"promise": True})
+        if getattr(args, "no_promise", False):
+            checks.append({"promise": False})
+        if getattr(args, "max_picked", None) is not None:
+            if args.max_picked < 0:
+                raise ValueError("--max-picked must be non-negative")
+            checks.append({"max_picked": int(args.max_picked)})
         tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
         try:
             if getattr(args, "turn", None):
                 case = cases_mod.create_case_from_turn(
                     config.TURN_LOG_DIR, args.turn, args.id,
                     incident=args.incident or "", tags=tags, checks=checks, day=args.day,
-                    expect_recorded=args.expect_recorded)
+                    expect_recorded=args.expect_recorded, archive_dir=config.ARCHIVE_DIR,
+                    complete_relevance=getattr(args, "complete_relevance", False))
             else:
                 case = cases_mod.create_case_from_message(
                     config.ARCHIVE_DIR, args.message, args.id,
@@ -492,6 +510,9 @@ def eval_command(config, args):
     """跑用例评测、整天回放、规则消融或窄口子措辞搜索（docs/self-iteration.md ③④⑦）。"""
     from regular import eval as eval_mod
     if args.search_wording:
+        if not args.allow_paid:
+            raise eval_mod.PaidEvaluationRequired(
+                "eval --search-wording requires --allow-paid; it makes real model requests")
         out = eval_mod.search_wording(
             config, target=args.search_wording, k=args.candidates, n=args.n,
             write=not args.no_write)
@@ -514,7 +535,10 @@ def eval_command(config, args):
         out = eval_mod.run_eval(
             config, base=args.base, cand=args.cand, cases_selector=args.cases,
             day=args.day, n=args.n, ablate=args.ablate or "",
-            patterns=patterns or None, write=not args.no_write)
+            patterns=patterns or None, write=not args.no_write,
+            allow_paid=args.allow_paid)
+    except eval_mod.PaidEvaluationRequired:
+        raise
     except RuntimeError as err:   # 盲评预检没过：原因原样说出来，别吞成一句泛泛的 doctor 提示
         print(str(err), file=sys.stderr)
         return 1
@@ -525,6 +549,54 @@ def eval_command(config, args):
         if out.get("report_path"):
             print(f"Report written to {out['report_path']}")
     return 0
+
+
+def tune_command(config, args):
+    """离线调参：体检阈值/词表（靠标注）或旧账检索策略（靠检索用例）。只读、不联网、不调模型。"""
+    from regular import tune as tune_mod
+    if args.target == "checkup":
+        out = tune_mod.tune_checkup(config, min_labels=args.min_labels, min_no=args.min_no,
+                                    write=not args.no_write, benchmark=args.benchmark)
+        render = tune_mod.render_checkup
+    else:
+        out = tune_mod.tune_recall(config, selector=args.cases, folds=args.folds,
+                                   drift_days=args.drift_days, write=not args.no_write)
+        render = tune_mod.render_recall
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(render(out))
+        if out.get("report_path"):
+            print(f"Report written to {out['report_path']}")
+    return 0
+
+
+def policy_command(config, args):
+    """查看、批准（apply）或重置 data/policies/ 下的体检 / 检索策略文件。"""
+    from regular import tune as tune_mod
+    if args.policy_action == "show":
+        targets = ("checkup", "recall") if args.name == "all" else (args.name,)
+        rows = [tune_mod.show_policy(config, name) for name in targets]
+        if args.json:
+            print(json.dumps(rows[0] if len(rows) == 1 else rows, ensure_ascii=False, indent=2))
+        else:
+            for r in rows:
+                src = f"applied {r.get('applied_at')} from {r.get('source')}" if r["file"] else "defaults"
+                print(f"{r['name']}: {src} ({r['path']})")
+                for k, v in r["overrides"].items():
+                    print(f"  {k} = {json.dumps(v, ensure_ascii=False)}")
+        return 0
+    if args.policy_action == "apply":
+        res = tune_mod.apply_proposal(config, args.report)
+        print(f"Applied {res['name']} policy -> {res['path']}"
+              + (f" (previous archived to {res['previous']})" if res.get("previous") else ""))
+        return 0
+    if args.policy_action == "reset":
+        prev = tune_mod.reset_policy(config, args.name)
+        print(f"Reset {args.name} policy to defaults"
+              + (f" (archived {prev})" if prev else " (was already default)"))
+        return 0
+    return 1
 
 
 def main(argv=None):
@@ -574,15 +646,24 @@ def main(argv=None):
     cs_add.add_argument("--choice", action="append", help="triage choice check QUESTION=VALUE")
     cs_add.add_argument("--choice-not", action="append", help="triage choice_not check QUESTION=VALUE")
     cs_add.add_argument("--judge", action="append", help="pairwise blind judge question")
+    cs_add.add_argument("--relevant", action="append", help="retrieve case: message_id that must be picked")
+    cs_add.add_argument("--irrelevant", action="append", help="retrieve case: message_id that must not be picked")
+    cs_add.add_argument("--expect-none", action="store_true", help="retrieve case: nothing should be retrieved")
+    promise_expectation = cs_add.add_mutually_exclusive_group()
+    promise_expectation.add_argument("--expect-promise", action="store_true", help="retrieve case: promise line must be included")
+    promise_expectation.add_argument("--no-promise", action="store_true", help="retrieve case: promise line must not be included")
+    cs_add.add_argument("--max-picked", type=int, help="retrieve case: maximum number of picked rows")
+    cs_add.add_argument("--complete-relevance", action="store_true",
+                        help="retrieve case: --relevant lists the complete relevant set; empty set needs --expect-none")
     cs_add.add_argument("--expect-recorded", action="store_true",
-                        help="triage case: use the recorded live answer as the expected one "
-                             "(default: you must give --choice/--choice-not)")
+                        help="triage or retrieve case: use the recorded live answer as the expected one "
+                             "(default: you must give --choice/--choice-not or --relevant/--irrelevant)")
     cs_seed = cs_sub.add_parser("seed", help="write built-in seed cases into data/cases")
     cs_seed.add_argument("--overwrite", action="store_true")
     cs_list = cs_sub.add_parser("list", help="list available cases")
     cs_list.add_argument("--cases", default="all", help="selector: all, tag, or glob")
     cs_list.add_argument("--json", action="store_true")
-    ev = sub.add_parser("eval", help="replay cases or a whole day across two versions, or ablate a prompt rule (requires --allow-paid)")
+    ev = sub.add_parser("eval", help="compare versions; pure local retrieve cases need no --allow-paid")
     ev.add_argument("--base", default=".", help="base git ref or directory (default: .)")
     ev.add_argument("--cand", default=".", help="candidate git ref or directory (default: .)")
     ev.add_argument("--cases", default="all", help="case selector: all, tag, glob, or none")
@@ -596,6 +677,25 @@ def main(argv=None):
     ev.add_argument("--no-write", action="store_true", help="do not write report files to data/evals")
     ev.add_argument("--json", action="store_true")
     ev.add_argument("--allow-paid", action="store_true", help="authorize real model requests and quota consumption")
+    tn = sub.add_parser("tune", help="read-only offline tuning for checkup thresholds or recall policy; no network or inference")
+    tn.add_argument("target", choices=("checkup", "recall"), help="which local policy to tune")
+    tn.add_argument("--cases", default="retrieve", help="recall: case selector (default: retrieve)")
+    tn.add_argument("--folds", type=int, default=5, help="recall: holdout folds (default: 5)")
+    tn.add_argument("--drift-days", type=int, default=7, help="recall: days of live recall turns to compare (default: 7)")
+    tn.add_argument("--min-labels", type=int, default=6, help="checkup: minimum labels per signal before tuning (default: 6)")
+    tn.add_argument("--min-no", type=int, default=2, help="checkup: minimum 'no' labels per signal before tuning (default: 2)")
+    tn.add_argument("--benchmark", help="checkup: independently labeled frozen benchmark JSON")
+    tn.add_argument("--no-write", action="store_true", help="do not write report files to data/evals")
+    tn.add_argument("--json", action="store_true")
+    pol = sub.add_parser("policy", help="inspect, apply, or reset local checkup / recall policies in data/policies")
+    pol_sub = pol.add_subparsers(dest="policy_action", required=True)
+    pol_show = pol_sub.add_parser("show", help="show effective policy and active overrides")
+    pol_show.add_argument("name", nargs="?", default="all", choices=("all", "checkup", "recall"))
+    pol_show.add_argument("--json", action="store_true")
+    pol_apply = pol_sub.add_parser("apply", help="apply a tune proposal JSON into data/policies")
+    pol_apply.add_argument("report", help="path to tune-*.json report (or archived policy JSON)")
+    pol_reset = pol_sub.add_parser("reset", help="reset policy to code defaults (archives current file)")
+    pol_reset.add_argument("name", choices=("checkup", "recall"))
     panel = sub.add_parser("panel", help="serve the local maintenance panel on loopback")
     panel.add_argument("--host", default="127.0.0.1", help="loopback address (default: 127.0.0.1)")
     panel.add_argument("--port", type=int, default=8765, help="local port (default: 8765)")
@@ -645,9 +745,21 @@ def main(argv=None):
         if args.command == "case":
             return case_command(config, args)
         if args.command == "eval":
-            if not args.allow_paid:
-                parser.error("eval requires --allow-paid; it makes real model requests")
-            return eval_command(config, args)
+            from regular import eval as eval_mod
+            try:
+                return eval_command(config, args)
+            except eval_mod.PaidEvaluationRequired as error:
+                parser.error(str(error))
+        if args.command == "tune":
+            if args.target != "checkup" and args.benchmark:
+                parser.error("--benchmark is only supported by tune checkup")
+            if args.target == "checkup" and (args.min_labels < 1 or args.min_no < 0):
+                parser.error("--min-labels must be positive and --min-no must be non-negative")
+            if args.target == "recall" and (args.folds < 2 or args.drift_days < 1):
+                parser.error("--folds must be at least 2 and --drift-days must be positive")
+            return tune_command(config, args)
+        if args.command == "policy":
+            return policy_command(config, args)
         if args.command == "panel":
             if args.host not in ("127.0.0.1", "localhost", "::1"):
                 parser.error("panel only binds to loopback; use --host 127.0.0.1")

@@ -8,7 +8,9 @@ import json
 import os
 import random
 import tempfile
+import time
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import archive as archive_mod
@@ -31,7 +33,7 @@ from regular import rules as rules_mod
 
 class CasesAndChecksTest(unittest.TestCase):
     def test_seed_cases_cover_all_documented_batches(self):
-        self.assertEqual(len(cases_mod.SEED_CASES), 60)
+        self.assertEqual(len(cases_mod.SEED_CASES), 68)
         for case in cases_mod.SEED_CASES:
             cases_mod.validate_case(case)
         deflect = [c for c in cases_mod.SEED_CASES if "deflect" in c.get("tags", ())]
@@ -39,11 +41,13 @@ class CasesAndChecksTest(unittest.TestCase):
         image = [c for c in cases_mod.SEED_CASES if "image" in c.get("tags", ())]
         banter = [c for c in cases_mod.SEED_CASES if "banter" in c.get("tags", ())]
         msg_depth = [c for c in cases_mod.SEED_CASES if c.get("depth") == "message"]
+        retrieve_depth = [c for c in cases_mod.SEED_CASES if c.get("depth") == "retrieve"]
         self.assertEqual(len(deflect), 9)
         self.assertEqual(len(remind), 10)
         self.assertEqual(len(image), 3)
         self.assertEqual(len(banter), 20)
         self.assertEqual(len(msg_depth), 1)
+        self.assertEqual(len(retrieve_depth), 8)
         # 账本上每条规则都至少挂上一条种子用例，拿掉它重跑才有东西可比
         for rule in rules_mod.load_rules():
             linked = [c["id"] for c in cases_mod.SEED_CASES
@@ -705,6 +709,209 @@ class JudgeAndSignificanceTest(unittest.TestCase):
         self.assertAlmostEqual(drop(4, 4, 1, 4), 5 / 70)
         self.assertGreater(loss(2, 0), alpha)              # 同一版本对同一版本实测出现过 2:0
         self.assertLessEqual(loss(4, 0), alpha)            # 盲评旧版 4:0
+
+
+class PolicySelfIterationTest(unittest.TestCase):
+    """本地体检与旧账检索策略的自迭代（regular/tune.py、recall.py、regular/checkup.py）。"""
+
+    def test_retrieve_case_creation_and_deterministic_eval(self):
+        import recall
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = os.path.join(tmp, "turns")
+            adir = os.path.join(tmp, "archive")
+            cdir = os.path.join(tmp, "cases")
+            os.makedirs(tdir)
+            os.makedirs(adir)
+            now = 1793600000.0
+            day = "2026-11-02"
+            # 归档里有一条相关、一条无关
+            with open(os.path.join(adir, f"{day}.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"group": "G1", "sender": "u1", "message_id": "m_milk",
+                                    "text": "上次说的那杯奶茶真好喝", "ts": now - 3600}) + "\n")
+                f.write(json.dumps({"group": "G1", "sender": "u2", "message_id": "m_noise",
+                                    "text": "完全不沾边的闲聊内容", "ts": now - 1800}) + "\n")
+            tlog = turns_mod.TurnLog(tdir, keep_days=0, enabled=True)
+            rec = tlog.append("recall", group="G1", user="u1", message_id="m_q",
+                              query="之前说的奶茶呢", names=["阿强"], now=now,
+                              picked=[], promise=None, skipped="", policy_sha="deadbeef")
+            tlog.close()
+
+            # 不写期望也不加 --expect-recorded 时必须拦截，并列出候选行
+            with self.assertRaises(ValueError) as ctx:
+                cases_mod.create_case_from_turn(tdir, rec["turn_id"], "ret-01", archive_dir=adir)
+            self.assertIn("m_milk", str(ctx.exception))
+
+            # 明确指定 --relevant 存成 depth=retrieve 用例，保留干扰行才能评估新策略误报
+            case = cases_mod.create_case_from_turn(
+                tdir, rec["turn_id"], "ret-01", archive_dir=adir,
+                checks=[{"retrieved": "m_milk"}])
+            self.assertEqual(case["depth"], "retrieve")
+            snap_ids = [r["message_id"] for r in case["retrieve"]["rows"]]
+            self.assertEqual(snap_ids, ["m_milk", "m_noise"])
+            cases_mod.save_case(cdir, case)
+
+            # 检索用例确定性评测：掉 1 条也直接算 regressed（p=0.0），不当成抽样噪声
+            rows, totals = asyncio.run(eval_mod.evaluate_cases(
+                [case],
+                [{"id": "ret-01", "samples": ['{"picked": ["m_milk"], "promise": null}'] * 2}],
+                [{"id": "ret-01", "samples": ['{"picked": [], "promise": null}'] * 2}],
+            ))
+            self.assertEqual(totals["regressed"], 1)
+            self.assertEqual(rows[0]["p_drop"], 0.0)
+
+            # 策略越界必须拦截；坏策略文件退回默认而不崩
+            with self.assertRaises(ValueError):
+                recall.validate_policy({"term_base": 999})
+            bad_file = os.path.join(tmp, "bad_recall.json")
+            with open(bad_file, "w", encoding="utf-8") as f:
+                f.write('{"policy": {"term_base": 999}}')
+            self.assertEqual(recall.active_policy(bad_file), recall.DEFAULT_POLICY)
+
+    def test_tune_checkup_prunes_false_positives_and_guards_holdout(self):
+        from regular import checkup, tune
+        with tempfile.TemporaryDirectory() as tmp:
+            idir = os.path.join(tmp, "interactions")
+            tdir = os.path.join(tmp, "turns")
+            cdir = os.path.join(tmp, "checkups")
+            edir = os.path.join(tmp, "evals")
+            pdir = os.path.join(tmp, "policies")
+            os.makedirs(idir)
+            os.makedirs(tdir)
+            base_ts = 1793600000.0
+            # 两天数据：每天 1 条真「答非所问」（yes，10 秒内）+ 2 条误报「什么意思」（no，15 秒内）
+            for idx, day in enumerate(("2026-11-02", "2026-11-03")):
+                t0 = base_ts + idx * 86400
+                rows = [
+                    {"schema": "regular.interaction.v1", "ts": t0, "kind": "delivery",
+                     "status": "delivered", "actor": "assistant", "group": "G", "user": "U",
+                     "text": "一段胡话", "outgoing_id": f"o_tp_{day}", "turn_id": f"t_tp_{day}"},
+                    {"schema": "regular.interaction.v1", "ts": t0 + 10, "kind": "incoming",
+                     "actor": "user", "group": "G", "user": "U", "message_id": f"m_tp_{day}",
+                     "text": "你这答非所问啊"},
+                    {"schema": "regular.interaction.v1", "ts": t0 + 200, "kind": "delivery",
+                     "status": "delivered", "actor": "assistant", "group": "G", "user": "U",
+                     "text": "正常回复一", "outgoing_id": f"o_fp1_{day}", "turn_id": f"t_fp1_{day}"},
+                    {"schema": "regular.interaction.v1", "ts": t0 + 215, "kind": "incoming",
+                     "actor": "user", "group": "G", "user": "U", "message_id": f"m_fp1_{day}",
+                     "text": "这个词什么意思"},
+                    {"schema": "regular.interaction.v1", "ts": t0 + 400, "kind": "delivery",
+                     "status": "delivered", "actor": "assistant", "group": "G", "user": "U",
+                     "text": "正常回复二", "outgoing_id": f"o_fp2_{day}", "turn_id": f"t_fp2_{day}"},
+                    {"schema": "regular.interaction.v1", "ts": t0 + 415, "kind": "incoming",
+                     "actor": "user", "group": "G", "user": "U", "message_id": f"m_fp2_{day}",
+                     "text": "那句话什么意思"},
+                ]
+                with open(os.path.join(idir, f"{day}.jsonl"), "w", encoding="utf-8") as f:
+                    for r in rows:
+                        f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                out = checkup.report(day, interaction_dir=idir, turn_dir=tdir, checkup_dir=cdir)
+                checkup.write(out, cdir)
+                for fd in out["findings"]:
+                    verdict = "yes" if "答非所问" in fd["detail"] else "no"
+                    checkup.add_label(cdir, fd["id"], verdict, signal=fd["signal"])
+
+            with patch.object(config, "INTERACTION_LOG_DIR", idir), \
+                    patch.object(config, "TURN_LOG_DIR", tdir), \
+                    patch.object(config, "ARCHIVE_DIR", os.path.join(tmp, "archive")), \
+                    patch.object(config, "STATE_FILE", os.path.join(tmp, "state.json")), \
+                    patch.object(config, "CHECKUP_DIR", cdir), \
+                    patch.object(config, "EVAL_DIR", edir), \
+                    patch.object(config, "POLICY_DIR", pdir), \
+                    patch.object(config, "CHECKUP_POLICY_FILE", os.path.join(pdir, "checkup.json")):
+                rep = tune.tune_checkup(config, min_labels=4, min_no=2)
+                self.assertIsNotNone(rep["proposal"])
+                bad_row = next(r for r in rep["signals"] if r["signal"] == "bad_reaction")
+                self.assertEqual(bad_row["cand"]["tp"], 2)
+                self.assertEqual(bad_row["cand"]["fp"], 0)
+                self.assertEqual(bad_row["holdout"]["lost_yes"], 0)
+                self.assertNotIn("什么意思", rep["proposal"]["policy"]["confused_markers"])
+
+                # 批准提案后，checkup 立即按新口径跑，那 4 条「什么意思」不再报出
+                json_report = rep["report_path"].replace(".md", ".json")
+                applied = tune.apply_proposal(config, json_report)
+                self.assertTrue(os.path.exists(applied["path"]))
+                after = checkup.report(
+                    "2026-11-02", interaction_dir=idir, turn_dir=tdir, checkup_dir=cdir,
+                    policy=checkup.load_policy(config.CHECKUP_POLICY_FILE))
+                self.assertEqual(len(after["findings"]), 1)
+                self.assertNotEqual(after["policy"], "default")
+
+    def test_tune_recall_and_cli_policy_lifecycle(self):
+        import recall
+        with tempfile.TemporaryDirectory() as tmp:
+            cdir = os.path.join(tmp, "cases")
+            tdir = os.path.join(tmp, "turns")
+            adir = os.path.join(tmp, "archive")
+            edir = os.path.join(tmp, "evals")
+            pdir = os.path.join(tmp, "policies")
+            os.makedirs(cdir)
+            os.makedirs(tdir)
+            os.makedirs(adir)
+            now = 1793600000.0
+            # 加两条需要 lookback_days >= 60 才翻得到的 45 天前旧账用例（且把只考 30 天截断的 04 排除）
+            for i in (1, 2):
+                cases_mod.save_case(cdir, {
+                    "schema": cases_mod.SCHEMA,
+                    "id": f"retrieve-old-0{i}",
+                    "incident": "docs/self-iteration.md",
+                    "tags": ["retrieve", "custom-recall"],
+                    "depth": "retrieve",
+                    "split": "train" if i == 1 else "validation",
+                    "retrieval_labels": {"complete": True, "relevant_ids": [f"m-camp-{i}"]},
+                    "retrieve": {
+                        "query": f"之前说的露营装备{i}",
+                        "names": ["阿强"],
+                        "now": now,
+                        "rows": [{"message_id": f"m-camp-{i}", "sender": "u1",
+                                  "text": f"露营装备{i}我放在储藏室了", "ts": now - 45 * 86400},
+                                 {"message_id": f"m-noise-{i}", "sender": "u2",
+                                  "text": "今天晚饭吃清汤面", "ts": now - 3600}],
+                        "promises": [],
+                        "coverage": {"complete": True},
+                        "exclude_text": f"之前说的露营装备{i}",
+                    },
+                    "reference": "",
+                    "checks": [{"retrieved": f"m-camp-{i}"}],
+                })
+            for seed in cases_mod._RETRIEVE_CASES:
+                if seed["id"] != "retrieve-04-lookback":
+                    cases_mod.save_case(cdir, {**seed, "tags": ["retrieve", "custom-recall"]})
+
+            # 写一条线上 kind=recall 记录，验证 drift 对比能跑通
+            day = time.strftime("%Y-%m-%d", time.localtime(now))
+            with open(os.path.join(adir, f"{day}.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"group": "G1", "sender": "u1", "message_id": "m-camp-live",
+                                    "text": "露营天幕上次借给老李了", "ts": now - 45 * 86400}) + "\n")
+            tlog = turns_mod.TurnLog(tdir, keep_days=0, enabled=True)
+            tlog.append("recall", group="G1", user="u1", message_id="m_live",
+                        query="之前说的露营天幕呢", names=["老李"], now=now,
+                        picked=[], promise=None, skipped="", policy_sha="default")
+            tlog.close()
+
+            recall_policy_file = os.path.join(pdir, "recall.json")
+            with patch.object(config, "CASES_DIR", cdir), \
+                    patch.object(config, "TURN_LOG_DIR", tdir), \
+                    patch.object(config, "ARCHIVE_DIR", adir), \
+                    patch.object(config, "EVAL_DIR", edir), \
+                    patch.object(config, "POLICY_DIR", pdir), \
+                    patch.object(config, "RECALL_POLICY_FILE", recall_policy_file), \
+                    patch.object(cli, "load_config", lambda directory: config), \
+                    patch("builtins.print"):
+                self.assertEqual(cli.main(["tune", "recall", "--cases", "custom-recall", "--json"]), 0)
+                tune_files = sorted(Path(edir).glob("tune-recall-*.json"))
+                self.assertEqual(len(tune_files), 1)
+                rep = json.loads(tune_files[0].read_text(encoding="utf-8"))
+                self.assertGreater(rep["cand_pass"], rep["base_pass"])
+                self.assertIsNotNone(rep["proposal"])
+                self.assertEqual(rep["drift"]["changed"], 1)
+
+                # CLI policy apply -> show -> reset 完整闭环
+                self.assertEqual(cli.main(["policy", "apply", str(tune_files[0])]), 0)
+                self.assertGreaterEqual(recall.active_policy(recall_policy_file)["lookback_days"], 60)
+                self.assertEqual(cli.main(["policy", "show", "recall", "--json"]), 0)
+                self.assertEqual(cli.main(["policy", "reset", "recall"]), 0)
+                self.assertIsNone(recall.active_policy(recall_policy_file)["lookback_days"])
+                self.assertEqual(len(list((Path(pdir) / "history").glob("recall-*.json"))), 1)
 
 
 if __name__ == "__main__":

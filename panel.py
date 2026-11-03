@@ -499,11 +499,21 @@ def _checkup(cfg, request, csrf):
         raise web.HTTPBadRequest(text="非法日期") from err
     if day not in days:
         days = [day, *days]
-    out = checkup_mod.report(day, **dirs)
+    policy_error = False
     try:
-        checkup_mod.write(out, dirs["checkup_dir"])
-    except OSError:
-        pass
+        policy = checkup_mod.load_policy(getattr(cfg, "CHECKUP_POLICY_FILE", ""))
+    except ValueError:
+        policy = None
+        policy_error = True
+    out = checkup_mod.report(day, **dirs, policy=policy)
+    if not policy_error:
+        try:
+            checkup_mod.write(out, dirs["checkup_dir"])
+        except OSError:
+            pass
+    warning = ('<p class="bad">体检策略文件无效，本页使用默认策略，已有报告保持不变。'
+               '请修复策略文件，或由维护者执行 <code>regular policy reset checkup</code>。</p>'
+               if policy_error else "")
     options = "".join(
         f'<option value="{_esc(d)}"{" selected" if d == day else ""}>{_esc(d)}</option>'
         for d in days)
@@ -545,13 +555,14 @@ def _checkup(cfg, request, csrf):
     i = out["inputs"]
     body = f"""
 <h1>每日体检</h1>
+{warning}
 <p class="muted">只读扫交互日志与每轮输入，不联网、不调模型。原料：消息 {i['incoming']} 条，送达 {i['delivered']} 条，
 每轮输入 {i['turns']} 轮 / 分诊 {i['triage']} 次；基线 {i['baseline_days']} 天。</p>
 <form method="get" action="/checkup" class="row" style="margin:12px 0">
 <select name="day">{options}</select>
 <button type="submit">查看</button>
 </form>
-<table><thead><tr><th>信号</th><th>条数</th><th>人工准确率</th></tr></thead>
+<table><thead><tr><th>信号</th><th>条数</th><th>候选标注确认率</th></tr></thead>
 <tbody>{"".join(sig_rows)}</tbody></table>
 <h2>候选明细（{len(out['findings'])} 条）</h2>
 {findings_html}

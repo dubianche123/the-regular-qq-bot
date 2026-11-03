@@ -5,6 +5,9 @@
   - 能直接判的用代码判：must / must_not（正则）、tag_present / tag_absent（〔画〕〔语音〕〔不接〕〔提醒〕）、
     remind_time（提醒时间算对没有）、replied（回没回）、max_chars（长度上限）。
   - 要人味判断的写 {"judge": "..."}，交给 regular/eval.py 的盲评模型（kimi-k3.1-pro）两两对比。
+  - 检索用例（depth=retrieve）只考旧账召回挑了哪几条：retrieved / not_retrieved（消息编号）、
+    retrieved_none（什么都不该给）、promise（该不该带上承诺账本那一行）、max_picked。
+    纯本地计算、不调模型，`regular tune recall` 拿它们离线搜检索策略。
 
 真实群聊存出来的用例都在部署目录 data/cases/<id>.json，不进版本库；
 这里自带一份从事故文档搬过来的种子用例（SEED_CASES），不带隐私 ID，测试和首次初始化共用。
@@ -14,6 +17,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
+import time
 from pathlib import Path
 
 import expression
@@ -31,7 +35,7 @@ def validate_case(case):
     if not cid or not all(c.isalnum() or c in "_-." for c in cid):
         raise ValueError(f"invalid case id: {cid!r}")
     depth = case.get("depth") or "generate"
-    if depth not in ("generate", "triage", "message"):
+    if depth not in ("generate", "triage", "message", "retrieve"):
         raise ValueError(f"unsupported case depth: {depth!r}")
     if depth == "generate" and not isinstance(case.get("turn"), dict):
         raise ValueError(f"case {cid}: depth=generate requires a 'turn' dict")
@@ -39,7 +43,118 @@ def validate_case(case):
         raise ValueError(f"case {cid}: depth=triage requires a 'triage' dict")
     if depth == "message" and not isinstance(case.get("messages"), list):
         raise ValueError(f"case {cid}: depth=message requires a 'messages' list")
+    if depth == "retrieve":
+        spec = case.get("retrieve")
+        if not isinstance(spec, dict) or not isinstance(spec.get("rows"), list) or not spec.get("query"):
+            raise ValueError(f"case {cid}: depth=retrieve requires 'retrieve' with 'query' and 'rows'")
+        labels = case.get("retrieval_labels")
+        if labels is not None:
+            if (not isinstance(labels, dict) or not isinstance(labels.get("complete"), bool)
+                    or not isinstance(labels.get("relevant_ids"), list)
+                    or any(not isinstance(mid, str) or not mid for mid in labels["relevant_ids"])):
+                raise ValueError(f"case {cid}: retrieval_labels requires complete and relevant_ids list")
     return case
+
+
+def _ids(value):
+    if value is None:
+        return ()
+    return tuple(str(v) for v in value) if isinstance(value, (list, tuple, set)) else (str(value),)
+
+
+def retrieval_metrics(sample, case):
+    """完整冻结语料上的消息级混淆矩阵；旧的局部 checks 不推断成完整相关集。
+
+    retrieval_labels.complete 声明已审阅全部 rows，relevant_ids 是完整相关集。
+    其余消息为负例。承诺不在此矩阵内，仍按 promise 检查；未知/截断语料不报率。
+    """
+    result = {"scope": "archive_messages", "evidence_complete": False,
+              "status": "partial", "reason": "",
+              **{key: None for key in ("tp", "fp", "fn", "tn", "precision", "recall", "f1",
+                                       "false_positive_rate", "false_negative_rate")}}
+    spec = case.get("retrieve") or {}
+    labels = case.get("retrieval_labels") or {}
+    if not isinstance(labels, dict) or labels.get("complete") is not True:
+        result["reason"] = "相关性仅有局部判据，未声明完整标注"
+        return result
+    if not isinstance(labels.get("relevant_ids"), list):
+        result["reason"] = "完整相关集必须是 relevant_ids 列表"
+        return result
+    coverage = spec.get("coverage") or {}
+    if coverage.get("complete") is not True:
+        result["reason"] = coverage.get("reason") or "冻结语料未声明完整覆盖"
+        return result
+    rows = spec.get("rows") or []
+    if any(not isinstance(row, dict) or not row.get("message_id") for row in rows):
+        result["reason"] = "语料存在没有稳定 message_id 的行"
+        return result
+    universe = {str(row["message_id"]) for row in rows}
+    relevant = set(_ids(labels.get("relevant_ids")))
+    if not relevant <= universe:
+        result["reason"] = "完整相关集包含冻结语料以外的消息"
+        return result
+    try:
+        got = json.loads(sample) if isinstance(sample, str) else sample
+        if not isinstance(got, dict) or not isinstance(got.get("picked"), list):
+            raise ValueError("invalid retrieval result")
+        picked = {str(mid) for mid in got["picked"]}
+    except (ValueError, TypeError):
+        result["reason"] = "检索结果缺失或格式无效"
+        return result
+    if not picked <= universe:
+        result["reason"] = "检索结果包含冻结语料以外的消息"
+        return result
+    tp, fp = len(picked & relevant), len(picked - relevant)
+    fn, tn = len(relevant - picked), len(universe - relevant - picked)
+    def ratio(n, d):
+        return n / d if d else None
+    result.update(evidence_complete=True, status="complete", reason="",
+                  tp=tp, fp=fp, fn=fn, tn=tn,
+                  precision=ratio(tp, tp + fp), recall=ratio(tp, tp + fn),
+                  f1=ratio(2 * tp, 2 * tp + fp + fn),
+                  false_positive_rate=ratio(fp, fp + tn),
+                  false_negative_rate=ratio(fn, tp + fn),
+                  universe_size=len(universe))
+    return result
+
+
+def _retrieval_details(text, item, details):
+    """检索用例的确定性检查：样本是 replay_worker 给的 {"picked": [...], "promise": ...} JSON。"""
+    try:
+        got = json.loads(text)
+    except (ValueError, TypeError):
+        got = None
+    if not isinstance(got, dict):
+        details.append({"check": "retrieve", "passed": False, "reason": "检索结果不是 JSON"})
+        return
+    picked = [str(m) for m in got.get("picked") or ()]
+    if "retrieved" in item:
+        want = _ids(item["retrieved"])
+        ok = any(m in picked for m in want)
+        details.append({"check": f"retrieved:{','.join(want)}", "passed": ok,
+                        "reason": "" if ok else f"该翻到 {'/'.join(want)}，实际挑了 {picked or '无'}"})
+    if "not_retrieved" in item:
+        bad = [m for m in _ids(item["not_retrieved"]) if m in picked]
+        details.append({"check": f"not_retrieved:{','.join(_ids(item['not_retrieved']))}",
+                        "passed": not bad,
+                        "reason": "" if not bad else f"不该翻出 {','.join(bad)}"})
+    if item.get("retrieved_none"):
+        ok = not picked and not got.get("promise")
+        details.append({"check": "retrieved_none", "passed": ok,
+                        "reason": "" if ok else f"什么都不该给，实际挑了 {picked}"})
+    if "promise" in item:
+        want = bool(item["promise"])
+        ok = bool(got.get("promise")) is want
+        details.append({"check": f"promise:{want}", "passed": ok,
+                        "reason": "" if ok else ("该带上承诺那一行" if want else "不该带承诺那一行")})
+    if "max_picked" in item:
+        limit = int(item["max_picked"])
+        ok = len(picked) <= limit
+        details.append({"check": f"max_picked:{limit}", "passed": ok,
+                        "reason": "" if ok else f"挑了 {len(picked)} 条 > {limit}"})
+
+
+RETRIEVE_CHECK_KEYS = ("retrieved", "not_retrieved", "retrieved_none", "promise", "max_picked")
 
 
 def _parse_choices_json(text):
@@ -65,6 +180,9 @@ def check_reply(raw_reply, checks):
     details = []
     for item in checks or ():
         if not isinstance(item, dict):
+            continue
+        if any(k in item for k in RETRIEVE_CHECK_KEYS):
+            _retrieval_details(text, item, details)
             continue
         if "must" in item:
             pat = item["must"]
@@ -195,7 +313,8 @@ def load_cases(cases_dir, *, selector="all", include_seeds=False):
 
 
 def create_case_from_turn(turn_dir, turn_id, case_id, *, incident="", tags=(),
-                          checks=(), reference=None, day=None, expect_recorded=False):
+                          checks=(), reference=None, day=None, expect_recorded=False,
+                          archive_dir=None, complete_relevance=False):
     """从 data/turns 里捞出一轮生成（reply）或分诊（triage）输入，存成一条用例。
 
     分诊用例要写明该判成什么（checks 里的 choice / choice_not）。存用例多半是因为那次判错了，
@@ -206,6 +325,10 @@ def create_case_from_turn(turn_dir, turn_id, case_id, *, incident="", tags=(),
     if row is None:
         raise KeyError(f"turn_id {turn_id!r} not found in {turn_dir}")
     kind = row.get("kind")
+    if kind == "recall":
+        return create_retrieve_case(row, case_id, archive_dir=archive_dir, incident=incident,
+                                    tags=tags, checks=checks, expect_recorded=expect_recorded,
+                                    complete_relevance=complete_relevance)
     if kind == "triage":
         choices = row.get("choices") or {}
         auto_checks = list(checks)
@@ -233,7 +356,7 @@ def create_case_from_turn(turn_dir, turn_id, case_id, *, incident="", tags=(),
             "checks": auto_checks,
         }
     if kind != "reply":
-        raise ValueError(f"turn {turn_id!r} is kind={kind!r}, expected 'reply' or 'triage'")
+        raise ValueError(f"turn {turn_id!r} is kind={kind!r}, expected 'reply', 'triage' or 'recall'")
     return {
         "schema": SCHEMA,
         "id": case_id,
@@ -249,6 +372,125 @@ def create_case_from_turn(turn_dir, turn_id, case_id, *, incident="", tags=(),
         "reference": row.get("raw") if reference is None else reference,
         "checks": list(checks),
     }
+
+
+SNAPSHOT_LOOKBACK_DAYS = 90   # 检索现场存多久的归档：覆盖 recall.POLICY_SPACE 里最长的回看
+SNAPSHOT_MAX_ROWS = 3000
+_ROW_FIELDS = ("message_id", "sender", "text", "ts", "cmd", "kind")
+
+
+def snapshot_rows(archive_dir, group, query, now, names=(), *,
+                  lookback_days=SNAPSHOT_LOOKBACK_DAYS, include_coverage=False):
+    """冻结同群、当时之前的语料，保留 archive.search 的文件/行顺序。
+
+    不用待测分词或查询词提前筛语料，负例同样保留。超过上限、缺档或坏行会声明
+    coverage 不完整，不能用被截断的集合声称总体召回率。query/names 仅保留调用兼容。
+    """
+    since = float(now) - lookback_days * 86400.0
+    out, reasons = [], []
+    try:
+        if not archive_dir or not Path(archive_dir).is_dir():
+            raise OSError("archive directory missing")
+        files = sorted(Path(archive_dir).glob("*.jsonl"), reverse=True)
+    except OSError:
+        files = []
+        reasons.append("归档目录不可用")
+    for path in files:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            reasons.append("归档文件无法读取")
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+                if not isinstance(r, dict):
+                    raise ValueError("not an archive row")
+            except (ValueError, TypeError):
+                reasons.append("归档存在无效行")
+                continue
+            if r.get("group") != group:
+                continue
+            try:
+                ts = float(r.get("ts") or 0.0)
+            except (TypeError, ValueError):
+                reasons.append("归档存在无效时间")
+                continue
+            if not since <= ts <= float(now):
+                continue
+            if len(out) >= SNAPSHOT_MAX_ROWS:
+                reasons.append("语料超过快照上限，已截断")
+                continue
+            out.append({k: r[k] for k in _ROW_FIELDS if k in r})
+    coverage = {"complete": not reasons, "reason": "；".join(dict.fromkeys(reasons)),
+                "scope": "frozen_archive_rows", "lookback_days": lookback_days,
+                "max_rows": SNAPSHOT_MAX_ROWS, "captured_rows": len(out)}
+    return (out, coverage) if include_coverage else out
+
+
+def create_retrieve_case(row, case_id, *, archive_dir=None, incident="", tags=(), checks=(),
+                         expect_recorded=False, complete_relevance=False):
+    """从 kind=recall 存用例：问题、人名、时刻、完整承诺候选和有界归档语料。
+
+    跟分诊用例一样要写明期望（--relevant / --irrelevant / --expect-none）：存用例多半是因为
+    那次挑错了，拿当时挑的当标准就把错的锁成了基准。确实要锁住当时的结果，加 --expect-recorded。
+    没给期望时报错，并把候选行列出来供挑选。
+    """
+    query = str(row.get("query") or "")
+    now = float(row.get("now") or row.get("ts") or 0.0)
+    names = list(row.get("names") or ())
+    rows, coverage = snapshot_rows(archive_dir, row.get("group"), query, now, names,
+                                   include_coverage=True)
+    recorded = [str(p.get("message_id")) for p in row.get("picked") or () if p.get("message_id")]
+    auto_checks = list(checks)
+    if not auto_checks and expect_recorded:
+        auto_checks = ([{"retrieved": m} for m in recorded]
+                       + [{"promise": bool(row.get("promise"))}]
+                       if recorded or row.get("promise") else [{"retrieved_none": True}])
+    if not auto_checks:
+        listing = "\n".join(
+            f"  {r.get('message_id')}  {time.strftime('%m-%d %H:%M', time.localtime(float(r.get('ts') or 0)))}"
+            f"  {'★' if str(r.get('message_id')) in recorded else ' '} {str(r.get('text') or '')[:40]}"
+            for r in rows[:15]) or "  （现场里没有跟问题沾边的归档行）"
+        raise ValueError(
+            "检索用例要写明该翻到什么：--relevant 消息编号 / --irrelevant 消息编号 / --expect-none"
+            "（确实要锁住当时的结果就加 --expect-recorded）。★ 是当时挑中的：\n" + listing)
+    if isinstance(row.get("promises"), list) and row.get("promises_complete") is True:
+        promises = [dict(p) for p in row["promises"] if isinstance(p, dict)]
+    else:
+        selected = row.get("promise_record")
+        promises = ([dict(selected)] if isinstance(selected, dict) else
+                    [{"who": "", "what": row["promise"]}] if row.get("promise") else [])
+        coverage["complete"] = False
+        coverage["reason"] = "；".join(filter(None, [coverage["reason"], "旧记录缺完整承诺候选快照"]))
+    if row.get("source_limit_reached"):
+        coverage["complete"] = False
+        coverage["reason"] = "；".join(filter(None, [coverage["reason"], "线上候选达到读取上限"]))
+    case = {
+        "schema": SCHEMA,
+        "id": case_id,
+        "incident": incident,
+        "tags": list(tags) or ["retrieve"],
+        "depth": "retrieve",
+        "source_turn_id": row.get("turn_id"),
+        "retrieve": {"query": query, "names": names, "now": now, "rows": rows,
+                     "promises": promises, "exclude_text": query, "coverage": coverage,
+                     "defaults": dict(row.get("defaults") or {})},
+        "reference": json.dumps({"picked": recorded, "promise": row.get("promise")},
+                                ensure_ascii=False),
+        "checks": auto_checks,
+    }
+    if complete_relevance:
+        relevant = sorted({mid for check in auto_checks for mid in _ids(check.get("retrieved"))})
+        if not relevant and not any(c.get("retrieved_none") for c in auto_checks):
+            raise ValueError("完整标注须用 --relevant 列出全部相关消息，或 --expect-none 声明全负例")
+        universe = {str(r.get("message_id")) for r in rows if r.get("message_id")}
+        if not set(relevant) <= universe:
+            raise ValueError("--relevant 包含冻结语料之外的消息，不能声明完整相关集")
+        case["retrieval_labels"] = {"complete": True, "relevant_ids": relevant}
+    return case
 
 
 def _read_jsonl_rows(path):
@@ -765,4 +1007,73 @@ _MESSAGE_CASES = [
     },
 ]
 
-SEED_CASES = [*_DEFLECT_9, *_REMIND_10, *_IMAGE_3, *_BANTER_20, *_MESSAGE_CASES, *_RULE_CASES]
+# 7) 旧账检索（depth=retrieve）：tests/test_recall.py 里钉住的那几种取舍搬成用例，
+#    调检索策略时拿来兜底 —— 这些都过不了的策略不该上线。全是合成的。
+_R_NOW = 1793600000.0   # 2026-11-02 前后，具体哪天不要紧，行的时间都相对它算
+_R_NAMES = ["阿强", "老王"]
+
+
+def _r_row(mid, sender, text, days, offset=0, **extra):
+    return {"message_id": mid, "sender": sender, "text": text,
+            "ts": _R_NOW - days * 86400 + offset, **extra}
+
+
+_R_BASE_ROWS = [
+    _r_row("r-milktea", "u1", "上次说的那杯奶茶真好喝，改天再请你", 3),
+    _r_row("r-brag", "u2", "阿强又在吹牛了", 2),
+    _r_row("r-dinner", "u2", "阿强上次说要请大家吃饭，结果又没下文了", 2, 10),
+    _r_row("r-gpu", "u1", "显卡驱动又崩了，烦死", 1),
+]
+
+
+def _retrieve_case(cid, query, checks, *, rows=(), promises=(), tags=(), relevant_ids=None,
+                   split="train"):
+    case = {
+        "schema": SCHEMA, "id": cid, "incident": "docs/self-iteration.md",
+        "tags": ["retrieve", *tags], "depth": "retrieve",
+        "split": split,
+        "retrieve": {"query": query, "names": list(_R_NAMES), "now": _R_NOW,
+                     "rows": [*_R_BASE_ROWS, *rows], "promises": list(promises),
+                     "exclude_text": query,
+                     "coverage": {"complete": True, "reason": "", "scope": "synthetic_corpus"}},
+        "reference": "", "checks": list(checks),
+    }
+    if relevant_ids is not None:
+        case["retrieval_labels"] = {"complete": True, "relevant_ids": list(relevant_ids)}
+    return case
+
+
+_RETRIEVE_CASES = [
+    _retrieve_case("retrieve-01-content-beats-name", "上次阿强说的奶茶是什么来着",
+                   [{"retrieved": "r-milktea"}, {"not_retrieved": ["r-dinner", "r-brag"]}],
+                   relevant_ids=["r-milktea"]),
+    _retrieve_case("retrieve-02-name-only-substantive", "上次阿强说的那件事",
+                   [{"retrieved": "r-dinner"}, {"not_retrieved": "r-brag"}],
+                   relevant_ids=["r-dinner"]),
+    _retrieve_case("retrieve-03-no-subject", "你还记得吗", [{"retrieved_none": True}],
+                   relevant_ids=[], split="validation"),
+    _retrieve_case("retrieve-04-lookback", "之前说的显卡",
+                   [{"retrieved": "r-gpu"}, {"not_retrieved": "r-gpu-old"}],
+                   rows=[_r_row("r-gpu-old", "u1", "显卡驱动去年也崩过一次", 40)],
+                   relevant_ids=["r-gpu"]),
+    _retrieve_case("retrieve-05-cmd-not-evidence", "之前说的显卡",
+                   [{"retrieved": "r-gpu"}, {"not_retrieved": "r-gpu-cmd"}],
+                   rows=[_r_row("r-gpu-cmd", "u1", "显卡模式启动命令记录", 0, cmd=True)],
+                   relevant_ids=["r-gpu"], split="validation"),
+    _retrieve_case("retrieve-06-self-excluded", "之前说的量子计算机项目又延期了",
+                   [{"retrieved_none": True}],
+                   rows=[_r_row("r-self", "u1", "之前说的量子计算机项目又延期了", 0)],
+                   relevant_ids=[], split="validation"),
+    _retrieve_case("retrieve-07-promise", "阿强之前答应请奶茶",
+                   [{"promise": True}, {"retrieved": "r-milktea"}],
+                   promises=[{"who": "阿强", "what": "请全群喝奶茶"}],
+                   relevant_ids=["r-milktea"]),
+    _retrieve_case("retrieve-08-distinct-senders", "之前说的显卡",
+                   [{"retrieved": "r-gpu"}, {"max_picked": 2}],
+                   rows=[_r_row(f"r-gpu-spam{i}", "u3", f"显卡又出问题了，第{i}次", 0, -i)
+                         for i in range(3)],
+                   relevant_ids=["r-gpu", "r-gpu-spam0", "r-gpu-spam1", "r-gpu-spam2"]),
+]
+
+SEED_CASES = [*_DEFLECT_9, *_REMIND_10, *_IMAGE_3, *_BANTER_20, *_MESSAGE_CASES, *_RULE_CASES,
+              *_RETRIEVE_CASES]

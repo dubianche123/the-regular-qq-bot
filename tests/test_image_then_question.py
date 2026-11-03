@@ -69,6 +69,7 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
             storage.DailyBudget(100, state.data["usage"]),
             describe=describe, available=lambda: True)
         for target, name, value in (
+                (runtime, "STATE", state),
                 (runtime, "INTERACTIONS", self.log),
                 (runtime, "ARCHIVE", self.archive),
                 (runtime, "FEEDBACK", decisions.FeedbackTracker(120.0, 180.0)),

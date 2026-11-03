@@ -8,7 +8,7 @@
     data/turns/YYYY-MM-DD.jsonl      当天，追加写
     data/turns/YYYY-MM-DD.jsonl.gz   过了当天就压缩
 
-两种行：
+记录类型：
 
     kind=reply    一次回复生成：get_ai_reply 的入参原样 + 当时的会话历史 + 模型原始输出。
                   稳定头不存全文（回放时由待测代码现拼），只存哈希和长度。
@@ -16,6 +16,8 @@
                   一轮生成可能排队、被拒、补投，送达结果只有那边说得准。
     kind=triage   一次分诊：decisions.FeedbackTracker.assess 送出去的那份 payload
                   （已经是脱敏后的代号）+ 问了哪几题 + 判出来的选项。
+    kind=recall   一次旧账检索：分诊判了 recall=look_up 后，recall.select 的问题、人名词典、
+                  时刻、挑中的归档消息编号与分数、承诺候选快照（不重复存归档正文）。
 
 边界（和 interactions.py 同一个口径）：
     - 只进不出：不进提示词、不进摘要、不进召回，模型永远看不到它。

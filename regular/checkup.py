@@ -2,8 +2,8 @@
 """每日体检：扫一天的交互日志和每轮输入，列出可疑的地方（docs/self-iteration.md ②）。
 
 只读、不联网、不调模型（跟 regular calibration 一样）。每条信号都是从一次事故来的，
-列出来的只是**候选**，不是结论 ——「？？」可能是在问别人。头一两周人工给每条标
-「是 / 不是」（`regular checkup --label ID yes|no`），报告里按信号统计准确率，
+列出来的只是**候选**，不是结论 ——「？？」可能是在问别人。独立评审另行标
+「是 / 不是」（`regular checkup --label ID yes|no`），报告里按信号统计候选确认率，
 准的留下，不准的改或删。
 
 | 信号          | 怎么认                                                          | 来自 |
@@ -15,6 +15,11 @@
 | promised      | 它说了「我去查」「记下了」「到点叫你」，那一轮却没实际记上提醒或起查询 | 11-01 02:49、11-03 09:05 |
 | catchphrase   | 它当天的话里同一个 4–6 字片段在三条以上出现，且比前七天明显多        | 「刚醒 / 开机」三天 27 句 |
 | sensitive     | 它的输出碰了敏感词表，或被平台拒收换成了兜底话                     | |
+| recall_empty  | 分诊说要翻旧账，检索却一条没挑到（kind=recall 的检索记录）          | 检索策略自迭代 |
+
+阈值和词表集中在 DEFAULT_POLICY。体检本身也是可迭代对象：`regular tune checkup` 拿标过的候选
+在记录过的日子上重放，只在「不丢任何一条已确认的候选」前提下收紧阈值、删掉只报错的词，
+维护者 `regular policy apply` 之后写进 data/policies/checkup.json（见 docs/self-iteration.md）。
 """
 from __future__ import annotations
 
@@ -55,6 +60,106 @@ REMIND_PROMISE_MARKERS = ("记下了", "记住了", "到点叫你", "到点提�
 PROMISE_MARKERS = LOOKUP_PROMISE_MARKERS + REMIND_PROMISE_MARKERS
 CORRECTION_ACTIONS = ("repair_briefly", "back_off")
 
+# ── 体检策略：每个信号用到的数值和词表（默认值即上面那几行常量）──
+DEFAULT_POLICY = {
+    "unanswered_seconds": UNANSWERED_SECONDS,
+    "repeat_window_seconds": REPEAT_WINDOW_SECONDS,
+    "repeat_similarity": REPEAT_SIMILARITY,
+    "repeat_min_chars": REPEAT_MIN_CHARS,
+    "reaction_seconds": REACTION_SECONDS,
+    "confused_min_qmarks": 2,
+    "confused_markers": list(CONFUSED_MARKERS),
+    "lookup_promise_markers": list(LOOKUP_PROMISE_MARKERS),
+    "remind_promise_markers": list(REMIND_PROMISE_MARKERS),
+    "lookup_window_seconds": 300,
+    "catchphrase_min": CATCHPHRASE_MIN,
+    "catchphrase_ratio": 2.0,
+    "catchphrase_min_talks": 2,
+}
+
+# 调参器的搜索空间。数值给一组候选值，候选值的范围就是边界；
+# 词表只能删、不能加（"subset"）—— 新说法要靠编码代理按事故补，不让自动搜索堆同义词。
+POLICY_SPACE = {
+    "unanswered_seconds": (60, 90, 120, 180, 300),
+    "repeat_window_seconds": (120, 180, 300, 600),
+    "repeat_similarity": (0.5, 0.6, 0.7, 0.8),
+    "repeat_min_chars": (3, 4, 6, 8),
+    "reaction_seconds": (20, 30, 45, 60, 90, 120),
+    "confused_min_qmarks": (1, 2, 3),
+    "confused_markers": "subset",
+    "lookup_promise_markers": "subset",
+    "remind_promise_markers": "subset",
+    "lookup_window_seconds": (120, 300, 600),
+    "catchphrase_min": (3, 4, 5, 6),
+    "catchphrase_ratio": (1.5, 2.0, 3.0, 4.0),
+    "catchphrase_min_talks": (2, 3),
+}
+
+# 每个参数只影响哪些信号：调参按信号分开调，互不牵连。
+PARAM_SIGNALS = {
+    "unanswered_seconds": ("unanswered",),
+    "repeat_window_seconds": ("repeated",),
+    "repeat_similarity": ("repeated",),
+    "repeat_min_chars": ("repeated",),
+    "reaction_seconds": ("bad_reaction",),
+    "confused_min_qmarks": ("bad_reaction",),
+    "confused_markers": ("bad_reaction",),
+    "lookup_promise_markers": ("promised",),
+    "remind_promise_markers": ("promised",),
+    "lookup_window_seconds": ("promised",),
+    "catchphrase_min": ("catchphrase",),
+    "catchphrase_ratio": ("catchphrase",),
+    "catchphrase_min_talks": ("catchphrase",),
+}
+
+
+def validate_policy(raw):
+    """把一份策略规整成完整策略；未知键、越界数值、往词表里加新词都抛 ValueError。"""
+    if not isinstance(raw, dict):
+        raise ValueError("checkup policy must be a JSON object")
+    out = {k: (list(v) if isinstance(v, list) else v) for k, v in DEFAULT_POLICY.items()}
+    for key, value in raw.items():
+        if key not in DEFAULT_POLICY:
+            raise ValueError(f"unknown checkup policy key: {key!r}")
+        space = POLICY_SPACE[key]
+        if space == "subset":
+            if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+                raise ValueError(f"checkup policy {key} must be a list of strings")
+            extra = [v for v in value if v not in DEFAULT_POLICY[key]]
+            if extra:
+                raise ValueError(f"checkup policy {key} may only drop markers, not add {extra}")
+            out[key] = [v for v in DEFAULT_POLICY[key] if v in value]
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"checkup policy {key} must be a number")
+        if not min(space) <= value <= max(space):
+            raise ValueError(f"checkup policy {key}={value} outside [{min(space)}, {max(space)}]")
+        out[key] = value
+    return out
+
+
+def policy_id(policy):
+    """报告里写明用的哪套口径：默认值写 default，否则写指纹（换了口径的两天不能直接比条数）。"""
+    if policy == validate_policy({}):
+        return "default"
+    blob = json.dumps(policy, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10]
+
+
+def load_policy(path):
+    """读 data/policies/checkup.json（维护者 apply 过的那份）；没有就是默认值。坏文件直接报错，
+    不悄悄退回默认 —— 体检是给人看的，用错了口径比报错更难发现。"""
+    if not path:
+        return validate_policy({})
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return validate_policy({})
+    except (OSError, ValueError) as err:
+        raise ValueError(f"checkup policy file {path} unreadable: {err}") from None
+    return validate_policy(doc.get("policy", doc) if isinstance(doc, dict) else doc)
+
+
 LABELS = {
     "unanswered": "叫了没回",
     "repeated": "同一句问好几遍",
@@ -63,6 +168,7 @@ LABELS = {
     "promised": "只说不做",
     "catchphrase": "口头禅",
     "sensitive": "碰了敏感词",
+    "recall_empty": "翻旧账落空",
 }
 
 _WORD = re.compile(r"[\w\u4e00-\u9fff]+")
@@ -222,12 +328,16 @@ def _tail(value):
 
 
 def _finding(signal, group, ts, *, user=None, detail="", turn_ids=(), message_id=None,
-             context=(), key=""):
+             context=(), key="", marker=None):
     raw = f"{signal}|{group}|{key or ts}"
-    return {"id": hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10], "signal": signal,
-            "label": LABELS[signal], "ts": ts, "group": group, "user": user, "detail": detail,
-            "message_id": message_id, "turn_ids": [t for t in turn_ids if t],
-            "context": list(context)}
+    out = {"id": hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10], "signal": signal,
+           "anchor": str(key or ts),
+           "label": LABELS[signal], "ts": ts, "group": group, "user": user, "detail": detail,
+           "message_id": message_id, "turn_ids": [t for t in turn_ids if t],
+           "context": list(context)}
+    if marker:
+        out["marker"] = marker   # 由哪个词认出来的：调参器做逐词消融用
+    return out
 
 
 def _unknown_at_targets(row, speakers_by_group):
@@ -244,7 +354,9 @@ def _unknown_at_targets(row, speakers_by_group):
 
 # ── 信号 ──
 
-def find_unanswered(data, timeline, names, turn_by_message, *, now=None):
+def find_unanswered(data, timeline, names, turn_by_message, *, now=None, policy=None):
+    p = policy or DEFAULT_POLICY
+    limit = p["unanswered_seconds"]
     now = time.time() if now is None else float(now)
     all_deliveries = list(data["delivery"]) + list(data.get("next_delivery") or ())
     answered = {r.get("source_message_id") for r in all_deliveries
@@ -267,17 +379,17 @@ def find_unanswered(data, timeline, names, turn_by_message, *, now=None):
             continue
         mid = row.get("message_id")
         ts = row.get("ts") or 0.0
-        if mid in answered and late.get(mid, 0) - ts <= UNANSWERED_SECONDS:
+        if mid in answered and late.get(mid, 0) - ts <= limit:
             continue
         # 还没等满两分钟的不抢报未回复
-        if mid not in answered and 0 <= now - ts < UNANSWERED_SECONDS:
+        if mid not in answered and 0 <= now - ts < limit:
             continue
         if unknown_ats:
             who_tag = "、".join(str(x)[-4:] for x in unknown_ats[:2])
-            why = (f"@了从没说过话的对象（{who_tag}），超过两分钟才回"
+            why = (f"@了从没说过话的对象（{who_tag}），超过 {limit:g} 秒才回"
                    if mid in answered else f"@了从没说过话的对象（{who_tag}），没有送达")
         else:
-            why = "超过两分钟才回" if mid in answered else "没有送达"
+            why = f"超过 {limit:g} 秒才回" if mid in answered else "没有送达"
         if mid in reasons:
             why += f"（决策：{reasons[mid]}）"
         out.append(_finding("unanswered", row.get("group"), ts, user=row.get("user"),
@@ -287,16 +399,17 @@ def find_unanswered(data, timeline, names, turn_by_message, *, now=None):
     return out
 
 
-def _similar(a, b):
-    return difflib.SequenceMatcher(None, a, b).ratio() >= REPEAT_SIMILARITY
+def _similar(a, b, threshold=REPEAT_SIMILARITY):
+    return difflib.SequenceMatcher(None, a, b).ratio() >= threshold
 
 
-def find_repeated(data, timeline, names, turn_by_message=None):
+def find_repeated(data, timeline, names, turn_by_message=None, policy=None):
+    p = policy or DEFAULT_POLICY
     speakers = data.get("speakers") or {}
     by_user = defaultdict(list)
     for row in data["incoming"]:
         text = "".join(_WORD.findall(row.get("text") or ""))
-        if len(text) >= REPEAT_MIN_CHARS and not row.get("cmd"):
+        if len(text) >= p["repeat_min_chars"] and not row.get("cmd"):
             by_user[(row.get("group"), row.get("user"))].append((row, text))
     out = []
     for (group, user), rows in by_user.items():
@@ -307,9 +420,9 @@ def find_repeated(data, timeline, names, turn_by_message=None):
             cluster = [i]
             for j in range(i + 1, len(rows)):
                 other, other_text = rows[j]
-                if (other.get("ts") or 0) - (row.get("ts") or 0) > REPEAT_WINDOW_SECONDS:
+                if (other.get("ts") or 0) - (row.get("ts") or 0) > p["repeat_window_seconds"]:
                     break
-                if j not in used and _similar(text, other_text):
+                if j not in used and _similar(text, other_text, p["repeat_similarity"]):
                     cluster.append(j)
             called = any(
                 rows[k][0].get("at") or _unknown_at_targets(rows[k][0], speakers)
@@ -353,14 +466,22 @@ def find_corrected(data, timeline, names):
     return out
 
 
-def _confused(text):
+def _confused(text, policy=None):
+    p = policy or DEFAULT_POLICY
     t = (text or "").replace("?", "？").strip()
-    if t.count("？") >= 2 and not _WORD.search(t):
+    if t.count("？") >= p["confused_min_qmarks"] and not _WORD.search(t):
         return True
-    return any(m in t for m in CONFUSED_MARKERS)
+    return any(m in t for m in p["confused_markers"])
 
 
-def find_bad_reaction(data, timeline, names):
+def _confused_marker(text, policy):
+    """它是因为哪个词被认成「没听懂」的（调参器拿来做逐词消融）；问号判出来的返回 None。"""
+    t = (text or "").replace("?", "？").strip()
+    return next((m for m in policy["confused_markers"] if m in t), None)
+
+
+def find_bad_reaction(data, timeline, names, policy=None):
+    p = policy or DEFAULT_POLICY
     out = []
     for group, items in timeline.items():
         last_bot = None
@@ -368,14 +489,15 @@ def find_bad_reaction(data, timeline, names):
             if item["bot"]:
                 last_bot = item
                 continue
-            if (last_bot and item["ts"] - last_bot["ts"] <= REACTION_SECONDS
-                    and _confused(item["text"])):
+            if (last_bot and item["ts"] - last_bot["ts"] <= p["reaction_seconds"]
+                    and _confused(item["text"], p)):
                 out.append(_finding("bad_reaction", group, item["ts"], user=item.get("user"),
                                     detail=f"「{item['text'][:30]}」← 它说「{last_bot['text'][:40]}」",
                                     message_id=item.get("message_id"),
                                     turn_ids=[last_bot.get("turn_id")],
                                     context=_context(timeline, group, item["ts"], names),
-                                    key=item.get("message_id")))
+                                    key=item.get("message_id"),
+                                    marker=_confused_marker(item["text"], p)))
                 last_bot = None   # 同一句只报一次
     return out
 
@@ -390,7 +512,7 @@ def _remind_executed(row, turn):
     return False
 
 
-def _lookup_executed(row, turn, data):
+def _lookup_executed(row, turn, data, window=300):
     """核对查询是不是真的执行了（不能只看分诊或门控写了 selected=True，查询可能还没跑完就失败）。"""
     if row.get("search_supplied"):
         return True
@@ -411,7 +533,7 @@ def _lookup_executed(row, turn, data):
         t_kw = t.get("kwargs") or {}
         if not (t.get("route") == "followup" or t_kw.get("lookup_note") or t_kw.get("search_note")):
             continue
-        if not (0 <= (t.get("ts") or 0.0) - ts <= 300):
+        if not (0 <= (t.get("ts") or 0.0) - ts <= window):
             continue
         t_mid = t.get("message_id")
         t_user = t.get("user")
@@ -427,26 +549,30 @@ def _lookup_executed(row, turn, data):
     return False
 
 
-def _did_something(row, marker, turn, data):
+def _did_something(row, marker, turn, data, policy=None):
     """按承诺类型核对实际执行记录：提醒看 remind_applied/（记下了：…），查询看 search_supplied/decision/followup。"""
-    if marker in REMIND_PROMISE_MARKERS:
+    p = policy or DEFAULT_POLICY
+    window = p["lookup_window_seconds"]
+    if marker in p["remind_promise_markers"]:
         return _remind_executed(row, turn)
-    if marker in LOOKUP_PROMISE_MARKERS:
-        return _lookup_executed(row, turn, data)
-    return _remind_executed(row, turn) or _lookup_executed(row, turn, data)
+    if marker in p["lookup_promise_markers"]:
+        return _lookup_executed(row, turn, data, window)
+    return _remind_executed(row, turn) or _lookup_executed(row, turn, data, window)
 
 
-def find_promised(data, timeline, names, turn_by_id, triage_by_message=None):
+def find_promised(data, timeline, names, turn_by_id, triage_by_message=None, policy=None):
+    p = policy or DEFAULT_POLICY
+    markers = [*p["lookup_promise_markers"], *p["remind_promise_markers"]]
     out = []
     for row in data["delivery"]:
         if row.get("generation") not in (None, "model"):
             continue        # 本地话术「我去查查，等我一会儿」是真起了查询才说的
         text = row.get("text") or ""
-        marker = next((m for m in PROMISE_MARKERS if m in text), None)
+        marker = next((m for m in markers if m in text), None)
         if not marker:
             continue
         turn = turn_by_id.get(row.get("turn_id"))
-        if _did_something(row, marker, turn, data):
+        if _did_something(row, marker, turn, data, p):
             continue
         ts = row.get("ts") or 0.0
         out.append(_finding("promised", row.get("group"), ts, user=row.get("user"),
@@ -454,7 +580,7 @@ def find_promised(data, timeline, names, turn_by_id, triage_by_message=None):
                             message_id=row.get("source_message_id"),
                             turn_ids=[row.get("turn_id")],
                             context=_context(timeline, row.get("group"), ts, names),
-                            key=row.get("outgoing_id")))
+                            key=row.get("outgoing_id"), marker=marker))
     return out
 
 
@@ -469,7 +595,8 @@ def _grams(text):
     return out
 
 
-def find_catchphrases(data, names, baseline):
+def find_catchphrases(data, names, baseline, policy=None):
+    p = policy or DEFAULT_POLICY
     hits = defaultdict(list)
     for row in data["delivery"]:
         for gram in _grams(row.get("text")):
@@ -485,7 +612,8 @@ def find_catchphrases(data, names, baseline):
         count = len(rows)
         talks = {r.get("user") or r.get("source_message_id") for r in rows}
         avg = base[gram] / base_days
-        if count >= CATCHPHRASE_MIN and len(talks) >= 2 and count >= 2 * avg + 1:
+        if (count >= p["catchphrase_min"] and len(talks) >= p["catchphrase_min_talks"]
+                and count >= p["catchphrase_ratio"] * avg + 1):
             candidates.append((gram, count, avg, rows))
     # 同一句话里的长片段吃掉它的短子串（「刚醒没多久」在，就不再单列「刚醒没多」）
     candidates.sort(key=lambda c: (-len(c[0]), -c[1]))
@@ -539,6 +667,26 @@ def find_sensitive(data, timeline, names, turn_by_id):
     return out
 
 
+def find_recall_empty(data, timeline, names):
+    """分诊判了要翻旧账（才会有 kind=recall 的记录），检索却一条没挑到。
+
+    可能是归档里本来就没有，也可能是检索策略切词 / 打分漏了 —— 后者标 yes 以后
+    用 `regular case add --turn <检索记录> --relevant <消息编号>` 存成检索用例，交给 `regular tune recall`。
+    """
+    out = []
+    for turn in data.get("turns") or ():
+        if turn.get("kind") != "recall" or turn.get("picked") or turn.get("promise"):
+            continue
+        ts = turn.get("now") or turn.get("ts") or 0.0
+        why = turn.get("skipped") or "没有打分过线的旧消息"
+        out.append(_finding("recall_empty", turn.get("group"), ts, user=turn.get("user"),
+                            detail=f"「{str(turn.get('query') or '')[:40]}」一条都没翻到（{why}）",
+                            message_id=turn.get("message_id"), turn_ids=[turn.get("turn_id")],
+                            context=_context(timeline, turn.get("group"), ts, names),
+                            key=turn.get("turn_id")))
+    return out
+
+
 # ── 汇总 ──
 
 def labels_path(checkup_dir):
@@ -546,7 +694,7 @@ def labels_path(checkup_dir):
 
 
 def read_labels(checkup_dir):
-    """人工标注：finding id → 最后一次标的 yes/no（可以改口，以最新为准）。"""
+    """外部评审标注：finding id → 最后一次 yes/no（可更新，以最新为准）。"""
     out = {}
     for row in _read_jsonl(labels_path(checkup_dir)):
         if row.get("id") and row.get("verdict") in ("yes", "no"):
@@ -567,7 +715,7 @@ def add_label(checkup_dir, finding_id, verdict, *, signal=None, note=""):
 
 
 def precision(checkup_dir):
-    """每种信号的人工准确率：标过 yes 的 / 标过的。信号名从标注行自带的 signal 取。"""
+    """已标候选确认率：yes / 已标候选；不包含未检出样本，不能推出召回率。"""
     stats = defaultdict(lambda: {"yes": 0, "no": 0})
     for row in read_labels(checkup_dir).values():
         if row.get("signal"):
@@ -598,13 +746,19 @@ def _names(state_file, groups, speakers=None):
     return names
 
 
-def report(day, *, interaction_dir, turn_dir, archive_dir=None, state_file=None,
-           checkup_dir=None, now=None):
+def prepare(day, *, interaction_dir, turn_dir, archive_dir=None, state_file=None):
+    """读一天的原料并排好索引（只读）。调参器对同一天反复换策略重跑，原料只读这一遍。"""
     data = load_day(day, interaction_dir=interaction_dir, turn_dir=turn_dir,
                     archive_dir=archive_dir)
     baseline = load_baseline(day, interaction_dir=interaction_dir)
     groups = {r.get("group") for r in data["incoming"] + data["delivery"]}
     names = _names(state_file, groups, speakers=data["speakers"]) if state_file else {"bot": "bot"}
+    return prepare_data(data, baseline=baseline, names=names)
+
+
+def prepare_data(data, *, baseline=None, names=None):
+    """为已冻结的本地输入建立索引；供日体检和独立策略基准共用，不读文件或调用模型。"""
+    names = names or {"bot": "bot"}
     timeline = _timeline(data)
     turn_by_id, turn_by_message, triage_by_message = {}, defaultdict(list), {}
     for t in data["turns"]:
@@ -618,15 +772,47 @@ def report(day, *, interaction_dir, turn_dir, archive_dir=None, state_file=None,
     for mid, tr in triage_by_message.items():
         if not turn_by_message.get(mid) and tr.get("turn_id"):
             turn_by_message[mid].append(tr)
-    findings = (find_unanswered(data, timeline, names, turn_by_message, now=now)
-                + find_repeated(data, timeline, names, turn_by_message)
-                + find_corrected(data, timeline, names)
-                + find_bad_reaction(data, timeline, names)
-                + find_promised(data, timeline, names, turn_by_id, triage_by_message)
-                + find_catchphrases(data, names, baseline)
-                + find_sensitive(data, timeline, names, turn_by_id))
+    return {"day": data["day"], "data": data, "baseline": baseline or {}, "names": names,
+            "timeline": timeline, "turn_by_id": turn_by_id,
+            "turn_by_message": turn_by_message, "triage_by_message": triage_by_message}
+
+
+_DETECTORS = {
+    "unanswered": lambda c, p, now: find_unanswered(
+        c["data"], c["timeline"], c["names"], c["turn_by_message"], now=now, policy=p),
+    "repeated": lambda c, p, now: find_repeated(
+        c["data"], c["timeline"], c["names"], c["turn_by_message"], policy=p),
+    "corrected": lambda c, p, now: find_corrected(c["data"], c["timeline"], c["names"]),
+    "bad_reaction": lambda c, p, now: find_bad_reaction(
+        c["data"], c["timeline"], c["names"], policy=p),
+    "promised": lambda c, p, now: find_promised(
+        c["data"], c["timeline"], c["names"], c["turn_by_id"], c["triage_by_message"], policy=p),
+    "catchphrase": lambda c, p, now: find_catchphrases(
+        c["data"], c["names"], c["baseline"], policy=p),
+    "sensitive": lambda c, p, now: find_sensitive(
+        c["data"], c["timeline"], c["names"], c["turn_by_id"]),
+    "recall_empty": lambda c, p, now: find_recall_empty(c["data"], c["timeline"], c["names"]),
+}
+
+
+def detect(ctx, policy=None, *, now=None, signals=None):
+    """在 prepare 好的原料上按给定策略跑信号；signals 给了就只跑这几种（调参时按信号分开跑）。"""
+    p = validate_policy(policy or {})
+    findings = []
+    for signal in (signals or LABELS):
+        findings += _DETECTORS[signal](ctx, p, now)
     order = list(LABELS)
     findings.sort(key=lambda f: (order.index(f["signal"]), f["ts"]))
+    return findings
+
+
+def report(day, *, interaction_dir, turn_dir, archive_dir=None, state_file=None,
+           checkup_dir=None, now=None, policy=None):
+    ctx = prepare(day, interaction_dir=interaction_dir, turn_dir=turn_dir,
+                  archive_dir=archive_dir, state_file=state_file)
+    data, baseline = ctx["data"], ctx["baseline"]
+    policy = validate_policy(policy or {})
+    findings = detect(ctx, policy, now=now)
     labelled = read_labels(checkup_dir) if checkup_dir else {}
     for f in findings:
         if f["id"] in labelled:
@@ -639,6 +825,7 @@ def report(day, *, interaction_dir, turn_dir, archive_dir=None, state_file=None,
                        "triage": sum(1 for t in data["turns"] if t.get("kind") == "triage"),
                        "baseline_days": len(baseline)},
             "counts": counts, "findings": findings,
+            "policy": policy_id(policy),
             "precision": precision(checkup_dir) if checkup_dir else {}}
 
 
@@ -687,8 +874,10 @@ def render(out):
                  f"每轮输入 {i['turns']} 轮 / 分诊 {i['triage']} 次；口头禅基线 {i['baseline_days']} 天。")
     lines.append("")
     lines.append("这些是候选，不是结论。标注：`regular checkup --label <id> yes|no`。")
+    if out.get("policy") and out["policy"] != "default":
+        lines.append(f"体检口径：`{out['policy']}`（data/policies/checkup.json，`regular policy show checkup` 查看）。")
     lines.append("")
-    lines.append("| 信号 | 条数 | 人工准确率 |")
+    lines.append("| 信号 | 条数 | 已标候选确认率 |")
     lines.append("| --- | --- | --- |")
     for signal, label in LABELS.items():
         p = out["precision"].get(signal)

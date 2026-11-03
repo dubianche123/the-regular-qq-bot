@@ -6,7 +6,7 @@
 
 **An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and knows when to join in and when to leave room for others.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1376-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1429-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 [中文](README.md) · **English** · [Message flow](#one-message-through-the-system) · [Decisions input](#what-decisions-actually-sees) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
@@ -106,16 +106,22 @@ Wording is only one editable surface. The replay needed depends on where the cha
 | Decisions instructions, choice descriptions and semantic examples | [`regular/decision_prompts.py`](regular/decision_prompts.py) | triage replay loads the tested version's questions and checks intended choices |
 | Triage thresholds and choice handling | [`regular/decisions.py`](regular/decisions.py) | triage checks usable choices; message replay covers later behavior such as quiet windows |
 | Input fields, context trimming, @ / quotes and routing | [`regular/decisions.py`](regular/decisions.py), [`bot.py`](bot.py), [`storage.py`](storage.py), [`quotes.py`](quotes.py) | message replay and directly related offline tests |
-| Memory, recall and evidence selection and injection | [`digest.py`](digest.py), [`recall.py`](recall.py), [`knowledge.py`](knowledge.py) | message replay plus focused tests; summary generation and actual tool execution need separate validation |
+| Local checkup signals, thresholds and time windows | [`regular/checkup.py`](regular/checkup.py), [`regular/tune.py`](regular/tune.py) | frozen logs with independent positive and negative labels; compare false alarms and misses with separate training and validation |
+| Archive recall matching, ranking and recency | [`recall.py`](recall.py), [`regular/tune.py`](regular/tune.py) | retrieval replay over frozen evidence and a complete relevant-message set; promises have separate checks |
+| Memory and other evidence selection and injection | [`digest.py`](digest.py), [`knowledge.py`](knowledge.py) | message replay plus focused tests; summary generation and actual tool execution need separate validation |
 | Models, reasoning parameters and task configuration | [`config.py`](config.py), [`providers.py`](providers.py) | comparisons with controlled configuration; replay and task probes have different coverage |
 
-The three replay depths are **generation**, which reruns recorded arguments; **triage**, which reruns recorded input with the tested questions; and **message**, which feeds archived events to the real handler with fake sending. Day replay regenerates the day's recorded replies to reveal patterns such as repeated phrases; it cannot simulate how members would react to changed replies.
+The four replay depths are **generation**, which reruns recorded arguments; **triage**, which reruns recorded input with the tested questions; **retrieval**, which selects evidence again from frozen archive and promise snapshots; and **message**, which feeds archived events to the real handler with fake sending. Day replay regenerates the day's recorded replies to reveal patterns such as repeated phrases; it cannot simulate how members would react to changed replies.
+
+**Checkup and archive recall are themselves evaluated.** Both versions use the same independently labeled set. A false positive flags a non-issue or selects irrelevant evidence; a false negative misses a labeled issue or relevant evidence. Reports show TP / FP / FN / TN, precision, recall and the actual errors. Labeling only detected findings, or requiring only one relevant item, cannot establish overall recall. Unknown labels, incomplete snapshots and empty denominators remain explicit instead of becoming zero misses.
+
+`tune checkup` and `tune recall` search bounded policy parameters locally with zero model tokens. Labels remain independent of the policy being searched, and validation data checks the resulting change. These commands produce reports and proposals; a maintainer applies a policy with `policy apply`, retaining its predecessor for rollback. See [local strategy evaluation](docs/self-iteration.md#local-strategy-evaluation) for scope and data formats.
 
 A message case with preset `triage_choices` freezes those choices; use cases without preset answers to test the full decision path. Message replay also replaces some evidence rendering and media execution, so it does not replace a real-service smoke check.
 
 Built-in wording search currently has only `remind` and `banter` targets. The latter edits the chat model's reply-or-pass instruction; native Decisions questions are edited by a coding agent and then evaluated. Safety, privacy, state ownership and call budgets remain code-enforced constraints. See [editable surfaces and validation boundaries](docs/self-iteration.md#iteration-surfaces).
 
-The [eight Harness² components](docs/self-iteration.md#harness2-components), four prompt layers and three replay depths describe different things. In the bot runtime, system prompt, guardrails, memory and tool guidance have direct counterparts. Fixed local code takes on some script and plugin responsibilities, without exposing model-run shell scripts or a plugin loop. The bot contains no nested subagent or skill framework.
+The [eight Harness² components](docs/self-iteration.md#harness2-components), four prompt layers and four replay depths describe different things. In the bot runtime, system prompt, guardrails, memory and tool guidance have direct counterparts. Fixed local code takes on some script and plugin responsibilities, without exposing model-run shell scripts or a plugin loop. The bot contains no nested subagent or skill framework.
 
 <details>
 <summary>For maintainers: commands, statistical decisions and existing checks</summary>
@@ -128,11 +134,17 @@ DEPLOY=/path/to/regular-bot
 .venv/bin/python -m regular --directory "$DEPLOY" case add --turn <turn_id> --id <case_id> --must-not "刚醒|洗衣"
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
+
+# Local strategy evaluation and tuning: no model requests
+.venv/bin/python -m regular --directory "$DEPLOY" tune checkup --benchmark docs/examples/checkup-benchmark.example.json
+.venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases retrieve -n 1
+.venv/bin/python -m regular --directory "$DEPLOY" tune recall
+.venv/bin/python -m regular --directory "$DEPLOY" policy show
 ```
 
-Without a `turn_id`, use `case add --message <message_id> --id <case_id>`. Triage cases need an intended choice such as `--choice addressed=answer`. `checkup` reads local logs without model calls; a separate judge model performs labeling. `eval` calls models, consumes quota and requires `--allow-paid`.
+Without a `turn_id`, use `case add --message <message_id> --id <case_id>`. Triage cases need an intended choice such as `--choice addressed=answer`. `checkup` reads local logs without model calls; a separate judge model performs labeling. Model-based generation, triage and judging require `--allow-paid`; retrieval-only evaluation without a model judge does not. The checkup benchmark above is synthetic command-demo data, not a measurement of live quality.
 
-A drop must pass a one-sided test to count as a regression; smaller drops are listed as within noise and can be rerun with a larger `-n`. A single boundary violation counts as a regression. Ablation gives one of four verdicts: delete, keep, unsure, or cannot tell. Missing cases or incomplete runs cannot support deletion. Prompt or rule changes do not ship automatically.
+Generation and judging drops must pass a one-sided test to count as regressions; smaller drops are listed as within noise and can be rerun with a larger `-n`. A single boundary violation counts as a regression. Retrieval is deterministic: a drop in checks or an increase in fully labeled FP / FN counts is a regression without repeated sampling. Ablation gives one of four verdicts: delete, keep, unsure, or cannot tell. Missing cases or incomplete runs cannot support deletion. Prompt or rule changes do not ship automatically.
 
 Small-scale checks so far: the same version against itself, 4 cases with 4 samples each, produced 0 regressions and 2 drops within noise. The first checkup of a real day led from a correction to 4 malformed bookkeeping tags leaking into replies, which were fixed. The full historical case set and longer live observation still need validation. The design borrows recorded-history replay from [Dream-RSI](https://arxiv.org/abs/2609.14858) and old/new comparison from [Harness²](https://arxiv.org/abs/2610.14224); see the [self-iteration design](docs/self-iteration.md) for the full process.
 
@@ -158,7 +170,8 @@ Conversation content needed for judgment and replies goes to the configured mode
 
 | Existing evidence | Scope |
 | --- | --- |
-| 1376 offline regression tests | code behavior, not a guarantee that every reply lands |
+| 1429 offline regression tests | code behavior, not a guarantee that every reply lands |
+| Archive recall passes 8 / 8 case checks, retrieves 7 / 9 relevant messages | [fully labeled synthetic cases](docs/self-iteration.md#local-strategy-evaluation); both versions agree, and the 2 budget-limited misses remain counted |
 | 17 / 20 unaddressed lines aimed at it answered, versus 3 / 20 before | [141 messages and 9 prompt variants](docs/when-to-reply.md); answer/pass labels came from a separate judge model |
 | 75.6% of reply input tokens hit the prefix cache | [261 calls from one live day](docs/providers.md), tied to that model and traffic |
 | 0.71-second median closed-set judgment | [908 judgments](docs/judgment-layer.md), not a service-latency guarantee |

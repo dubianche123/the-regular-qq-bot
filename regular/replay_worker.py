@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""回放子进程（docs/self-iteration.md ③⑤）：在指定代码版本下重跑生成层、分诊层或消息层用例。
+"""回放子进程（docs/self-iteration.md ③⑤）：在指定代码版本下重跑生成层、分诊层、消息层或检索用例。
 
 为什么要单独起子进程：
     `regular eval --base <ref> --cand .` 对比两个版本时，各自的 prompts.py / bot.py
@@ -407,14 +407,88 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
         return None
 
 
+class _PromiseList:
+    """检索用例里存的承诺账本快照，装成 recall 认的 promises.list(group) 接口。"""
+
+    def __init__(self, rows):
+        self._rows = [dict(r) for r in rows or ()]
+
+    def list(self, group_id):
+        return list(self._rows)
+
+
+class _RowArchive:
+    """检索用例里存的归档快照，装成 archive.search 接口（给还没有 recall.select 的旧版本用）。"""
+
+    def __init__(self, rows):
+        self._rows = list(rows or ())
+
+    def search(self, group_id=None, keyword="", since_ts=None, limit=50):
+        return [r for r in self._rows if not since_ts or float(r.get("ts") or 0) >= since_ts][:limit]
+
+
+async def _run_retrieve_once(config, spec, policy=None):
+    return run_retrieve(config, spec, policy=policy)
+
+
+def run_retrieve(config, spec, policy=None):
+    """重跑一条检索用例（depth=retrieve）：纯本地计算，返回 {"picked", "promise", "skipped"} 的 JSON。
+
+    调参器（regular/tune.py）在本进程里直接调它，回放子进程走 _run_retrieve_once —— 同一份逻辑。
+    """
+    import recall as recall_mod
+
+    rows = [dict(r) for r in spec.get("rows") or ()]
+    kwargs = dict(names=tuple(spec.get("names") or ()), now=float(spec.get("now") or time.time()),
+                  max_items=spec.get("max_items"), lookback_days=spec.get("lookback_days"),
+                  exclude_text=spec.get("exclude_text") or "")
+    promises = _PromiseList(spec.get("promises"))
+    with ExitStack() as stack:
+        # 环境默认值也是现场的一部分；策略内的显式 max_items/lookback_days 仍可覆盖它们。
+        defaults = spec.get("defaults") or {}
+        for key, attr in (("max_items", "MEMORY_RECALL_MAX_ITEMS"),
+                          ("lookback_days", "MEMORY_RECALL_LOOKBACK_DAYS")):
+            if key in defaults:
+                stack.enter_context(patch.object(recall_mod.config, attr, defaults[key]))
+        if hasattr(recall_mod, "select"):
+            if policy is not None:
+                kwargs["policy"] = policy
+            sel = recall_mod.select("REPLAY_GROUP", spec.get("query") or "", rows=rows,
+                                    promises=promises, **kwargs)
+            out = {"picked": [str(i["row"].get("message_id")) for i in sel["picked"]],
+                   "promise": (sel.get("promise") or {}).get("what"),
+                   "skipped": sel.get("skipped") or ""}
+        else:
+            # 走旧版自己的 _pick，只观察被选行。正文可能重复、截断或脱敏，不能逆推 ID。
+            picked = []
+            original_pick = recall_mod._pick
+            def capture_pick(*args, **kw):
+                result = original_pick(*args, **kw)
+                picked.extend(str(row.get("message_id")) for row in result)
+                return result
+            stack.enter_context(patch.object(recall_mod, "_pick", capture_pick))
+            stack.enter_context(patch.object(recall_mod.config, "MEMORY_RECALL_ENABLED", True))
+            note = recall_mod.build_note("REPLAY_GROUP", spec.get("query") or "",
+                                         archive=_RowArchive(rows), promises=promises, **kwargs)
+            has_promise = any(line.startswith("- 承诺：") for line in note.splitlines())
+            out = {"picked": picked, "promise": has_promise or None, "skipped": ""}
+    return json.dumps(out, ensure_ascii=False)
+
+
 async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=None):
     """对单条用例（或单轮输入）抽样 n 次，返回 {"id": ..., "samples": [...], "errors": int}。"""
+    depth = item.get("depth") or ("triage" if item.get("kind") == "triage" else "generate")
+    if depth == "retrieve":
+        if config is None:
+            import config as _config
+            config = _config
+        out = await _run_retrieve_once(config, item.get("retrieve") or {})
+        return {"id": item.get("id"), "samples": [out] * max(1, int(n)), "errors": 0}
     if bot is None:
         import bot as _bot
         import config as _config
         import runtime as _runtime
         bot, runtime, config = _bot, _runtime, _config
-    depth = item.get("depth") or ("triage" if item.get("kind") == "triage" else "generate")
     samples = []
     errors = 0
     for _ in range(max(1, int(n))):
@@ -435,13 +509,16 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
 
 
 async def replay_batch(items, *, n=1, concurrency=6, retries=1):
-    import bot
     import config
-    import runtime
-    if hasattr(runtime, "TURNS"):
-        runtime.TURNS.enabled = False
-    if hasattr(runtime, "INTERACTIONS"):
-        runtime.INTERACTIONS.enabled = False
+    bot = runtime = None
+    if any(item.get("depth") != "retrieve" for item in items):
+        import bot as bot_mod
+        import runtime as runtime_mod
+        bot, runtime = bot_mod, runtime_mod
+        if hasattr(runtime, "TURNS"):
+            runtime.TURNS.enabled = False
+        if hasattr(runtime, "INTERACTIONS"):
+            runtime.INTERACTIONS.enabled = False
     sem = asyncio.Semaphore(max(1, int(concurrency)))
 
     async def one(item):
@@ -485,8 +562,11 @@ def main(argv=None):
     rules_mod = _load_harness_rules()
     code_dir = str(Path(args.code_dir).resolve())
     _activate_code_dir(code_dir)
-    import bot
     import prompts
+    items = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    needs_model_path = any(item.get("depth") != "retrieve" for item in items)
+    if needs_model_path:
+        import bot
 
     ablated = None
     prompts_file = Path(code_dir) / "prompts.py"
@@ -499,14 +579,13 @@ def main(argv=None):
         for attr, val in json.loads(args.override_json).items():
             setattr(prompts, attr, val)
     fake_reply = os.environ.get("REGULAR_FAKE_MODEL_REPLY")
-    if fake_reply is not None:
+    if fake_reply is not None and needs_model_path:
         async def _fake_call(messages, max_tokens, **kw):
             return fake_reply
         bot.call_model = _fake_call
 
     head = rules_mod.head_stats(
         prompts_mod=prompts, path=prompts_file if prompts_file.is_file() else None)
-    items = json.loads(Path(args.input).read_text(encoding="utf-8"))
     results = asyncio.run(replay_batch(items, n=args.n, concurrency=args.concurrency))
     payload = {"head": head, "ablated": ablated, "results": results}
     Path(args.output).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

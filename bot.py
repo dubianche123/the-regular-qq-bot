@@ -704,6 +704,20 @@ def _record_turn(params, head, flags, messages, max_tokens, raw, retried):
     return row
 
 
+def _record_recall(group_id, user, message_id, query, names, now, selection):
+    """一次旧账检索进 data/turns（kind=recall）：问题、人名词典、时刻和挑中的消息编号。
+
+    同时记录承诺候选快照；存例时冻结当时可用的归档，不用旧策略先筛掉干扰消息。
+    体检据此报「翻旧账落空」，调参器比较新旧选择；历史资料不全时须注明覆盖缺口。
+    """
+    try:
+        runtime.TURNS.append("recall", group=group_id, user=user, message_id=message_id,
+                             query=query, names=list(names), now=now,
+                             release=code_release(), **recall_mod.trace(selection))
+    except Exception:
+        logger.warning("检索记录失败，不影响回复", exc_info=True)
+
+
 async def get_ai_reply(session_id, user_text, is_owner=False,
                        context_hint="", unprompted=False, relation_note="",
                        group_memory="", owner_label="", private=False, state_note="",
@@ -2999,11 +3013,16 @@ class GroupBot(botpy.Client):
         if (not unprompted and not quip and not back_off
                 and not feedback_note and config.MEMORY_RECALL_ENABLED
                 and feedback_result.get("recall") == "look_up"):
-            recall_note = refresh_names(group_id, recall_mod.build_note(
+            recall_names = _recall_names(group_id)
+            recall_now = time.time()
+            selection = recall_mod.select(
                 group_id, user_input,
                 archive=runtime.ARCHIVE, promises=runtime.PROMISES,
-                names=_recall_names(group_id), name_of=_resolve_name(group_id),
-                exclude_text=user_input))
+                names=recall_names, now=recall_now, exclude_text=user_input)
+            recall_note = refresh_names(group_id, recall_mod.render(
+                selection, name_of=_resolve_name(group_id), now=recall_now))
+            _record_recall(group_id, sender_openid, message.id, user_input,
+                           recall_names, recall_now, selection)
             if recall_note:
                 logger.info("🔎 旧账召回：%d 条本地证据（%s）",
                             recall_note.count("\n- "), session_id[-12:])

@@ -74,9 +74,10 @@ launchctl kickstart -k gui/$(id -u)/com.qqbot.xiaowang
 | `search.py` | 按需 DuckDuckGo 搜索 |
 | `panel.py` | 本机维护面板（`aiohttp`，127.0.0.1） |
 | `providers.py` | 显式候选、按任务路由、预算/超时边界 |
-| `turns.py` | 每轮生成与分诊输入的原样 JSONL 记录（`data/turns/`） |
+| `turns.py` | 每轮生成、分诊与旧账检索输入的原样 JSONL 记录（`data/turns/`） |
 | `regular/checkup.py` | 每日只读体检信号、上下文提取与标注结果统计 |
-| `regular/cases.py` / `regular/eval.py` | 事故用例库、双版本子进程回放、盲评、整天回放、窄口子措辞搜索 |
+| `regular/cases.py` / `regular/eval.py` | 事故用例库（生成/分诊/检索/消息四层）、双版本子进程回放、盲评、整天回放、窄口子措辞搜索 |
+| `regular/tune.py` | 体检信号阈值/词表与旧账检索策略的离线自迭代（坐标搜索、留出验证、漂移对比、`data/policies/` 提案与回退） |
 | `regular/rules.py` | `prompts.py` 规则账本解析与单条消融（`--ablate`） |
 | `tests/` | 离线回归测试 |
 
@@ -117,6 +118,16 @@ DEPLOY=~/Code_repository/regular-bot
    .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
    .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
    .venv/bin/python -m regular --directory "$DEPLOY" eval --ablate <rule_id> --allow-paid
+
+   # 本地体检与旧账检索策略的离线调参（0 token，只出提案，维护者 policy apply 后生效）
+   .venv/bin/python -m regular --directory "$DEPLOY" tune checkup
+   .venv/bin/python -m regular --directory "$DEPLOY" tune checkup --benchmark <完整独立标注集.json>
+   .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases retrieve -n 1
+   .venv/bin/python -m regular --directory "$DEPLOY" tune recall
+   .venv/bin/python -m regular --directory "$DEPLOY" policy show
    ```
+   体检候选 `yes/no` 只有局部确认信息，不能推出总体漏报率。完整体检 benchmark 要冻结正负单元并分开训练与验证；
+   检索用例须完整标注相关消息集合、保留干扰消息并声明语料覆盖。缺标注、截断或分母为空须单列，不能填成零误报/漏报。
+   仅含本地检索且无模型评审的 `eval` 不需要 `--allow-paid`；混合或模型评测仍须显式授权。
 5. **写报告与事故记录，交由人决定上不上线**：
    检查 `$DEPLOY/data/evals/` 下的报告（退步用例排最前，上线前任何退步都必须交代原因；「噪声内下降」加大 `-n` 只跑那几条再看；规则消融的结论分「可删除 / 仍需保留 / 说不准 / 判断不了」四种；稳定头字数不许无故只增不减），补充 `docs/` 事故记录与离线测试。上线永远由维护者手动执行。

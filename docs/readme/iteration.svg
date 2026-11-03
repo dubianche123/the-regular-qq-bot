@@ -38,7 +38,7 @@
 <text x="744" y="787" font-size="18" fill="#56677E" font-weight="400">Tested code / questions / input strategy</text>
 <rect x="120" y="866" width="1040" height="108" rx="15" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="144" y="901" font-size="21" fill="#213249" font-weight="650">Expected outcomes stay here: code checks + independent blind judging</text>
-<text x="144" y="934" font-size="17" fill="#56677E" font-weight="400">Full cases find regressions · day replay finds repetition · rules can be ablated</text>
+<text x="144" y="934" font-size="17" fill="#56677E" font-weight="400">History regressions · local false positives / misses · day patterns · rule ablation</text>
 <text x="144" y="960" font-size="16" fill="#56677E" font-weight="400">Day replay regenerates recorded replies; it does not simulate later member reactions</text>
 <rect x="64" y="1052" width="688" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="88" y="1087" font-size="23" fill="#213249" font-weight="650">Comparison report: gains and costs</text>

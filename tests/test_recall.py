@@ -130,7 +130,9 @@ class RecallTest(unittest.TestCase):
         import inspect
         import bot
         src = inspect.getsource(bot)
-        self.assertIn("recall_mod.build_note", src)
+        self.assertIn("recall_mod.select(", src)
+        self.assertIn("recall_mod.render(", src)
+        self.assertIn("_record_recall(", src)
         self.assertIn("recall_note=recall_note", src)
 
 

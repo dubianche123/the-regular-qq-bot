@@ -36,6 +36,11 @@ from regular import rules as rules_mod
 
 SCHEMA_OUT = "regular.eval.v1"
 
+
+class PaidEvaluationRequired(RuntimeError):
+    """选中的评测包含模型请求，调用方尚未明确授权。"""
+
+
 DEFAULT_DAY_PATTERNS = {
     "housework": r"洗衣|买菜|厨房|做饭|拖把|漏勺|家政|袜子",
     "fake_car": r"车刚|打火|熄火|早高峰|后备箱",
@@ -358,19 +363,34 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             and (not has_judge or (judged_pairs > 0 and j_wins["dropped"] == 0))
         )
 
-        # 退步：新版全部生成失败、盲评判越线、或者下降过了单侧检验；够不上检验的下降记成噪声内下降
+        retrieval = None
+        retrieval_regressed = retrieval_improved = False
+        if case.get("depth") == "retrieve":
+            retrieval = {
+                "base": cases_mod.retrieval_metrics(next((s for s in b_samples if s is not None), None), case),
+                "cand": cases_mod.retrieval_metrics(next((s for s in c_samples if s is not None), None), case),
+            }
+            b_ret, c_ret = retrieval["base"], retrieval["cand"]
+            if b_ret["evidence_complete"] and c_ret["evidence_complete"]:
+                retrieval_regressed = c_ret["fp"] > b_ret["fp"] or c_ret["fn"] > b_ret["fn"]
+                retrieval_improved = (not retrieval_regressed) and (
+                    c_ret["fp"] < b_ret["fp"] or c_ret["fn"] < b_ret["fn"])
+
+        # 检索完整标注的误报/漏报直接比较；生成与盲评的下降仍需排除抽样噪声。
         gen_regressed = bool(b_valid > 0 and c_valid == 0)
         det_dropped = bool(b_checks and c_checks and c_rate < b_rate)
         det_p = drop_p_value(b_pass, b_valid, c_pass, c_valid) if det_dropped else 1.0
+        if det_dropped and (case.get("depth") == "retrieve"):
+            det_p = 0.0   # 检索是确定性的本地计算，没有抽样噪声：掉了就是掉了
         judge_lost = bool(has_judge and j_wins["base"] > j_wins["cand"])
         judge_p = judge_loss_p_value(j_wins["base"], j_wins["cand"]) if judge_lost else 1.0
-        regressed = bool(gen_regressed or c_crossed > 0
+        regressed = bool(gen_regressed or c_crossed > 0 or retrieval_regressed
                          or (det_dropped and det_p <= REGRESSION_P)
                          or (judge_lost and judge_p <= REGRESSION_P))
         wobbled = (not regressed) and (det_dropped or judge_lost)
         det_improved = bool(c_checks and c_rate > b_rate)
         judge_improved = bool(has_judge and j_wins["cand"] > j_wins["base"] and c_crossed == 0)
-        improved = (not regressed) and (not wobbled) and (det_improved or judge_improved)
+        improved = (not regressed) and (not wobbled) and (det_improved or judge_improved or retrieval_improved)
         if regressed:
             totals["regressed"] += 1
         elif wobbled:
@@ -385,6 +405,10 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             failed_reasons.append("样本或盲评不完整")
         if c_crossed > 0:
             failed_reasons.append(f"盲评判越线×{c_crossed}")
+        if retrieval_regressed:
+            for key, label in (("fp", "误报"), ("fn", "漏报")):
+                if c_ret[key] > b_ret[key]:
+                    failed_reasons.insert(0, f"检索{label}增加：{b_ret[key]} → {c_ret[key]}")
         if judge_lost:
             failed_reasons.append(f"盲评判输 ({j_wins['cand']}/{j_wins['base']}/{j_wins['tie']})")
             failed_reasons.extend(j_reasons)
@@ -410,12 +434,16 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             "failed_reasons": list(dict.fromkeys(failed_reasons))[:3],
             "base_sample": next((s for s in b_samples if s is not None), ""),
             "cand_sample": next((s for s in c_samples if s is not None), ""),
+            "retrieval": retrieval,
         })
 
     # 退步排最前，其次噪声内下降，再次改进，其余按 id
     rows.sort(key=lambda r: (0 if r["regressed"] else 1 if r["wobbled"] else 2 if r["improved"] else 3,
                              r["id"]))
     totals["incomplete_cases"] = sum(1 for r in rows if not r.get("evidence_complete"))
+    retrieval_rows = [r for r in rows if r.get("retrieval")]
+    if retrieval_rows:
+        totals["retrieval"] = _retrieval_totals(retrieval_rows)
     totals["base_pass_rate"] = round(
         totals["base_passed_samples"] / totals["base_total_samples"], 3
     ) if totals["base_total_samples"] else None
@@ -425,6 +453,27 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
     judged = totals["judge_cand_wins"] + totals["judge_base_wins"] + totals["judge_ties"]
     totals["cand_win_rate"] = round(totals["judge_cand_wins"] / judged, 3) if judged else None
     return rows, totals
+
+
+def _retrieval_totals(rows):
+    """消息级矩阵每个确定性用例只计一次；两版都完整的用例使用同一个分母。"""
+    complete = [r for r in rows if r["evidence_complete"]
+                and all(r["retrieval"][side]["evidence_complete"] for side in ("base", "cand"))]
+    out = {"scope": "archive_messages", "complete_cases": len(complete),
+           "excluded_cases": len(rows) - len(complete)}
+    for side in ("base", "cand"):
+        if not complete:
+            out[side] = None
+            continue
+        m = {key: sum(r["retrieval"][side][key] for r in complete) for key in ("tp", "fp", "fn", "tn")}
+        tp, fp, fn, tn = (m[key] for key in ("tp", "fp", "fn", "tn"))
+        m.update(precision=tp / (tp + fp) if tp + fp else None,
+                 recall=tp / (tp + fn) if tp + fn else None,
+                 f1=2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else None,
+                 false_positive_rate=fp / (fp + tn) if fp + tn else None,
+                 false_negative_rate=fn / (tp + fn) if tp + fn else None)
+        out[side] = m
+    return out
 
 
 def day_metrics(samples, *, patterns=None):
@@ -516,6 +565,26 @@ def render_report(report):
             lines.append(f"- 网络/生成错误剔除对数：{t['dropped_pairs']}"
                          + (f"（其中盲评失败 {t['judge_errors']} 对）" if t.get("judge_errors") else ""))
 
+    retrieval = t.get("retrieval")
+    if retrieval:
+        lines += ["", "## 检索误报与漏报（归档消息级）", "",
+                  f"完整标注且两版执行完整：{retrieval['complete_cases']} 条用例；"
+                  f"未纳入完整对照：{retrieval['excluded_cases']} 条。每条用例只计一次，不乘抽样数。"]
+        if retrieval["complete_cases"]:
+            lines += ["", "| 指标 | Base | Cand |", "| --- | --- | --- |"]
+            for key, label in (("tp", "TP"), ("fp", "误报 FP"), ("fn", "漏报 FN"), ("tn", "TN"),
+                               ("precision", "Precision"), ("recall", "Recall"), ("f1", "F1"),
+                               ("false_positive_rate", "误报率 FP / (FP + TN)"),
+                               ("false_negative_rate", "漏报率 FN / (TP + FN)")):
+                vals = []
+                for side in ("base", "cand"):
+                    value = retrieval[side][key]
+                    vals.append("—" if value is None else str(value) if key in ("tp", "fp", "fn", "tn")
+                                else f"{value:.1%}")
+                lines.append(f"| {label} | {vals[0]} | {vals[1]} |")
+        else:
+            lines.append("现有部分判据仅用于通过/失败检查；缺少完整相关集或完整语料时不计算误报、漏报和召回率。")
+
     case_rows = report.get("cases") or []
     for flag, title in (
             ("regressed", "退步用例（旧版过、新版不过，上线前必须交代）"),
@@ -578,7 +647,7 @@ def write_report(report, eval_dir):
 
 def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
              n=4, ablate="", patterns=None, judge_fn=None, worker_fn=None,
-             write=True):
+             write=True, allow_paid=True):
     """执行一次完整评测（用例集 和/或 整天回放），返回 report dict。"""
     worker = worker_fn or run_worker_subprocess
     concurrency = getattr(config, "EVAL_CONCURRENCY", 6)
@@ -594,6 +663,11 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
         if not day or cases_selector != "all":
             cases = cases_mod.load_cases(config.CASES_DIR, selector=cases_selector,
                                          include_seeds=True)
+    if not allow_paid and (day or any(
+            (case.get("depth") or "generate") != "retrieve"
+            or cases_mod.judge_prompts(case.get("checks")) for case in cases)):
+        raise PaidEvaluationRequired("eval requires --allow-paid for generation, triage, message, day replay or model judging; "
+                                     "only pure local retrieve cases run without it")
     if judge_fn is None and any(cases_mod.judge_prompts(c.get("checks")) for c in cases):
         preflight_judge(config)
 
