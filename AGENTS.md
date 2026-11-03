@@ -75,7 +75,7 @@ launchctl kickstart -k gui/$(id -u)/com.qqbot.xiaowang
 | `panel.py` | 本机维护面板（`aiohttp`，127.0.0.1） |
 | `providers.py` | 显式候选、按任务路由、预算/超时边界 |
 | `turns.py` | 每轮生成与分诊输入的原样 JSONL 记录（`data/turns/`） |
-| `regular/checkup.py` | 每日只读体检信号、上下文提取与人工准确率统计 |
+| `regular/checkup.py` | 每日只读体检信号、上下文提取与标注结果统计 |
 | `regular/cases.py` / `regular/eval.py` | 事故用例库、双版本子进程回放、盲评、整天回放、窄口子措辞搜索 |
 | `regular/rules.py` | `prompts.py` 规则账本解析与单条消融（`--ablate`） |
 | `tests/` | 离线回归测试 |

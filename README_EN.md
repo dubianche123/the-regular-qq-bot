@@ -107,6 +107,8 @@ Two details came out of the replays:
 | Only "your call", message sent as-is | 20 / 20 | 9 / 69 | 93% |
 | **Final: check your own recent lines + neutral frame + queue** | **17 / 20** | **47 / 69** | **51%** |
 
+The answer/pass labels in this replay were assigned by a separate judge model for version comparison.
+
 The costs are stated, not hidden. It talks more (20% → 51% of unaddressed messages). Each unaddressed message costs one reply call: the prefix is cached, and a pass is only a few tokens. In exchange, the per-message triage call is gone. Two knobs for making it quieter are in [docs/when-to-reply.md](docs/when-to-reply.md).
 
 ## Closed-set judgment: trust the ranking, not the scale
@@ -179,9 +181,9 @@ A fix used to start with a screenshot, a scene rebuilt from logs and a replay sc
 | Step | What it records or checks | Entry point |
 | --- | --- | --- |
 | Record | Verbatim arguments, session history, media switches, raw model output and triage input, linked to actual delivery. Private chats are skipped; retained for 30 days by default | automatic, `data/turns/` |
-| Daily checkup | Seven kinds of candidate: missed calls, repeated questions, corrections, confused reactions, empty promises, catchphrases and sensitive-word hits. Context and case commands accompany findings; human labels measure precision | `checkup` |
+| Daily checkup | Seven kinds of candidate: missed calls, repeated questions, corrections, confused reactions, empty promises, catchphrases and sensitive-word hits. Findings include context and case commands; a separate judge model labels them, and the confirmation rate is tracked per signal | `checkup` |
 | Case library | A saved scene plus its intended behavior. Code checks tags, times and forbidden wording; a blind judge compares tone and relevance | `case add` |
-| Version comparison | Independent subprocesses replay the same scene n times per version, with code checks and shuffled pairwise judging by kimi-k3.1-pro. Whole-day replay checks catchphrases and volume | `eval` |
+| Version comparison | Independent subprocesses replay the same scene n times per version, with code checks and shuffled pairwise judging by a separate judge model. Whole-day replay checks catchphrases and volume | `eval` |
 | Rule ledger | Each prompt rule has a source and linked cases. Remove one and replay to test whether it still helps; record stable-head length | `rules` / `eval --ablate` |
 
 Choose the replay depth for the issue. Testing generation alone does not test the message route:
@@ -202,7 +204,7 @@ DEPLOY=/path/to/regular-bot
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
 ```
 
-Without a `turn_id`, use `case add --message <message_id> --id <case_id>` to save a message-level case from the archive. Triage cases need the correct expectation, such as `--choice addressed=answer`, so an earlier wrong choice does not become the standard. `checkup` is offline and makes no model calls. `eval` calls models and consumes quota, so it requires explicit `--allow-paid`.
+Without a `turn_id`, use `case add --message <message_id> --id <case_id>` to save a message-level case from the archive. Triage cases need the correct expectation, such as `--choice addressed=answer`, so an earlier wrong choice does not become the standard. `checkup` lists candidates offline and makes no model calls; a separate judge model labels them afterwards, and the labels reflect that model's judgments. `eval` calls models and consumes quota, so it requires explicit `--allow-paid`.
 
 **Reports separate regressions from variation.** A drop must pass a one-sided test to count as a regression; smaller drops are listed as within noise and can be retried with a larger `-n`. A single boundary violation counts as a regression. Rule ablation gives one of four verdicts: deletable, keep, unsure, or cannot tell. Missing cases or incomplete runs cannot support deletion.
 
@@ -213,7 +215,7 @@ Small-scale checks so far:
 - **The same version against itself** (4 cases, 4 samples each): 0 regressions and 2 drops within noise. A single missed reply does not establish a regression.
 - **The first checkup on a real day** showed, under "corrected", a reply that had leaked a malformed bookkeeping tag into the group. Following it turned up 4 such replies that day; fixed.
 
-Earlier evidence includes [9 prompt variants on 141 messages](docs/when-to-reply.md), [three image-reading failure causes and their regressions](docs/image-before-reply.md), [a three-provider comparison](docs/model-roles.md), and [hindsight labels on 1082 requests](docs/request-sincerity.md). The full historical case set and longer live observation still need validation.
+Earlier evidence includes [9 prompt variants on 141 messages](docs/when-to-reply.md), [three image-reading failure causes and their regressions](docs/image-before-reply.md), [a three-provider comparison](docs/model-roles.md), and [hindsight labels from a judge model on 1082 requests](docs/request-sincerity.md). The full historical case set and longer live observation still need validation.
 
 The design draws on recorded-history replay in [Dream-RSI](https://arxiv.org/abs/2609.14858) and old/new comparison in [Harness²](https://arxiv.org/abs/2610.14224). See the [self-iteration design](docs/self-iteration.md) for implementation, boundaries and measurements; the detailed design docs are in Chinese.
 

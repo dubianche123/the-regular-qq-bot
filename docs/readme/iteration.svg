@@ -19,7 +19,7 @@
 <text x="540" y="224" font-size="14" fill="#397D70" font-weight="650" >COMMAND · READ-ONLY</text>
 <text x="486" y="269" font-size="23" fill="#213249" font-weight="700" >Find, then verify</text>
 <text x="486" y="305" font-size="18" fill="#56677E" font-weight="400" >checkup → context and findings</text>
-<text x="486" y="335" font-size="18" fill="#56677E" font-weight="400" >Human labels measure precision</text>
+<text x="486" y="335" font-size="18" fill="#56677E" font-weight="400" >A judge model labels candidates</text>
 <rect x="880" y="184" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
 <rect x="900" y="204" width="42" height="30" rx="9" fill="#F0EBF8"/>
 <text x="921" y="225" font-size="16" fill="#7962A7" font-weight="700" text-anchor="middle">03</text>
