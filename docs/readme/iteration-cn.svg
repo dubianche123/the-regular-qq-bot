@@ -1,47 +1,67 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="710" viewBox="0 0 1280 710" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="zh-CN">
-<title id="iteration-title">从真实群聊里的问题，一步步改回来</title><desc id="iteration-desc">线上事故后，先从日志和归档还原现场，用真实语料回放并为不同写法打分，再修改提示词或代码、跑 1376 个离线回归测试，发布后检查启动日志，新的线上反馈继续进入下一轮迭代。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="940" viewBox="0 0 1280 940" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="zh-CN">
+<title id="iteration-title">把一次事故，变成以后的回归用例</title><desc id="iteration-desc">现场自动记录，体检列出候选，编码代理定位并改代码或提示词，把事故保存为回归用例，再用旧版和新版独立回放，维护者根据报告决定上线。代码版本由 base 和 cand 指定，真实配置与数据由 directory 指定。</desc>
 <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
-<rect x="1" y="1" width="1278" height="708" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
-<text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1.7">THE REGULAR / ITERATION</text>
-<text x="48" y="98" font-size="32" fill="#213249" font-weight="700">从真实群聊里的问题，一步步改回来</text>
-<text x="48" y="137" font-size="21" fill="#56677E" font-weight="400">事故 → 证据 → 回放 → 修改 → 回归 → 发布</text>
-<rect x="48" y="184" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
-<rect x="68" y="204" width="42" height="34" rx="9" fill="#FFF4E4" stroke="#FFF4E4"/>
-<text x="89" y="227" font-size="17" fill="#A7783E" font-weight="700" text-anchor="middle">01</text>
-<text x="70" y="275" font-size="24" fill="#213249" font-weight="700">线上事故</text>
-<text x="70" y="310" font-size="20" fill="#56677E" font-weight="400">先确认实际出了什么事</text>
-<rect x="464" y="184" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
-<rect x="484" y="204" width="42" height="34" rx="9" fill="#FFF4E4" stroke="#FFF4E4"/>
-<text x="505" y="227" font-size="17" fill="#A7783E" font-weight="700" text-anchor="middle">02</text>
-<text x="486" y="275" font-size="24" fill="#213249" font-weight="700">还原现场</text>
-<text x="486" y="310" font-size="20" fill="#56677E" font-weight="400">日志 · 原文归档</text>
-<rect x="880" y="184" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
-<rect x="900" y="204" width="42" height="34" rx="9" fill="#EAF4EF" stroke="#EAF4EF"/>
-<text x="921" y="227" font-size="17" fill="#397D70" font-weight="700" text-anchor="middle">03</text>
-<text x="902" y="275" font-size="24" fill="#213249" font-weight="700">真实语料回放</text>
-<text x="902" y="310" font-size="20" fill="#56677E" font-weight="400">几种写法逐一打分</text>
-<rect x="880" y="422" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
-<rect x="900" y="442" width="42" height="34" rx="9" fill="#F0EBF8" stroke="#F0EBF8"/>
-<text x="921" y="465" font-size="17" fill="#7962A7" font-weight="700" text-anchor="middle">04</text>
-<text x="902" y="513" font-size="24" fill="#213249" font-weight="700">修改实现</text>
-<text x="902" y="548" font-size="20" fill="#56677E" font-weight="400">改提示词，或改代码</text>
-<rect x="464" y="422" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
-<rect x="484" y="442" width="42" height="34" rx="9" fill="#EAF4EF" stroke="#EAF4EF"/>
-<text x="505" y="465" font-size="17" fill="#397D70" font-weight="700" text-anchor="middle">05</text>
-<text x="486" y="513" font-size="24" fill="#213249" font-weight="700">离线回归</text>
-<text x="486" y="548" font-size="20" fill="#56677E" font-weight="400">1376 个测试</text>
-<rect x="48" y="422" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
-<rect x="68" y="442" width="42" height="34" rx="9" fill="#FFF4E4" stroke="#FFF4E4"/>
-<text x="89" y="465" font-size="17" fill="#A7783E" font-weight="700" text-anchor="middle">06</text>
-<text x="70" y="513" font-size="24" fill="#213249" font-weight="700">发布部署</text>
-<text x="70" y="548" font-size="20" fill="#56677E" font-weight="400">检查启动日志</text>
-<path d="M408 262h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M824 262h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M1056 348v66" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M872 500h-48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M456 500h-48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<path d="M224 586v45H24V262h16" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
-<text x="270" y="637" font-size="20" fill="#56677E" font-weight="500">新的线上反馈，进入下一轮迭代</text>
-<text x="48" y="685" font-size="18" fill="#56677E" font-weight="400">文档保留来源、回放结果和局限，让每个结论都能追溯。</text>
+<rect x="1" y="1" width="1278" height="938" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+<text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1.7">THE REGULAR / SELF-ITERATION</text>
+<text x="48" y="98" font-size="32" fill="#213249" font-weight="700" >把一次事故，变成以后的回归用例</text>
+<text x="48" y="137" font-size="21" fill="#56677E" font-weight="400" >命令执行固定流程，编码代理提出改法，维护者决定上不上线。</text>
+<rect x="48" y="184" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="68" y="204" width="42" height="30" rx="9" fill="#EAF0F6"/>
+<text x="89" y="225" font-size="16" fill="#5375A1" font-weight="700" text-anchor="middle">01</text>
+<text x="124" y="224" font-size="14" fill="#5375A1" font-weight="650" >线上 · 自动记录</text>
+<text x="70" y="269" font-size="24" fill="#213249" font-weight="700" >原样留下现场</text>
+<text x="70" y="305" font-size="19" fill="#56677E" font-weight="400" >入参 · 历史 · 原始输出</text>
+<text x="70" y="335" font-size="18" fill="#56677E" font-weight="400" >私聊不记 · 默认保留 30 天</text>
+<rect x="464" y="184" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="484" y="204" width="42" height="30" rx="9" fill="#EAF4EF"/>
+<text x="505" y="225" font-size="16" fill="#397D70" font-weight="700" text-anchor="middle">02</text>
+<text x="540" y="224" font-size="14" fill="#397D70" font-weight="650" >命令 · 只读体检</text>
+<text x="486" y="269" font-size="24" fill="#213249" font-weight="700" >找可疑，再确认</text>
+<text x="486" y="305" font-size="19" fill="#56677E" font-weight="400" >checkup → 前后文与候选</text>
+<text x="486" y="335" font-size="18" fill="#56677E" font-weight="400" >人工标注是 / 不是，统计准确率</text>
+<rect x="880" y="184" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="900" y="204" width="42" height="30" rx="9" fill="#F0EBF8"/>
+<text x="921" y="225" font-size="16" fill="#7962A7" font-weight="700" text-anchor="middle">03</text>
+<text x="956" y="224" font-size="14" fill="#7962A7" font-weight="650" >编码代理 · 改进层</text>
+<text x="902" y="269" font-size="24" fill="#213249" font-weight="700" >定位原因，提出改法</text>
+<text x="902" y="305" font-size="19" fill="#56677E" font-weight="400" >先分清代码还是提示词</text>
+<text x="902" y="335" font-size="18" fill="#56677E" font-weight="400" >通用方案 + 针对本群的方案</text>
+<rect x="880" y="422" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="900" y="442" width="42" height="30" rx="9" fill="#EAF0F6"/>
+<text x="921" y="463" font-size="16" fill="#5375A1" font-weight="700" text-anchor="middle">04</text>
+<text x="956" y="462" font-size="14" fill="#5375A1" font-weight="650" >用例库 · 固定判据</text>
+<text x="902" y="507" font-size="24" fill="#213249" font-weight="700" >把事故存成回归</text>
+<text x="902" y="543" font-size="19" fill="#56677E" font-weight="400" >case add → 生成 / 分诊 / 消息</text>
+<text x="902" y="573" font-size="18" fill="#56677E" font-weight="400" >写明应该怎样，不复制错答案</text>
+<rect x="464" y="422" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="484" y="442" width="42" height="30" rx="9" fill="#EAF4EF"/>
+<text x="505" y="463" font-size="16" fill="#397D70" font-weight="700" text-anchor="middle">05</text>
+<text x="540" y="462" font-size="14" fill="#397D70" font-weight="650" >命令 · 执行层</text>
+<text x="486" y="507" font-size="24" fill="#213249" font-weight="700" >同现场，新旧对比</text>
+<text x="486" y="543" font-size="19" fill="#56677E" font-weight="400" >eval → 代码检查 + 两两盲评</text>
+<text x="486" y="573" font-size="18" fill="#56677E" font-weight="400" >全量用例 · 整天回放 · 单条消融</text>
+<rect x="48" y="422" width="352" height="172" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="68" y="442" width="42" height="30" rx="9" fill="#FFF4E4"/>
+<text x="89" y="463" font-size="16" fill="#A7783E" font-weight="700" text-anchor="middle">06</text>
+<text x="124" y="462" font-size="14" fill="#A7783E" font-weight="650" >维护者 · 上线决定</text>
+<text x="70" y="507" font-size="24" fill="#213249" font-weight="700" >看报告，再决定上线</text>
+<text x="70" y="543" font-size="19" fill="#56677E" font-weight="400" >核对退步、噪声和未完成项</text>
+<text x="70" y="573" font-size="18" fill="#56677E" font-weight="400" >人工发布，检查启动与新反馈</text>
+<path d="M408 270h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M824 270h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M1056 364v50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M872 508h-48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M456 508h-48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M224 602v40H24V270h16" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<text x="270" y="648" font-size="18" fill="#56677E" font-weight="400" >人工发布后的新反馈，进入下一轮</text>
+<rect x="48" y="690" width="576" height="166" rx="17" fill="#EAF0F6" stroke="#D5DFEB"/>
+<text x="72" y="729" font-size="23" fill="#213249" font-weight="650" >代码仓库</text>
+<text x="72" y="774" font-size="21" fill="#5375A1" font-weight="600" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">--base HEAD / --cand .</text>
+<text x="72" y="819" font-size="20" fill="#56677E" font-weight="400" >待测代码、提示词规则与种子用例</text>
+<rect x="656" y="690" width="576" height="166" rx="17" fill="#EAF0F6" stroke="#D5DFEB"/>
+<text x="680" y="729" font-size="23" fill="#213249" font-weight="650" >部署目录</text>
+<text x="680" y="774" font-size="21" fill="#5375A1" font-weight="600" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">--directory &quot;$DEPLOY&quot;</text>
+<text x="680" y="819" font-size="20" fill="#56677E" font-weight="400" >.env + data/turns · cases · evals</text>
+<text x="48" y="905" font-size="18" fill="#56677E" font-weight="400" >评测显式 --allow-paid；规则消融只提供证据，上线始终由人决定。</text>
 </g></svg>

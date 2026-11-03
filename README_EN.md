@@ -166,46 +166,56 @@ It also has a daily rhythm and moods. Woken up after midnight, it is grumpy; whe
   - Delivery falls back from passive reply to proactive post to riding along with the next message.
   - Reads of the same image share one in-flight task, and descriptions are cached, so each image is read once.
 
-## How it evolves: incident → replay → change → regression
-
-Every design decision traces back to a live incident and a set of data. The docs follow "before → what went wrong → now → replay → costs and limits", not just conclusions.
-
-![Iteration: incident, reconstruction, replay, change, regression, release and feedback](docs/readme/iteration.svg)
-
-A few examples:
-
-- **[When to reply](docs/when-to-reply.md)** compared 9 prompt variants on 141 real messages, using 89 hand-labeled clear cases, for recall, false replies and volume.
-- **[Read images before replying](docs/image-before-reply.md)** started from seven "I can't see the image" lines in one minute. Logs showed three separate causes; each was fixed, and each fix has a test that fails without it.
-- **[Three providers, one job each](docs/model-roles.md)** compared a local gateway, OpenAI and Gemini on the same real prompts for replies and nickname moderation, then fixed the roles and per-model call parameters.
-- **[Real request or a bit?](docs/request-sincerity.md)** compared live judgments against hindsight labels on 1082 messages addressed to the bot.
-
-The detailed design docs are in Chinese.
+<a id="how-it-evolves-incident--replay--change--regression"></a>
 
 ## Self-iteration: the loop as commands
 
-The loop above used to be done by hand. A problem surfaced only when someone posted a screenshot; every incident meant rebuilding the scene from logs; replay scripts were thrown away afterwards; and a change was replayed only against the incident that prompted it.
-The mechanical parts are now commands, and people keep two decisions: **what to change, and whether to ship it**. The approach borrows from two papers:
-[Dream-RSI](https://arxiv.org/abs/2609.14858) uses recorded history as a replay simulator, and [Harness²](https://arxiv.org/abs/2610.14224) compares instead of scoring when there is no ground truth.
+A fix used to start with a screenshot, a scene rebuilt from logs and a replay script thrown away afterwards. Now the scene is recorded automatically and incidents become lasting cases. Every later change can replay old and new versions to check whether an earlier problem has returned.
 
-| Step | What it does | Command |
+![Self-iteration: record, check, diagnose, save cases, compare versions, and let a person decide what ships; code versions and deployment data are selected separately](docs/readme/iteration.svg)
+
+**Commands execute, a coding agent makes changes, and a person decides what ships.** Fixed commands record, check, replay and report. Claude Code / CodeX follows [AGENTS.md](AGENTS.md) to find the cause, propose a general fix and a group-specific one, then edit code or prompts. This covers both wording and code issues such as an unrecognized @ or an unseen quote, using the same checks whoever makes the change.
+
+| Step | What it records or checks | Entry point |
 | --- | --- | --- |
-| Record | At the `get_ai_reply` entry, every input of a turn is kept verbatim: the call arguments, the session history at the time, media switches and the raw model output. Triage inputs are kept too. Private chats are skipped; 30 days by default | automatic, `data/turns/` |
-| Daily checkup | Read-only, offline, no model calls. Seven signals: called but no reply, the same question asked again, corrected by members, a confused reaction, promised but not done, catchphrases, sensitive-word hits. Each finding comes with context and a one-line command to save it as a case; people label yes / no, and precision is tracked per signal | `regular checkup` |
-| Case library | One command turns a recorded turn or an archived message into a case, at one of three depths: generation, triage or message. What code can check, code checks (regex, `〔画〕`/`〔提醒〕` tags, reminder times); the rest goes to the blind judge | `regular case add` |
-| Evaluation | The old and new versions each run in their own subprocess (the old one from a temporary `git worktree`), sampling every case n times. kimi-k3.1-pro, which never competes, judges shuffled pairs. A drop counts as a regression only if it passes a one-sided test; smaller drops are listed separately as within noise. Whole-day replay compares patterns no single turn shows, such as catchphrase counts and how often it passes | `regular eval` |
-| Rule ledger | Every rule in the prompt records where it came from (which incident, which day) and which cases cover it. Removing one and rerunning gives one of four verdicts: deletable, keep, unsure, cannot tell. This keeps the prompt from only ever growing | `regular eval --ablate` |
+| Record | Verbatim arguments, session history, media switches, raw model output and triage input, linked to actual delivery. Private chats are skipped; retained for 30 days by default | automatic, `data/turns/` |
+| Daily checkup | Seven kinds of candidate: missed calls, repeated questions, corrections, confused reactions, empty promises, catchphrases and sensitive-word hits. Context and case commands accompany findings; human labels measure precision | `checkup` |
+| Case library | A saved scene plus its intended behavior. Code checks tags, times and forbidden wording; a blind judge compares tone and relevance | `case add` |
+| Version comparison | Independent subprocesses replay the same scene n times per version, with code checks and shuffled pairwise judging by kimi-k3.1-pro. Whole-day replay checks catchphrases and volume | `eval` |
+| Rule ledger | Each prompt rule has a source and linked cases. Remove one and replay to test whether it still helps; record stable-head length | `rules` / `eval --ablate` |
 
-**Two layers.** The execution layer is the fixed commands above, calling the chat API directly. Results are repeatable, testable and costed, and every iterator is measured with the same ruler.
-The improvement layer is an off-the-shelf coding agent (Claude Code or CodeX) that follows the runbook in [AGENTS.md](AGENTS.md) and works only through these commands: read the checkup, find the cause, propose a general fix and a group-specific one, save cases, run the full evaluation, write the report.
-There is no home-grown "read report → edit prompt" loop. Half the problems live in code (an unrecognised @, an unseen quote); a prompt-only loop cannot fix those and would add one more brake to the prompt instead.
+Choose the replay depth for the issue. Testing generation alone does not test the message route:
 
-**No automatic shipping.** Scores come from one judge model and a few dozen cases, so fully automatic selection would pick whatever pleases the judge, and a bad line in the group cannot be taken back. The one exception is a narrow slot that code can check (the reminder time format, the wording of the reply-or-pass instruction): there, a dozen rewordings can be searched automatically and the best one handed to a person for approval.
+| Depth | What runs again | What it tests |
+| --- | --- | --- |
+| Generation | Recorded arguments → `get_ai_reply` | prompt wording, reply style, model parameters |
+| Triage | Recorded input → the tested version's questions and choice handling | answer or pass, look up information, or back off |
+| Message | Archived messages → the real message handler, with fake sending | @, quotes, context construction and routing, including missed replies with no generation record |
 
-Measured:
-- **The same version against itself** (4 cases, 4 samples each): 0 regressions and 2 drops within noise. That is why a single drop does not count as a regression.
+**Select code and data separately.** Run these commands from the source checkout and set `DEPLOY` to your deployment directory, containing the live `.env` and `data/`. `--directory` selects data and configuration; `--base` / `--cand` select code. `.` means the current working tree; Git versions are checked out temporarily.
+
+```bash
+DEPLOY=/path/to/regular-bot
+.venv/bin/python -m regular --directory "$DEPLOY" checkup --day today
+.venv/bin/python -m regular --directory "$DEPLOY" case add --turn <turn_id> --id <case_id> --must-not "刚醒|洗衣"
+.venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
+.venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
+```
+
+Without a `turn_id`, use `case add --message <message_id> --id <case_id>` to save a message-level case from the archive. Triage cases need the correct expectation, such as `--choice addressed=answer`, so an earlier wrong choice does not become the standard. `checkup` is offline and makes no model calls. `eval` calls models and consumes quota, so it requires explicit `--allow-paid`.
+
+**Reports separate regressions from variation.** A drop must pass a one-sided test to count as a regression; smaller drops are listed as within noise and can be retried with a larger `-n`. A single boundary violation counts as a regression. Rule ablation gives one of four verdicts: deletable, keep, unsure, or cannot tell. Missing cases or incomplete runs cannot support deletion.
+
+**A person always decides what ships.** A judge model and a limited case library provide evidence; automatic selection can overfit the judge. Narrow slots with code checks, such as reminder-time formatting or reply-or-pass wording, can search candidates automatically, then hand them to a person for approval.
+
+Small-scale checks so far:
+
+- **The same version against itself** (4 cases, 4 samples each): 0 regressions and 2 drops within noise. A single missed reply does not establish a regression.
 - **The first checkup on a real day** showed, under "corrected", a reply that had leaked a malformed bookkeeping tag into the group. Following it turned up 4 such replies that day; fixed.
 
-See [self-iteration](docs/self-iteration.md) (in Chinese).
+Earlier evidence includes [9 prompt variants on 141 messages](docs/when-to-reply.md), [three image-reading failure causes and their regressions](docs/image-before-reply.md), [a three-provider comparison](docs/model-roles.md), and [hindsight labels on 1082 requests](docs/request-sincerity.md). The full historical case set and longer live observation still need validation.
+
+The design draws on recorded-history replay in [Dream-RSI](https://arxiv.org/abs/2609.14858) and old/new comparison in [Harness²](https://arxiv.org/abs/2610.14224). See the [self-iteration design](docs/self-iteration.md) for implementation, boundaries and measurements; the detailed design docs are in Chinese.
 
 ## Quick start
 
