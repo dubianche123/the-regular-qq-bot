@@ -291,7 +291,7 @@ class FeedbackTracker:
     宁可重启后少判几次，也不拿不可信的旧记录硬凑。
     """
 
-    def __init__(self, window_seconds, quiet_seconds, max_groups=128, log=None):
+    def __init__(self, window_seconds, quiet_seconds, max_groups=128, log=None, turns=None):
         self.window_seconds = float(window_seconds)
         self.quiet_seconds = float(quiet_seconds)
         self.max_groups = int(max_groups)
@@ -304,6 +304,9 @@ class FeedbackTracker:
         # 是同一个坑。这里**不** import runtime 或 interactions —— runtime
         # 构造本对象，反向依赖会成环。
         self._log = log
+        # 每轮输入记录（turns.TurnLog）：分诊看到的那份 payload 原样留下，分诊改动才回放得了。
+        # 同样晚绑定，理由同上。
+        self._turns = turns
         self._groups = {}        # group -> {"reply": {...}|None, "quiet_until": ts}
         self._order = []         # LRU：最近碰过的排到末尾，满了先挤掉最旧的
 
@@ -311,6 +314,14 @@ class FeedbackTracker:
         """每次用时才解析，不在构造时把单例钉死（见 __init__ 的说明）。"""
         log = self._log
         return log() if callable(log) else log
+
+    def _record_triage(self, group, user, message_id, payload, asked, choices, stale):
+        """分诊的输入和结论进每轮输入记录。payload 已是脱敏代号；写失败由 TurnLog 兜着。"""
+        turns = self._turns() if callable(self._turns) else self._turns
+        if turns is None:
+            return
+        turns.append("triage", group=group, user=user, message_id=message_id,
+                     payload=payload, asked=asked, choices=choices, stale=stale)
 
     def _log_scores(self, group, site, scores, **extra):
         """把这次判断的数值落进本地观察日志。只进不出：它永远不进提示词。
@@ -508,6 +519,8 @@ class FeedbackTracker:
                          user=user, source_message_id=message_id,
                          **({"source_reply_id": reply["outgoing_id"]}
                             if reply else {}))
+        self._record_triage(group, user, message_id, payload, result["asked"],
+                            choices, stale)
         choices = choices or {}
         result.update(addressed=choices.get("addressed"),
                       nickname=choices.get("nickname"),

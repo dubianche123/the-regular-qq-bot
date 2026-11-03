@@ -74,6 +74,39 @@ launchctl kickstart -k gui/$(id -u)/com.qqbot.xiaowang
 | `search.py` | 按需 DuckDuckGo 搜索 |
 | `panel.py` | 本机维护面板（`aiohttp`，127.0.0.1） |
 | `providers.py` | 显式候选、按任务路由、预算/超时边界 |
+| `turns.py` | 每轮生成与分诊输入的原样 JSONL 记录（`data/turns/`） |
+| `regular/checkup.py` | 每日只读体检信号、上下文提取与人工准确率统计 |
+| `regular/cases.py` / `regular/eval.py` | 事故用例库、双版本子进程回放、盲评、整天回放、窄口子措辞搜索 |
+| `regular/rules.py` | `prompts.py` 规则账本解析与单条消融（`--ablate`） |
 | `tests/` | 离线回归测试 |
 
 修改任何模块前先读它和它的直接调用方；不确定的边界先查看 `docs/DESIGN_NOTES.md` 和对应测试。
+
+## 自我迭代标准流程（见 `docs/self-iteration.md`）
+
+代理（Claude Code / CodeX）排查线上问题与迭代提示词/代码时，统一通过以下只读和评测命令操作，**严禁自动上线或重启线上机器人**：
+
+1. **读每日体检，挑最严重的候选**：
+   ```bash
+   regular --directory . checkup --day today
+   regular --directory . checkup --label <finding_id> yes|no
+   ```
+2. **定位原因（先分清是代码问题还是提示词问题）**：
+   对照 `data/turns/YYYY-MM-DD.jsonl`（按 `turn_id` 查当轮原样入参）、`data/interactions/YYYY-MM-DD.jsonl` 和 `data/archive/YYYY-MM-DD.jsonl` 定位根因。代码能解决的（如 `@` 识别、引用拼接、冷却边界）不往提示词里堆刹车。
+3. **提两种范围的改法（Harness² 分范围对比）**：
+   - 通用改法（不绑特定话题/句式）；
+   - 针对本群与人设的改法；
+   若改 `prompts.py`，在对应字符串前挂 `# rule: <id> | <date> | <doc> | cases: <pattern>`（可用 `regular rules` 查看账本与稳定头字数）。
+4. **存成回归用例，跑全量评测与整天回放**：
+   ```bash
+   # 从体检输出的 turn_id 存成用例（或初始化种子用例）
+   regular --directory . case add --turn <turn_id> --id <case_id> --incident docs/xxx.md --must-not "刚醒|洗衣"
+   regular --directory . case seed
+
+   # 对比旧版本与当前改法（全量用例 + 整天回放 + 规则消融）
+   regular --directory . eval --base HEAD --cand . --cases all -n 4 --allow-paid
+   regular --directory . eval --base HEAD --cand . --day today --allow-paid
+   regular --directory . eval --ablate <rule_id> --allow-paid
+   ```
+5. **写报告与事故记录，交由人决定上不上线**：
+   检查 `data/evals/` 下的报告（退步用例排最前，上线前任何退步都必须交代原因；稳定头字数不许无故只增不减），补充 `docs/` 事故记录与离线测试。上线永远由维护者手动执行。

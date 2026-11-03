@@ -8,6 +8,7 @@ import asyncio
 import collections
 import contextvars
 import copy
+import hashlib
 import json
 from types import SimpleNamespace
 import logging
@@ -629,6 +630,66 @@ def split_cmd(raw):
 _reply_trace = contextvars.ContextVar(
     "regular_reply_trace", default=None)
 
+# 每轮输入记录里不存的入参：session_id 单列；allow_fallback 回放时一律 False。
+_TURN_SKIP_PARAMS = ("session_id", "allow_fallback")
+_release_id = None
+
+
+def code_release():
+    """当前跑的是哪版代码：REGULAR_RELEASE 优先，其次 git 短哈希，都没有就是包版本号。只算一次。"""
+    global _release_id
+    if _release_id is None:
+        _release_id = os.environ.get("REGULAR_RELEASE", "").strip()
+        if not _release_id:
+            import subprocess
+            try:
+                _release_id = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=os.path.dirname(os.path.abspath(__file__)),
+                    capture_output=True, text=True, timeout=2).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                _release_id = ""
+        if not _release_id:
+            from regular import __version__
+            _release_id = f"v{__version__}"
+    return _release_id
+
+
+def _record_turn(params, head, flags, messages, max_tokens, raw, retried):
+    """一轮回复生成的全部输入原样进 data/turns（见 turns.py）。私聊不记；写失败不影响回复。
+
+    稳定头只存哈希和长度：回放时由待测代码现拼，比对哈希就知道头变没变。
+    会话历史存「这一轮真的送出去的那段」（已裁剪）；每日记忆就是入参里的 group_memory。
+    turn_id 写回 _reply_trace，reply_in_session 把它挂到 delivery 行上 —— 实际发出去的
+    正文以那一行为准。
+    """
+    if params.get("private"):
+        return None
+    try:
+        trace = _reply_trace.get()
+        trace = trace if trace is not None else {}
+        memory = bool(params.get("group_memory"))
+        route = (trace.get("route")
+                 or ("followup" if params.get("lookup_note") else None)
+                 or ("banter" if params.get("unprompted") else "reply"))
+        row = runtime.TURNS.append(
+            "reply", route=route, group=trace.get("group"), user=trace.get("user"),
+            message_id=trace.get("message_id"), session_id=params.get("session_id"),
+            release=code_release(),
+            head_sha=hashlib.sha256(head.encode("utf-8")).hexdigest()[:12],
+            head_chars=len(head), media=flags,
+            kwargs={k: v for k, v in params.items() if k not in _TURN_SKIP_PARAMS},
+            session=messages[1 + memory:-1], max_tokens=max_tokens,
+            model=providers.completion_meta(),
+            effort=config.TIER_REASONING.get("chat") or None,
+            raw=raw, retried=retried)
+    except Exception:
+        logger.warning("每轮输入记录失败，不影响回复", exc_info=True)
+        return None
+    if row is not None:
+        trace["turn_id"] = row["turn_id"]
+    return row
+
 
 async def get_ai_reply(session_id, user_text, is_owner=False,
                        context_hint="", unprompted=False, relation_note="",
@@ -656,14 +717,17 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
     """
     # 喊停：调用方可以带上判断的结论（分诊里有把握的 back_off），这里再并上本地词表 ——
     # 词表这一道放在生成入口，直接调 get_ai_reply 的旁路（私聊、主动开口、测试）也绕不开。
+    # ⚠️ 这一行必须是函数体第一句：locals() 此刻恰好是全部入参，每轮输入记录原样存它。
+    params = dict(locals())
     back_off = bool(back_off) or looks_like_back_off(user_text)
     try:
         # ── 1) 稳定头：同一个群里，每个人、每一轮，这一段都应当逐字节相同 ──
         # 人设里的 {bot} / {owner} 在这里换成真名（代码里不写死任何人名，见 naming.py）
+        flags = media_flags()
         head = (prompts.PROMPT_NORMAL
                 + prompts.PROMPT_SHARED_RULES
                 + prompts.PROMPT_OUTPUT_RULES
-                + media_rules())
+                + media_rules(flags))
         head = naming.render(head, owner=owner_label)
         if config.AFFINITY_ENABLED and config.CMD_PROTOCOL_ENABLED:
             # 输出协议：只有还让模型自评时才需要
@@ -758,7 +822,9 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         )
         # 对话一律走对话梯队：不为「插嘴」单独换模型，那会让同一个角色在不同路径上表现不一致
         raw = await call_model(messages, max_tokens)
+        retried = False
         if not raw:
+            _record_turn(params, head, flags, messages, max_tokens, raw, retried)
             return (_pick_fallback() if allow_fallback else None), None
         body, payload = split_cmd(raw)
         # 采样乱码闸（2026-10-15 <CMD! 残片 / 10-19 0A9F%F5，均智谱 glm-4.7）：
@@ -767,11 +833,13 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         if glitch:
             logger.warning("🧯 模型输出疑似采样乱码（%s…），重生成一次。原文: %s",
                            glitch[:10], raw[:140])
+            retried = True
             raw = await call_model(messages, max_tokens)
             body, payload = split_cmd(raw)
             glitch = _garbage_run(body)
             if glitch:
                 logger.warning("🧯 重生成仍含乱码（%s…），按原样发送", glitch[:10])
+        _record_turn(params, head, flags, messages, max_tokens, raw, retried)
         # 标签解析失败时退化：拿主干文本，不计分
         if not body:
             return (_pick_fallback() if allow_fallback else None), None
@@ -814,8 +882,8 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             fields["reason"] = result.reason
         for key in ("generation", "provider", "model", "tier",
                     "finish_reason", "knowledge_supplied", "recall_supplied",
-                    "search_supplied", "personal_memory_used",
-                    "personal_memory_enabled"):
+                    "search_supplied", "remind_applied", "personal_memory_used",
+                    "personal_memory_enabled", "turn_id"):
             value = meta.get(key)
             if value is not None:
                 fields[key] = value
@@ -828,6 +896,9 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             rid = rid.get("id") if isinstance(rid, dict) else getattr(rid, "id", None)
             if isinstance(rid, (str, int)):
                 fields["platform_message_id"] = str(rid)
+            ref_idx = quotes.receipt_ref(result.receipt)
+            if ref_idx:
+                fields["ref_idx"] = ref_idx
             # 反馈观察登记【先于】日志落账：只有确认送达的模型回复才算
             # 「上一条 AI 回复」—— 本地应答、平台兜底文案、主动广播、
             # 排队/失败投递一律不算。登记失败不许影响投递提交。
@@ -879,16 +950,26 @@ async def resend_queue_loop():
         await SENDER.drain()
 
 
-def media_rules():
-    """稳定头里的「你会画图 / 你会发语音 / 你能记提醒」：只看开关和凭据，同一进程里逐字节不变，不破缓存。"""
+def media_flags():
+    """稳定头里那几段开没开：画图 / 语音 / 提醒。每轮输入记录存这个，回放时照着拼同一个头。"""
+    return {"draw": bool(image_generation.available()), "voice": bool(_VOICE_OUT.ready()),
+            "remind": bool(config.REMINDER_ENABLED)}
+
+
+def media_rules(flags=None):
+    """稳定头里的「你会画图 / 你会发语音 / 你能记提醒」：只看开关和凭据，同一进程里逐字节不变，不破缓存。
+
+    flags 给了就照它拼（回放用，见 regular/replay_worker.py），不给就看当前进程的开关。
+    """
+    flags = media_flags() if flags is None else flags
     parts = []
-    if image_generation.available():
+    if flags.get("draw"):
         parts.append(prompts.PROMPT_DRAW_RULES)
-    if _VOICE_OUT.ready():
+    if flags.get("voice"):
         parts.append(prompts.PROMPT_VOICE_RULES)
     if parts:
         parts.append(prompts.PROMPT_MEDIA_RECORD)
-    if config.REMINDER_ENABLED:
+    if flags.get("remind"):
         parts.append(prompts.PROMPT_REMIND_RULES)
     return "".join(parts)
 
@@ -948,7 +1029,11 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             context["media_note"] = media.note
         # 本轮的注入痕迹 + 实际应答候选：都先重置再取，被 mock/失败的调用
         # 不会带着上一轮的出处来冒充。
-        trace = {"personal_memory_used": False}
+        trace = {"personal_memory_used": False,
+                 # 每轮输入记录要的「谁、在哪、回的哪条」；get_ai_reply 记完把 turn_id 写回来
+                 "group": getattr(message, "group_openid", None),
+                 "user": getattr(getattr(message, "author", None), "member_openid", None),
+                 "message_id": getattr(message, "id", None)}
         token = _reply_trace.set(trace)
         providers.reset_completion_meta()
         try:
@@ -973,13 +1058,18 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         body = said.text if generated else (body or _pick_fallback())
         # 〔提醒 …〕：发出去之前就登记，记不上的原因补在它那句话后面（它已经答应了，得说实话）
         remind_note = ""
+        remind_applied = None
         if said.remind and getattr(media, "remind", False):
             remind_note, remind_line = reminders.apply(
                 runtime.SCHEDULER, media.group, media.user, said.remind, time.time(),
                 blocked=wordfilter.has_hit)
+            remind_applied = bool(
+                remind_note.startswith("提醒记下了：") or remind_note.startswith("提醒取消了"))
             runtime.STATE.mark_dirty()
             logger.info("⏰ %s（%s）", remind_note, session_id[-12:])
             body = "\n".join(part for part in (body, remind_line) if part) or remind_note
+        elif said.remind:
+            remind_applied = False
         if not body and said.kind != "image":
             return body, delta, None   # 只写了个标记、没写话：当它这轮不说
         hinted = f"{body}\n{OWNER_CLAIM_HINT}"
@@ -1023,6 +1113,10 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         }
         if completion:
             interaction.update(completion)  # 真正答上来的 provider/model/tier/finish
+        if remind_applied is not None:
+            interaction["remind_applied"] = remind_applied
+        if trace.get("turn_id"):
+            interaction["turn_id"] = trace["turn_id"]   # 这句话是哪一轮输入生成的（data/turns）
         # 只有「本群 + 有源发言者 + 有源消息 ID」的 AI 会话回复才可被反馈绑定；
         # 本地命令、主动广播、私聊都不在反馈口径里。
         interaction["feedback_eligible"] = bool(
@@ -1715,16 +1809,22 @@ async def proactive_loop():
             # 说不说由小王自己定：没什么想说的就写〔不接〕（以前先问一次插嘴判断，
             # 判断说接得上才让它写；2026-11-02 起和群里没叫它的消息同一个口径）。
             prompt = naming.render(prompts.PROMPT_PROACTIVE).replace("{topics}", topics)
-            body, _ = await get_ai_reply(
-                f"{gid}_proactive", prompt, context_hint=topics,
-                owner_label=owner_label(gid), state_note=activation.state_line("", mood_v),
-                allow_fallback=False)
+            trace = {"route": "proactive", "group": gid}
+            token = _reply_trace.set(trace)
+            try:
+                body, _ = await get_ai_reply(
+                    f"{gid}_proactive", prompt, context_hint=topics,
+                    owner_label=owner_label(gid), state_note=activation.state_line("", mood_v),
+                    allow_fallback=False)
+            finally:
+                _reply_trace.reset(token)
             # 主动开口没有可回的那条消息，画不了也发不了语音：写了标记只留正文；〔不接〕就是空的
             body = expression.parse(body).text if body else body
             if not body or _garbage_run(body):
                 continue    # 没生成出来 / 又抽风了 —— 这轮不说话
             if await post_to_group(gid, body.strip(),
-                                   model_generated=True, history=fresh[-4:]):
+                                   model_generated=True, history=fresh[-4:],
+                                   turn_id=trace.get("turn_id")):
                 _last_proactive[gid] = time.time()
                 logger.info("🌙 [自发开口] 距上次群消息 %.0f 分钟", (time.time() - last_msg_ts) / 60)
         except asyncio.CancelledError:
@@ -1983,12 +2083,13 @@ async def fire_reminder(task):
 
 # ── 承诺催债 ──
 
-async def post_to_group(group_id, text, *, model_generated=False, history=()):
+async def post_to_group(group_id, text, *, model_generated=False, history=(), turn_id=None):
     """主动往群里发一句话（不是回复）。催债、定时播报都要用它。
 
     原生反馈判过「收敛」的群，窗口内主动发言一律按住 —— 点名回复
     （safe_reply 那条路）不受影响。model_generated=True 的确认送达
     会登记进反馈缓存，让随后的人话反馈能认到这句群发。
+    turn_id：这句是哪一轮输入生成的（data/turns），只进观察日志。
     """
     client = _bot_ref.get("client")
     if client is None or not text:
@@ -2009,6 +2110,8 @@ async def post_to_group(group_id, text, *, model_generated=False, history=()):
                       "policy_id": policy_id}
             if reason:
                 fields["reason"] = reason
+            if turn_id:
+                fields["turn_id"] = turn_id
             if status == "delivered":
                 fields["text"] = text
                 rid = receipt.get("id") if isinstance(receipt, dict) \
@@ -2319,9 +2422,13 @@ class GroupBot(botpy.Client):
                 raw_content, [getattr(u, "member_openid", None) for u in (getattr(message, "mentions", None) or ())],
                 scene.get("bots")), "群友引用它的话时带的 @")
         me = _self_openids(group_id, bot_id)
-        _recent_at_ids[message.id] = quotes.at_ids(raw_content)
+        raw_at_ids = quotes.at_ids(raw_content)
+        _recent_at_ids[message.id] = raw_at_ids
         while len(_recent_at_ids) > config.DEDUP_MAX:
             _recent_at_ids.popitem(last=False)
+        listed_mentions = [getattr(u, "member_openid", None)
+                           for u in (getattr(message, "mentions", None) or ())
+                           if getattr(u, "member_openid", None)]
         mentioned_others = [m for m in extract_mentions(message, bot_id) if m not in me]
         if mentioned_others:
             logger.info("🔗 捕捉到艾特对象 %s", "、".join(m[-4:] for m in mentioned_others))
@@ -2373,7 +2480,9 @@ class GroupBot(botpy.Client):
         #    「这人想变猫娘」这种人物事实（2026-09-21 实测事故）。
         archived = runtime.ARCHIVE.append(
             group_id, sender_openid, heard, at=is_at,
-            cmd=is_control_command(user_input), message_id=message.id)
+            cmd=is_control_command(user_input), message_id=message.id,
+            at_ids=raw_at_ids, mentions=listed_mentions,
+            msg_idx=scene.get("msg_idx"), ref_msg_idx=scene.get("ref_msg_idx"))
         if config.DIGEST_ENABLED:
             runtime.DIGESTS.touch(group_id)
         # 记一下这个群最近有人说话：主动催债前要确认群里还活着。

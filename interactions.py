@@ -34,6 +34,8 @@ class InteractionLog:
     27 天里一次没人用过，判断层的自然反馈早就替了它，一起删了。）
     """
 
+    label = "交互日志"
+
     def __init__(self, log_dir, *, enabled=True, keep_days=0):
         self.log_dir = log_dir
         self.enabled = bool(enabled)
@@ -82,12 +84,17 @@ class InteractionLog:
         for key, value in fields.items():
             if key not in _RESERVED:
                 row[key] = value
+        return self._write(row)
+
+    def _write(self, row):
+        """一行落盘 + 顺手清理；失败只告警返回 None。子类（turns.TurnLog）共用这一段。"""
         try:
             fp = self._ensure_fp(day_key(row["ts"]))
             fp.write(json.dumps(row, ensure_ascii=False) + "\n")
             fp.flush()
         except (OSError, TypeError, ValueError, UnicodeError):
-            logger.warning("交互日志写入失败（%s），本条放弃，不影响正常接话", kind)
+            logger.warning("%s写入失败（%s），本条放弃，不影响正常接话",
+                           self.label, row.get("kind"))
             return None
         self._maybe_prune(row["ts"])
         return row

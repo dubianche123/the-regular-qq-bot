@@ -20,6 +20,7 @@ import receptive as receptive_mod
 import scheduler as scheduler_mod
 import relations
 import storage
+import turns as turns_mod
 import logging
 logger = logging.getLogger("qqbot")   # 与 bot.py 同一个命名 logger，共享 handler
 
@@ -124,6 +125,13 @@ INTERACTIONS = interactions_mod.InteractionLog(
     keep_days=config.ARCHIVE_KEEP_DAYS,
 )
 
+# 每轮模型输入（回复生成 + 分诊）原样留一份，给回放、体检、评测用（见 turns.py）。
+TURNS = turns_mod.TurnLog(
+    config.TURN_LOG_DIR,
+    enabled=config.TURN_LOG_ENABLED,
+    keep_days=config.TURN_LOG_KEEP_DAYS,
+)
+
 # 插嘴接纳度：自然反馈的**跨天**那一层（FeedbackTracker.quiet 是即时那一层），
 # 外加「居然记得」的冷却台账。有把握地读出「这人不爱被搭话」时，没叫它的那一轮
 # 给小王交代一句（bot.reply_unprompted）；证据不足时什么都不说。
@@ -150,7 +158,7 @@ STATE.register_collector(RECEPTIVE.dump_into)
 # 测试数据被写进部署目录的真实日志（2026-10-31）。同 OWNER_OPENID 那条告警。
 FEEDBACK = decisions_mod.FeedbackTracker(
     config.DECISION_FEEDBACK_WINDOW_SECONDS, config.DECISION_QUIET_SECONDS,
-    log=lambda: INTERACTIONS)
+    log=lambda: INTERACTIONS, turns=lambda: TURNS)
 
 OWNER_OPENID = None
 

@@ -431,6 +431,20 @@ INTERACTION_LOG_DIR = data_path("INTERACTION_LOG_DIR", "interactions")
 # 观察口径版本号：随每条 delivery 落盘，供离线分析区分记录口径，不影响行为。
 INTERACTION_POLICY_ID = _env_str("INTERACTION_POLICY_ID", "regular-observe-v1")
 
+# ══════════════════ 自己迭代（见 docs/self-iteration.md）═════════════════
+# 每轮模型输入原样记一份（turns.py），回放不用再拼现场。私聊不记；只进不出。
+TURN_LOG_ENABLED = _env_bool("TURN_LOG_ENABLED", True)
+TURN_LOG_DIR = data_path("TURN_LOG_DIR", "turns")
+TURN_LOG_KEEP_DAYS = _env_int("TURN_LOG_KEEP_DAYS", 30)   # 0 = 永不清理
+# 体检报告、用例库、评测报告：都带真实群聊，跟归档一个待遇，不进代码库
+CHECKUP_DIR = data_path("CHECKUP_DIR", "checkups")
+CASES_DIR = data_path("CASES_DIR", "cases")
+EVAL_DIR = data_path("EVAL_DIR", "evals")
+# 盲评：不参赛的评审模型（网关上的 kimi-k3.1-pro），走哪一家的凭据
+EVAL_JUDGE_PROVIDER = _env_str("EVAL_JUDGE_PROVIDER", "openai")
+EVAL_JUDGE_MODEL = _env_str("EVAL_JUDGE_MODEL", "kimi-k3.1-pro")
+EVAL_CONCURRENCY = _env_int("EVAL_CONCURRENCY", 6)
+
 # ══════════════════ 判断 API（原生 GPT Decisions，见 providers.call_decision）═════════════════
 # 独立配置：端点/模型/密钥在 data/decision_api.json（面板「判断 API」页保存），
 # 不是 chat/completions，不改动会话模型梯队。关掉则原生请求一律不发出。

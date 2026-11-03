@@ -69,12 +69,15 @@ class MessageArchive:
         return self._fp
 
     def append(self, group_id, sender, text, ts=None, at=False, keep=True, cmd=False,
-               message_id=None):
+               message_id=None, *, at_ids=None, mentions=None, msg_idx=None,
+               ref_msg_idx=None):
         """落一条原始消息。返回写入的字典（被过滤掉则返回 None）。
 
         cmd=True 表示这是一条**本地控制指令**（「猫娘模式」「查好感」「决斗」之类），
         不是聊天内容。它照样落盘留痕，但压缩长期记忆时会跳过（见 since）——
         否则「喊猫娘模式」会被当成「这人想变猫娘」写进人物档案，实测已经发生过。
+        at_ids / mentions / msg_idx / ref_msg_idx：原始 @ 的 openid 列表与引用索引
+        （2026-11-03，见 docs/self-iteration.md 第 5 节），消息层回放靠它们还原现场。
         """
         ts = time.time() if ts is None else ts
         t = (text or "").strip()
@@ -93,6 +96,14 @@ class MessageArchive:
             row["at"] = 1
         if cmd:
             row["cmd"] = 1
+        if at_ids:
+            row["at_ids"] = [str(x) for x in at_ids if x]
+        if mentions:
+            row["mentions"] = [str(x) for x in mentions if x]
+        if msg_idx:
+            row["msg_idx"] = str(msg_idx)
+        if ref_msg_idx:
+            row["ref_msg_idx"] = str(ref_msg_idx)
         self._write_row(row)
         self._message_cache[row["message_id"]] = row
         if len(self._message_cache) > 5000:

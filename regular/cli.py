@@ -375,6 +375,152 @@ def calibration(config, *, site="banter", as_json=False):
     return 0 if out["counts"]["labelled"] else 1
 
 
+def checkup(config, *, day=None, as_json=False, write=True, label=None, note=""):
+    """每日体检（docs/self-iteration.md ②）：只读、不联网、不调模型。
+
+    --label ID yes|no 给一条候选标「是 / 不是」，体检报告据此统计每种信号的准确率。
+    """
+    from regular import checkup as checkup_mod
+    if label:
+        finding_id, verdict = label
+        found = checkup_mod.find_finding(config.CHECKUP_DIR, finding_id)
+        if found is None:
+            print(f"No checkup finding {finding_id} in {config.CHECKUP_DIR}; run regular checkup first.",
+                  file=sys.stderr)
+            return 1
+        checkup_mod.add_label(config.CHECKUP_DIR, finding_id, verdict,
+                              signal=found["signal"], note=note)
+        print(f"Labelled {finding_id} ({found['label']}) as {verdict}.")
+        return 0
+    out = checkup_mod.report(
+        checkup_mod.resolve_day(day), interaction_dir=config.INTERACTION_LOG_DIR,
+        turn_dir=config.TURN_LOG_DIR, archive_dir=config.ARCHIVE_DIR,
+        state_file=config.STATE_FILE, checkup_dir=config.CHECKUP_DIR)
+    path = checkup_mod.write(out, config.CHECKUP_DIR) if write else None
+    if as_json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(checkup_mod.render(out))
+        if path:
+            print(f"Report written to {path}")
+    return 0
+
+
+def rules_command(*, as_json=False):
+    """列出 prompts.py 里的规则账本和稳定头长度（只读，不调模型）。"""
+    from regular import rules as rules_mod
+    items = [
+        {k: v for k, v in r.items() if k != "text"}
+        for r in rules_mod.load_rules()
+    ]
+    head = rules_mod.head_stats()
+    payload = {"head": head, "rules": items}
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(f"Stable head: {head['total_chars']} chars | tracked rules: {head['rules_count']} ({head['rules_chars']} chars)")
+        for r in items:
+            print(f"  - {r['id']} ({r['chars']}c, {r['date']}, {r['doc']}) cases={','.join(r['cases'])}")
+    return 0
+
+
+def case_command(config, args):
+    """管理 data/cases 用例库：add（从 turn_id 存成用例）、seed（写入文档种子用例）、list。"""
+    from regular import cases as cases_mod
+    if args.case_action == "seed":
+        written = cases_mod.seed_cases_into(config.CASES_DIR, overwrite=args.overwrite)
+        print(f"Seeded {written} case(s) into {config.CASES_DIR} (total {len(cases_mod.SEED_CASES)} seed definitions).")
+        return 0
+    if args.case_action == "list":
+        loaded = cases_mod.load_cases(config.CASES_DIR, selector=args.cases, include_seeds=True)
+        if args.json:
+            print(json.dumps([{"id": c["id"], "depth": c.get("depth", "generate"),
+                               "incident": c.get("incident", ""), "tags": c.get("tags", [])}
+                              for c in loaded], ensure_ascii=False, indent=2))
+        else:
+            for c in loaded:
+                print(f"{c['id']}\t[{c.get('depth', 'generate')}]\t{','.join(c.get('tags') or ())}\t{c.get('incident', '')}")
+            print(f"Total: {len(loaded)} case(s).")
+        return 0
+    if args.case_action == "add":
+        checks = []
+        for pat in args.must or ():
+            checks.append({"must": pat})
+        for pat in args.must_not or ():
+            checks.append({"must_not": pat})
+        for tag in args.tag_present or ():
+            checks.append({"tag_present": tag})
+        for tag in args.tag_absent or ():
+            checks.append({"tag_absent": tag})
+        for j in args.judge or ():
+            checks.append({"judge": j})
+        for c_item in args.choice or ():
+            qname, sep, val = str(c_item).partition("=")
+            if not sep or not qname.strip() or not val.strip():
+                raise ValueError(f"invalid --choice {c_item!r}; expected QUESTION=VALUE")
+            checks.append({"choice": {qname.strip(): val.strip()}})
+        for c_item in args.choice_not or ():
+            qname, sep, val = str(c_item).partition("=")
+            if not sep or not qname.strip() or not val.strip():
+                raise ValueError(f"invalid --choice-not {c_item!r}; expected QUESTION=VALUE")
+            checks.append({"choice_not": {qname.strip(): val.strip()}})
+        tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+        try:
+            if getattr(args, "turn", None):
+                case = cases_mod.create_case_from_turn(
+                    config.TURN_LOG_DIR, args.turn, args.id,
+                    incident=args.incident or "", tags=tags, checks=checks, day=args.day)
+            else:
+                case = cases_mod.create_case_from_message(
+                    config.ARCHIVE_DIR, args.message, args.id,
+                    interaction_dir=config.INTERACTION_LOG_DIR,
+                    turn_dir=config.TURN_LOG_DIR, day=args.day,
+                    context_messages=getattr(args, "context", 6),
+                    incident=args.incident or "", tags=tags, checks=checks)
+        except KeyError as err:
+            print(str(err), file=sys.stderr)
+            return 1
+        path = cases_mod.save_case(config.CASES_DIR, case)
+        print(f"Saved case {case['id']} -> {path}")
+        return 0
+    return 1
+
+
+def eval_command(config, args):
+    """跑用例评测、整天回放、规则消融或窄口子措辞搜索（docs/self-iteration.md ③④⑦）。"""
+    from regular import eval as eval_mod
+    if args.search_wording:
+        out = eval_mod.search_wording(
+            config, target=args.search_wording, k=args.candidates, n=args.n,
+            write=not args.no_write)
+        if args.json:
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+        else:
+            print(eval_mod.render_search_report(out))
+            if out.get("report_path"):
+                print(f"Report written to {out['report_path']}")
+        return 0
+
+    patterns = {}
+    for item in args.pattern or ():
+        name, sep, rx = str(item).partition("=")
+        if not sep or not name.strip() or not rx:
+            raise ValueError(f"invalid --pattern {item!r}; expected NAME=REGEX")
+        patterns[name.strip()] = rx
+
+    out = eval_mod.run_eval(
+        config, base=args.base, cand=args.cand, cases_selector=args.cases,
+        day=args.day, n=args.n, ablate=args.ablate or "",
+        patterns=patterns or None, write=not args.no_write)
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(eval_mod.render_report(out))
+        if out.get("report_path"):
+            print(f"Report written to {out['report_path']}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="regular", description="The Regular: local demo, configuration, diagnostics and QQ runtime")
     parser.add_argument("--version", action="version", version=__version__)
@@ -394,6 +540,53 @@ def main(argv=None):
     cal.add_argument("--site", choices=("banter", "callback"), default="banter",
                      help="which judgement to check (default: banter)")
     cal.add_argument("--json", action="store_true")
+    chk = sub.add_parser("checkup", help="read-only daily checkup: list suspicious moments from local journals; no network or inference")
+    chk.add_argument("--day", help="YYYY-MM-DD, MM-DD, today or yesterday (default: today)")
+    chk.add_argument("--json", action="store_true")
+    chk.add_argument("--no-write", action="store_true", help="print only; do not write data/checkups")
+    chk.add_argument("--label", nargs=2, metavar=("ID", "VERDICT"),
+                     help="label a finding yes/no for per-signal precision")
+    chk.add_argument("--note", default="", help="optional note stored with --label")
+    rls = sub.add_parser("rules", help="read-only list of tracked prompt rules and stable-head length; no network or inference")
+    rls.add_argument("--json", action="store_true")
+    cs = sub.add_parser("case", help="manage replay cases in data/cases (add from turn, seed from docs, list)")
+    cs_sub = cs.add_subparsers(dest="case_action", required=True)
+    cs_add = cs_sub.add_parser("add", help="save a recorded turn or archived message as a replay case")
+    cs_src = cs_add.add_mutually_exclusive_group(required=True)
+    cs_src.add_argument("--turn", help="turn_id from data/turns (generate or triage case)")
+    cs_src.add_argument("--message", help="message_id from data/archive or data/interactions (message-level case)")
+    cs_add.add_argument("--context", type=int, default=6,
+                        help="number of preceding group messages to include with --message (default: 6)")
+    cs_add.add_argument("--id", required=True, help="case id")
+    cs_add.add_argument("--day", help="optional day to look up turn_id or message_id")
+    cs_add.add_argument("--incident", default="", help="incident doc path, e.g. docs/quotes.md")
+    cs_add.add_argument("--tags", default="", help="comma-separated tags")
+    cs_add.add_argument("--must", action="append", help="regex that must match")
+    cs_add.add_argument("--must-not", action="append", help="regex that must not match")
+    cs_add.add_argument("--tag-present", action="append", help="expression tag that must be present")
+    cs_add.add_argument("--tag-absent", action="append", help="expression tag that must be absent")
+    cs_add.add_argument("--choice", action="append", help="triage choice check QUESTION=VALUE")
+    cs_add.add_argument("--choice-not", action="append", help="triage choice_not check QUESTION=VALUE")
+    cs_add.add_argument("--judge", action="append", help="pairwise blind judge question")
+    cs_seed = cs_sub.add_parser("seed", help="write built-in seed cases into data/cases")
+    cs_seed.add_argument("--overwrite", action="store_true")
+    cs_list = cs_sub.add_parser("list", help="list available cases")
+    cs_list.add_argument("--cases", default="all", help="selector: all, tag, or glob")
+    cs_list.add_argument("--json", action="store_true")
+    ev = sub.add_parser("eval", help="replay cases or a whole day across two versions, or ablate a prompt rule (requires --allow-paid)")
+    ev.add_argument("--base", default=".", help="base git ref or directory (default: .)")
+    ev.add_argument("--cand", default=".", help="candidate git ref or directory (default: .)")
+    ev.add_argument("--cases", default="all", help="case selector: all, tag, glob, or none")
+    ev.add_argument("-n", type=int, default=4, help="samples per case per version (default: 4)")
+    ev.add_argument("--day", help="replay all recorded turns of a day (YYYY-MM-DD or MM-DD)")
+    ev.add_argument("--ablate", help="rule id from prompts.py to ablate in candidate")
+    ev.add_argument("--search-wording", choices=("remind", "banter"),
+                    help="search better wording for a narrow deterministic rule")
+    ev.add_argument("--candidates", type=int, default=6, help="number of wording candidates to propose (default: 6)")
+    ev.add_argument("--pattern", action="append", help="custom whole-day regex NAME=REGEX")
+    ev.add_argument("--no-write", action="store_true", help="do not write report files to data/evals")
+    ev.add_argument("--json", action="store_true")
+    ev.add_argument("--allow-paid", action="store_true", help="authorize real model requests and quota consumption")
     panel = sub.add_parser("panel", help="serve the local maintenance panel on loopback")
     panel.add_argument("--host", default="127.0.0.1", help="loopback address (default: 127.0.0.1)")
     panel.add_argument("--port", type=int, default=8765, help="local port (default: 8765)")
@@ -433,6 +626,19 @@ def main(argv=None):
             return coverage(config, as_json=args.json)
         if args.command == "calibration":
             return calibration(config, site=args.site, as_json=args.json)
+        if args.command == "checkup":
+            if args.label and args.label[1] not in ("yes", "no"):
+                parser.error("--label VERDICT must be yes or no")
+            return checkup(config, day=args.day, as_json=args.json, write=not args.no_write,
+                           label=args.label, note=args.note)
+        if args.command == "rules":
+            return rules_command(as_json=args.json)
+        if args.command == "case":
+            return case_command(config, args)
+        if args.command == "eval":
+            if not args.allow_paid:
+                parser.error("eval requires --allow-paid; it makes real model requests")
+            return eval_command(config, args)
         if args.command == "panel":
             if args.host not in ("127.0.0.1", "localhost", "::1"):
                 parser.error("panel only binds to loopback; use --host 127.0.0.1")

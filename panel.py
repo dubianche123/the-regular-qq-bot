@@ -152,6 +152,7 @@ def _esc(value):
 def _page(title, body, active=""):
     nav = [
         ("/", "概览", "home"),
+        ("/checkup", "体检", "checkup"),
         ("/knowledge", "知识库", "knowledge"),
         ("/memory", "记忆", "memory"),
         ("/search", "搜索", "search"),
@@ -456,6 +457,127 @@ async def _decision_save(cfg, request, csrf):
     raise web.HTTPFound("/decision?saved=1")
 
 
+def _checkup_dirs(cfg):
+    root = Path(cfg.DATA_DIR)
+    return {
+        "checkup_dir": getattr(cfg, "CHECKUP_DIR", str(root / "checkups")),
+        "interaction_dir": getattr(cfg, "INTERACTION_LOG_DIR", str(root / "interactions")),
+        "turn_dir": getattr(cfg, "TURN_LOG_DIR", str(root / "turns")),
+        "archive_dir": getattr(cfg, "ARCHIVE_DIR", str(root / "archive")),
+        "state_file": getattr(cfg, "STATE_FILE", str(root / "state.json")),
+    }
+
+
+def _checkup_days(dirs):
+    from regular import checkup as checkup_mod
+    days = set()
+    for key, suffix in (("checkup_dir", ".json"), ("interaction_dir", ".jsonl"),
+                        ("turn_dir", ".jsonl"), ("turn_dir", ".jsonl.gz")):
+        try:
+            for name in os.listdir(dirs[key]):
+                if name.endswith(suffix):
+                    day = name[:-len(suffix)]
+                    try:
+                        checkup_mod.resolve_day(day)
+                        days.add(day)
+                    except ValueError:
+                        pass
+        except OSError:
+            pass
+    return sorted(days, reverse=True)
+
+
+def _checkup(cfg, request, csrf):
+    """每日体检页：列出可疑候选与前后上下文，支持直接在面板标 yes/no。"""
+    from regular import checkup as checkup_mod
+    dirs = _checkup_dirs(cfg)
+    days = _checkup_days(dirs)
+    raw_day = (request.query.get("day") or "").strip()
+    try:
+        day = checkup_mod.resolve_day(raw_day or (days[0] if days else None))
+    except ValueError as err:
+        raise web.HTTPBadRequest(text="非法日期") from err
+    if day not in days:
+        days = [day, *days]
+    out = checkup_mod.report(day, **dirs)
+    try:
+        checkup_mod.write(out, dirs["checkup_dir"])
+    except OSError:
+        pass
+    options = "".join(
+        f'<option value="{_esc(d)}"{" selected" if d == day else ""}>{_esc(d)}</option>'
+        for d in days)
+    sig_rows = []
+    for sig, label in checkup_mod.LABELS.items():
+        p = out["precision"].get(sig)
+        rate = f"{p['precision']:.0%}（{p['yes']}/{p['yes'] + p['no']}）" if p else "—"
+        sig_rows.append(
+            f"<tr><td>{_esc(label)}</td><td>{out['counts'][sig]}</td><td>{_esc(rate)}</td></tr>")
+    cards = []
+    for f in out["findings"]:
+        clock = time.strftime("%H:%M:%S", time.localtime(f["ts"]))
+        verdict = f.get("verdict")
+        badge = (f'<span class="good">已标 yes</span>' if verdict == "yes"
+                 else '<span class="bad">已标 no</span>' if verdict == "no"
+                 else '<span class="muted">未标注</span>')
+        ctx_html = f"<pre>{_esc(chr(10).join(f['context']))}</pre>" if f.get("context") else ""
+        raw_cmds = checkup_mod.case_add_commands(day, f)
+        cmds = ""
+        if raw_cmds:
+            cmd_list = "；".join(f"<code>{_esc(cmd)}</code>" for cmd in raw_cmds)
+            cmds = f'<p class="muted">存成用例：{cmd_list}</p>'
+        cards.append(f"""
+<div class="card" style="margin:12px 0">
+<div class="row" style="justify-content:space-between">
+  <div><strong>[{_esc(f['id'])}] {_esc(f['label'])}</strong> · <span class="mono">{_esc(clock)}</span> · {badge}</div>
+  <form method="post" action="/checkup/label" class="row">
+    <input type="hidden" name="csrf" value="{_esc(csrf)}">
+    <input type="hidden" name="day" value="{_esc(day)}">
+    <input type="hidden" name="id" value="{_esc(f['id'])}">
+    <button type="submit" name="verdict" value="yes">是问题 (yes)</button>
+    <button type="submit" name="verdict" value="no" style="background:var(--muted)">误报 (no)</button>
+  </form>
+</div>
+<p>{_esc(f['detail'])}</p>
+{ctx_html}{cmds}
+</div>""")
+    findings_html = "".join(cards) if cards else '<p class="muted">今天没有可疑的地方。</p>'
+    i = out["inputs"]
+    body = f"""
+<h1>每日体检</h1>
+<p class="muted">只读扫交互日志与每轮输入，不联网、不调模型。原料：消息 {i['incoming']} 条，送达 {i['delivered']} 条，
+每轮输入 {i['turns']} 轮 / 分诊 {i['triage']} 次；基线 {i['baseline_days']} 天。</p>
+<form method="get" action="/checkup" class="row" style="margin:12px 0">
+<select name="day">{options}</select>
+<button type="submit">查看</button>
+</form>
+<table><thead><tr><th>信号</th><th>条数</th><th>人工准确率</th></tr></thead>
+<tbody>{"".join(sig_rows)}</tbody></table>
+<h2>候选明细（{len(out['findings'])} 条）</h2>
+{findings_html}
+"""
+    return _page("每日体检", body, "checkup")
+
+
+async def _checkup_label(cfg, request, csrf):
+    from regular import checkup as checkup_mod
+    form = await request.post()
+    if not hmac.compare_digest(str(form.get("csrf") or ""), str(csrf)):
+        raise web.HTTPBadRequest(text="请求无效")
+    finding_id = str(form.get("id") or "").strip()
+    verdict = str(form.get("verdict") or "").strip()
+    day = str(form.get("day") or "").strip()
+    if verdict not in ("yes", "no") or not finding_id:
+        raise web.HTTPBadRequest(text="标注参数不合法")
+    dirs = _checkup_dirs(cfg)
+    found = checkup_mod.find_finding(dirs["checkup_dir"], finding_id)
+    if found is None:
+        raise web.HTTPBadRequest(text="未找到该体检条目")
+    checkup_mod.add_label(dirs["checkup_dir"], finding_id, verdict, signal=found.get("signal"))
+    target_day = quote(day, safe="") if day else ""
+    raise web.HTTPFound(f"/checkup?day={target_day}" if target_day else "/checkup")
+
+
 def create_app(cfg, *, token):
     @web.middleware
     async def auth(request, handler):
@@ -499,9 +621,17 @@ def create_app(cfg, *, token):
     async def decision_save(request):
         return await _decision_save(cfg, request, csrf)
 
+    async def checkup_page(request):
+        return _html(_checkup(cfg, request, csrf))
+
+    async def checkup_label(request):
+        return await _checkup_label(cfg, request, csrf)
+
     csrf = secrets.token_urlsafe(24)
     app = web.Application(middlewares=[auth])
     app.router.add_get("/", home)
+    app.router.add_get("/checkup", checkup_page)
+    app.router.add_post("/checkup/label", checkup_label)
     app.router.add_get("/knowledge", knowledge)
     app.router.add_post("/knowledge/save", knowledge_save)
     app.router.add_get("/memory", memory)

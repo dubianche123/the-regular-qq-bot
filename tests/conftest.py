@@ -153,10 +153,16 @@ def _never_write_the_deployment_journal(tmp_path_factory):
     """
     import interactions as interactions_mod
     import runtime
+    import turns as turns_mod
     saved = runtime.INTERACTIONS
+    saved_turns = runtime.TURNS
     runtime.INTERACTIONS = interactions_mod.InteractionLog(
         str(tmp_path_factory.mktemp("journal")), enabled=False, keep_days=0)
+    # 每轮输入记录同理（data/turns 是体检和评测的原料，夹具混进去就报假数）
+    runtime.TURNS = turns_mod.TurnLog(
+        str(tmp_path_factory.mktemp("turns")), enabled=False, keep_days=0)
     try:
         yield
     finally:
         runtime.INTERACTIONS = saved
+        runtime.TURNS = saved_turns
