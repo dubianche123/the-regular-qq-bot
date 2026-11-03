@@ -653,8 +653,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        media_note="", unprompted_hint=""):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
-    返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签
-    —— 默认就不再要求模型记账了，好感度改由每日压缩评估（见 config.CMD_PROTOCOL_ENABLED）。
+    返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签（协议关了，
+    或者它没写/写坏了），调用方退回本地词表（见 config.CMD_PROTOCOL_ENABLED，默认开着）。
 
     owner_label 是群里对群主的称呼（档案里认领的那个，没认领就是通用词）。它只在
     人设里出现「别总提群主」这类句子里，对**同一个群**是常数，所以不影响下面这条不变量。
@@ -1643,7 +1643,7 @@ async def run_digest(group_id, reason=""):
             schedule_promises(group_id)
 
         # 好感度结算：这一整段时间里谁更亲近、谁在抬杠，一次性落库
-        # （每轮不再让模型自评，见 config.CMD_PROTOCOL_ENABLED）
+        # （每轮那一票是回复里的记账标签，见 config.CMD_PROTOCOL_ENABLED；这里是看全天的那一道）
         if config.AFFINITY_ENABLED:
             n_aff, detail = apply_digest_affinity(
                 group_id, (result.get("data") or {}).get("affinity"))
