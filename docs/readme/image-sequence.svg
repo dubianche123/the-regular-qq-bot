@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1060" viewBox="0 0 1280 1060" role="img" aria-labelledby="diagram-title diagram-desc" xml:lang="en">
+  <title id="diagram-title">Read the image before answering</title>
+  <desc id="diagram-desc">A member posts an image and immediately asks about it. The bot requests closed-choice triage and finishes any pending image read before constructing the four-layer reply prompt. If the image is ready within six seconds it replies once. If the asker’s own image is still being read, it first sends a local waiting line, then continues within the 30-second total image-read timeout. The reply and actual outcome are recorded locally.</desc>
+  <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="1" y="1" width="1278" height="1058" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+    <text x="48" y="50" font-size="16" font-weight="700" fill="#A7783E" letter-spacing="1.7">THE REGULAR / IMAGE → REPLY</text>
+    <text x="48" y="102" font-size="32" font-weight="700" fill="#213249" >Read the image before answering</text>
+    <text x="48" y="142" font-size="21" font-weight="400" fill="#56677E" >An example: an image, an immediate question, then a grounded reply.</text>
+    <rect x="48" y="184" width="352" height="204" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="72" y="216" font-size="16" font-weight="700" fill="#A7783E" >01 / MEMBER → BOT</text>
+    <text x="72" y="256" font-size="24" font-weight="650" fill="#213249" >Post an image</text>
+    <text x="72" y="295" font-size="20" font-weight="400" fill="#56677E" >Register the pending image</text>
+    <text x="72" y="327" font-size="20" font-weight="400" fill="#56677E" >Start a background read</text>
+    <text x="72" y="359" font-size="20" font-weight="400" fill="#56677E" >Background cooldown applies</text>
+    <rect x="464" y="184" width="352" height="204" rx="18" fill="#EAF4EF" stroke="#D7E0EB"/>
+    <text x="488" y="216" font-size="16" font-weight="700" fill="#397D70" >02 / BOT → DECISIONS</text>
+    <text x="488" y="256" font-size="24" font-weight="650" fill="#213249" >Ask about it right away</text>
+    <text x="488" y="295" font-size="19" font-weight="400" fill="#56677E" >“@bot, what do you think?”</text>
+    <text x="488" y="327" font-size="19" font-weight="400" fill="#56677E" >Triage: addressed? stop? lookup?</text>
+    <text x="488" y="359" font-size="19" font-weight="400" fill="#56677E" >Here: no stop and no lookup</text>
+    <rect x="880" y="184" width="352" height="204" rx="18" fill="#F0EBF8" stroke="#D7E0EB"/>
+    <text x="904" y="216" font-size="16" font-weight="700" fill="#7962A7" >03 / BOT → VISION</text>
+    <text x="904" y="256" font-size="24" font-weight="650" fill="#213249" >Finish the pending read</text>
+    <text x="904" y="295" font-size="20" font-weight="400" fill="#56677E" >Wait for an in-flight read</text>
+    <text x="904" y="327" font-size="20" font-weight="400" fill="#56677E" >or read in the foreground</text>
+    <text x="904" y="359" font-size="20" font-weight="400" fill="#56677E" >Reuse one task per image</text>
+    <path d="M406 286h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M822 286h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M1056 388v28" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="48" y="426" width="1184" height="52" rx="13" fill="#EAF0F6" stroke="#D7E0EB"/>
+    <text x="72" y="460" font-size="20" font-weight="650" fill="#213249" >WAIT UP TO 6 s</text>
+    <text x="460" y="460" font-size="19" font-weight="400" fill="#56677E" >ASYNC_REPLY_SECONDS · local code owns the waiting</text>
+    <path d="M328 478v28" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M952 478v28" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <rect x="48" y="518" width="560" height="200" rx="18" fill="#EAF4EF" stroke="#D7E0EB"/>
+    <text x="72" y="550" font-size="16" font-weight="700" fill="#397D70" >A / READY</text>
+    <text x="72" y="590" font-size="24" font-weight="650" fill="#213249" >Ready within 6 seconds</text>
+    <text x="72" y="629" font-size="20" font-weight="400" fill="#56677E" >Use the one-line image description</text>
+    <text x="72" y="661" font-size="20" font-weight="400" fill="#56677E" >Go straight to the proper reply</text>
+    <text x="72" y="693" font-size="20" font-weight="400" fill="#56677E" >Only one reply is needed</text>
+    <rect x="672" y="518" width="560" height="200" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="696" y="550" font-size="16" font-weight="700" fill="#A7783E" >B / ASKER’S OWN IMAGE STILL LOADING</text>
+    <text x="696" y="590" font-size="24" font-weight="650" fill="#213249" >Send a short waiting line first</text>
+    <text x="696" y="629" font-size="20" font-weight="400" fill="#56677E" >Then keep waiting for the same read</text>
+    <text x="696" y="661" font-size="20" font-weight="400" fill="#56677E" >30 s total timeout, including download</text>
+    <text x="696" y="693" font-size="20" font-weight="400" fill="#56677E" >If unreadable, say so honestly</text>
+    <path d="M328 718v24H224v28" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M952 718v24H328" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="48" y="782" width="352" height="164" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="72" y="814" font-size="16" font-weight="700" fill="#A7783E" >04 / LOCAL CODE</text>
+    <text x="72" y="854" font-size="24" font-weight="650" fill="#213249" >Build the reply context</text>
+    <text x="72" y="893" font-size="20" font-weight="400" fill="#56677E" >The image description is now</text>
+    <text x="72" y="925" font-size="20" font-weight="400" fill="#56677E" >part of the group context</text>
+    <rect x="464" y="782" width="352" height="164" rx="18" fill="#F0EBF8" stroke="#D7E0EB"/>
+    <text x="488" y="814" font-size="16" font-weight="700" fill="#7962A7" >05 / REPLY MODEL</text>
+    <text x="488" y="854" font-size="24" font-weight="650" fill="#213249" >Compose the response</text>
+    <text x="488" y="893" font-size="20" font-weight="400" fill="#56677E" >Write the reply text</text>
+    <text x="488" y="925" font-size="20" font-weight="400" fill="#56677E" >Optional output tags may follow</text>
+    <rect x="880" y="782" width="352" height="164" rx="18" fill="#FFF4E4" stroke="#D7E0EB"/>
+    <text x="904" y="814" font-size="16" font-weight="700" fill="#A7783E" >06 / BOT → MEMBER</text>
+    <text x="904" y="854" font-size="24" font-weight="650" fill="#213249" >Deliver, then record</text>
+    <text x="904" y="893" font-size="20" font-weight="400" fill="#56677E" >Send the reply to the group</text>
+    <text x="904" y="925" font-size="20" font-weight="400" fill="#56677E" >Record the session and log</text>
+    <path d="M406 864h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <path d="M822 864h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+    <text x="48" y="998" font-size="19" font-weight="400" fill="#56677E" >The waiting line is local text: no extra generation call.</text>
+  </g>
+</svg>

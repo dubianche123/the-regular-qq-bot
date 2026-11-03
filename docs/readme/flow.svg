@@ -1,50 +1,76 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
-<title id="title">From group messages to responses</title>
-<desc id="desc">Group messages and context pass through local rules and, when needed, closed-choice decisions and lookup. The chat model chooses whether to respond and may request an image or voice reply; code checks and carries out permitted actions. The result can be silence, text, an image or voice. Local code manages relationships, memory and quotas.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#8595A9"/></marker></defs>
-<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
-<rect x="1" y="1" width="1198" height="658" rx="20" fill="#F8FAFD" stroke="#DBE3ED"/>
-<text x="36" y="48" font-size="25" font-weight="700" fill="#23324A">From a group message to a response</text>
-<text x="36" y="79" font-size="16" fill="#536782">Local rules, closed-choice decisions and the chat model share the work</text>
-<rect x="36" y="110" width="258" height="156" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
-<text x="53" y="147" font-size="18" font-weight="700" fill="#23324A">Message &amp; context</text>
-<text x="53" y="190" font-size="15" fill="#536782">What someone said</text>
-<text x="53" y="222" font-size="15" fill="#536782">Recent chat, images or voice</text>
-<rect x="326" y="110" width="258" height="156" rx="14" fill="#E7F5EF" stroke="#93C8B0"/>
-<text x="343" y="147" font-size="18" font-weight="700" fill="#23324A">Rules, decisions &amp; lookup</text>
-<text x="343" y="190" font-size="15" fill="#536782">Some messages use decisions</text>
-<text x="343" y="222" font-size="15" fill="#536782">Recall or search when needed</text>
-<rect x="616" y="110" width="258" height="156" rx="14" fill="#F0EAFC" stroke="#B7A2D7"/>
-<text x="633" y="147" font-size="18" font-weight="700" fill="#23324A">Chat model</text>
-<text x="633" y="190" font-size="15" fill="#536782">If unaddressed: reply or not</text>
-<text x="633" y="222" font-size="15" fill="#536782">Compose text or request media</text>
-<rect x="906" y="110" width="258" height="156" rx="14" fill="#FFF3DD" stroke="#D9BD83"/>
-<text x="923" y="147" font-size="18" font-weight="700" fill="#23324A">Local code</text>
-<text x="923" y="190" font-size="15" fill="#536782">Check context, limits and access</text>
-<text x="923" y="222" font-size="15" fill="#536782">Call services and deliver results</text>
-<path d="M294 188H320" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M584 188H610" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M874 188H900" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M1035 266V300H165M1035 300H1035" fill="none" stroke="#8595A9" stroke-width="2"/>
-<path d="M165 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="36" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="53" y="371" font-size="18" font-weight="700" fill="#23324A">Stay quiet</text>
-<text x="53" y="407" font-size="15" fill="#536782">Send nothing</text>
-<path d="M455 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="326" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="343" y="371" font-size="18" font-weight="700" fill="#23324A">Text</text>
-<text x="343" y="407" font-size="15" fill="#536782">Reply naturally</text>
-<path d="M745 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="616" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="633" y="371" font-size="18" font-weight="700" fill="#23324A">Image</text>
-<text x="633" y="407" font-size="15" fill="#536782">Send text and image</text>
-<path d="M1035 300V326" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="906" y="332" width="258" height="106" rx="14" fill="#FFFFFF" stroke="#C8D4E1"/>
-<text x="923" y="371" font-size="18" font-weight="700" fill="#23324A">Voice</text>
-<text x="923" y="407" font-size="15" fill="#536782">Synthesize and send</text>
-<rect x="36" y="492" width="1128" height="70" rx="14" fill="#F0F3F8" stroke="#BCC9D8"/>
-<text x="54" y="534" font-size="17" font-weight="700" fill="#23324A">Local state</text>
-<text x="195" y="534" font-size="16" fill="#536782">Relationships &amp; names · Memory · Quotas</text>
-<text x="830" y="534" font-size="15" fill="#536782">Read and updated by code</text>
-<text x="36" y="618" font-size="14" fill="#536782">Closed-choice decisions use OpenAI Decisions; some messages are handled directly by local rules.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="920" viewBox="0 0 1280 920" role="img" aria-labelledby="flow-title flow-desc" xml:lang="en">
+<title id="flow-title">From a group message to a response</title><desc id="flow-desc">Local routing prepares the turn and can request closed-choice judgments or evidence. The chat model can stay quiet or compose text, media intent or a reminder. Local code checks and delivers, records the actual outcome, and owns names, relationships, memory and quotas. Judgments and lookups are optional; some local rules can end the turn before a model call.</desc>
+<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+<rect x="1" y="1" width="1278" height="918" rx="24" fill="#F6F8FC" stroke="#D7E0EB" />
+<text x="48" y="43" font-size="14" font-weight="700" fill="#A7783E" letter-spacing="2">THE REGULAR / ARCHITECTURE</text>
+<text x="48" y="92" font-size="34" font-weight="700" fill="#213249" >From a group message to a response</text>
+<text x="48" y="131" font-size="21" font-weight="400" fill="#56677E" >Code owns the flow and state. Models interpret and compose.</text>
+<rect x="48" y="164" width="1184" height="64" rx="16" fill="#213249" stroke="#213249" />
+<g transform="translate(70 183)" fill="none" stroke="#EDC792" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h22v16H12l-7 6v-6H3z M9 9h10 M9 14h7"/></g>
+<text x="113" y="205" font-size="24" font-weight="600" fill="#FFFFFF" >QQ group message</text>
+<path d="M359 182v28" stroke="#54647A"/>
+<text x="385" y="204" font-size="21" font-weight="400" fill="#D4DFEB" >Text · images · voice + recent conversation</text>
+<path d="M224 228v38" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="48" y="283" font-size="15" font-weight="700" fill="#A7783E" letter-spacing="1.2">01  LOCAL ROUTING</text>
+<text x="464" y="283" font-size="15" font-weight="700" fill="#7962A7" letter-spacing="1.2">02  CONVERSATION</text>
+<text x="880" y="283" font-size="15" font-weight="700" fill="#A7783E" letter-spacing="1.2">03  DELIVERY</text>
+<rect x="48" y="300" width="352" height="214" rx="18" fill="#FFFFFF" stroke="#D7E0EB" />
+<rect x="68" y="320" width="44" height="44" rx="13" fill="#FFF4E4" stroke="#FFF4E4" />
+<g transform="translate(76 328)" fill="none" stroke="#A7783E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h8v7h13 M11 13v10h13 M20 9l4 4-4 4 M20 19l4 4-4 4"/></g>
+<text x="126" y="350" font-size="24" font-weight="650" fill="#213249" >Prepare the turn</text>
+<rect x="464" y="300" width="352" height="214" rx="18" fill="#FFFFFF" stroke="#D7E0EB" />
+<rect x="484" y="320" width="44" height="44" rx="13" fill="#F0EBF8" stroke="#F0EBF8" />
+<g transform="translate(492 328)" fill="none" stroke="#7962A7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h18v16H12l-6 5v-5H5z M10 10h8 M10 15h5"/></g>
+<text x="542" y="350" font-size="24" font-weight="650" fill="#213249" >Choose how to reply</text>
+<rect x="880" y="300" width="352" height="214" rx="18" fill="#FFFFFF" stroke="#D7E0EB" />
+<rect x="900" y="320" width="44" height="44" rx="13" fill="#FFF4E4" stroke="#FFF4E4" />
+<g transform="translate(908 328)" fill="none" stroke="#A7783E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14l22-10-7 22-5-9-10-3z M13 17L25 4"/></g>
+<text x="958" y="350" font-size="24" font-weight="650" fill="#213249" >Check, then deliver</text>
+<text x="72" y="407" font-size="18" font-weight="400" fill="#56677E" >Local rules select a path</text>
+<text x="72" y="441" font-size="18" font-weight="400" fill="#56677E" >Build context &amp; media conditions</text>
+<text x="72" y="475" font-size="18" font-weight="400" fill="#56677E" >Use judgments or lookup if needed</text>
+<text x="488" y="407" font-size="18" font-weight="400" fill="#56677E" >Unaddressed: reply or stay quiet</text>
+<text x="488" y="441" font-size="18" font-weight="400" fill="#56677E" >Compose text and media intent</text>
+<text x="488" y="475" font-size="18" font-weight="400" fill="#56677E" >or a reminder with its time</text>
+<text x="904" y="407" font-size="18" font-weight="400" fill="#56677E" >Check context, services &amp; quotas</text>
+<text x="904" y="441" font-size="18" font-weight="400" fill="#56677E" >Run media / reminder actions</text>
+<text x="904" y="475" font-size="18" font-weight="400" fill="#56677E" >Record what actually happened</text>
+<path d="M406 374h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="432" y="353" font-size="14" font-weight="500" fill="#56677E" text-anchor="middle">Context</text>
+<path d="M822 374h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="848" y="353" font-size="14" font-weight="500" fill="#56677E" text-anchor="middle">Intent</text>
+<path d="M224 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6"/>
+<text x="48" y="552" font-size="14" font-weight="700" fill="#397D70" letter-spacing="1.3">ON DEMAND</text>
+<rect x="48" y="568" width="352" height="158" rx="16" fill="#EAF4EF" stroke="#C9DFD5" />
+<text x="70" y="602" font-size="20" font-weight="650" fill="#397D70" >Decisions → fixed choices</text>
+<text x="70" y="633" font-size="18" font-weight="500" fill="#397D70" >Local recall / knowledge / search</text>
+<path d="M70 650h308" fill="none" stroke="#C9DFD5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="70" y="680" font-size="18" font-weight="400" fill="#56677E" >Choices guide routing; evidence</text>
+<text x="70" y="708" font-size="18" font-weight="400" fill="#56677E" >enters this turn’s context.</text>
+<path d="M640 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="464" y="568" width="352" height="158" rx="16" fill="#FFFFFF" stroke="#D7E0EB" />
+<g transform="translate(486 591)" fill="none" stroke="#7962A7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v9h4l6 6V4l-6 6H7z M22 10l7 9 M29 10l-7 9"/></g>
+<text x="532" y="614" font-size="22" font-weight="650" fill="#213249" >Staying quiet is a choice</text>
+<text x="488" y="653" font-size="18" font-weight="400" fill="#56677E" >Model returns 〔不接〕 → no send</text>
+<text x="488" y="686" font-size="18" font-weight="400" fill="#56677E" >Local rules can also end a turn</text>
+<text x="488" y="710" font-size="18" font-weight="400" fill="#56677E" >before any conversation call.</text>
+<path d="M1056 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="880" y="568" width="352" height="158" rx="16" fill="#FFFFFF" stroke="#D7E0EB" />
+<text x="904" y="609" font-size="22" font-weight="650" fill="#213249" >Back to the conversation</text>
+<rect x="904" y="628" width="64" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4" />
+<text x="936.0" y="652" font-size="18" font-weight="600" fill="#A7783E" text-anchor="middle">Text</text>
+<rect x="977" y="628" width="64" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4" />
+<text x="1009.0" y="652" font-size="18" font-weight="600" fill="#A7783E" text-anchor="middle">Image</text>
+<rect x="1050" y="628" width="64" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4" />
+<text x="1082.0" y="652" font-size="18" font-weight="600" fill="#A7783E" text-anchor="middle">Voice</text>
+<rect x="1123" y="628" width="85" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4" />
+<text x="1165.5" y="652" font-size="18" font-weight="600" fill="#A7783E" text-anchor="middle">Remind</text>
+<text x="904" y="705" font-size="17" font-weight="400" fill="#56677E" >Actual outcome informs the next turn</text>
+<rect x="48" y="770" width="1184" height="94" rx="17" fill="#EAF0F6" stroke="#D5DFEB" />
+<g transform="translate(72 799)" fill="none" stroke="#213249" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c0-5 20-5 20 0s-20 5-20 0v15c0 5 20 5 20 0V7 M4 14c0 5 20 5 20 0"/></g>
+<text x="118" y="811" font-size="23" font-weight="650" fill="#213249" >Local state</text>
+<text x="118" y="840" font-size="16" font-weight="400" fill="#56677E" >Read &amp; updated by code</text>
+<text x="410" y="824" font-size="22" font-weight="500" fill="#213249" >Names &amp; relationships   ·   Memory   ·   Quotas &amp; jobs</text>
+<text x="48" y="895" font-size="17" font-weight="400" fill="#56677E" >Roles shown here; individual messages can take different paths.</text>
 </g></svg>

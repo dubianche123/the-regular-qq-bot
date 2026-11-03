@@ -67,58 +67,11 @@ Three layers, each doing what it is good at:
 
 In more detail:
 
-```mermaid
-flowchart TB
-    subgraph IN["1 · Intake"]
-        direction LR
-        I1["QQ group / private message"] --> I2["dedupe · @ to names<br/>voice transcription · archive"]
-    end
-    subgraph JUDGE["2 · Judgment: speak or not"]
-        direction LR
-        J1{"About it?"} -- "@ / its name" --> J2["Decisions triage<br/>one call, several questions"]
-        J1 -- "not called" --> J3["its own call<br/>code keeps the floors"]
-    end
-    subgraph GEN["3 · Generation: what to say, whether to act"]
-        direction LR
-        G1["slow work & images<br/>6 s, then a holding line"] --> G2["four-layer prompt"] --> G3["reply model"]
-    end
-    subgraph ACT["4 · Execution"]
-        direction LR
-        A1["parse tags<br/>draw · voice<br/>pass · remind"] --> A2["quotas · moderation · delivery"] --> A3["text · image · voice · reminder"]
-    end
-    IN --> JUDGE --> GEN --> ACT
-    STATE[("local state, owned by code<br/>relationships · nicknames · memory · ledgers<br/>quotas · cooldowns · scheduled jobs")]
-    GEN <-. "into the prompt" .-> STATE
-    ACT <-. "check quotas · record outcomes" .-> STATE
-```
+![Detailed architecture: intake, optional judgments, four-layer context, reply and local execution](docs/readme/architecture.svg)
 
 One "post an image, then ask about it" message, end to end:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant U as Member
-    participant B as The Regular
-    participant D as Decisions
-    participant V as Vision model
-    participant M as Reply model
-    U->>B: [image]
-    B-)V: background read (rate-limited)
-    U->>B: @bot what do you think of this?
-    B->>D: triage: talking to me? need a lookup? asking me to stop?
-    D-->>B: not a stop · no lookup
-    B->>V: read owed images in the foreground
-    alt read within 6 s
-        V-->>B: one-line description
-    else still reading, and it is the asker's own image
-        B-->>U: Let me look at the picture, one sec.
-        V-->>B: one-line description (at most 30 s)
-    end
-    B->>M: four-layer prompt (context now has the description)
-    M-->>B: reply text (may carry a tag)
-    B-->>U: reply
-    B->>B: session and interaction log record what actually happened
-```
+![Image follow-up timeline: read first, acknowledge after six seconds, then answer](docs/readme/image-sequence.svg)
 
 ## The speaker decides
 
@@ -126,19 +79,7 @@ sequenceDiagram
 
 **Approach.** Capabilities go into the stable prompt head, which stays byte-identical while the switches don't change, so it doesn't break the cache. Actions are written by the reply model in its own reply. Code only checks the format, enforces quotas, executes, and writes the actual outcome back into the session. Next turn, the model sees what it really did.
 
-```mermaid
-flowchart LR
-    R["one reply from the model"] --> P{"expression.parse"}
-    P -- "〔不接〕 pass" --> N["send nothing"]
-    P -- "〔画〕 brief for the artist" --> I["send the line, then draw<br/>per-user & global quota · moderation · refund if unsent"]
-    P -- "〔语音〕 (tone)" --> T["synthesize → transcribe back<br/>mismatch: send as text"]
-    P -- "〔提醒 11-03 09:00〕 what" --> S["register a job (one per member)<br/>echo: (registered: 11-03 09:00)"]
-    P -- "no tag" --> X["send text"]
-    I --> L["session records the actual outcome<br/>(system: the image was posted)"]
-    T --> L
-    S --> L
-    X --> L
-```
+![Reply tags and local actions: pass, draw, voice, reminders and text](docs/readme/expression.svg)
 
 | Tag | The model decides | Code enforces |
 | --- | --- | --- |
@@ -153,20 +94,7 @@ Most of a group chat isn't addressed to the bot. The old approach rolled dice: 1
 
 Now unaddressed messages go straight to the bot's own judgment. Code only states facts and keeps the floors:
 
-```mermaid
-flowchart TB
-    M["a group message"] --> A{"@ mention?"}
-    A -- "yes" --> ANS["always answer"]
-    A -- "no" --> NM{"its name?"}
-    NM -- "yes" --> TR["triage: addressed<br/>answer / quip / let_it_pass"]
-    TR -- "answer" --> ANS2["answer properly"]
-    TR -- "quip" --> Q2["one short line"]
-    TR -- "let_it_pass" --> U
-    NM -- "no" --> U["its own call"]
-    U --> F{"floors"}
-    F -- "quiet window · told to stop · unread bare image" --> NO["don't ask it"]
-    F -- "pass (queued, one per group at a time)" --> C["with its own recent lines in view:<br/>reply, or write 〔不接〕"]
-```
+![Reply routing: mentions, name triage and the model’s choice when unaddressed](docs/readme/reply-routing.svg)
 
 Two details came out of the replays:
 - In chat format, a "user" turn always reads as addressed to the model; sent as-is, it answered 93%. So the line is re-framed as "something just said in the group, not addressed to you".
@@ -194,53 +122,11 @@ The costs are stated, not hidden. It talks more (20% → 51% of unaddressed mess
 
 People in a group wait a few seconds at most. Web lookups, deep research and image reading can all take longer, so they share one protocol ([`slowwork.py`](slowwork.py): `start → handle`, `poll → status`) and one rhythm:
 
-```mermaid
-sequenceDiagram
-    participant U as Member
-    participant B as The Regular
-    participant R as Background job
-    participant S as Job table (persisted)
-    U->>B: what was that paper about?
-    B->>R: start → handle
-    alt back within 6 s
-        R-->>B: result
-        B-->>U: answer with sources
-    else not back yet
-        B-->>U: Let me look it up, one moment.
-        B->>S: store the handle (survives restarts)
-        loop every few seconds
-            S->>R: poll
-        end
-        R-->>S: result
-        S->>B: write the follow-up from the result
-        B-->>U: second reply to the same message (inside the passive window)
-        Note over B,U: window closed → post proactively → if refused, ride on the next group message
-    end
-```
+![Slow-work timeline: six-second wait, persisted handles and delivery fallbacks](docs/readme/slow-work.svg)
 
 Reminders live in the same job table:
 
-```mermaid
-stateDiagram-v2
-    state "registered (one per member)" as Set
-    state "due" as Due
-    state "waiting to ride along" as Carry
-    state "delivered" as Sent
-    state "dropped" as Drop
-    [*] --> Set: reply writes 〔提醒 …〕
-    Set --> Set: same member sets another, replacing it
-    Set --> [*]: 〔取消提醒〕 cancel
-    Set --> Due: scheduler wakes
-    Due --> Sent: proactive post accepted
-    Due --> Carry: proactive post refused
-    Due --> Drop: missed by over an hour (restart)
-    Carry --> Sent: sent with the next group message
-    Carry --> Drop: an hour late
-    Sent --> Set: daily, next day
-    Drop --> Set: daily, next day
-    Sent --> [*]: one-off
-    Drop --> [*]: one-off
-```
+![Reminder lifecycle: registration, due time, carry-along delivery, expiry and daily rescheduling](docs/readme/reminders.svg)
 
 ## Four-layer prompt, ordered for the prefix cache
 
@@ -253,12 +139,7 @@ Everything that changes with the speaker or the turn goes last. The earlier a la
 | 3. Session | this member's exchanges with the bot, with "(system: …)" lines recording actual outcomes | appended per turn |
 | 4. Turn | group context (every line labeled by speaker), nickname and relationship, knowledge, search results, old stories, personal quotes, the current time, what is available this turn | every turn |
 
-```mermaid
-pie showData
-    title Reply input tokens, 261 live calls in one day
-    "Served from prefix cache" : 75.6
-    "Not cached" : 24.4
-```
+![Input tokens across 261 live reply calls in one day: 75.6% served from prefix cache](docs/readme/cache.svg)
 
 ## State and memory: code owns it, the model only talks
 
@@ -288,12 +169,7 @@ It also has a daily rhythm and moods. Woken up after midnight, it is grumpy; whe
 
 Every design decision traces back to a live incident and a set of data. The docs follow "before → what went wrong → now → replay → costs and limits", not just conclusions.
 
-```mermaid
-flowchart LR
-    A["live incident"] --> B["reconstruct<br/>logs · archive"] --> C["replay real data<br/>score variants"]
-    C --> D["change prompt<br/>or code"] --> E["offline regression<br/>1326 tests"] --> F["release & deploy<br/>check startup log"]
-    F -.-> A
-```
+![Iteration: incident, reconstruction, replay, change, regression, release and feedback](docs/readme/iteration.svg)
 
 A few examples:
 

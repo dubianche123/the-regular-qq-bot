@@ -1,45 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
-<title id="title">How Decisions helps with a group message</title>
-<desc id="desc">For a relevant group message, applicable fixed-choice questions are sent to OpenAI Decisions. Local code combines the results with rules and limits and either acts or falls back.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#8595A9"/></marker></defs>
-<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
-<rect x="1" y="1" width="1198" height="658" rx="20" fill="#F8FAFD" stroke="#DBE3ED"/>
-<text x="36" y="48" font-size="25" fill="#23324A" font-weight="700">How Decisions helps with a group message</text>
-<text x="36" y="79" font-size="16" fill="#536782" font-weight="400">Ask the relevant fixed-choice questions together; local code decides what to do.</text>
-<rect x="36" y="120" width="248" height="218" rx="14" fill="#EAF1FE" stroke="#9CB4DF"/>
-<text x="54" y="156" font-size="18" fill="#23324A" font-weight="700">Message &amp; context</text>
-<rect x="53" y="179" width="214" height="97" rx="10" fill="#FFFFFF" stroke="#D6E0EE"/>
-<text x="66" y="211" font-size="15" fill="#334766" font-weight="600">“Xiaowang, is that shop</text>
-<text x="66" y="237" font-size="15" fill="#334766" font-weight="600">we discussed still open?”</text>
-<text x="54" y="310" font-size="14" fill="#536782" font-weight="400">With the recent conversation</text>
-<path d="M284 229H316" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="324" y="120" width="438" height="336" rx="14" fill="#E7F5EF" stroke="#93C8B0"/>
-<text x="344" y="156" font-size="18" fill="#23324A" font-weight="700">Select questions for this situation</text>
-<rect x="343" y="176" width="400" height="71" rx="9" fill="#FFFFFF" stroke="#CFE5DA"/>
-<text x="359" y="202" font-size="16" fill="#23324A" font-weight="700">Is the message for the bot?</text>
-<text x="359" y="227" font-size="14" fill="#536782" font-weight="400">Answer · Joke · Passing mention</text>
-<rect x="343" y="261" width="400" height="71" rx="9" fill="#FFFFFF" stroke="#CFE5DA"/>
-<text x="359" y="287" font-size="16" fill="#23324A" font-weight="700">Does it need group history?</text>
-<text x="359" y="312" font-size="14" fill="#536782" font-weight="400">Look it up · No need</text>
-<rect x="343" y="346" width="400" height="71" rx="9" fill="#FFFFFF" stroke="#CFE5DA"/>
-<text x="359" y="372" font-size="16" fill="#23324A" font-weight="700">Does it need current information?</text>
-<text x="359" y="397" font-size="14" fill="#536782" font-weight="400">Search · Research · Neither</text>
-<path d="M762 229H795" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="803" y="120" width="361" height="145" rx="14" fill="#F0EAFC" stroke="#B7A2D7"/>
-<text x="823" y="156" font-size="18" fill="#23324A" font-weight="700">Choices &amp; confidence</text>
-<text x="823" y="195" font-size="15" fill="#536782" font-weight="400">A choice and scores for each question</text>
-<text x="823" y="225" font-size="15" fill="#536782" font-weight="400">An uncertain answer may be set aside</text>
-<path d="M983 265V285" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="803" y="293" width="361" height="163" rx="14" fill="#FFF3DD" stroke="#D9BD83"/>
-<text x="823" y="330" font-size="18" fill="#23324A" font-weight="700">Local code</text>
-<text x="823" y="370" font-size="15" fill="#536782" font-weight="400">Combine results with rules and limits</text>
-<text x="823" y="401" font-size="15" fill="#536782" font-weight="400">Reply, look up facts, or use a fallback</text>
-<path d="M983 456V482" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<rect x="36" y="490" width="1128" height="96" rx="14" fill="#FFFFFF" stroke="#CCD8E4"/>
-<text x="54" y="530" font-size="16" fill="#23324A" font-weight="700">May recall or search</text>
-<text x="424" y="530" font-size="16" fill="#23324A" font-weight="700">Evidence enters the context</text>
-<text x="808" y="530" font-size="16" fill="#23324A" font-weight="700">Chat model writes a reply</text>
-<path d="M345 526H390" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M728 526H773" fill="none" stroke="#8595A9" stroke-width="2" marker-end="url(#arrow)"/>
-<text x="36" y="627" font-size="14" fill="#536782" font-weight="400">Illustration: only relevant questions are asked; choices and actions depend on context and configuration.</text>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="790" viewBox="0 0 1280 790" role="img" aria-labelledby="decisions-title decisions-desc" xml:lang="en">
+  <title id="decisions-title">Turn judgments into choices</title>
+  <desc id="decisions-desc">Local code selects applicable questions for a relevant group message and may submit them together to OpenAI Decisions. The service returns fixed choices and scores. Local code applies the results or falls back under local rules and limits. Optional lookup evidence enters the current context for the chat model to compose a reply.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" markerWidth="8" markerHeight="8" refX="9" refY="5" orient="auto-start-reverse"><path d="M2 1L7 5L2 9" fill="none" stroke="#8794A6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="1" y="1" width="1278" height="788" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+    <text x="48" y="56" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing="1.7">THE REGULAR / DECISIONS</text>
+    <text x="48" y="110" font-size="32" fill="#213249" font-weight="700" text-anchor="start">Turn judgments into choices</text>
+    <text x="48" y="148" font-size="21" fill="#56677E" font-weight="400" text-anchor="start">Ask relevant questions together. Local code handles the results.</text>
+    <rect x="48" y="184" width="1184" height="76" rx="16" fill="white" stroke="#D7E0EB"/>
+    <g transform="translate(72 205)" fill="none" stroke="#56677E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h30v22H15l-8 8v-8H2z"/><path d="M9 10h16M9 16h11"/></g>
+    <text x="124" y="230" font-size="22" fill="#213249" font-weight="600" text-anchor="start">“Xiaowang, is that shop we discussed still open?”</text>
+    <text x="1208" y="230" font-size="18" fill="#56677E" font-weight="400" text-anchor="end">Message + recent chat</text>
+    <path d="M224 260v28" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="48" y="300" width="352" height="270" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <rect x="464" y="300" width="352" height="270" rx="18" fill="#EAF4EF" stroke="#BCD5CA"/>
+    <rect x="880" y="300" width="352" height="270" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
+    <text x="72" y="334" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing=".7">01 / LOCAL CODE</text>
+    <text x="488" y="334" font-size="16" fill="#397D70" font-weight="700" text-anchor="start" letter-spacing=".7">02 / CLOSED CHOICES</text>
+    <text x="904" y="334" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing=".7">03 / LOCAL CODE</text>
+    <text x="72" y="376" font-size="26" fill="#213249" font-weight="700" text-anchor="start">Select questions</text>
+    <text x="488" y="376" font-size="25" fill="#213249" font-weight="700" text-anchor="start">OpenAI Decisions</text>
+    <text x="904" y="376" font-size="25" fill="#213249" font-weight="700" text-anchor="start">Apply or fall back</text>
+    <circle cx="77" cy="410" r="3" fill="#B78749"/>
+    <text x="90" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Is this message for the bot?</text>
+    <circle cx="77" cy="444" r="3" fill="#B78749"/>
+    <text x="90" y="450" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Does it need group history?</text>
+    <circle cx="77" cy="478" r="3" fill="#B78749"/>
+    <text x="90" y="484" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Does it need current facts?</text>
+    <text x="72" y="544" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Relevant only · can batch</text>
+    <text x="488" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Select from fixed options</text>
+    <rect x="488" y="438" width="304" height="89" rx="12" fill="white" stroke="#C5DACE"/>
+    <text x="508" y="471" font-size="22" fill="#397D70" font-weight="700" text-anchor="start">Choices + scores</text>
+    <text x="508" y="503" font-size="17" fill="#56677E" font-weight="400" text-anchor="start">Not calibrated probabilities</text>
+    <text x="904" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Combine rules and limits</text>
+    <text x="904" y="450" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Reply, look up, or fall back</text>
+    <text x="904" y="544" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Code owns state and actions</text>
+    <path d="M406 435h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M822 435h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="432" y="412" font-size="17" fill="#56677E" font-weight="400" text-anchor="middle">Ask</text>
+    <text x="848" y="412" font-size="17" fill="#56677E" font-weight="400" text-anchor="middle">Return</text>
+    <path d="M1056 570v20H224v14" fill="none" stroke="#8794A6" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+    <rect x="48" y="610" width="1184" height="108" rx="18" fill="white" stroke="#D7E0EB"/>
+    <rect x="48" y="630" width="4" height="68" rx="2" fill="#397D70"/>
+    <text x="76" y="652" font-size="22" fill="#397D70" font-weight="700" text-anchor="start">Optional lookup</text>
+    <text x="76" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Code recalls or searches</text>
+    <text x="488" y="652" font-size="22" fill="#213249" font-weight="600" text-anchor="start">Evidence enters context</text>
+    <text x="488" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Reference for the current turn</text>
+    <text x="910" y="652" font-size="22" fill="#7962A7" font-weight="700" text-anchor="start">Chat model composes</text>
+    <text x="910" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">A reply informed by evidence</text>
+    <path d="M406 664h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M822 664h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="48" y="760" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Illustration: not every message needs Decisions, and not every turn needs a lookup.</text>
+  </g>
+</svg>

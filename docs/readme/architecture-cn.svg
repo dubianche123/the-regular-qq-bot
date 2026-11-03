@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1180" viewBox="0 0 1280 1180" role="img" aria-labelledby="architecture-title architecture-desc" xml:lang="zh-CN">
+<title id="architecture-title">四个阶段，一条清楚的主线</title><desc id="architecture-desc">接入、按需判断、生成和本地执行。相关群消息可请求 Decisions 闭集分诊，未点名消息由回复模型判断是否接话；本地代码守底线。读图和查询超过六秒先回一句。四层提示词交给回复模型，代码解析画图、语音、不接、提醒等标记，检查额度并投递。关系、称呼、记忆、账本、额度、冷却和定时任务由代码持有。</desc>
+<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+<rect x="1" y="1" width="1278" height="1178" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+<text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1.7">THE REGULAR / MESSAGE PATH</text>
+<text x="48" y="98" font-size="32" fill="#213249" font-weight="700">四个阶段，一条清楚的主线</text>
+<text x="48" y="137" font-size="21" fill="#56677E" font-weight="400">判断和查询按需使用，状态与执行始终由本地代码掌握。</text>
+<rect x="48" y="176" width="1184" height="130" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="72" y="200" width="44" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4"/>
+<text x="94" y="225" font-size="18" fill="#A7783E" font-weight="700" text-anchor="middle">01</text>
+<text x="72" y="271" font-size="24" fill="#213249" font-weight="700">接入</text>
+<rect x="270" y="200" width="300" height="82" rx="12" fill="#EAF0F6" stroke="#EAF0F6"/>
+<text x="292" y="233" font-size="23" fill="#213249" font-weight="650">QQ 群消息 / 私聊</text>
+<text x="292" y="263" font-size="19" fill="#56677E" font-weight="400">文字 · 图片 · 语音</text>
+<path d="M578 241h44" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="648" y="233" font-size="22" fill="#213249" font-weight="600">去重 · @ 翻成人话</text>
+<text x="648" y="265" font-size="20" fill="#56677E" font-weight="400">语音转写 · 原文归档</text>
+<path d="M640 312v32" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="352" width="1184" height="198" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="72" y="376" width="44" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4"/>
+<text x="94" y="401" font-size="18" fill="#A7783E" font-weight="700" text-anchor="middle">02</text>
+<text x="72" y="447" font-size="24" fill="#213249" font-weight="700">判断</text>
+<text x="72" y="478" font-size="17" fill="#56677E" font-weight="400">按场景分流</text>
+<rect x="270" y="376" width="420" height="150" rx="12" fill="#EAF4EF" stroke="#C9DFD5"/>
+<text x="292" y="408" font-size="19" fill="#397D70" font-weight="600">与机器人有关的群消息</text>
+<text x="292" y="446" font-size="23" fill="#213249" font-weight="650">Decisions 闭集分诊</text>
+<text x="292" y="480" font-size="19" fill="#56677E" font-weight="400">按需调用：一份请求，多道选择题</text>
+<text x="292" y="510" font-size="19" fill="#56677E" font-weight="400">代码采用判断结果，或按规则回退</text>
+<rect x="738" y="376" width="466" height="150" rx="12" fill="#F0EBF8" stroke="#DBD1EB"/>
+<text x="760" y="408" font-size="19" fill="#7962A7" font-weight="600">没叫它的消息</text>
+<text x="760" y="446" font-size="23" fill="#213249" font-weight="650">交给回复模型自己定</text>
+<text x="760" y="480" font-size="19" fill="#56677E" font-weight="400">接话或安静；代码守住前置底线</text>
+<text x="760" y="510" font-size="19" fill="#56677E" font-weight="400">收敛期 · 喊停 · 同一群排队</text>
+<path d="M640 556v32" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="596" width="1184" height="180" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="72" y="620" width="44" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4"/>
+<text x="94" y="645" font-size="18" fill="#A7783E" font-weight="700" text-anchor="middle">03</text>
+<text x="72" y="691" font-size="24" fill="#213249" font-weight="700">生成</text>
+<text x="72" y="722" font-size="17" fill="#56677E" font-weight="400">准备与调用</text>
+<rect x="270" y="620" width="252" height="132" rx="12" fill="#F0EBF8" stroke="#DBD1EB"/>
+<rect x="558" y="620" width="252" height="132" rx="12" fill="#F0EBF8" stroke="#DBD1EB"/>
+<rect x="846" y="620" width="358" height="132" rx="12" fill="#F0EBF8" stroke="#DBD1EB"/>
+<text x="290" y="654" font-size="21" fill="#213249" font-weight="650">慢活与等图</text>
+<text x="290" y="690" font-size="19" fill="#56677E" font-weight="400">6 秒等不到</text>
+<text x="290" y="719" font-size="19" fill="#56677E" font-weight="400">先回一句，再跟进</text>
+<path d="M528 686h22" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="578" y="654" font-size="21" fill="#213249" font-weight="650">四层提示词</text>
+<text x="578" y="690" font-size="18" fill="#56677E" font-weight="400">稳定头 · 每日记忆</text>
+<text x="578" y="719" font-size="18" fill="#56677E" font-weight="400">会话历史 · 本轮动态</text>
+<path d="M816 686h22" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="868" y="654" font-size="23" fill="#213249" font-weight="650">回复模型</text>
+<text x="868" y="690" font-size="20" fill="#56677E" font-weight="400">说什么、做不做，由它表达</text>
+<text x="868" y="719" font-size="19" fill="#56677E" font-weight="400">回复正文 ·〔不接〕· 动作意图</text>
+<path d="M640 782v32" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="822" width="1184" height="170" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="72" y="846" width="44" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4"/>
+<text x="94" y="871" font-size="18" fill="#A7783E" font-weight="700" text-anchor="middle">04</text>
+<text x="72" y="917" font-size="24" fill="#213249" font-weight="700">执行</text>
+<text x="72" y="948" font-size="17" fill="#56677E" font-weight="400">本地代码</text>
+<rect x="270" y="846" width="350" height="122" rx="12" fill="#FFF4E4" stroke="#E6D6BE"/>
+<text x="292" y="879" font-size="22" fill="#213249" font-weight="650">解析回复标记</text>
+<text x="292" y="913" font-size="19" fill="#56677E" font-weight="400">〔画〕 〔语音〕</text>
+<text x="292" y="943" font-size="19" fill="#56677E" font-weight="400">〔不接〕 〔提醒〕</text>
+<path d="M626 907h22" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="656" y="846" width="270" height="122" rx="12" fill="#FFF4E4" stroke="#E6D6BE"/>
+<text x="678" y="879" font-size="22" fill="#213249" font-weight="650">检查与投递</text>
+<text x="678" y="913" font-size="19" fill="#56677E" font-weight="400">额度 · 审核</text>
+<text x="678" y="943" font-size="19" fill="#56677E" font-weight="400">写回实际结果</text>
+<path d="M932 907h22" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="962" y="846" width="242" height="122" rx="12" fill="#FFF4E4" stroke="#E6D6BE"/>
+<text x="984" y="879" font-size="22" fill="#213249" font-weight="650">输出</text>
+<text x="984" y="913" font-size="20" fill="#56677E" font-weight="400">文字 · 图片</text>
+<text x="984" y="943" font-size="20" fill="#56677E" font-weight="400">语音 · 提醒</text>
+<rect x="48" y="1038" width="1184" height="104" rx="16" fill="#EAF0F6" stroke="#D5DFEB"/>
+<text x="72" y="1078" font-size="24" fill="#213249" font-weight="700">本地状态</text>
+<text x="72" y="1114" font-size="19" fill="#56677E" font-weight="400">由代码持有</text>
+<text x="348" y="1078" font-size="21" fill="#213249" font-weight="600">关系 · 称呼 · 记忆 · 账本 · 额度 · 冷却 · 定时任务</text>
+<text x="348" y="1114" font-size="20" fill="#56677E" font-weight="400">代码读取状态带进提示词、核对额度，再写回实际发生的结果。</text>
+</g></svg>

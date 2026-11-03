@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="710" viewBox="0 0 1280 710" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="en">
+<title id="iteration-title">Learn from what actually happened</title><desc id="iteration-desc">A live incident leads to reconstruction from logs and archives, scored replay with real data, prompt or code changes, 1326 offline regression tests, release and startup-log checks, then new live feedback.</desc>
+<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+<rect x="1" y="1" width="1278" height="708" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+<text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1.7">THE REGULAR / ITERATION</text>
+<text x="48" y="98" font-size="32" fill="#213249" font-weight="700">Learn from what actually happened</text>
+<text x="48" y="137" font-size="21" fill="#56677E" font-weight="400">Incident → evidence → replay → change → regression → release</text>
+<rect x="48" y="184" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="68" y="204" width="42" height="34" rx="9" fill="#FFF4E4" stroke="#FFF4E4"/>
+<text x="89" y="227" font-size="17" fill="#A7783E" font-weight="700" text-anchor="middle">01</text>
+<text x="70" y="275" font-size="24" fill="#213249" font-weight="700">Live incident</text>
+<text x="70" y="310" font-size="20" fill="#56677E" font-weight="400">What went wrong?</text>
+<rect x="464" y="184" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="484" y="204" width="42" height="34" rx="9" fill="#FFF4E4" stroke="#FFF4E4"/>
+<text x="505" y="227" font-size="17" fill="#A7783E" font-weight="700" text-anchor="middle">02</text>
+<text x="486" y="275" font-size="24" fill="#213249" font-weight="700">Reconstruct</text>
+<text x="486" y="310" font-size="20" fill="#56677E" font-weight="400">Logs · raw archive</text>
+<rect x="880" y="184" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="900" y="204" width="42" height="34" rx="9" fill="#EAF4EF" stroke="#EAF4EF"/>
+<text x="921" y="227" font-size="17" fill="#397D70" font-weight="700" text-anchor="middle">03</text>
+<text x="902" y="275" font-size="24" fill="#213249" font-weight="700">Replay real data</text>
+<text x="902" y="310" font-size="20" fill="#56677E" font-weight="400">Score several variants</text>
+<rect x="880" y="422" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="900" y="442" width="42" height="34" rx="9" fill="#F0EBF8" stroke="#F0EBF8"/>
+<text x="921" y="465" font-size="17" fill="#7962A7" font-weight="700" text-anchor="middle">04</text>
+<text x="902" y="513" font-size="24" fill="#213249" font-weight="700">Make the change</text>
+<text x="902" y="548" font-size="20" fill="#56677E" font-weight="400">Prompt or code</text>
+<rect x="464" y="422" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="484" y="442" width="42" height="34" rx="9" fill="#EAF4EF" stroke="#EAF4EF"/>
+<text x="505" y="465" font-size="17" fill="#397D70" font-weight="700" text-anchor="middle">05</text>
+<text x="486" y="513" font-size="24" fill="#213249" font-weight="700">Offline regression</text>
+<text x="486" y="548" font-size="20" fill="#56677E" font-weight="400">1326 tests</text>
+<rect x="48" y="422" width="352" height="156" rx="16" fill="white" stroke="#D7E0EB"/>
+<rect x="68" y="442" width="42" height="34" rx="9" fill="#FFF4E4" stroke="#FFF4E4"/>
+<text x="89" y="465" font-size="17" fill="#A7783E" font-weight="700" text-anchor="middle">06</text>
+<text x="70" y="513" font-size="24" fill="#213249" font-weight="700">Release &amp; check</text>
+<text x="70" y="548" font-size="20" fill="#56677E" font-weight="400">Check startup logs</text>
+<path d="M408 262h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M824 262h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M1056 348v66" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M872 500h-48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M456 500h-48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M224 586v45H24V262h16" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<text x="270" y="637" font-size="20" fill="#56677E" font-weight="500">New live feedback starts the next cycle</text>
+<text x="48" y="685" font-size="18" fill="#56677E" font-weight="400">Each conclusion keeps its source, replay and known limits in the docs.</text>
+</g></svg>
