@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="920" viewBox="0 0 1280 920" role="img" aria-labelledby="flow-title flow-desc" xml:lang="zh-CN">
-<title id="flow-title">一次接话，三种分工</title><desc id="flow-desc">主线为本地分流、对话模型、检查与送达。Decisions 闭集判断和资料查询是按需支路，资料进入本轮上下文。未点名时对话模型可以保持安静，也可写回复并提出画图、语音或提醒意图。代码检查并执行，记录实际结果；称呼、关系、记忆和额度始终由代码维护。部分消息也可由前置本地规则直接结束。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1210" viewBox="0 0 1280 1210" role="img" aria-labelledby="flow-title flow-desc" xml:lang="zh-CN">
+<title id="flow-title">线上接话，离线改进</title><desc id="flow-desc">代码选择路径并持有状态，判断与资料按需请求，回复模型可以接话或不接。慢任务先回应再跟进。原样输入、判断和实际送达进入离线体检、存例、代码或提示词修改及新旧回放，维护者批准后才发布。</desc>
 <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
-<rect x="1" y="1" width="1278" height="918" rx="24" fill="#F6F8FC" stroke="#D7E0EB" />
+<rect x="1" y="1" width="1278" height="1208" rx="24" fill="#F6F8FC" stroke="#D7E0EB" />
 <text x="48" y="43" font-size="14" font-weight="700" fill="#A7783E" letter-spacing="2">THE REGULAR / ARCHITECTURE</text>
-<text x="48" y="92" font-size="34" font-weight="700" fill="#213249" >一次接话，三种分工</text>
-<text x="48" y="131" font-size="21" font-weight="400" fill="#56677E" >代码掌握流程和状态，模型理解意图、组织表达。</text>
+<text x="48" y="92" font-size="34" font-weight="700" fill="#213249" >线上接话，离线改进</text>
+<text x="48" y="131" font-size="21" font-weight="400" fill="#56677E" >代码选择路径与执行动作，模型理解与表达，现场记录用于下一轮改进。</text>
 <rect x="48" y="164" width="1184" height="64" rx="16" fill="#213249" stroke="#213249" />
 <g transform="translate(70 183)" fill="none" stroke="#EDC792" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h22v16H12l-7 6v-6H3z M9 9h10 M9 14h7"/></g>
 <text x="113" y="205" font-size="24" font-weight="600" fill="#FFFFFF" >QQ 群消息</text>
@@ -29,7 +29,7 @@
 <text x="958" y="350" font-size="24" font-weight="650" fill="#213249" >最后执行与送达</text>
 <text x="72" y="407" font-size="21" font-weight="400" fill="#56677E" >本地规则选择本轮路径</text>
 <text x="72" y="441" font-size="21" font-weight="400" fill="#56677E" >准备上下文与本轮能力条件</text>
-<text x="72" y="475" font-size="21" font-weight="400" fill="#56677E" >按场景请求判断或查询</text>
+<text x="72" y="475" font-size="21" font-weight="400" fill="#56677E" >能本地处理时，0 次模型调用</text>
 <text x="488" y="407" font-size="21" font-weight="400" fill="#56677E" >未点名时，选择回应或安静</text>
 <text x="488" y="441" font-size="21" font-weight="400" fill="#56677E" >组织回复，写画面描述</text>
 <text x="488" y="475" font-size="21" font-weight="400" fill="#56677E" >或写出语音内容与提醒时间</text>
@@ -37,24 +37,24 @@
 <text x="904" y="441" font-size="21" font-weight="400" fill="#56677E" >执行媒体与提醒，发送结果</text>
 <text x="904" y="475" font-size="21" font-weight="400" fill="#56677E" >记下实际送达或失败的情况</text>
 <path d="M406 374h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<text x="432" y="353" font-size="16" font-weight="500" fill="#56677E" text-anchor="middle">上下文</text>
+<text x="432" y="353" font-size="16" font-weight="500" fill="#56677E" text-anchor="middle">需回复时</text>
 <path d="M822 374h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <text x="848" y="353" font-size="16" font-weight="500" fill="#56677E" text-anchor="middle">表达</text>
 <path d="M224 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6"/>
 <text x="48" y="552" font-size="14" font-weight="700" fill="#397D70" letter-spacing="1.3">按需支路</text>
 <rect x="48" y="568" width="352" height="158" rx="16" fill="#EAF4EF" stroke="#C9DFD5" />
 <text x="70" y="602" font-size="20" font-weight="650" fill="#397D70" >Decisions → 闭集选项</text>
-<text x="70" y="633" font-size="20" font-weight="500" fill="#397D70" >旧账 / 知识库 / 联网 → 资料</text>
+<text x="70" y="633" font-size="20" font-weight="500" fill="#397D70" >读图 / 资料查询 → 本轮证据</text>
 <path d="M70 650h308" fill="none" stroke="#C9DFD5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="70" y="680" font-size="20" font-weight="400" fill="#56677E" >判断用于分流；资料作为证据</text>
-<text x="70" y="708" font-size="20" font-weight="400" fill="#56677E" >进入本轮上下文，再交给模型。</text>
-<path d="M640 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="70" y="680" font-size="20" font-weight="400" fill="#56677E" >判断 / 资料就绪 → 本轮上下文</text>
+<text x="70" y="708" font-size="20" font-weight="400" fill="#56677E" >读图 / 查询未完 → 慢活路径</text>
+
 <rect x="464" y="568" width="352" height="158" rx="16" fill="#FFFFFF" stroke="#D7E0EB" />
-<g transform="translate(486 591)" fill="none" stroke="#7962A7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v9h4l6 6V4l-6 6H7z M22 10l7 9 M29 10l-7 9"/></g>
-<text x="532" y="614" font-size="22" font-weight="650" fill="#213249" >安静也是一种选择</text>
-<text x="488" y="653" font-size="20" font-weight="400" fill="#56677E" >模型选择〔不接〕→ 不发送</text>
-<text x="488" y="686" font-size="20" font-weight="400" fill="#56677E" >前置本地规则也可能结束本轮</text>
-<text x="488" y="710" font-size="18" font-weight="400" fill="#56677E" >（例如喊停、暂停窗口）。</text>
+<g transform="translate(486 591)" fill="none" stroke="#7962A7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="15" cy="15" r="12"/><path d="M15 7v9l6 4"/></g>
+<text x="532" y="614" font-size="22" font-weight="650" fill="#213249" >先回应，再跟进</text>
+<text x="488" y="653" font-size="20" font-weight="400" fill="#56677E" >等 6 秒未完，先回一句进度</text>
+<text x="488" y="686" font-size="20" font-weight="400" fill="#56677E" >把手落盘，完成后再生成回复</text>
+<text x="488" y="710" font-size="18" font-weight="400" fill="#56677E" >被动 / 主动 / 后续捎带</text>
 <path d="M1056 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <rect x="880" y="568" width="352" height="158" rx="16" fill="#FFFFFF" stroke="#D7E0EB" />
 <text x="904" y="609" font-size="22" font-weight="650" fill="#213249" >回到群聊</text>
@@ -67,10 +67,33 @@
 <rect x="1123" y="628" width="85" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4" />
 <text x="1165.5" y="652" font-size="18" font-weight="600" fill="#A7783E" text-anchor="middle">提醒</text>
 <text x="904" y="705" font-size="20" font-weight="400" fill="#56677E" >实际结果进入后续会话</text>
+<path d="M400 680h32V430h24" fill="none" stroke="#8290A3" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<path d="M400 708h56" fill="none" stroke="#8290A3" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<path d="M640 568v-46" fill="none" stroke="#8290A3" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="48" y="770" width="1184" height="94" rx="17" fill="#EAF0F6" stroke="#D5DFEB" />
 <g transform="translate(72 799)" fill="none" stroke="#213249" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c0-5 20-5 20 0s-20 5-20 0v15c0 5 20 5 20 0V7 M4 14c0 5 20 5 20 0"/></g>
-<text x="118" y="811" font-size="23" font-weight="650" fill="#213249" >本地状态</text>
-<text x="118" y="840" font-size="16" font-weight="400" fill="#56677E" >由代码读取与更新</text>
-<text x="410" y="824" font-size="22" font-weight="500" fill="#213249" >称呼与关系    ·    群记忆    ·    额度与定时任务</text>
-<text x="48" y="895" font-size="17" font-weight="400" fill="#56677E" >这是分工图：判断与查询按需使用，不同消息不一定走相同路径。</text>
+<text x="118" y="811" font-size="23" font-weight="650" fill="#213249" >本地状态与记录</text>
+<text x="118" y="840" font-size="16" font-weight="400" fill="#56677E" >代码维护状态，另存现场</text>
+<text x="410" y="824" font-size="22" font-weight="500" fill="#213249" >称呼与关系 · 群记忆 · 额度与任务 · 现场记录</text>
+<text x="48" y="895" font-size="17" font-weight="400" fill="#56677E" >离线改进 / 原样输入、判断与实际送达，成为下一次改动的证据</text>
+<path d="M224 864v12H24v144h16" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<rect x="48" y="940" width="352" height="180" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="70" y="970" font-size="14" fill="#397D70" font-weight="700">01 / 现场与用例</text>
+<text x="70" y="1008" font-size="22" fill="#397D70" font-weight="650">记录现场，存成回归</text>
+<text x="70" y="1048" font-size="18" fill="#56677E" font-weight="400">输入、判断与实际送达</text>
+<text x="70" y="1082" font-size="18" fill="#56677E" font-weight="400">体检候选 → 写明应该怎样</text>
+<rect x="464" y="940" width="352" height="180" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="486" y="970" font-size="14" fill="#7962A7" font-weight="700">02 / 改法与回放</text>
+<text x="486" y="1008" font-size="22" fill="#7962A7" font-weight="650">编码代理修改，命令验证</text>
+<text x="486" y="1048" font-size="18" fill="#56677E" font-weight="400">代码、提示词与判定策略</text>
+<text x="486" y="1082" font-size="18" fill="#56677E" font-weight="400">新旧回放 + 独立模型评审</text>
+<rect x="880" y="940" width="352" height="180" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="902" y="970" font-size="14" fill="#A7783E" font-weight="700">03 / 上线决定</text>
+<text x="902" y="1008" font-size="22" fill="#A7783E" font-weight="650">维护者决定上不上线</text>
+<text x="902" y="1048" font-size="18" fill="#56677E" font-weight="400">核对退步、噪声与覆盖范围</text>
+<text x="902" y="1082" font-size="18" fill="#56677E" font-weight="400">批准后发布，再看新的反馈</text>
+<path d="M408 1020h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M824 1020h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M1232 1020h24V196h-16" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<text x="48" y="1173" font-size="18" fill="#56677E" font-weight="400">同一份现场连接两条链：线上留下证据，离线验证改法，维护者批准后才改变线上机器人。</text>
 </g></svg>

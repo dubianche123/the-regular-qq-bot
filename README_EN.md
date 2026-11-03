@@ -8,193 +8,104 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1376-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
-[中文](README.md) · **English** · [Highlights](#design-highlights) · [Architecture](#architecture) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
+[中文](README.md) · **English** · [Message flow](#one-message-through-the-system) · [Decisions input](#what-decisions-actually-sees) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
 </div>
 
-The Regular is not an assistant waiting for commands. It listens to the group, answers when called, and decides for itself whether an unaddressed message is meant for it. It can take a joke or a correction, and it backs off when people find it annoying. It reads images, transcribes voice messages, looks things up, draws, speaks, and sets reminders. It keeps its own nicknames, relationships and memory for every group.
+The Regular listens to group chat, answers when addressed, decides whether an unaddressed line is for it, joins jokes and corrections, and backs off when unwelcome. Reading images, hearing voice, looking things up, drawing, speaking and reminders all end in an actual result confirmed by code.
 
-The hard part is not getting a model to produce a sentence. It is the chain of judgments and boundaries around it. Is this message for me? Should I speak right now? If the bot says "let me draw that", a picture has to follow. If it agrees to "remind everyone at 9", the reminder has to exist. Slow work cannot leave people waiting. Memory cannot be invented, and cost cannot run away. Every design below grew out of something that went wrong in a real group chat, and each one is backed by replay data or offline tests.
+The same system has two connected paths. **The live path handles the message in front of it; the improvement path turns earlier failures into evidence for the next change.** Recorded scenes connect them. A coding agent proposes changes, and a maintainer decides what ships.
 
-<table>
-<tr>
-<td align="center"><strong>1376</strong><br><sub>offline regression tests</sub></td>
-<td align="center"><strong>17 / 20</strong><br><sub>messages clearly aimed at it without its name, answered (3 / 20 under the old dice)</sub></td>
-<td align="center"><strong>75.6%</strong><br><sub>of reply input tokens served from the prefix cache (261 live calls in one day)</sub></td>
-<td align="center"><strong>0.71 s</strong><br><sub>median closed-set triage latency (908 calls)</sub></td>
-<td align="center"><strong>60 / 60</strong><br><sub>reminder replays with the right time and person</sub></td>
-</tr>
-</table>
+| Path | Flow |
+| --- | --- |
+| Live companion | message → local preparation → optional judgment and reply → execute, deliver, record the outcome |
+| Offline improvement | recorded scene → checkup and cases → code or prompt edit → old/new replay → human release decision |
 
-## Life in the group
+[Conversation examples](docs/readme/conversation.svg) · [Measurements and limits](#measurements-and-limits) · [Implementation and replay design](docs/self-iteration.md)
 
-<table>
-<tr>
-<td width="50%" valign="top"><strong>💬 Follow split messages</strong><br>Send "tell the story of Haihu" and then just its name. It reads the earlier message to understand the question.</td>
-<td width="50%" valign="top"><strong>🤝 Take a joke or correction</strong><br>It can pick up on a correction, play along with a joke, and step back when someone wants quiet.</td>
-</tr>
-<tr>
-<td width="50%" valign="top"><strong>🌿 Be part of the group</strong><br>When nobody calls it, it judges whether the message is for it; when told to be quiet, it goes quiet for a while.</td>
-<td width="50%" valign="top"><strong>🎨 More than text</strong><br>Ask naturally for a picture, a voice reply, a search, an old story or a timed reminder (one per member; a new one replaces the old).</td>
-</tr>
-</table>
+<a id="design-highlights"></a>
+<a id="architecture"></a>
+<a id="the-speaker-decides"></a>
 
-![Group chat illustration: split questions, corrections and an image request](docs/readme/conversation.svg)
+## One message through the system
 
-These are illustrative scenarios and design goals, not a guarantee for every reply. Results depend on the model, the conversation, and whether the configured services are available.
+Code deduplicates the event, resolves @ mentions and quotes, and prepares image or voice information. Local rules may end the turn without a model call; Decisions is called when a semantic judgment is needed. The reply model composes from context, code checks and executes, and the session records what was actually delivered.
 
-## Design highlights
+![One information flow connecting live replies, slow-work delivery and offline improvement](docs/readme/flow.svg)
 
-| | Problem | Approach | Evidence |
-| --- | --- | --- | --- |
-| 🗣️ | **Words and actions diverged.** When a judgment layer decided to draw, the reply model never knew. For a whole night it sent pictures while saying "I can't draw." | **The speaker decides.** The reply model writes `〔画〕` (draw), `〔语音〕` (voice), `〔不接〕` (pass) or `〔提醒 …〕` (remind) in its own reply. Code parses the tag, enforces quotas, executes, and writes the actual outcome back into the session. | [Image and voice](docs/media-replies.md) |
-| 🎯 | **Whether to answer unaddressed messages.** It used to roll dice (12% × closeness × time of day × rhythm…). Of 20 messages clearly aimed at it, it caught 3. | The reply model judges for itself, with the message re-framed so it no longer reads as "the user is talking to you". Code only keeps the floors: a stop request, a quiet window, one consult per group at a time. | 141 real messages replayed: **17 / 20**, [when to reply](docs/when-to-reply.md) |
-| ⚖️ | **Which judgments go to a model.** | Intent and routing go to OpenAI Decisions as closed-set triage. Each message gets one call carrying every relevant question, and each option is a code action. **Trust the ranking and confident answers, not the probability scale.** | [Judgment layer](docs/judgment-layer.md), [calibration study](docs/decision-calibration.md) |
-| ⏳ | **Slow work cannot leave people waiting.** | Lookups and image reading share one rhythm. Wait 6 s inline; if the work isn't done, send a short local line and follow up when it is. Job handles persist across restarts. When QQ's passive-reply window has closed, it posts proactively, and if that is refused, the message rides on the next group message. | [Slow work](docs/slow-work.md), [read images before replying](docs/image-before-reply.md) |
-| ⏰ | **A promise has to be recorded.** | The model writes `〔提醒 11-03 09:00〕`, and code parses that fixed format. One reminder per member; a new one replaces the old. The reply echoes the registered time so people can check it on the spot. | 10 phrasings × 6 samples: **60 / 60**, [reminders](docs/reminders.md) |
-| 🧠 | **Memory must not be invented.** | Code owns relationships, nicknames, ledgers and quotas; the model cannot write them. A personal quote is only kept if it is bound verbatim to the archive (speaker, message id and time all match). It is only brought in when the current topic matches. | [Personal memory](docs/personal-memory.md) |
-| 💰 | **Bounded cost.** | A four-layer prompt ordered by stability keeps the cached prefix long. SDK auto-retry is off; candidates are explicit, with attempt caps, a whole-turn timeout, and global and per-feature daily budgets. | **75.6%** of live input tokens cached, [providers](docs/providers.md) |
-| 🔬 | **Prompt changes by gut feeling break things.** | Every change is first replayed on the real archive in production format and scored. Conclusions and limits are written down. | [9 variants compared](docs/when-to-reply.md), [three providers, one job each](docs/model-roles.md) |
-| 🔁 | **Fixed bugs come back; replays only cover the latest incident.** | Every turn's inputs are recorded verbatim, an incident becomes a case with one command, and every change is compared old vs new on all cases, blind-judged and significance-tested. Coding agents work only through these commands; a person always ships. | [Self-iteration](#self-iteration-the-loop-as-commands) |
+There are three decisions here: **local code selects the path, Decisions returns a bounded semantic choice, and the reply model chooses what to say, whether to answer and whether to propose an action.** Platform @ mentions and names take different routes; for an unaddressed line, the reply model chooses to answer or return `〔不接〕` (pass). `〔画〕`, `〔语音〕` and `〔提醒 …〕` propose drawing, voice and reminders. Code checks context, services, format, sensitive words and quota before execution. The next turn sees the actual result.
 
-## Architecture
+The inputs, judgments and outcomes also become the evidence for [offline improvement](#self-iteration-the-loop-as-commands). For modules, see the [detailed architecture](docs/readme/architecture.svg), [image and voice](docs/media-replies.md), and [quotes and @](docs/quotes.md).
 
-![Message flow: judgment, conversation and local execution](docs/readme/flow.svg)
+<a id="when-to-speak"></a>
+<a id="closed-set-judgment-trust-the-ranking-not-the-scale"></a>
 
-Three layers, each doing what it is good at:
-- **Closed-set judgment** (Decisions) answers "what is this message for".
-- **The reply model** decides what to say and whether to act.
-- **Local code** owns state, keeps boundaries, and executes.
+## What Decisions actually sees
 
-In more detail:
+Decisions receives **scene `input` plus a list of `questions`**. The input carries the current message, context and the bot's previous reply. Every question has `instructions`, fixed choices and each choice's `description`. This is separate from the reply model's four-part context: stable head → memory → history → current turn.
 
-![Detailed architecture: intake, optional judgments, four-layer context, reply and local execution](docs/readme/architecture.svg)
+A synthetic scene: a member asks, "What is this thing?" Atuan replies, "I’m not sure what this is." Without a platform @, the member then says, "Atuan, I think it looks like a teacup." The name and continuation make the intended `addressed` result `answer`: acknowledge the contribution, without treating the teacup guess as fact.
 
-One "post an image, then ask about it" message, end to end:
+![Decisions request packaging: scene, questions and choices, then answers handled by code](docs/readme/decision.svg)
 
-![Image follow-up timeline: read first, acknowledge after six seconds, then answer](docs/readme/image-sequence.svg)
+The diagram shows decoded `input`; the HTTP request encodes it as a JSON string. The separate `questions` list carries questions like this one, with shortened wording for the synthetic example:
 
-## The speaker decides
+```json
+{
+  "type": "choice",
+  "name": "addressed",
+  "instructions": "Use the conversation to decide whether the bot is being invited to speak. (Shortened example.)",
+  "choices": [
+    {"value": "answer", "description": "A question, contribution or correction expects the bot to respond"},
+    {"value": "quip", "description": "A remark at or about the bot may welcome a short reaction"},
+    {"value": "let_it_pass", "description": "Members are talking to one another, or a reply would intrude or repeat"}
+  ]
+}
+```
 
-**Problem.** In the first version, a judgment layer decided to draw and code called the image API directly. The reply model never knew it could draw, whether it drew this turn, or what it drew. It sent pictures while saying "I can't generate images here", and a voice message literally said "I can't send voice". When it agreed to "remind everyone at 9 tomorrow", nothing in the code recorded it.
+Question wording, choice descriptions and examples within instructions live in [`regular/decision_prompts.py`](regular/decision_prompts.py), so they can be iterated. **Use triage replay for question edits; use message replay for changes to fields, trimming or context construction.** Relevant questions share one call. Actions use rankings and sufficiently supported choices; probability calibration is checked [separately](docs/decision-calibration.md). See the [Decisions input guide](docs/self-iteration.md#decisions-input) for full packaging and coverage.
 
-**Approach.** Capabilities go into the stable prompt head, which stays byte-identical while the switches don't change, so it doesn't break the cache. Actions are written by the reply model in its own reply. Code only checks the format, enforces quotas, executes, and writes the actual outcome back into the session. Next turn, the model sees what it really did.
+<a id="slow-work-answer-first-follow-up-when-done"></a>
 
-![Reply tags and local actions: pass, draw, voice, reminders and text](docs/readme/expression.svg)
+## How slow work returns to the group
 
-| Tag | The model decides | Code enforces |
+Image reading, lookups and deeper research may not finish during the first response window. Only tasks on the slow-work path use the waiting and follow-up flow below; code tracks task handles and later delivery.
+
+| When | What the group sees | What code keeps |
 | --- | --- | --- |
-| `〔画〕` draw | whether to draw, what, and the full brief for the image model | 5 images per member per day (more at higher closeness), 40 globally; it declines suggestive or political-innuendo requests itself and never claims it "can't draw" |
-| `〔语音〕` voice | whether to speak and in what tone | a daily limit; after synthesis the audio is transcribed back and compared with the text (two filler characters tolerated); a mismatch is sent as text |
-| `〔不接〕` pass | whether an unaddressed message is its business | floors: quiet window, stop requests, one consult per group at a time |
-| `〔提醒 …〕` remind | whether to remember, when, and what for whom | fixed-format parsing, within 30 days, sensitive-word check, one per member; the reply echoes the registered time |
+| Ready immediately | a reply using the result | result and confirmed delivery |
+| Longer than the live wait, currently 6 seconds | a short local progress line | an in-flight task or recoverable handle |
+| Background work completes | a follow-up; after the passive window, try a proactive post, then carry it with a later message | completion state, task association and delivery outcome |
 
-## When to speak
-
-Most of a group chat isn't addressed to the bot. The old approach rolled dice: 12% base, multiplied by closeness, time of day and mood, a rhythm prior, an "is interrupting OK" judgment, and receptiveness. Over two days of live traffic, there were 20 messages clearly aimed at it without its name: follow-ups to what it just said, pushback, a bare "?", errands for it. The dice caught 3.
-
-Now unaddressed messages go straight to the bot's own judgment. Code only states facts and keeps the floors:
-
-![Reply routing: mentions, name triage and the model’s choice when unaddressed](docs/readme/reply-routing.svg)
-
-Two details came out of the replays:
-- In chat format, a "user" turn always reads as addressed to the model; sent as-is, it answered 93%. So the line is re-framed as "something just said in the group, not addressed to you".
-- The context has to include the bot's own recent lines, marked as "you". Without them, it can't tell whether a message is a follow-up to it.
-
-| Variant (141 live messages replayed, luna low) | Aimed at it, answered | Not its business, skipped | Answered overall |
-| --- | --- | --- | --- |
-| Live dice + continuation judgment | 3 / 20 | 63 / 69 | 20% |
-| Only "your call", message sent as-is | 20 / 20 | 9 / 69 | 93% |
-| **Final: check your own recent lines + neutral frame + queue** | **17 / 20** | **47 / 69** | **51%** |
-
-The answer/pass labels in this replay were assigned by a separate judge model for version comparison.
-
-The costs are stated, not hidden. It talks more (20% → 51% of unaddressed messages). Each unaddressed message costs one reply call: the prefix is cached, and a pass is only a few tokens. In exchange, the per-message triage call is gone. Two knobs for making it quieter are in [docs/when-to-reply.md](docs/when-to-reply.md).
-
-## Closed-set judgment: trust the ranking, not the scale
-
-[OpenAI Decisions](docs/judgment-layer.md) sits between regex and a full model. It only "puts one human sentence into a closed set of options": billed on input, deterministic, sub-second. Three rules govern its use:
-
-- **One call per message.** A message that concerns the bot gets a single payload carrying every relevant question: is it talking to me, is it a stop request, is it feedback on my last line, does it need a lookup… A message that doesn't concern the bot, outside a feedback window, triggers no judgment call at all.
-- **Every option is an action.** When the judgment is unavailable or unsure, the fallback is chosen by what it costs to get that action wrong.
-- **Trust ranking and confident answers only.** Measured on the real archive: the ranking is usable, but the scale drifts with the base rate, so it can't be read as a probability ([calibration study](docs/decision-calibration.md)).
-
-![How Decisions is used: choose questions per scene, judge in a closed set, then let code act](docs/readme/decision.svg)
-
-## Slow work: answer first, follow up when done
-
-People in a group wait a few seconds at most. Web lookups, deep research and image reading can all take longer, so they share one protocol ([`slowwork.py`](slowwork.py): `start → handle`, `poll → status`) and one rhythm:
-
-![Slow-work timeline: six-second wait, persisted handles and delivery fallbacks](docs/readme/slow-work.svg)
-
-Reminders live in the same job table:
-
-![Reminder lifecycle: registration, due time, carry-along delivery, expiry and daily rescheduling](docs/readme/reminders.svg)
-
-## Four-layer prompt, ordered for the prefix cache
-
-Everything that changes with the speaker or the turn goes last. The earlier a layer, the more stable it is, so every member and every turn in a group shares a byte-identical prefix. Reordering requires [`tests/test_harness.py`](tests/test_harness.py) to pass.
-
-| Layer | Content | Changes |
-| --- | --- | --- |
-| 1. Stable head | persona, shared rules, output rules, capabilities (draw / voice / reminders) | per deployment |
-| 2. Daily memory | the group's catchphrases and expressions (counted during the daily digest, kept only if seen twice) | daily |
-| 3. Session | this member's exchanges with the bot, with "(system: …)" lines recording actual outcomes | appended per turn |
-| 4. Turn | group context (every line labeled by speaker), nickname and relationship, knowledge, search results, old stories, personal quotes, the current time, what is available this turn | every turn |
-
-![Input tokens across 261 live reply calls in one day: 75.6% served from prefix cache](docs/readme/cache.svg)
-
-## State and memory: code owns it, the model only talks
-
-| State | Written by | Used for |
-| --- | --- | --- |
-| Eight closeness tiers (blacklist → soulmate), capped daily | local code; the model only gives a direction (-1 / 0 / 1) | tone and how much context it sees (10 lines at the top tier, 2 at "distant") |
-| Nicknames | self-claimed or given by the owner, isolated per group | the model cannot change the main nickname; new nicknames are screened for homophones of political names |
-| Personal quotes | the model only proposes "who said what + topic words"; code binds them verbatim to the archive | used only for the current speaker, a matching topic, and while fresh; at most 2 |
-| Group digest and promise ledger | daily digest | promises made in the group are chased after a day, at most twice, never at night |
-| Quotas, cooldowns, scheduled jobs | local code, persisted in `state.json` | restored after restarts |
-| Raw archive | written on receipt | daily digest, "remember when…" lookups, verifying quote sources |
-| Interaction log | append-only | replays and calibration; never enters a prompt |
-
-It also has a daily rhythm and moods. Woken up after midnight, it is grumpy; when fed up, it is curt. These follow its state rather than being "modes" switched by commands.
-
-## Cost, privacy and reliability
-
-- **Bounded cost.** SDK auto-retry is off. Candidate models are explicit, with attempt caps and per-call and whole-turn timeouts. There is a global cap of 3000 calls a day, plus separate daily limits for search, deep research, image reading, drawing and voice. Reasoning tokens count against the output cap; when a reply is truncated, the fix is to raise the cap, not to retry blindly.
-- **Privacy.** OpenIDs and group IDs never enter the model context or group replies. Memory, archive and knowledge-base outputs pass a sensitive-word filter. Search results are wrapped as untrusted external material. The maintenance panel binds to `127.0.0.1` only. Messages concerning the bot are sent to the decision service, and unaddressed messages are sent to the reply model so it can decide whether to answer. Choose services that match your group's expectations; see the [judgment layer's privacy notes](docs/judgment-layer.md).
-- **Reliability.**
-  - A gateway watchdog reconnects after 90 s of silence.
-  - Failed sends go to a retry queue.
-  - Delivery falls back from passive reply to proactive post to riding along with the next message.
-  - Reads of the same image share one in-flight task, and descriptions are cached, so each image is read once.
+A reminder is another use of the same job table. The model writes a fixed time tag; code parses, checks and registers it. Each person has one reminder, and a new one replaces it. Job state and quotas persist across restarts. See [slow work](docs/slow-work.md), [image follow-ups](docs/image-before-reply.md), and [reminder formats](docs/reminders.md).
 
 <a id="how-it-evolves-incident--replay--change--regression"></a>
 
 ## Self-iteration: the loop as commands
 
-A fix used to start with a screenshot, a scene rebuilt from logs and a replay script thrown away afterwards. Now the scene is recorded automatically and incidents become lasting cases. Every later change can replay old and new versions to check whether an earlier problem has returned.
+The inputs, judgments and execution outcomes above are the scene for improvement. Checkup lists candidates offline, a separate judge model labels them, a coding agent edits code or prompts from that evidence, and fixed commands replay old and new versions and report the difference. **A model labels and blind-judges; a maintainer decides what ships.**
 
-![Self-iteration: record, check, diagnose, save cases, compare versions, and let a person decide what ships; code versions and deployment data are selected separately](docs/readme/iteration.svg)
+Wording is only one editable surface. The replay needed depends on where the change takes effect:
 
-**Commands execute, a coding agent makes changes, and a person decides what ships.** Fixed commands record, check, replay and report. Claude Code / CodeX follows [AGENTS.md](AGENTS.md) to find the cause, propose a general fix and a group-specific one, then edit code or prompts. This covers both wording and code issues such as an unrecognized @ or an unseen quote, using the same checks whoever makes the change.
-
-| Step | What it records or checks | Entry point |
+| Editable object | Main entry | Validation |
 | --- | --- | --- |
-| Record | Verbatim arguments, session history, media switches, raw model output and triage input, linked to actual delivery. Private chats are skipped; retained for 30 days by default | automatic, `data/turns/` |
-| Daily checkup | Seven kinds of candidate: missed calls, repeated questions, corrections, confused reactions, empty promises, catchphrases and sensitive-word hits. Findings include context and case commands; a separate judge model labels them, and the confirmation rate is tracked per signal | `checkup` |
-| Case library | A saved scene plus its intended behavior. Code checks tags, times and forbidden wording; a blind judge compares tone and relevance | `case add` |
-| Version comparison | Independent subprocesses replay the same scene n times per version, with code checks and shuffled pairwise judging by a separate judge model. Whole-day replay checks catchphrases and volume | `eval` |
-| Rule ledger | Each prompt rule has a source and linked cases. Remove one and replay to test whether it still helps; record stable-head length | `rules` / `eval --ablate` |
+| Persona, tone, output rules and action guidance | [`prompts.py`](prompts.py) | generation replay; ledger rules also support ablation |
+| Decisions instructions, choice descriptions and semantic examples | [`regular/decision_prompts.py`](regular/decision_prompts.py) | triage replay loads the tested version's questions and checks intended choices |
+| Triage thresholds and choice handling | [`regular/decisions.py`](regular/decisions.py) | triage checks usable choices; message replay covers later behavior such as quiet windows |
+| Input fields, context trimming, @ / quotes and routing | [`regular/decisions.py`](regular/decisions.py), [`bot.py`](bot.py), [`storage.py`](storage.py), [`quotes.py`](quotes.py) | message replay and directly related offline tests |
+| Memory, recall and evidence selection and injection | [`digest.py`](digest.py), [`recall.py`](recall.py), [`knowledge.py`](knowledge.py) | message replay plus focused tests; summary generation and actual tool execution need separate validation |
+| Models, reasoning parameters and task configuration | [`config.py`](config.py), [`providers.py`](providers.py) | comparisons with controlled configuration; replay and task probes have different coverage |
 
-Choose the replay depth for the issue. Testing generation alone does not test the message route:
+The three replay depths are **generation**, which reruns recorded arguments; **triage**, which reruns recorded input with the tested questions; and **message**, which feeds archived events to the real handler with fake sending. A message case with preset `triage_choices` freezes those choices; use cases without preset answers to test the full decision path. Message replay also replaces some evidence rendering and media execution, so it does not replace a real-service smoke check.
 
-| Depth | What runs again | What it tests |
-| --- | --- | --- |
-| Generation | Recorded arguments → `get_ai_reply` | prompt wording, reply style, model parameters |
-| Triage | Recorded input → the tested version's questions and choice handling | answer or pass, look up information, or back off |
-| Message | Archived messages → the real message handler, with fake sending | @, quotes, context construction and routing, including missed replies with no generation record |
+Built-in wording search currently has only `remind` and `banter` targets. The latter edits the chat model's reply-or-pass instruction; native Decisions questions are edited by a coding agent and then evaluated. Safety, privacy, state ownership and call budgets remain code-enforced constraints. See [editable surfaces and validation boundaries](docs/self-iteration.md#iteration-surfaces).
 
-**Select code and data separately.** Run these commands from the source checkout and set `DEPLOY` to your deployment directory, containing the live `.env` and `data/`. `--directory` selects data and configuration; `--base` / `--cand` select code. `.` means the current working tree; Git versions are checked out temporarily.
+The [eight Harness² components](docs/self-iteration.md#harness2-components), four prompt layers and three replay depths describe different things. In the bot runtime, system prompt, guardrails, memory and tool guidance have direct counterparts. Fixed local code takes on some script and plugin responsibilities, without exposing model-run shell scripts or a plugin loop. The bot contains no nested subagent or skill framework.
+
+<details>
+<summary>For maintainers: commands, statistical decisions and existing checks</summary>
+
+Run from the source checkout. `DEPLOY` contains the live `.env` and `data/`; `--base` / `--cand` select code versions.
 
 ```bash
 DEPLOY=/path/to/regular-bot
@@ -204,20 +115,41 @@ DEPLOY=/path/to/regular-bot
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
 ```
 
-Without a `turn_id`, use `case add --message <message_id> --id <case_id>` to save a message-level case from the archive. Triage cases need the correct expectation, such as `--choice addressed=answer`, so an earlier wrong choice does not become the standard. `checkup` lists candidates offline and makes no model calls; a separate judge model labels them afterwards, and the labels reflect that model's judgments. `eval` calls models and consumes quota, so it requires explicit `--allow-paid`.
+Without a `turn_id`, use `case add --message <message_id> --id <case_id>`. Triage cases need an intended choice such as `--choice addressed=answer`. `checkup` reads local logs without model calls; a separate judge model performs labeling. `eval` calls models, consumes quota and requires `--allow-paid`.
 
-**Reports separate regressions from variation.** A drop must pass a one-sided test to count as a regression; smaller drops are listed as within noise and can be retried with a larger `-n`. A single boundary violation counts as a regression. Rule ablation gives one of four verdicts: deletable, keep, unsure, or cannot tell. Missing cases or incomplete runs cannot support deletion.
+A drop must pass a one-sided test to count as a regression; smaller drops are listed as within noise and can be rerun with a larger `-n`. A single boundary violation counts as a regression. Ablation gives one of four verdicts: delete, keep, unsure, or cannot tell. Missing cases or incomplete runs cannot support deletion. Prompt or rule changes do not ship automatically.
 
-**A person always decides what ships.** A judge model and a limited case library provide evidence; automatic selection can overfit the judge. Narrow slots with code checks, such as reminder-time formatting or reply-or-pass wording, can search candidates automatically, then hand them to a person for approval.
+Small-scale checks so far: the same version against itself, 4 cases with 4 samples each, produced 0 regressions and 2 drops within noise. The first checkup of a real day led from a correction to 4 malformed bookkeeping tags leaking into replies, which were fixed. The full historical case set and longer live observation still need validation. The design borrows recorded-history replay from [Dream-RSI](https://arxiv.org/abs/2609.14858) and old/new comparison from [Harness²](https://arxiv.org/abs/2610.14224); see the [self-iteration design](docs/self-iteration.md) for the full process.
 
-Small-scale checks so far:
+</details>
 
-- **The same version against itself** (4 cases, 4 samples each): 0 regressions and 2 drops within noise. A single missed reply does not establish a regression.
-- **The first checkup on a real day** showed, under "corrected", a reply that had leaked a malformed bookkeeping tag into the group. Following it turned up 4 such replies that day; fixed.
+<a id="four-layer-prompt-ordered-for-the-prefix-cache"></a>
+<a id="state-and-memory-code-owns-it-the-model-only-talks"></a>
+<a id="cost-privacy-and-reliability"></a>
 
-Earlier evidence includes [9 prompt variants on 141 messages](docs/when-to-reply.md), [three image-reading failure causes and their regressions](docs/image-before-reply.md), [a three-provider comparison](docs/model-roles.md), and [hindsight labels from a judge model on 1082 requests](docs/request-sincerity.md). The full historical case set and longer live observation still need validation.
+## Boundaries for state, cost and privacy
 
-The design draws on recorded-history replay in [Dream-RSI](https://arxiv.org/abs/2609.14858) and old/new comparison in [Harness²](https://arxiv.org/abs/2610.14224). See the [self-iteration design](docs/self-iteration.md) for implementation, boundaries and measurements; the detailed design docs are in Chinese.
+| Boundary | How code enforces it |
+| --- | --- |
+| State has provenance | names, relationships, promises, mood, quotas and jobs stay code-owned; personal quotes bind verbatim to the archive and enter context only when relevant, at most two |
+| Context has an order | stable head → daily memory → session history → current turn; person- and turn-dependent content goes last |
+| Calls are bounded | SDK auto-retry is off; explicit candidates, attempt caps, request/turn timeouts and global/per-feature daily budgets |
+| Evidence has a boundary | explicit, single-step tools; search reads titles, snippets and links only; outside material is wrapped as untrusted evidence |
+| Privacy and output checks | no openids or group IDs in model context or replies; memory, archive and knowledge exports pass the sensitive-word check; the panel binds only to 127.0.0.1 |
+
+Conversation content needed for judgment and replies goes to the configured model services, so choose them with group members' expectations in mind. The bot is a resident companion with fixed capability interfaces; an external coding agent changes code and tooling through the maintenance process. See [personal evidence](docs/personal-memory.md), [judgment privacy](docs/judgment-layer.md), and [providers and cost](docs/providers.md).
+
+## Measurements and limits
+
+| Existing evidence | Scope |
+| --- | --- |
+| 1376 offline regression tests | code behavior, not a guarantee that every reply lands |
+| 17 / 20 unaddressed lines aimed at it answered, versus 3 / 20 before | [141 messages and 9 prompt variants](docs/when-to-reply.md); answer/pass labels came from a separate judge model |
+| 75.6% of reply input tokens hit the prefix cache | [261 calls from one live day](docs/providers.md), tied to that model and traffic |
+| 0.71-second median closed-set judgment | [908 judgments](docs/judgment-layer.md), not a service-latency guarantee |
+| Reminder times and targets correct in 60 / 60 replays | [10 phrasings, 6 samples each](docs/reminders.md), covering that batch |
+
+Earlier iterations also examined [three image-reading failures](docs/image-before-reply.md), [three-provider roles](docs/model-roles.md), and [hindsight labels from a judge model on 1082 requests](docs/request-sincerity.md). These measurements record gains and costs under specific conditions; sustained effects need later unseen examples and live observation.
 
 ## Quick start
 

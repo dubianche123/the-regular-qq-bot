@@ -1,57 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="790" viewBox="0 0 1280 790" role="img" aria-labelledby="decisions-title decisions-desc" xml:lang="en">
-  <title id="decisions-title">Turn judgments into choices</title>
-  <desc id="decisions-desc">Local code selects applicable questions for a relevant group message and may submit them together to OpenAI Decisions. The service returns fixed choices and scores. Local code applies the results or falls back under local rules and limits. Optional lookup evidence enters the current context for the chat model to compose a reply.</desc>
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" markerWidth="8" markerHeight="8" refX="9" refY="5" orient="auto-start-reverse"><path d="M2 1L7 5L2 9" fill="none" stroke="#8794A6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
-  </defs>
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
-    <rect x="1" y="1" width="1278" height="788" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
-    <text x="48" y="56" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing="1.7">THE REGULAR / DECISIONS</text>
-    <text x="48" y="110" font-size="32" fill="#213249" font-weight="700" text-anchor="start">Turn judgments into choices</text>
-    <text x="48" y="148" font-size="21" fill="#56677E" font-weight="400" text-anchor="start">Ask relevant questions together. Local code handles the results.</text>
-    <rect x="48" y="184" width="1184" height="76" rx="16" fill="white" stroke="#D7E0EB"/>
-    <g transform="translate(72 205)" fill="none" stroke="#56677E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h30v22H15l-8 8v-8H2z"/><path d="M9 10h16M9 16h11"/></g>
-    <text x="124" y="230" font-size="22" fill="#213249" font-weight="600" text-anchor="start">“Xiaowang, is that shop we discussed still open?”</text>
-    <text x="1208" y="230" font-size="18" fill="#56677E" font-weight="400" text-anchor="end">Message + recent chat</text>
-    <path d="M224 260v28" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <rect x="48" y="300" width="352" height="270" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
-    <rect x="464" y="300" width="352" height="270" rx="18" fill="#EAF4EF" stroke="#BCD5CA"/>
-    <rect x="880" y="300" width="352" height="270" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
-    <text x="72" y="334" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing=".7">01 / LOCAL CODE</text>
-    <text x="488" y="334" font-size="16" fill="#397D70" font-weight="700" text-anchor="start" letter-spacing=".7">02 / CLOSED CHOICES</text>
-    <text x="904" y="334" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing=".7">03 / LOCAL CODE</text>
-    <text x="72" y="376" font-size="26" fill="#213249" font-weight="700" text-anchor="start">Select questions</text>
-    <text x="488" y="376" font-size="25" fill="#213249" font-weight="700" text-anchor="start">OpenAI Decisions</text>
-    <text x="904" y="376" font-size="25" fill="#213249" font-weight="700" text-anchor="start">Apply or fall back</text>
-    <circle cx="77" cy="410" r="3" fill="#B78749"/>
-    <text x="90" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Is this message for the bot?</text>
-    <circle cx="77" cy="444" r="3" fill="#B78749"/>
-    <text x="90" y="450" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Does it need group history?</text>
-    <circle cx="77" cy="478" r="3" fill="#B78749"/>
-    <text x="90" y="484" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Does it need current facts?</text>
-    <text x="72" y="544" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Relevant only · can batch</text>
-    <text x="488" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Select from fixed options</text>
-    <rect x="488" y="438" width="304" height="89" rx="12" fill="white" stroke="#C5DACE"/>
-    <text x="508" y="471" font-size="22" fill="#397D70" font-weight="700" text-anchor="start">Choices + scores</text>
-    <text x="508" y="503" font-size="17" fill="#56677E" font-weight="400" text-anchor="start">Not calibrated probabilities</text>
-    <text x="904" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Combine rules and limits</text>
-    <text x="904" y="450" font-size="20" fill="#213249" font-weight="400" text-anchor="start">Reply, look up, or fall back</text>
-    <text x="904" y="544" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Code owns state and actions</text>
-    <path d="M406 435h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M822 435h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="432" y="412" font-size="17" fill="#56677E" font-weight="400" text-anchor="middle">Ask</text>
-    <text x="848" y="412" font-size="17" fill="#56677E" font-weight="400" text-anchor="middle">Return</text>
-    <path d="M1056 570v20H224v14" fill="none" stroke="#8794A6" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
-    <rect x="48" y="610" width="1184" height="108" rx="18" fill="white" stroke="#D7E0EB"/>
-    <rect x="48" y="630" width="4" height="68" rx="2" fill="#397D70"/>
-    <text x="76" y="652" font-size="22" fill="#397D70" font-weight="700" text-anchor="start">Optional lookup</text>
-    <text x="76" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Code recalls or searches</text>
-    <text x="488" y="652" font-size="22" fill="#213249" font-weight="600" text-anchor="start">Evidence enters context</text>
-    <text x="488" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Reference for the current turn</text>
-    <text x="910" y="652" font-size="22" fill="#7962A7" font-weight="700" text-anchor="start">Chat model composes</text>
-    <text x="910" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">A reply informed by evidence</text>
-    <path d="M406 664h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M822 664h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="48" y="760" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">Illustration: not every message needs Decisions, and not every turn needs a lookup.</text>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1280" viewBox="0 0 1280 1280" role="img" aria-labelledby="decisions-title decisions-desc" xml:lang="en">
+<title id="decisions-title">What Decisions actually receives</title><desc id="decisions-desc">A synthetic teacup exchange shows the main triage request. Local code selects and anonymizes the excerpt, then sends model, input and questions. Input is a JSON string; questions contain instructions and fixed choices with descriptions. Local code filters returned choices and scores and handles routing. Fields are conditional; the chat persona and daily memory are not attached automatically.</desc>
+<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;PingFang SC&apos;, &apos;Microsoft YaHei&apos;, sans-serif">
+<rect x="1" y="1" width="1278" height="1278" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+<text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700">THE REGULAR / DECISIONS INPUT</text>
+<text x="48" y="98" font-size="32" fill="#213249" font-weight="700">What Decisions actually receives</text>
+<text x="48" y="137" font-size="21" fill="#56677E" font-weight="400">One shared scene + relevant choice questions. Code handles the result.</text>
+<rect x="48" y="174" width="1184" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="72" y="204" font-size="15" fill="#A7783E" font-weight="700" data-box="48,174,1232,300">SYNTHETIC EXAMPLE · a follow-up, not an @ mention</text>
+<text x="72" y="237" font-size="21" fill="#213249" font-weight="500" data-box="48,174,1232,300">member_a: “What is this thing?”  →  Atuan: “I’m not sure what this is.”</text>
+<text x="72" y="273" font-size="22" fill="#213249" font-weight="650" data-box="48,174,1232,300">Now member_a says: “Atuan, I think it looks like a teacup.”</text>
+<path d="M640 308v24" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="342" width="1184" height="68" rx="14" fill="#FFF4E4" stroke="#E6D6BE"/>
+<text x="72" y="370" font-size="15" fill="#A7783E" font-weight="700" data-box="48,342,1232,410">01 / LOCAL CODE</text>
+<text x="278" y="370" font-size="19" fill="#213249" font-weight="500" data-box="48,342,1232,410">Select the excerpt, map identities to member_a, and choose the questions.</text>
+<text x="278" y="395" font-size="17" fill="#56677E" font-weight="400" data-box="48,342,1232,410">At most four earlier human lines; include a delivered bot reply only within its window.</text>
+<path d="M640 418v24" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="452" width="1184" height="466" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="48" y="452" width="1184" height="60" rx="18" fill="#213249" stroke="#213249"/>
+<text x="72" y="490" font-size="16" fill="#FFFFFF" font-weight="700">02 / ONE NATIVE REQUEST</text>
+<text x="566" y="490" font-size="23" fill="#FFFFFF" font-weight="600" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">{ model, input, questions }</text>
+<text x="72" y="541" font-size="18" fill="#56677E" font-weight="500">model: the configured judgment model</text>
+<text x="740" y="541" font-size="18" fill="#56677E" font-weight="400">Ask several relevant questions together.</text>
+<rect x="72" y="562" width="560" height="328" rx="14" fill="#EAF0F6" stroke="#D5DFEB"/>
+<rect x="656" y="562" width="552" height="328" rx="14" fill="#EAF4EF" stroke="#BCD5CA"/>
+<text x="94" y="596" font-size="23" fill="#5375A1" font-weight="700" data-box="72,562,632,890">input · the scene</text>
+<text x="94" y="623" font-size="16" fill="#56677E" font-weight="400" data-box="72,562,632,890">JSON string on the wire; decoded here for reading.</text>
+<text x="94" y="658" font-size="17" fill="#5375A1" font-weight="600" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">recent_human_messages</text>
+<text x="94" y="714" font-size="17" fill="#5375A1" font-weight="600" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">bot_reply</text>
+<text x="94" y="770" font-size="17" fill="#5375A1" font-weight="600" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">latest_message</text>
+<text x="112" y="683" font-size="18" fill="#213249" font-weight="400" data-box="72,562,632,890">member_a: “What is this thing?”</text>
+<text x="112" y="739" font-size="18" fill="#213249" font-weight="400" data-box="72,562,632,890">“I’m not sure what this is.” · last delivered reply</text>
+<text x="112" y="795" font-size="18" fill="#213249" font-weight="400" data-box="72,562,632,890">member_a: “Atuan, I think it’s a teacup.”</text>
+<text x="94" y="829" font-size="17" fill="#5375A1" font-weight="500" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">latest_is_directed: true</text>
+<text x="94" y="860" font-size="17" fill="#5375A1" font-weight="500" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">bot_is_addressed_as: [&quot;Atuan&quot;]</text>
+<text x="678" y="596" font-size="23" fill="#397D70" font-weight="700" data-box="656,562,1208,890">questions · how it is asked</text>
+<text x="678" y="623" font-size="16" fill="#56677E" font-weight="400" data-box="656,562,1208,890">One question shown; wording below is illustrative.</text>
+<text x="678" y="658" font-size="17" fill="#397D70" font-weight="600" data-box="656,562,1208,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">type: &quot;choice&quot; · name: &quot;addressed&quot;</text>
+<text x="678" y="693" font-size="17" fill="#397D70" font-weight="600" data-box="656,562,1208,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">instructions</text>
+<text x="696" y="720" font-size="18" fill="#213249" font-weight="400" data-box="656,562,1208,890">Does this continue the exchange and invite a reply?</text>
+<text x="678" y="756" font-size="17" fill="#397D70" font-weight="600" data-box="656,562,1208,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">choices: [{ value, description }, …]</text>
+<text x="696" y="786" font-size="18" fill="#213249" font-weight="400" data-box="656,562,1208,890">answer  → expects a response</text>
+<text x="696" y="818" font-size="18" fill="#213249" font-weight="400" data-box="656,562,1208,890">quip  → a short reaction is welcome</text>
+<text x="696" y="850" font-size="18" fill="#213249" font-weight="400" data-box="656,562,1208,890">let_it_pass  → no need to join in</text>
+<text x="72" y="909" font-size="16" fill="#56677E" font-weight="400">Optional: messages after the bot reply / a proposed nickname.</text>
+<path d="M640 926v24" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="960" width="560" height="158" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="672" y="960" width="560" height="158" rx="17" fill="#F0EBF8" stroke="#D6CCE7"/>
+<text x="72" y="991" font-size="16" fill="#397D70" font-weight="700" data-box="48,960,608,1118">03 / SERVICE RETURNS</text>
+<text x="72" y="1026" font-size="19" fill="#213249" font-weight="500" data-box="48,960,608,1118" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">answers: [{ name: &quot;addressed&quot;,</text>
+<text x="92" y="1056" font-size="19" fill="#397D70" font-weight="600" data-box="48,960,608,1118" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">choice: &quot;answer&quot;, … }]</text>
+<text x="72" y="1094" font-size="17" fill="#56677E" font-weight="400" data-box="48,960,608,1118">Plus confidence / probabilities; not a group reply.</text>
+<path d="M616 1040h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="696" y="991" font-size="16" fill="#7962A7" font-weight="700" data-box="672,960,1232,1118">04 / LOCAL CODE DECIDES</text>
+<text x="696" y="1026" font-size="21" fill="#213249" font-weight="650" data-box="672,960,1232,1118">usable_choices → accept or fall back</text>
+<text x="696" y="1059" font-size="18" fill="#56677E" font-weight="400" data-box="672,960,1232,1118">Check missing fields, margins and feedback state.</text>
+<text x="696" y="1092" font-size="18" fill="#56677E" font-weight="400" data-box="672,960,1232,1118">Then answer, quip, or let the reply model decide.</text>
+<text x="48" y="1161" font-size="16" fill="#A7783E" font-weight="700">WHAT CAN BE ITERATED</text>
+<rect x="48" y="1176" width="352" height="61" rx="12" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="66" y="1200" font-size="17" fill="#5375A1" font-weight="600" data-box="48,1176,400,1237" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">decisions.py</text>
+<text x="66" y="1224" font-size="16" fill="#56677E" font-weight="400" data-box="48,1176,400,1237">Input selection and shape</text>
+<rect x="464" y="1176" width="352" height="61" rx="12" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="482" y="1200" font-size="17" fill="#5375A1" font-weight="600" data-box="464,1176,816,1237" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">decision_prompts.py</text>
+<text x="482" y="1224" font-size="16" fill="#56677E" font-weight="400" data-box="464,1176,816,1237">Wording, examples, option descriptions</text>
+<rect x="880" y="1176" width="352" height="61" rx="12" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="898" y="1200" font-size="17" fill="#5375A1" font-weight="600" data-box="880,1176,1232,1237" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">usable_choices + callers</text>
+<text x="898" y="1224" font-size="16" fill="#56677E" font-weight="400" data-box="880,1176,1232,1237">Filtering, routing and state handling</text>
+<text x="48" y="1263" font-size="17" fill="#56677E" font-weight="400">No automatic chat persona or daily memory is attached; identity IDs are scrubbed locally.</text>
+</g></svg>

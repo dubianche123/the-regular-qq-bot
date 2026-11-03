@@ -1,57 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="790" viewBox="0 0 1280 790" role="img" aria-labelledby="decisions-title decisions-desc" xml:lang="zh-CN">
-  <title id="decisions-title">让判断成为选择题</title>
-  <desc id="decisions-desc">本地代码针对相关群消息选择适用问题，可合并提交到 OpenAI Decisions。接口返回固定选项与分数，本地代码结合规则和额度采用结果或回退；按需取得的资料进入本轮上下文，再由对话模型组织回复。</desc>
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" markerWidth="8" markerHeight="8" refX="9" refY="5" orient="auto-start-reverse"><path d="M2 1L7 5L2 9" fill="none" stroke="#8794A6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
-  </defs>
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
-    <rect x="1" y="1" width="1278" height="788" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
-    <text x="48" y="56" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing="1.7">THE REGULAR / DECISIONS</text>
-    <text x="48" y="110" font-size="32" fill="#213249" font-weight="700" text-anchor="start">让判断成为选择题</text>
-    <text x="48" y="148" font-size="21" fill="#56677E" font-weight="400" text-anchor="start">适用题目合并提交，选择结果交回本地代码。</text>
-    <rect x="48" y="184" width="1184" height="76" rx="16" fill="white" stroke="#D7E0EB"/>
-    <g transform="translate(72 205)" fill="none" stroke="#56677E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h30v22H15l-8 8v-8H2z"/><path d="M9 10h16M9 16h11"/></g>
-    <text x="124" y="230" font-size="22" fill="#213249" font-weight="600" text-anchor="start">「小王，上次那家店还开着吗？」</text>
-    <text x="1208" y="230" font-size="18" fill="#56677E" font-weight="400" text-anchor="end">消息 + 最近聊天</text>
-    <path d="M224 260v28" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <rect x="48" y="300" width="352" height="270" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
-    <rect x="464" y="300" width="352" height="270" rx="18" fill="#EAF4EF" stroke="#BCD5CA"/>
-    <rect x="880" y="300" width="352" height="270" rx="18" fill="#FFF4E4" stroke="#E6D6BE"/>
-    <text x="72" y="334" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing=".7">01 / 本地代码</text>
-    <text x="488" y="334" font-size="16" fill="#397D70" font-weight="700" text-anchor="start" letter-spacing=".7">02 / 闭集判断</text>
-    <text x="904" y="334" font-size="16" fill="#B78749" font-weight="700" text-anchor="start" letter-spacing=".7">03 / 本地代码</text>
-    <text x="72" y="376" font-size="26" fill="#213249" font-weight="700" text-anchor="start">按场景选题</text>
-    <text x="488" y="376" font-size="25" fill="#213249" font-weight="700" text-anchor="start">OpenAI Decisions</text>
-    <text x="904" y="376" font-size="25" fill="#213249" font-weight="700" text-anchor="start">采用结果，或回退</text>
-    <circle cx="77" cy="410" r="3" fill="#B78749"/>
-    <text x="90" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">是在跟我说话吗？</text>
-    <circle cx="77" cy="444" r="3" fill="#B78749"/>
-    <text x="90" y="450" font-size="20" fill="#213249" font-weight="400" text-anchor="start">需要翻群里的旧事吗？</text>
-    <circle cx="77" cy="478" r="3" fill="#B78749"/>
-    <text x="90" y="484" font-size="20" fill="#213249" font-weight="400" text-anchor="start">需要查最新信息吗？</text>
-    <text x="72" y="544" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">只问适用题目 · 可合并提交</text>
-    <text x="488" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">从固定选项中选择</text>
-    <rect x="488" y="438" width="304" height="89" rx="12" fill="white" stroke="#C5DACE"/>
-    <text x="508" y="471" font-size="22" fill="#397D70" font-weight="700" text-anchor="start">选择 + 分数</text>
-    <text x="508" y="503" font-size="17" fill="#56677E" font-weight="400" text-anchor="start">比较选项，不当作校准概率</text>
-    <text x="904" y="416" font-size="20" fill="#213249" font-weight="400" text-anchor="start">结合本地规则与额度</text>
-    <text x="904" y="450" font-size="20" fill="#213249" font-weight="400" text-anchor="start">决定接话、查找或回退</text>
-    <text x="904" y="544" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">状态与执行由代码掌握</text>
-    <path d="M406 435h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M822 435h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="432" y="412" font-size="17" fill="#56677E" font-weight="400" text-anchor="middle">提交</text>
-    <text x="848" y="412" font-size="17" fill="#56677E" font-weight="400" text-anchor="middle">返回</text>
-    <path d="M1056 570v20H224v14" fill="none" stroke="#8794A6" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
-    <rect x="48" y="610" width="1184" height="108" rx="18" fill="white" stroke="#D7E0EB"/>
-    <rect x="48" y="630" width="4" height="68" rx="2" fill="#397D70"/>
-    <text x="76" y="652" font-size="22" fill="#397D70" font-weight="700" text-anchor="start">按需查资料</text>
-    <text x="76" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">由代码执行查询或搜索</text>
-    <text x="488" y="652" font-size="22" fill="#213249" font-weight="600" text-anchor="start">资料进入本轮上下文</text>
-    <text x="488" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">只作为这一轮的参考证据</text>
-    <text x="910" y="652" font-size="22" fill="#7962A7" font-weight="700" text-anchor="start">对话模型组织回复</text>
-    <text x="910" y="687" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">结合资料，自然接话</text>
-    <path d="M406 664h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M822 664h46" fill="none" stroke="#8794A6" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="48" y="760" font-size="18" fill="#56677E" font-weight="400" text-anchor="start">示意流程：不是每条消息都要分诊，也不是每轮都需要查询。</text>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1280" viewBox="0 0 1280 1280" role="img" aria-labelledby="decisions-title decisions-desc" xml:lang="zh-CN">
+<title id="decisions-title">Decisions 究竟看到了什么</title><desc id="decisions-desc">合成茶杯场景展示主分诊请求：本地选择片段、匿名身份，发出 model、input、questions。input 是 JSON 字符串；questions 含题面和带说明的固定选项。返回选项和分数后，由代码过滤并决定路由。字段按条件携带，回复人设和每日记忆不自动附加。</desc>
+<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g font-family="-apple-system, BlinkMacSystemFont, &apos;Segoe UI&apos;, &apos;PingFang SC&apos;, &apos;Microsoft YaHei&apos;, sans-serif">
+<rect x="1" y="1" width="1278" height="1278" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+<text x="48" y="48" font-size="16" fill="#A7783E" font-weight="700">THE REGULAR / DECISIONS INPUT</text>
+<text x="48" y="98" font-size="32" fill="#213249" font-weight="700">Decisions 究竟看到了什么</text>
+<text x="48" y="137" font-size="21" fill="#56677E" font-weight="400">一份现场，配几道适用的选择题；选项回来后，再由代码处理。</text>
+<rect x="48" y="174" width="1184" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="72" y="204" font-size="15" fill="#A7783E" font-weight="700" data-box="48,174,1232,300">合成场景 · 没有平台 @，但叫了名字并接着它的话说</text>
+<text x="72" y="237" font-size="21" fill="#213249" font-weight="500" data-box="48,174,1232,300">member_a：「这个东西是什么？」 → 阿团：「我不确定这是什么。」</text>
+<text x="72" y="273" font-size="22" fill="#213249" font-weight="650" data-box="48,174,1232,300">当前 member_a：「阿团，我觉得像个茶杯。」</text>
+<path d="M640 308v24" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="342" width="1184" height="68" rx="14" fill="#FFF4E4" stroke="#E6D6BE"/>
+<text x="72" y="370" font-size="15" fill="#A7783E" font-weight="700" data-box="48,342,1232,410">01 / 本地代码</text>
+<text x="278" y="370" font-size="19" fill="#213249" font-weight="500" data-box="48,342,1232,410">取最近片段，把身份换成 member_a 这类代号，再选本轮要问的题。</text>
+<text x="278" y="395" font-size="17" fill="#56677E" font-weight="400" data-box="48,342,1232,410">最近人类发言最多 4 条；机器人回复只取窗口内、确认送达的那一句。</text>
+<path d="M640 418v24" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="452" width="1184" height="466" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="48" y="452" width="1184" height="60" rx="18" fill="#213249" stroke="#213249"/>
+<text x="72" y="490" font-size="16" fill="#FFFFFF" font-weight="700">02 / 一次原生请求</text>
+<text x="566" y="490" font-size="23" fill="#FFFFFF" font-weight="600" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">{ model, input, questions }</text>
+<text x="72" y="541" font-size="18" fill="#56677E" font-weight="500">model：本机配置的判断模型</text>
+<text x="740" y="541" font-size="18" fill="#56677E" font-weight="400">同一份现场，可以合并问几道题。</text>
+<rect x="72" y="562" width="560" height="328" rx="14" fill="#EAF0F6" stroke="#D5DFEB"/>
+<rect x="656" y="562" width="552" height="328" rx="14" fill="#EAF4EF" stroke="#BCD5CA"/>
+<text x="94" y="596" font-size="23" fill="#5375A1" font-weight="700" data-box="72,562,632,890">input · 它看到的现场</text>
+<text x="94" y="623" font-size="16" fill="#56677E" font-weight="400" data-box="72,562,632,890">HTTP 中是 JSON 字符串，这里展开便于阅读。</text>
+<text x="94" y="658" font-size="17" fill="#5375A1" font-weight="600" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">recent_human_messages</text>
+<text x="94" y="714" font-size="17" fill="#5375A1" font-weight="600" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">bot_reply</text>
+<text x="94" y="770" font-size="17" fill="#5375A1" font-weight="600" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">latest_message</text>
+<text x="112" y="683" font-size="18" fill="#213249" font-weight="400" data-box="72,562,632,890">member_a：「这个东西是什么？」</text>
+<text x="112" y="739" font-size="18" fill="#213249" font-weight="400" data-box="72,562,632,890">「我不确定这是什么。」 · 最近送达</text>
+<text x="112" y="795" font-size="18" fill="#213249" font-weight="400" data-box="72,562,632,890">member_a：「阿团，我觉得像个茶杯。」</text>
+<text x="94" y="829" font-size="17" fill="#5375A1" font-weight="500" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">latest_is_directed: true</text>
+<text x="94" y="860" font-size="17" fill="#5375A1" font-weight="500" data-box="72,562,632,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">bot_is_addressed_as: [&quot;阿团&quot;]</text>
+<text x="678" y="596" font-size="23" fill="#397D70" font-weight="700" data-box="656,562,1208,890">questions · 要它怎么判断</text>
+<text x="678" y="623" font-size="16" fill="#56677E" font-weight="400" data-box="656,562,1208,890">只展开一道题；下列为题面与描述的释义。</text>
+<text x="678" y="658" font-size="17" fill="#397D70" font-weight="600" data-box="656,562,1208,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">type: &quot;choice&quot; · name: &quot;addressed&quot;</text>
+<text x="678" y="693" font-size="17" fill="#397D70" font-weight="600" data-box="656,562,1208,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">instructions</text>
+<text x="696" y="720" font-size="18" fill="#213249" font-weight="400" data-box="656,562,1208,890">这句是在接它的话、等它回应，还是只是提到它？</text>
+<text x="678" y="756" font-size="17" fill="#397D70" font-weight="600" data-box="656,562,1208,890" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">choices: [{ value, description }, …]</text>
+<text x="696" y="786" font-size="18" fill="#213249" font-weight="400" data-box="656,562,1208,890">answer → 在接它的话，等它回应</text>
+<text x="696" y="818" font-size="18" fill="#213249" font-weight="400" data-box="656,562,1208,890">quip → 可短接一句，不必正经答</text>
+<text x="696" y="850" font-size="18" fill="#213249" font-weight="400" data-box="656,562,1208,890">let_it_pass → 别人聊天，无需介入</text>
+<text x="72" y="909" font-size="16" fill="#56677E" font-weight="400">按需另带：机器人回复后的补充（最多 4 条）、起名候选等。</text>
+<path d="M640 926v24" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="48" y="960" width="560" height="158" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<rect x="672" y="960" width="560" height="158" rx="17" fill="#F0EBF8" stroke="#D6CCE7"/>
+<text x="72" y="991" font-size="16" fill="#397D70" font-weight="700" data-box="48,960,608,1118">03 / 接口返回选项</text>
+<text x="72" y="1026" font-size="19" fill="#213249" font-weight="500" data-box="48,960,608,1118" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">answers: [{ name: &quot;addressed&quot;,</text>
+<text x="92" y="1056" font-size="19" fill="#397D70" font-weight="600" data-box="48,960,608,1118" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">choice: &quot;answer&quot;, … }]</text>
+<text x="72" y="1094" font-size="17" fill="#56677E" font-weight="400" data-box="48,960,608,1118">还带 confidence / probabilities，不直接写群回复。</text>
+<path d="M616 1040h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="696" y="991" font-size="16" fill="#7962A7" font-weight="700" data-box="672,960,1232,1118">04 / 代码筛选，再决定路由</text>
+<text x="696" y="1026" font-size="21" fill="#213249" font-weight="650" data-box="672,960,1232,1118">usable_choices → 采用选项，或弃答回退</text>
+<text x="696" y="1059" font-size="18" fill="#56677E" font-weight="400" data-box="672,960,1232,1118">检查缺项、选项边际与反馈是否过期。</text>
+<text x="696" y="1092" font-size="18" fill="#56677E" font-weight="400" data-box="672,960,1232,1118">再走正经答、短接或自主接话；状态由代码掌握。</text>
+<text x="48" y="1161" font-size="16" fill="#A7783E" font-weight="700">能迭代的三个位置</text>
+<rect x="48" y="1176" width="352" height="61" rx="12" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="66" y="1200" font-size="17" fill="#5375A1" font-weight="600" data-box="48,1176,400,1237" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">decisions.py</text>
+<text x="66" y="1224" font-size="16" fill="#56677E" font-weight="400" data-box="48,1176,400,1237">取哪些信息、怎样组装</text>
+<rect x="464" y="1176" width="352" height="61" rx="12" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="482" y="1200" font-size="17" fill="#5375A1" font-weight="600" data-box="464,1176,816,1237" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">decision_prompts.py</text>
+<text x="482" y="1224" font-size="16" fill="#56677E" font-weight="400" data-box="464,1176,816,1237">题面、边界例子、选项说明</text>
+<rect x="880" y="1176" width="352" height="61" rx="12" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="898" y="1200" font-size="17" fill="#5375A1" font-weight="600" data-box="880,1176,1232,1237" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">usable_choices + callers</text>
+<text x="898" y="1224" font-size="16" fill="#56677E" font-weight="400" data-box="880,1176,1232,1237">选项过滤、路由与状态处理</text>
+<text x="48" y="1263" font-size="17" fill="#56677E" font-weight="400">不自动附上回复模型的人设或每日记忆；原始身份 ID 在本地脱敏。</text>
+</g></svg>

@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="920" viewBox="0 0 1280 920" role="img" aria-labelledby="flow-title flow-desc" xml:lang="en">
-<title id="flow-title">From a group message to a response</title><desc id="flow-desc">Local routing prepares the turn and can request closed-choice judgments or evidence. The chat model can stay quiet or compose text, media intent or a reminder. Local code checks and delivers, records the actual outcome, and owns names, relationships, memory and quotas. Judgments and lookups are optional; some local rules can end the turn before a model call.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1210" viewBox="0 0 1280 1210" role="img" aria-labelledby="flow-title flow-desc" xml:lang="en">
+<title id="flow-title">Live replies and offline improvement</title><desc id="flow-desc">Local code selects the route and owns state. Judgments and evidence are optional; the reply model may answer or stay quiet. Slow work can acknowledge first and follow up later. Original inputs, judgments and actual outcomes feed offline checkup, cases, code or prompt edits and old/new replay. A maintainer approves release.</desc>
 <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
-<rect x="1" y="1" width="1278" height="918" rx="24" fill="#F6F8FC" stroke="#D7E0EB" />
+<rect x="1" y="1" width="1278" height="1208" rx="24" fill="#F6F8FC" stroke="#D7E0EB" />
 <text x="48" y="43" font-size="14" font-weight="700" fill="#A7783E" letter-spacing="2">THE REGULAR / ARCHITECTURE</text>
-<text x="48" y="92" font-size="34" font-weight="700" fill="#213249" >From a group message to a response</text>
-<text x="48" y="131" font-size="21" font-weight="400" fill="#56677E" >Code owns the flow and state. Models interpret and compose.</text>
+<text x="48" y="92" font-size="34" font-weight="700" fill="#213249" >Live replies and offline improvement</text>
+<text x="48" y="131" font-size="21" font-weight="400" fill="#56677E" >Code routes and executes; recorded scenes support the next improvement.</text>
 <rect x="48" y="164" width="1184" height="64" rx="16" fill="#213249" stroke="#213249" />
 <g transform="translate(70 183)" fill="none" stroke="#EDC792" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h22v16H12l-7 6v-6H3z M9 9h10 M9 14h7"/></g>
 <text x="113" y="205" font-size="24" font-weight="600" fill="#FFFFFF" >QQ group message</text>
@@ -29,7 +29,7 @@
 <text x="958" y="350" font-size="24" font-weight="650" fill="#213249" >Check, then deliver</text>
 <text x="72" y="407" font-size="18" font-weight="400" fill="#56677E" >Local rules select a path</text>
 <text x="72" y="441" font-size="18" font-weight="400" fill="#56677E" >Build context &amp; media conditions</text>
-<text x="72" y="475" font-size="18" font-weight="400" fill="#56677E" >Use judgments or lookup if needed</text>
+<text x="72" y="475" font-size="18" font-weight="400" fill="#56677E" >Local handling can use 0 model calls</text>
 <text x="488" y="407" font-size="18" font-weight="400" fill="#56677E" >Unaddressed: reply or stay quiet</text>
 <text x="488" y="441" font-size="18" font-weight="400" fill="#56677E" >Compose text and media intent</text>
 <text x="488" y="475" font-size="18" font-weight="400" fill="#56677E" >or a reminder with its time</text>
@@ -37,24 +37,24 @@
 <text x="904" y="441" font-size="18" font-weight="400" fill="#56677E" >Run media / reminder actions</text>
 <text x="904" y="475" font-size="18" font-weight="400" fill="#56677E" >Record what actually happened</text>
 <path d="M406 374h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<text x="432" y="353" font-size="14" font-weight="500" fill="#56677E" text-anchor="middle">Context</text>
+<text x="432" y="353" font-size="14" font-weight="500" fill="#56677E" text-anchor="middle">If replying</text>
 <path d="M822 374h50" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <text x="848" y="353" font-size="14" font-weight="500" fill="#56677E" text-anchor="middle">Intent</text>
 <path d="M224 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6"/>
 <text x="48" y="552" font-size="14" font-weight="700" fill="#397D70" letter-spacing="1.3">ON DEMAND</text>
 <rect x="48" y="568" width="352" height="158" rx="16" fill="#EAF4EF" stroke="#C9DFD5" />
 <text x="70" y="602" font-size="20" font-weight="650" fill="#397D70" >Decisions → fixed choices</text>
-<text x="70" y="633" font-size="18" font-weight="500" fill="#397D70" >Local recall / knowledge / search</text>
+<text x="70" y="633" font-size="18" font-weight="500" fill="#397D70" >Images / evidence lookup → context</text>
 <path d="M70 650h308" fill="none" stroke="#C9DFD5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="70" y="680" font-size="18" font-weight="400" fill="#56677E" >Choices guide routing; evidence</text>
-<text x="70" y="708" font-size="18" font-weight="400" fill="#56677E" >enters this turn’s context.</text>
-<path d="M640 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="70" y="680" font-size="17" font-weight="400" fill="#56677E" >Choices / evidence → turn context</text>
+<text x="70" y="708" font-size="17" font-weight="400" fill="#56677E" >Image / lookup still pending → wait</text>
+
 <rect x="464" y="568" width="352" height="158" rx="16" fill="#FFFFFF" stroke="#D7E0EB" />
-<g transform="translate(486 591)" fill="none" stroke="#7962A7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v9h4l6 6V4l-6 6H7z M22 10l7 9 M29 10l-7 9"/></g>
-<text x="532" y="614" font-size="22" font-weight="650" fill="#213249" >Staying quiet is a choice</text>
-<text x="488" y="653" font-size="18" font-weight="400" fill="#56677E" >Model returns 〔不接〕 → no send</text>
-<text x="488" y="686" font-size="18" font-weight="400" fill="#56677E" >Local rules can also end a turn</text>
-<text x="488" y="710" font-size="18" font-weight="400" fill="#56677E" >before any conversation call.</text>
+<g transform="translate(486 591)" fill="none" stroke="#7962A7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="15" cy="15" r="12"/><path d="M15 7v9l6 4"/></g>
+<text x="532" y="614" font-size="22" font-weight="650" fill="#213249" >Wait, then follow up</text>
+<text x="488" y="653" font-size="18" font-weight="400" fill="#56677E" >After 6 seconds, send progress</text>
+<text x="488" y="686" font-size="18" font-weight="400" fill="#56677E" >Keep handles; finish in background</text>
+<text x="488" y="710" font-size="18" font-weight="400" fill="#56677E" >Passive / proactive / carry-along</text>
 <path d="M1056 514v42" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <rect x="880" y="568" width="352" height="158" rx="16" fill="#FFFFFF" stroke="#D7E0EB" />
 <text x="904" y="609" font-size="22" font-weight="650" fill="#213249" >Back to the conversation</text>
@@ -67,10 +67,33 @@
 <rect x="1123" y="628" width="85" height="36" rx="10" fill="#FFF4E4" stroke="#FFF4E4" />
 <text x="1165.5" y="652" font-size="18" font-weight="600" fill="#A7783E" text-anchor="middle">Remind</text>
 <text x="904" y="705" font-size="17" font-weight="400" fill="#56677E" >Actual outcome informs the next turn</text>
+<path d="M400 680h32V430h24" fill="none" stroke="#8290A3" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<path d="M400 708h56" fill="none" stroke="#8290A3" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<path d="M640 568v-46" fill="none" stroke="#8290A3" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="48" y="770" width="1184" height="94" rx="17" fill="#EAF0F6" stroke="#D5DFEB" />
 <g transform="translate(72 799)" fill="none" stroke="#213249" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c0-5 20-5 20 0s-20 5-20 0v15c0 5 20 5 20 0V7 M4 14c0 5 20 5 20 0"/></g>
-<text x="118" y="811" font-size="23" font-weight="650" fill="#213249" >Local state</text>
-<text x="118" y="840" font-size="16" font-weight="400" fill="#56677E" >Read &amp; updated by code</text>
-<text x="410" y="824" font-size="22" font-weight="500" fill="#213249" >Names &amp; relationships   ·   Memory   ·   Quotas &amp; jobs</text>
-<text x="48" y="895" font-size="17" font-weight="400" fill="#56677E" >Roles shown here; individual messages can take different paths.</text>
+<text x="118" y="811" font-size="23" font-weight="650" fill="#213249" >State &amp; records</text>
+<text x="118" y="840" font-size="14" font-weight="400" fill="#56677E" >Code owns state; logs keep evidence</text>
+<text x="410" y="824" font-size="20" font-weight="500" fill="#213249" >Relationships · Memory · Quotas &amp; jobs · Turn records</text>
+<text x="48" y="895" font-size="17" font-weight="400" fill="#56677E" >OFFLINE / Recorded inputs, judgments and outcomes become evidence</text>
+<path d="M224 864v12H24v144h16" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<rect x="48" y="940" width="352" height="180" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="70" y="970" font-size="14" fill="#397D70" font-weight="700">01 / EVIDENCE</text>
+<text x="70" y="1008" font-size="22" fill="#397D70" font-weight="650">Evidence becomes cases</text>
+<text x="70" y="1048" font-size="18" fill="#56677E" font-weight="400">Inputs, judgments, actual results</text>
+<text x="70" y="1082" font-size="18" fill="#56677E" font-weight="400">Checkup → regression checks</text>
+<rect x="464" y="940" width="352" height="180" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="486" y="970" font-size="14" fill="#7962A7" font-weight="700">02 / IMPROVEMENT</text>
+<text x="486" y="1008" font-size="22" fill="#7962A7" font-weight="650">Propose, replay, compare</text>
+<text x="486" y="1048" font-size="18" fill="#56677E" font-weight="400">A coding agent edits code or prompts</text>
+<text x="486" y="1082" font-size="18" fill="#56677E" font-weight="400">Old/new replay + a separate judge</text>
+<rect x="880" y="940" width="352" height="180" rx="18" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="902" y="970" font-size="14" fill="#A7783E" font-weight="700">03 / RELEASE</text>
+<text x="902" y="1008" font-size="22" fill="#A7783E" font-weight="650">Maintainer decides to ship</text>
+<text x="902" y="1048" font-size="18" fill="#56677E" font-weight="400">Read regressions, noise and limits</text>
+<text x="902" y="1082" font-size="18" fill="#56677E" font-weight="400">Publish only after approval</text>
+<path d="M408 1020h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M824 1020h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M1232 1020h24V196h-16" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="5 6"/>
+<text x="48" y="1173" font-size="18" fill="#56677E" font-weight="400">Recorded scenes connect both paths. A human-approved release changes the live bot.</text>
 </g></svg>

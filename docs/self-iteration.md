@@ -85,6 +85,177 @@ flowchart LR
 跟归档一个待遇，不进代码库；代码库里只放命令本身和种子用例：事故那几条（岔开话题、引用）
 用的是 `docs/` 里已经公开的原句，其余全是合成的。
 
+<a id="iteration-surfaces"></a>
+
+### 可迭代对象与验证边界
+
+迭代对象包括提示词、判断题、信息输入结构和本地处理策略。编码代理修改候选代码，
+评测命令重跑同一份现场；机器人本身不会在群里修改源码、账本或自己的权限。
+
+| 对象 | 可以改什么 / 在哪里 | 怎样验证 |
+| --- | --- | --- |
+| 回复提示词 | [prompts.py](../prompts.py)：人设措辞、接话说明、输出格式、提醒与媒体标记说明；带 `# rule:` 的段落可逐条消融 | 生成层回放；使用同一份背景与记忆比较候选回复 |
+| Decisions 判断题 | [regular/decision_prompts.py](../regular/decision_prompts.py)：`instructions`、题面中的语义例子、`choices[].description` | 分诊层重新加载候选版本的题目；`name` 和 `value` 是代码协议，改名须同步调用方和用例 |
+| Decisions 的信息输入 | [regular/decisions.py](../regular/decisions.py) 的 `FeedbackTracker.assess`：取哪些上下文、怎样截断和匿名、何时问哪道题 | 消息层重新执行输入构造；分诊层沿用当时记录的 payload |
+| 判断结果怎样成为动作 | `usable_choices` 的解析与弃答；反馈短修、收敛窗口、过期处理及 [bot.py](../bot.py) 路由 | 选项解析可用分诊层；时间窗口、状态变化和最终路由需消息层及定向测试 |
+| 上下文、记忆与资料 | [storage.py](../storage.py)、[digest.py](../digest.py)、[recall.py](../recall.py)、[knowledge.py](../knowledge.py)：裁剪、证据选择、注入时机与格式 | 生成层可比较已记录材料的使用；材料如何选出、摘要如何生成，还需模块测试 |
+| 本地执行与异步 | [expression.py](../expression.py)、[reminders.py](../reminders.py)、[slowwork.py](../slowwork.py)、[delivery.py](../delivery.py)：解析、时间计算、任务状态与发送降级 | 消息层及模块测试；真实查询、画图、语音和平台投递另做 smoke |
+| 模型与调用参数 | [providers.py](../providers.py)、[config.py](../config.py)：候选模型、推理强度、token 上限、超时与成本边界 | 同条件回放加供应商测试；两版默认共用部署配置，不等于比较了两套配置 |
+| 改进与评测流程 | [regular/eval.py](../regular/eval.py)、[regular/cases.py](../regular/cases.py)、[AGENTS.md](../AGENTS.md)：判据、评审题面、统计与经验复用 | 固定验证集及独立检查；修改评审后，不能只凭它自己的分数证明它更好 |
+
+“能改”和“已有自动搜索”分开看。现有 `--search-wording` 只支持 `remind`（提醒格式说明）
+和 `banter`（**聊天生成层**的接话说明）。Decisions 题面可以由编码代理修改后跑分诊评测，
+但还没有内置自动措辞搜索目标。隐私、单步工具、成本与人工上线等硬边界不能被自动搜索放宽。
+
+现有回放还有这些边界：
+
+- 消息用例若预置 `triage_choices`，回放会固定采用这些选项；比较题面或完整分诊路由须使用未预置答案的用例。
+- 消息层替换知识库渲染、画图和语音等调用；消息处理通过，不等于真实外部能力已验收。
+- 主分诊 `assess` 已记录 payload；旧话回扣 `consider_callback` 尚未同样记录原始输入，动态记忆判断题也未纳入通用题目重建池。不能把“分诊可回放”扩大成所有 Decisions 调用都完整覆盖。
+
+<a id="decisions-input"></a>
+
+### Decisions 实际看到什么
+
+Decisions 收到的是**有界的事实输入，加上本轮适用的一组选择题**，不是回复模型的四层提示词。
+`providers.call_decision` 发原生请求，顶层只有 `model`、`input`、`questions`；
+`input` 在 HTTP 请求中是序列化后的 JSON 字符串。
+
+![Decisions 的输入来源、请求封装、题面与本地处理](readme/decision-cn.svg)
+
+下面全部是合成场景，没有使用真实群聊数据：
+
+> 成员甲：这个东西是什么？<br>
+> 机器人阿团：我不确定这是什么。<br>
+> 成员甲：阿团，我觉得像个茶杯。
+
+本地代码将发言人转换为 `member_a` 之类的代号。`input` 解码后可以是：
+
+```json
+{
+  "recent_human_messages": [
+    {"speaker": "member_a", "text": "这个东西是什么？"}
+  ],
+  "bot_reply": {
+    "route": "invited_reply",
+    "reply_to": "member_a",
+    "text": "我不确定这是什么。"
+  },
+  "latest_message": {
+    "speaker": "member_a",
+    "text": "阿团，我觉得像个茶杯。"
+  },
+  "latest_is_directed": true,
+  "bot_is_addressed_as": ["阿团"]
+}
+```
+
+| 字段 | 来源与作用 |
+| --- | --- |
+| `recent_human_messages` | 有回复观察窗口时取登记上一条回复时的人类背景，否则取当前背景；最多最近四条，逐条裁剪、脱敏 |
+| `bot_reply` | 窗口内最近一条确认送达的模型回复，附回复路径和对象代号；没有时不带 |
+| `messages_after_bot_reply` | 机器人回复之后、当前句之前的补充，最多四条；有合适材料才带，避免把补充错放到回复之前 |
+| `latest_message` | 当前说话人的代号和本轮文本 |
+| `latest_is_directed` | 本地检测到的平台 @ 或机器人名字；是措辞事实，不直接等于“应该答” |
+| `bot_is_addressed_as` | 可用的机器人叫法，帮助判断文本中的名字指谁；取不到时不带 |
+| `nickname_candidate` | 本地起名解析提出的候选，通过本地过滤后才带 |
+
+群号、openid 和原始消息 ID 留在本地关联，不进入这份输入。
+整份群归档、每日记忆和回复人设也不会自动附到这次判断中。
+可选字段只在条件成立时出现；一题都用不上就不发请求。
+
+题目来自 [regular/decision_prompts.py](../regular/decision_prompts.py)。每题包含
+`type`、`name`、`instructions` 和 `choices`。下面只展开 `addressed` 一题：英文题面为节选，
+选项描述用中文解释含义，完整线上措辞见源码。
+
+```json
+{
+  "type": "choice",
+  "name": "addressed",
+  "instructions": "The latest Chinese group-chat message mentions or addresses the bot by name. First use bot_reply and recent_human_messages if present to determine whether the latest message continues that exchange.",
+  "choices": [
+    {"value": "answer", "description": "正在与机器人交谈，等待它回答，包括对上句的相关补充或纠正"},
+    {"value": "quip", "description": "可以短接一句的调侃或评价，但不等它回答"},
+    {"value": "let_it_pass", "description": "只是提到机器人，或回复会打扰、重复、争夺注意力"}
+  ]
+}
+```
+
+请求封装相当于：
+
+```python
+body = {
+    "model": settings["model"],
+    "input": json.dumps(payload, ensure_ascii=False),
+    "questions": decision_prompts.addressed_questions(),
+}
+```
+
+示例只演示一道题；真实 `assess` 会按条件合并反馈目标、下一步、是否被叫到、请求性质、
+起名、旧账、查询等适用题目，最多一次请求，并非每轮都把全部题目发一遍。
+上面的合成场景可要求 `addressed=answer`：陈述句也是在补充刚才的对话，应该接住。
+这并没有认定“茶杯”就是事实。
+
+下面是合成的单题返回；接口没有直接写群回复：
+
+```json
+{
+  "answers": [{
+    "name": "addressed",
+    "type": "choice",
+    "choice": "answer",
+    "confidence": 0.85,
+    "probabilities": [
+      {"value": "answer", "probability": 0.90},
+      {"value": "quip", "probability": 0.06},
+      {"value": "let_it_pass", "probability": 0.04}
+    ]
+  }]
+}
+```
+
+本地 `usable_choices` 校验格式、选项与边际，再由调用方处理路由、短修或收敛。
+分数用于相对比较，不当作校准后的正确率。当前没有独立 few-shot 示例库或 `examples` 字段，
+只有 `instructions` 中的语义例子；增加或改写这些例子也是可测的迭代对象。
+
+最小迭代路径：
+
+```bash
+# 在代码仓库执行，DEPLOY 指向部署数据；先明确期望
+.venv/bin/python -m regular --directory "$DEPLOY" case add \
+  --turn <triage_turn_id> --id triage-followup-01 --choice addressed=answer
+
+# 修改 regular/decision_prompts.py 的题面或选项说明后，比较同一输入
+.venv/bin/python -m regular --directory "$DEPLOY" eval \
+  --base HEAD --cand . --cases triage-followup-01 -n 4 --allow-paid
+```
+
+若修改的是 payload 构造，已保存的分诊输入不会随之改变；应改用消息层，
+检查 @、引用与历史怎样重新进入判断，不能只重放旧 payload。
+
+<a id="harness2-components"></a>
+
+### 与 Harness² 八类组件的对应
+
+[Harness² 官方说明](https://github.com/google-research/harness2#harness-components)和
+[论文附录 D.3、表 5](https://arxiv.org/html/2610.14224v1#A4.SS3)讨论的是八类可编辑组件，
+不是八个必须逐级凑满的层级。下表按本项目职责映射，并不表示实现了通用 Agent 平台。
+
+| Harness² 组件 | 老群友中的对应 | 当前边界 |
+| --- | --- | --- |
+| C1 系统提示词 | `prompts.py` 的人设、共享规则、输出规则；Decisions 的任务题面也可单独修改 | 直接对应，按生成或分诊入口分别验证 |
+| C2 护栏 | 共享硬规则、敏感词过滤、身份与账本权限、额度和超时边界 | 直接对应；实现可以修正，硬约束不能交给自动搜索放宽 |
+| C3 记忆 | 每日记忆、会话历史、档案与个人原话的选择及注入 | 直接对应；可迭代策略与格式，真实档案和账本由代码维护，模型不能随意改写 |
+| C4 工具使用说明 | 搜索、召回、画图、语音、提醒的条件、标记与即时能力说明 | 直接对应；显式协议和本地代码执行，保持单步边界 |
+| C5 子代理 | 机器人内部没有自主分派任务的子代理系统 | 多种模型按固定路径分工不等于子代理；外接编码代理的协作不算机器人自带能力 |
+| C6 按需技能 | 机器人内部没有由模型加载并执行的技能库 | 能力按配置和固定接口启用，不提供通用多步技能循环 |
+| C7 脚本 | 提醒解析、查询、投递等确定性工作由固定本地函数完成 | 承担部分同类职责；没有开放模型生成脚本或执行 shell，不算论文中的脚本执行组件 |
+| C8 插件 | 生成和投递前后的本地门控、清洗、结果记录 | 承担部分同类职责，没有可编辑的工具循环插件系统 |
+
+严格说是**四类直接对应，另两类的部分职责由本地代码承担，两类刻意不做**。
+Decisions 不是另加的一层：题面属于可编辑判断说明，输入结构属于上下文构造。
+八类组件、缓存用的四层提示词、评测用的三种回放深度，描述的是三个不同维度。
+
 ## 5. 四个组件
 
 ### ① 记下每轮的模型输入
@@ -105,20 +276,24 @@ flowchart LR
 ```
 
 - 直接调模型的四处（起名审核、群史记查询、到点提醒那句、催债）先不记，需要时再补。
-- 分诊的输入（`decisions.FeedbackTracker.assess` 拼的那份 payload）也记一份，分诊改动才回放得了。
-  现在交互日志里只有分诊的结果和分数（`decision_scores`），没有它看到的东西。
+- 主要分诊的输入（`decisions.FeedbackTracker.assess` 拼的那份 payload）也记在 `data/turns/`，
+  连同题目名和选择，供分诊层回放。旧账 callback 仍只有交互日志中的结果和分数（`decision_scores`），
+  没有完整原始输入，不属于这条回放链的完整覆盖范围。
 - `private=True` 的不记。
 - 存 `data/turns/日期.jsonl`，过了当天压缩，默认留 30 天（`TURN_LOG_KEEP_DAYS`），开关 `TURN_LOG_ENABLED`。
   量：11-03 一天 107 次送达，每轮输入的大头是背景和会话历史，估计每天 1MB 上下。
 
-**回放的两种深度。**
+**回放的三种深度。**
 
 - **生成层回放**：拿记下的入参再调一次 `get_ai_reply`，稳定头用待测代码现拼。
   覆盖提示词措辞、换模型、换推理强度 —— 迄今大部分修改都在这一层。便宜，一轮一次调用。
+- **分诊层回放**：保持当时的 payload，按待测版本重新构造题目并检查选项。
+  适合改题面、选项说明和有效选择的阈值；输入字段与上下文构造的变化要交给消息层验证。
 - **消息层回放**：把一段归档消息按原顺序喂给真的 `handle_group_msg`（假发送，模型真假可选），
   覆盖分诊、背景怎么拼、@ 和引用怎么认这些代码。11-03 的引用改动就属于这一层：
   生成层回放只会重放当时那份「看不见引用」的背景。现有的 `tests/test_image_then_question.py`、
-  `regular demo` 已经是这种跑法，缺的是归档里没有原始的 @ 和引用索引 —— 要做就在归档行里补这两样。
+  `regular demo` 也是这种跑法。旧归档缺原始的 @ 和引用索引，新归档已经记录这些字段供消息层还原；
+  缺失的历史字段不能凭空补回。
 
 ### ② 每日体检
 
@@ -254,7 +429,8 @@ OpenAI 额度够用，瓶颈是时间，所以要并发、要能只跑某个标�
 
 **例外：窄口子可以直接用 API 自动搜措辞。** 只改一小段提示词、而且有代码能判对错的检查时，
 值得写一个搜索循环：让模型把这一段改写出十几个版本，逐个跑评测，留最好的，交给人批准。
-比如提醒的时间格式（回放能直接算记对没有）、分诊题目的措辞（「什么时候开口」那 20 条带标签的回放）。
+当前已接入提醒的时间格式和生成层的接话说明（「什么时候开口」那批带标签回放）；
+原生 Decisions 题面可修改后做分诊评测，其自动措辞搜索尚未接入。
 人设、语气这类只能靠盲评的不这么做。
 
 经验库不用另起：`docs/` 下的事故记录加上用例库，就是 Harness² 说的「改进库」——
@@ -270,7 +446,7 @@ OpenAI 额度够用，瓶颈是时间，所以要并发、要能只跑某个标�
 | 4 | ④ 规则标识和拿掉重跑 | 3 | 小 |
 | 5 | 消息层回放：归档补原始 @ 和引用索引 | 3 | 中 |
 | 6 | 流程说明写进 `AGENTS.md`；代理先手动触发、跑顺后每天凌晨跑，出报告和分支 | 2、3 跑顺两三周以后 | 小 |
-| 7 | 窄口子的措辞自动搜索（提醒时间格式、分诊题目） | 3 | 小 |
+| 7 | 窄口子的措辞自动搜索（提醒时间格式、生成层接话说明；原生分诊题面搜索未接入） | 3 | 小 |
 
 第 1 步越早上线越好：每晚一天，就少一天能原样回放的现场。
 
