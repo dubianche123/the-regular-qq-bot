@@ -446,6 +446,8 @@ EVAL_DIR = data_path("EVAL_DIR", "evals")
 EVAL_JUDGE_PROVIDER = _env_str("EVAL_JUDGE_PROVIDER", "zhipu")
 EVAL_JUDGE_MODEL = _env_str("EVAL_JUDGE_MODEL", "cn:kimi-k3.1-pro")
 EVAL_CONCURRENCY = _env_int("EVAL_CONCURRENCY", 6)
+# 盲评单独限流：网关同时最多扛两个请求，再多就开始超时（生成走的是 OpenAI，不受这个限）
+EVAL_JUDGE_CONCURRENCY = _env_int("EVAL_JUDGE_CONCURRENCY", 2)
 
 # ══════════════════ 判断 API（原生 GPT Decisions，见 providers.call_decision）═════════════════
 # 独立配置：端点/模型/密钥在 data/decision_api.json（面板「判断 API」页保存），

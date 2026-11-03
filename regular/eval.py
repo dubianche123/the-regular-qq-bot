@@ -606,7 +606,7 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
             base_head, cand_head = b_out.get("head"), c_out.get("head")
             case_rows, totals = asyncio.run(
                 evaluate_cases(cases, b_out["results"], c_out["results"], judge_fn=judge_fn,
-                               concurrency=concurrency))
+                               concurrency=getattr(config, "EVAL_JUDGE_CONCURRENCY", 2)))
             if ablate_info is not None:
                 rule_obj = rules_mod.get_rule(ablate)
                 has_linked = any(rules_mod.matches_case(rule_obj, r["id"], r.get("tags"))
