@@ -208,7 +208,7 @@ regular --directory regular-bot run
 | 什么时候开口 | [没叫它的时候](docs/when-to-reply.md) · [何时介入（旧方案存档）](docs/when-to-intervene.md) · [真托付还是整活](docs/request-sincerity.md) · [岔开话题别换台](docs/deflection.md) |
 | 能力与动作 | [画图与语音](docs/media-replies.md) · [图像生成配置](docs/image-generation.md) · [先读图再回话](docs/image-before-reply.md) · [到点提醒](docs/reminders.md) |
 | 异步 | [慢活：先回一句，做完再跟进](docs/slow-work.md) |
-| 记忆与观察 | [交情与个人证据](docs/personal-memory.md) · [互动观察](docs/interaction-observations.md) |
+| 记忆与观察 | [交情与个人证据](docs/personal-memory.md) · [互动观察](docs/interaction-observations.md) · [自己迭代（设计稿）](docs/self-iteration.md) |
 | 模型与供应商 | [三家模型各司其职](docs/model-roles.md) · [供应商配置](docs/providers.md) |
 | 总览 | [设计笔记](docs/DESIGN_NOTES.md) |
 
