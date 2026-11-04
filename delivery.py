@@ -68,6 +68,8 @@ class PendingSend:
     attempts: int = 0
     on_outcome: Callable | None = None
     fallback: bool = False
+    # 引用回复：被引用消息的索引（事件 message_scene.ext 里的 msg_idx）；QQ 不收就去掉再发
+    quote: str | None = None
 
 
 class Sender:
@@ -105,7 +107,8 @@ class Sender:
         result = DeliveryResult("delivered", item.text, receipt, fallback=item.fallback)
         self.last_status = result.status
         self.last_delivery_at = self.clock()
-        logger.info("📤 [已送达] %s", item.text.replace("\n", " ")[:120])
+        logger.info("📤 [已送达%s] %s", "·引用" if item.quote else "",
+                    item.text.replace("\n", " ")[:120])
         # 观察记录先于业务回调落账：异步/卡住的 on_delivered 不许拖延
         # 「已送达」进入索引，否则随后赶到的显式反馈会找不到刚送达的回复。
         self._observe(item, result)
@@ -150,25 +153,43 @@ class Sender:
                     item.sequence = self._next_sequence(item.message)
                 item.text = text
             item.attempts += 1
-            sent = await item.message.reply(content=item.text, msg_type=0, msg_seq=item.sequence)
+            extra = ({"message_reference": {"message_id": item.quote,
+                                            "ignore_get_message_error": True}}
+                     if item.quote else {})
+            sent = await item.message.reply(content=item.text, msg_type=0, msg_seq=item.sequence,
+                                            **extra)
             return await self._delivered(item, sent) if sent else None
 
+    def _drop_quote(self, item, error):
+        """引用回复被拒：引用只是让人看清回的是谁，去掉它再发一次，话不能因此丢了。"""
+        if not item.quote:
+            return False
+        logger.warning("QQ 不收引用回复，改发普通回复: %s", str(error)[:120])
+        item.quote = None
+        item.sequence = self._next_sequence(item.message)
+        return True
+
     async def reply(self, message, text, *, on_delivered=None, is_current=None,
-                    retry_lock=None, send_lock=None, prepare=None, on_outcome=None):
+                    retry_lock=None, send_lock=None, prepare=None, on_outcome=None,
+                    quote=None):
         item = PendingSend(message, text, self.clock(), self._next_sequence(message),
                            on_delivered, is_current, retry_lock, send_lock, prepare,
-                           on_outcome=on_outcome)
-        for attempt in range(2):
+                           on_outcome=on_outcome, quote=quote)
+        # 吞掉的超时只再试一次；换兜底话、去掉引用各最多一回，不占这一次
+        unconfirmed = 0
+        while unconfirmed < 2:
             try:
                 result = await self._attempt(item)
             except Exception as error:
                 if connection_error(error):
                     return self._queue(item, type(error).__name__)
-                if attempt == 0 and self.fallback and ("40034006" in str(error) or "违规" in str(error)):
+                if not item.fallback and self.fallback and ("40034006" in str(error) or "违规" in str(error)):
                     item.text = self.fallback(message)
                     item.prepare = None
                     item.fallback = True
                     item.sequence = self._next_sequence(message)
+                    continue
+                if self._drop_quote(item, error):
                     continue
                 self.last_status = "rejected"
                 logger.warning("QQ拒收回复: %s", str(error)[:160])
@@ -178,6 +199,7 @@ class Sender:
             if result is not None:
                 return result
             # botpy can swallow a timeout. Unchanged payload retries reuse the sequence.
+            unconfirmed += 1
         return self._queue(item, "unconfirmed timeout")
 
     async def drain(self):
@@ -201,6 +223,9 @@ class Sender:
                         if connection_error(error):
                             self.pending.appendleft(item)
                             break
+                        if self._drop_quote(item, error):
+                            self.pending.append(item)
+                            continue
                         self.last_status = "rejected"
                         self._observe(item, DeliveryResult(
                             "rejected", item.text, reason=type(error).__name__,

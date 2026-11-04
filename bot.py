@@ -1051,11 +1051,12 @@ def media_turn(group_id, user_id, score, *, asked, remind=False):
 
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                            owner_hint_group=None, prepared=None, prepared_local=False,
-                           media=None, **context):
+                           media=None, is_stale=None, **context):
     """Serialize generation and send; queued delivery commits through the same callback.
 
     prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
     media=MediaTurn：这一轮认不认小王写的〔画〕〔语音〕（见 media_turn）；None 时标记一律当文字。
+    is_stale：写好以后、发出去之前再问一次「时机过没过」，过了就不发（见 reply_unprompted）。
     """
     async with runtime.SESSIONS.lock(session_id):
         generation = runtime.SESSIONS.begin_turn(session_id)
@@ -1089,6 +1090,9 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         said = expression.parse(body) if generated else expression.Said(None, "", body or "")
         if said.kind == "pass":
             logger.info("🤐 这句不接（%s）", session_id[-12:])
+            return "", delta, None
+        if is_stale is not None and is_stale():
+            logger.info("⌛ 写好了没发：群里已经接着聊了（%s）", session_id[-12:])
             return "", delta, None
         if said.kind == "image" and not (media is not None and media.draw):
             logger.info("🎨 这一轮不认〔画〕，只发文字（%s）", session_id[-12:])
@@ -1218,7 +1222,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             is_current=lambda: runtime.SESSIONS.generation(session_id) == generation,
             retry_lock=runtime.SESSIONS.lock(session_id),
             send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
-            prepare=prepare if owner_hint_group else None)
+            prepare=prepare if owner_hint_group else None,
+            quote=_quote_if_moved_on(message))
         return body, delta, result
 
 
@@ -1233,6 +1238,36 @@ def _waited(group_id, message_id):
     return 0.0
 
 
+def _arrived(group_id, message_id):
+    """这条消息进群聊背景缓存的时刻，和它后面还有没有别人的话。找不到返回 (None, False)。"""
+    since = None
+    for row in group_buffers.get(group_id, ()):
+        if since is not None:
+            return since, True
+        if row.get("message_id") == message_id:
+            since = float(row.get("time") or 0)
+    return since, False
+
+
+def _spoke_since(group_id, message_id):
+    """它要回的那条之后，它自己又说过别的（own_lines）。"""
+    since, _ = _arrived(group_id, message_id)
+    return since is not None and any(o["time"] > since for o in own_lines.get(group_id, ()))
+
+
+def _moved_on(group_id, message_id):
+    """它要回的那条之后，群里又有人说了话，或者它自己又说过别的。"""
+    since, others = _arrived(group_id, message_id)
+    return others or _spoke_since(group_id, message_id)
+
+
+def _quote_if_moved_on(message):
+    """回的那条已经被别的话隔开了：引用着回，让人看得出回的是谁。不 @ —— @ 会给人推送提醒。"""
+    ref = (getattr(message, "_scene", None) or {}).get("msg_idx")
+    group_id = getattr(message, "group_openid", None)
+    return ref if ref and group_id and _moved_on(group_id, getattr(message, "id", None)) else None
+
+
 def _said_more(group_id, member, message_id):
     """这人在这条之后又说了话（群聊背景缓存里排在它后面）。"""
     after = False
@@ -1243,11 +1278,18 @@ def _said_more(group_id, member, message_id):
     return False
 
 
-async def reply_unprompted(message, session_id, user_text, *, callback_note="", **context):
+async def reply_unprompted(message, session_id, user_text, *, callback_note="", owed=False,
+                           **context):
     """没 @、没叫名字的一句：接不接小王自己定（写〔不接〕就不发），代码只交代事实、记结果。
 
     一个群一次只问一句：同一时刻冒出来的几句排着问，前一句它接了，后一句它就知道
     自己刚开过口（PROMPT_BANTER_RECENT）—— 不然几句一起问，可能一起接。
+
+    写好了、发出去之前再看一眼（2026-11-04）：这几秒里它自己已经说过别的（回了别人、插了别的话），
+    这句就不发 —— 不然人一多，它一下冒出两三句。只是别人说了话不算：那就引用着回（_quote_if_moved_on）。
+    kimi-k3.1-pro 盲评四天里会被扔的 43 句：它自己在中间说过话的 20 句里 17 句该咽回去；
+    只有别人说过话的 23 句里 16 句发出来也合适（见 docs/when-to-reply.md）。
+    owed=True（分诊判了这句是冲它刚才那句来的，回它的「？」、接它的话）照发。
     """
     group_id = getattr(message, "group_openid", None)
     member = getattr(getattr(message, "author", None), "member_openid", None)
@@ -1269,13 +1311,20 @@ async def reply_unprompted(message, session_id, user_text, *, callback_note="", 
         # 接纳度只在有把握地读出「这人不爱被搭话」时低于 1（见 receptive.py 的声明门槛）
         if config.RECEPTIVE_ENABLED and runtime.RECEPTIVE.multiplier(group_id, member, now=now) < 1:
             hints.append(prompts.PROMPT_BANTER_UNWELCOME)
-        outcome = await reply_in_session(message, session_id, user_text,
+        stale = {}
+
+        def is_stale():
+            stale["hit"] = not owed and _spoke_since(group_id, message_id)
+            return stale["hit"]
+
+        outcome = await reply_in_session(message, session_id, user_text, is_stale=is_stale,
                                          unprompted_hint="\n".join(hints), **context)
         spoke = outcome[2] is not None
         runtime.INTERACTIONS.append(
             "decision", group_id, user=member, actor="system",
             source_message_id=getattr(message, "id", None), route="banter",
-            selected=spoke, reason="spoke" if spoke else "declined",
+            selected=spoke,
+            reason="spoke" if spoke else "stale" if stale.get("hit") else "declined",
             callback=bool(callback_note))
         if spoke:
             logger.info("💬 没叫它，它接了（%s）", (member or "")[-4:])
@@ -1327,7 +1376,8 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
                 message, said.text, on_delivered=commit, interaction=interaction,
                 is_current=current, retry_lock=runtime.SESSIONS.lock(session_id),
                 send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
-                prepare=prepare if owner_hint_group else None)
+                prepare=prepare if owner_hint_group else None,
+                quote=_quote_if_moved_on(message))
     finally:
         said_first.set()
     try:
@@ -3142,6 +3192,7 @@ class GroupBot(botpy.Client):
             if unprompted:
                 outcome = await reply_unprompted(message, session_id, user_input,
                                                  media=this_turn, callback_note=callback_note,
+                                                 owed=feedback_result.get("target") == "bot_response",
                                                  **reply_kwargs)
             else:
                 outcome = await reply_in_session(message, session_id, user_input,

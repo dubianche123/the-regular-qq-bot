@@ -95,13 +95,13 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(lambda: runtime.RELATIONS.records.pop(f"{G}|{B}", None))
         self.addCleanup(runtime.SESSIONS.clear_group, G)
 
-    async def _drive(self, text, sender=A, is_at=False, msg_id=None):
+    async def _drive(self, text, sender=A, is_at=False, msg_id=None, scene=None):
         fake_self = SimpleNamespace(
             robot=SimpleNamespace(id="BOT_WHEN", name="regular"))
         msg = SimpleNamespace(
             id=msg_id or "msg-" + os.urandom(5).hex(), content=text,
             group_openid=G, author=SimpleNamespace(member_openid=sender),
-            attachments=[], mentions=[], timestamp=None,
+            attachments=[], mentions=[], timestamp=None, _scene=dict(scene or {}),
             reply=AsyncMock(return_value={"id": "rcpt-" + os.urandom(3).hex()}))
         await bot.GroupBot.handle_group_msg(fake_self, msg, is_at=is_at)
         return msg
@@ -439,6 +439,59 @@ class OwnDrawingInViewTest(_Base):
         self.assertNotIn("更早画的奶龙", prompt)
         self.assertLess(prompt.index("水墨奶蛙"), prompt.index("小王这是不是奶龙"))
 
+
+class MovedOnTest(_Base):
+    """2026-11-04：人一多，小王一下冒出两三句（四天 39 次，约 25 次里有没叫它的插话）。
+    插话写好了、发出去之前，它自己已经说过别的，就不发；只是别人说了话，就引用着回。
+    欠人的那句照发。"""
+
+    def _meanwhile(self, *, other=False, itself=False):
+        """生成这一句的那几秒里：另一个人说了话 / 它自己回了别的。"""
+        original = bot.call_model
+
+        async def model(messages, max_tokens, **kw):
+            if other:
+                bot.group_buffers[G].append({"sender": B, "text": "我先撤了", "time": time.time(),
+                                             "message_id": "later-" + os.urandom(3).hex()})
+            if itself:
+                bot.own_lines[G].append({"time": time.time(), "text": "刚回了别人一句"})
+            return await original(messages, max_tokens, **kw)
+        return patch.object(bot, "call_model", model)
+
+    async def test_banter_is_dropped_when_it_already_spoke_meanwhile(self):
+        with self._meanwhile(itself=True):
+            msg = await self._drive("今天好热")
+        msg.reply.assert_not_awaited()
+        self.assertEqual(self.log.gates()[-1]["reason"], "stale")
+        self.assertEqual(self._session(), [])
+
+    async def test_banter_talked_over_by_others_goes_out_quoted(self):
+        with self._meanwhile(other=True):
+            msg = await self._drive("今天好热", scene={"msg_idx": "REFIDX_hot=="})
+        self.assertEqual(msg.reply.await_args.kwargs["message_reference"]["message_id"],
+                         "REFIDX_hot==")
+        self.assertEqual(self.log.gates()[-1]["reason"], "spoke")
+
+    async def test_owed_banter_still_goes_out_and_quotes(self):
+        msg = SimpleNamespace(
+            id="owed-1", content="？", group_openid=G, author=SimpleNamespace(member_openid=A),
+            attachments=[], mentions=[], timestamp=None, _scene={"msg_idx": "REFIDX_owed=="},
+            reply=AsyncMock(return_value={"id": "rcpt-owed"}))
+        bot.group_buffers[G].append({"sender": A, "text": "？", "time": time.time(),
+                                     "message_id": "owed-1"})
+        with self._meanwhile(itself=True):
+            await bot.reply_unprompted(msg, f"{G}_{A}", "？", owed=True)
+        self.assertEqual(msg.reply.await_args.kwargs["message_reference"]["message_id"],
+                         "REFIDX_owed==")
+
+    async def test_addressed_reply_quotes_when_talked_over(self):
+        with self._meanwhile(other=True):
+            msg = await self._drive("小王你说呢", is_at=True, scene={"msg_idx": "REFIDX_q=="})
+        self.assertEqual(msg.reply.await_args.kwargs["message_reference"]["message_id"], "REFIDX_q==")
+
+    async def test_quiet_exchange_is_a_plain_reply(self):
+        msg = await self._drive("小王你说呢", is_at=True, scene={"msg_idx": "REFIDX_q=="})
+        self.assertNotIn("message_reference", msg.reply.await_args.kwargs)
 
 if __name__ == "__main__":
     unittest.main()

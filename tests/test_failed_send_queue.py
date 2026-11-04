@@ -116,3 +116,26 @@ class ResendQueueTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class QuoteReplyTest(unittest.IsolatedAsyncioTestCase):
+    """2026-11-04：回的那条被别的话隔开了就引用着回；QQ 不收引用参数也不能把话丢了。"""
+
+    async def test_quote_goes_out_as_message_reference(self):
+        m = FakeGroupMessage([{"id": "ok"}])
+        result = await Sender().reply(m, "回你", quote="REFIDX_abc==")
+        self.assertEqual(result.status, "delivered")
+        self.assertEqual(m.calls[0]["message_reference"]["message_id"], "REFIDX_abc==")
+
+    async def test_rejected_quote_is_dropped_and_the_line_still_goes_out(self):
+        m = FakeGroupMessage([ValueError("invalid message_reference"), {"id": "ok"}])
+        with self.assertLogs("qqbot", "WARNING"):
+            result = await Sender().reply(m, "回你", quote="REFIDX_bad==")
+        self.assertEqual(result.status, "delivered")
+        self.assertNotIn("message_reference", m.calls[1])
+        self.assertNotEqual(m.calls[0]["msg_seq"], m.calls[1]["msg_seq"])
+
+    async def test_plain_reply_has_no_reference(self):
+        m = FakeGroupMessage([{"id": "ok"}])
+        await Sender().reply(m, "回你")
+        self.assertNotIn("message_reference", m.calls[0])
