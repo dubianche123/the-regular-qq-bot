@@ -1,73 +1,76 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1410" viewBox="0 0 1280 1410" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="en">
-<title id="iteration-title">From a live failure to the next version</title><desc id="iteration-desc">Record live inputs, judgments and actual delivery. Read-only checkup proposes findings; a separate judge model labels them. Cases fix the scene and intended behavior. An external coding agent edits a candidate. The same scene inputs feed independent baseline and candidate workers; expected outcomes stay on the evaluation side for code checks and separate blind judging. Regressions or insufficient evidence send work back for edits or more tests. A maintainer decides whether to deploy. New feedback and accumulated cases and incident notes feed the next round.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1498" viewBox="0 0 1280 1498" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="en">
+<title id="iteration-title">From a live failure to the next version</title><desc id="iteration-desc">Record live inputs, triage, recall and delivery. Independent labels cover reply cases and full positive and negative benchmarks, including missed issues and irrelevant evidence. A coding agent edits code and prompts; local tune searches checkup and archive-recall policies on train only, keeping validation separate. Baseline and candidate receive identical inputs while expectations stay with the evaluator. Generation and triage use checks and optional blind judging; local policies use full confusion matrices. Unknown labels and incomplete corpora stay explicit. Maintainers approve code deployment or policy apply, retaining rollback history and accumulated evidence.</desc>
 <defs>
 <marker id="arrow-line" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
 <marker id="arrow-purple" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#7962A7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
 <marker id="arrow-amber" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#A7783E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
 <marker id="arrow-blue" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#5375A1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
 </defs><g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
-<rect x="1" y="1" width="1278" height="1408" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
+<rect x="1" y="1" width="1278" height="1496" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
 <text x="64" y="47" font-size="16" fill="#A7783E" font-weight="700">THE REGULAR / SELF-ITERATION</text>
 <text x="64" y="98" font-size="32" fill="#213249" font-weight="700">From a live failure to the next version</text>
 <text x="64" y="138" font-size="21" fill="#56677E" font-weight="400">Compare each proposal on the same scene, including failures already fixed.</text>
 <rect x="64" y="180" width="1152" height="100" rx="17" fill="#213249" stroke="#213249"/>
 <text x="88" y="207" font-size="14" font-weight="700" fill="#EDC792">LIVE · AUTOMATIC RECORDS</text>
-<text x="88" y="239" font-size="24" font-weight="650" fill="#FFFFFF">Original inputs, judgments, actual outcomes and delivery</text>
+<text x="88" y="239" font-size="24" font-weight="650" fill="#FFFFFF">Inputs, triage, recall selections and actual delivery</text>
 <text x="88" y="266" font-size="18" fill="#D4DFEB">Keep what really happened; turn_id links the input to its outcome</text>
-<rect x="64" y="320" width="520" height="178" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<text x="88" y="348" font-size="13" fill="#397D70" font-weight="700">READ-ONLY COMMAND + SEPARATE JUDGE</text>
-<text x="88" y="384" font-size="23" fill="#213249" font-weight="650">Turn a finding into a fixed case</text>
-<text x="88" y="418" font-size="17" fill="#56677E" font-weight="400">checkup flags findings; a judge labels separately</text>
-<text x="88" y="450" font-size="19" fill="#5375A1" font-weight="600">case = recorded scene + intended behavior</text>
-<text x="88" y="480" font-size="18" fill="#56677E" font-weight="400">Include earlier cases and incident lessons</text>
-<rect x="696" y="320" width="520" height="178" rx="17" fill="#F0EBF8" stroke="#DCD2EE"/>
-<text x="720" y="348" font-size="13" fill="#7962A7" font-weight="700">EXTERNAL CODING AGENT · CANDIDATE EDITS</text>
-<text x="720" y="384" font-size="23" fill="#213249" font-weight="650">Find the cause, then propose a fix</text>
-<text x="720" y="418" font-size="17" fill="#56677E" font-weight="400">Code, prompts, Decisions questions or inputs</text>
-<text x="720" y="450" font-size="16.5" fill="#56677E" font-weight="400">Read incident notes; try general / group-specific fixes</text>
-<text x="720" y="480" font-size="17" fill="#56677E" font-weight="400">Edit a candidate while the live version stays put</text>
-<rect x="64" y="562" width="1152" height="436" rx="19" fill="#EAF0F6" stroke="#D5DFEB"/>
-<text x="88" y="599" font-size="18" fill="#213249" font-weight="650">FIXED COMMANDS · CONTROLLED REPLAY</text>
-<rect x="350" y="624" width="580" height="42" rx="11" fill="#FFFFFF" stroke="#D7E0EB"/>
-<text x="640" y="651" font-size="17" fill="#5375A1" font-weight="600" text-anchor="middle">Same scene inputs: this incident + earlier cases</text>
-<rect x="120" y="708" width="440" height="116" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<text x="144" y="748" font-size="25" fill="#5375A1" font-weight="700">Baseline</text>
-<text x="144" y="787" font-size="18" fill="#56677E" font-weight="400">Original code / prompts in its own worker</text>
-<rect x="720" y="708" width="440" height="116" rx="17" fill="#F8F5FC" stroke="#DCD2EE"/>
-<text x="744" y="748" font-size="25" fill="#7962A7" font-weight="700">Candidate</text>
-<text x="744" y="787" font-size="18" fill="#56677E" font-weight="400">Tested code / questions / input strategy</text>
-<rect x="120" y="866" width="1040" height="108" rx="15" fill="#FFFFFF" stroke="#D7E0EB"/>
-<text x="144" y="901" font-size="21" fill="#213249" font-weight="650">Expected outcomes stay here: code checks + independent blind judging</text>
-<text x="144" y="934" font-size="17" fill="#56677E" font-weight="400">History regressions · local false positives / misses · day patterns · rule ablation</text>
-<text x="144" y="960" font-size="16" fill="#56677E" font-weight="400">Day replay regenerates recorded replies; it does not simulate later member reactions</text>
-<rect x="64" y="1052" width="688" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
-<text x="88" y="1087" font-size="23" fill="#213249" font-weight="650">Comparison report: gains and costs</text>
-<text x="88" y="1125" font-size="18" fill="#397D70" font-weight="600">Improvements · regressions · noisy drops · unfinished work</text>
-<text x="88" y="1156" font-size="18" fill="#56677E" font-weight="400">Regressions first; one boundary violation counts</text>
-<rect x="816" y="1052" width="400" height="126" rx="17" fill="#FFF4E4" stroke="#EAD6B8"/>
-<text x="840" y="1087" font-size="22" fill="#A7783E" font-weight="700">Maintainer decides whether to ship</text>
-<text x="840" y="1125" font-size="16.5" fill="#56677E" font-weight="400">Review regressions, noise and coverage</text>
-<text x="840" y="1156" font-size="17" fill="#56677E" font-weight="400">Deploy manually, then observe real feedback</text>
-<rect x="64" y="1234" width="688" height="92" rx="15" fill="#EAF4EF" stroke="#C9DFD5"/>
-<text x="88" y="1269" font-size="21" fill="#397D70" font-weight="650">Assets that accumulate: cases + incident lessons</text>
-<text x="88" y="1304" font-size="17" fill="#56677E" font-weight="400">Keep the case and the cause; the next edit reuses both</text>
-<text x="64" y="1345" font-size="17" fill="#A7783E" font-weight="600">New feedback returns to live records</text>
-<text x="64" y="1390" font-size="16.5" fill="#56677E" font-weight="400">Commands reproduce and compare; the agent proposes edits. Accumulated evidence carries into the next round.</text>
+<rect x="64" y="320" width="520" height="226" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="88" y="348" font-size="13" fill="#397D70" font-weight="700">SEPARATE JUDGE LABELS · FIXED EVALUATION DATA</text>
+<text x="88" y="384" font-size="23" fill="#213249" font-weight="650">Freeze scenes and label missed issues</text>
+<text x="88" y="418" font-size="17" fill="#56677E" font-weight="400">Reply / triage cases: inputs + expectations</text>
+<text x="88" y="450" font-size="17" fill="#5375A1" font-weight="600">Checkup / recall: full positive + negative labels</text>
+<text x="88" y="480" font-size="18" fill="#56677E" font-weight="400">Include normal scenes and irrelevant evidence</text>
+<text x="88" y="512" font-size="16" fill="#56677E">Candidate-only yes/no cannot establish recall</text>
+<rect x="696" y="320" width="520" height="226" rx="17" fill="#F0EBF8" stroke="#DCD2EE"/>
+<text x="720" y="348" font-size="13" fill="#7962A7" font-weight="700">CANDIDATES · CODING AGENT / LOCAL TUNING</text>
+<text x="720" y="384" font-size="23" fill="#213249" font-weight="650">Code edits and policy candidates</text>
+<text x="720" y="418" font-size="17" fill="#56677E" font-weight="400">Agent: code, prompts, questions and inputs</text>
+<text x="720" y="450" font-size="16.5" fill="#56677E" font-weight="400">tune: checkup thresholds / recall ranking; 0 tokens</text>
+<text x="720" y="480" font-size="17" fill="#56677E" font-weight="400">Search train only; keep validation for acceptance</text>
+<text x="720" y="512" font-size="15" fill="#56677E">Approval required; keep policies for rollback</text>
+<rect x="64" y="610" width="1152" height="476" rx="19" fill="#EAF0F6" stroke="#D5DFEB"/>
+<text x="88" y="647" font-size="18" fill="#213249" font-weight="650">FIXED COMMANDS · CONTROLLED REPLAY</text>
+<rect x="350" y="672" width="580" height="42" rx="11" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="640" y="699" font-size="17" fill="#5375A1" font-weight="600" text-anchor="middle">Same scene inputs and frozen corpus; validation is held out</text>
+<rect x="120" y="756" width="440" height="116" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="144" y="796" font-size="25" fill="#5375A1" font-weight="700">Baseline</text>
+<text x="144" y="835" font-size="18" fill="#56677E" font-weight="400">Original code / prompts / local policy</text>
+<rect x="720" y="756" width="440" height="116" rx="17" fill="#F8F5FC" stroke="#DCD2EE"/>
+<text x="744" y="796" font-size="25" fill="#7962A7" font-weight="700">Candidate</text>
+<text x="744" y="835" font-size="18" fill="#56677E" font-weight="400">Tested code / prompts / questions / policy</text>
+<rect x="120" y="914" width="1040" height="148" rx="15" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="144" y="949" font-size="21" fill="#213249" font-weight="650">Two evaluations; expected outcomes stay on this side</text>
+<text x="144" y="982" font-size="17" fill="#56677E" font-weight="400">Replies / triage: code checks and optional independent judging</text>
+<text x="144" y="1008" font-size="17" fill="#56677E" font-weight="400">Checkup / recall: full labels → TP / FP / FN / TN, precision and recall</text>
+<text x="144" y="1042" font-size="16" fill="#56677E">Unknown / incomplete stays explicit; recall counts messages, promises checked separately; extra FP / FN regresses</text>
+<rect x="64" y="1140" width="688" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
+<text x="88" y="1175" font-size="23" fill="#213249" font-weight="650">Comparison report: gains and costs</text>
+<text x="88" y="1213" font-size="18" fill="#397D70" font-weight="600">Gains · regressions · false alarms / misses · coverage gaps</text>
+<text x="88" y="1244" font-size="18" fill="#56677E" font-weight="400">Generation: check noise; local policies: deterministic</text>
+<rect x="816" y="1140" width="400" height="126" rx="17" fill="#FFF4E4" stroke="#EAD6B8"/>
+<text x="840" y="1175" font-size="22" fill="#A7783E" font-weight="700">Maintainer approves activation</text>
+<text x="840" y="1213" font-size="16.5" fill="#56677E" font-weight="400">Code / prompts: manual deployment</text>
+<text x="840" y="1244" font-size="17" fill="#56677E" font-weight="400">Policy: policy apply; keep rollback history</text>
+<rect x="64" y="1322" width="688" height="92" rx="15" fill="#EAF4EF" stroke="#C9DFD5"/>
+<text x="88" y="1357" font-size="21" fill="#397D70" font-weight="650">Accumulated assets: cases + labels + incident lessons</text>
+<text x="88" y="1392" font-size="17" fill="#56677E" font-weight="400">Keep frozen inputs and labels for the next regression run</text>
+<text x="64" y="1433" font-size="17" fill="#A7783E" font-weight="600">New feedback returns to live records</text>
+<text x="64" y="1478" font-size="16.5" fill="#56677E" font-weight="400">Commands compare; agents and local tuning propose. Maintainers approve, and evidence accumulates.</text>
 <path d="M324 280v32" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M592 412h96" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <text x="640" y="396" font-size="12" fill="#56677E" font-weight="500" text-anchor="middle">Evidence &amp; checks</text>
-<path d="M324 498v38h316v80" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
-<path d="M640 666v20H340v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
-<path d="M640 686h300v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
-<path d="M1184 498v268h-16" fill="none" stroke="#7962A7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-purple)"/>
-<text x="1184" y="537" font-size="15" fill="#7962A7" font-weight="600" text-anchor="end">Candidate code</text>
-<path d="M340 824v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
-<path d="M940 824v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
-<path d="M340 974v70" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
-<path d="M760 1115h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
-<path d="M696 1052v-24h544V410h-16" fill="none" stroke="#A7783E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-amber)" stroke-dasharray="6 6"/>
-<text x="1216" y="1019" font-size="14" fill="#A7783E" font-weight="600" text-anchor="end">Regressions / weak evidence → edit or test again</text>
-<path d="M408 1178v48" fill="none" stroke="#5375A1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
-<path d="M64 1280H44V466h12" fill="none" stroke="#5375A1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-blue)" stroke-dasharray="6 6"/>
-<path d="M1016 1178v184H24V230h32" fill="none" stroke="#A7783E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-amber)" stroke-dasharray="6 6"/>
+<path d="M324 546v38h316v80" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M640 714v20H340v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M640 734h300v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M1184 546v268h-16" fill="none" stroke="#7962A7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-purple)"/>
+<text x="1184" y="585" font-size="15" fill="#7962A7" font-weight="600" text-anchor="end">Candidate code / policy</text>
+<path d="M340 872v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M940 872v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M340 1062v70" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M760 1203h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
+<path d="M696 1140v-24h544V410h-16" fill="none" stroke="#A7783E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-amber)" stroke-dasharray="6 6"/>
+<text x="1216" y="1107" font-size="14" fill="#A7783E" font-weight="600" text-anchor="end">Regressions / weak evidence → edit or test again</text>
+<path d="M408 1266v48" fill="none" stroke="#5375A1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M64 1368H44V466h12" fill="none" stroke="#5375A1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-blue)" stroke-dasharray="6 6"/>
+<path d="M1016 1266v184H24V230h32" fill="none" stroke="#A7783E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-amber)" stroke-dasharray="6 6"/>
 </g></svg>

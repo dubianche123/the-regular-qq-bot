@@ -85,7 +85,7 @@ A reminder is another use of the same job table. The model writes a fixed time t
 
 Each iteration produces **a candidate change, new regression cases and an old/new comparison report**. The live bot records inputs, judgments and actual delivery. `checkup` reads those records and flags suspicious scenes; a separate judge model labels them in another maintenance step. An external coding agent diagnoses and edits, evaluation commands replay and compare, and a maintainer decides what ships.
 
-![Self-iteration: freeze the scene and expectation, compare baseline and candidate, revisit regressions, then observe released behavior](docs/readme/iteration.svg)
+![Self-iteration: independent complete labels, training and validation, baseline versus candidate, false positives and misses, and approved code or policy activation](docs/readme/iteration.svg)
 
 Continue the synthetic teacup scene. **Suppose** "Atuan, I think it looks like a teacup" was classified as `let_it_pass` and went unanswered. Follow that failure through the iteration:
 
