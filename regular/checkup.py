@@ -13,7 +13,8 @@
 | corrected     | 分诊判出群友在纠正 / 叫停它（natural_feedback）                    | 分诊层已有 |
 | bad_reaction  | 它说完一分钟内有人回「？？」「答非所问」「串了」……                 | 11-02 20:57 |
 | promised      | 它说了「我去查」「记下了」「到点叫你」，那一轮却没实际记上提醒或起查询 | 11-01 02:49、11-03 09:05 |
-| catchphrase   | 它当天的话里同一个 4–6 字片段在三条以上出现，且比前七天明显多        | 「刚醒 / 开机」三天 27 句 |
+| catchphrase   | 它当天自己写的话里同一个 4–6 字片段在三条以上出现，且比前七天明显多  | 「刚醒 / 开机」三天 27 句 |
+| blind         | 它说自己看不见图（「只看到图片标记」「图没显示出来」）              | 11-01 12:31、11-04 11:39 / 11:43 |
 | sensitive     | 它的输出碰了敏感词表，或被平台拒收换成了兜底话                     | |
 | recall_empty  | 分诊说要翻旧账，检索却一条没挑到（kind=recall 的检索记录）          | 检索策略自迭代 |
 
@@ -32,6 +33,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+import quotes
 import turns as turns_mod
 from interactions import SCHEMA as INTERACTION_SCHEMA
 
@@ -50,8 +52,14 @@ CONTEXT_BEFORE = 5
 CONTEXT_AFTER = 3
 
 # 群里「没听懂 / 不对劲」的说法。这只是体检的候选筛子，不进任何线上判断。
+# 「没问你」那几句是它接了别人之间的话、被人点破（11-04 11:49「没问你小王，问的罗老板」）：
+# 带着它的名字，却不是在叫它，「叫了没回」那条不算它（NOT_ADDRESSED_MARKERS）。
+NOT_ADDRESSED_MARKERS = ("没问你", "不是问你", "没叫你", "没跟你说", "不是跟你说")
 CONFUSED_MARKERS = ("答非所问", "又似了", "串了", "没听懂", "听不懂", "啥意思", "什么意思",
-                    "在说啥", "说的啥", "你在说什么", "牛头不对马嘴")
+                    "在说啥", "说的啥", "你在说什么", "牛头不对马嘴") + NOT_ADDRESSED_MARKERS
+# 它说自己看不见图：读图没成、或者把自己刚画的图当成了别人发的（11-04 11:43「没真看见图」）
+BLIND_MARKERS = ("看不到图", "看不见图", "没看见图", "没看到图", "图片标记", "没显示出来",
+                 "图没显示", "图片没显示", "图打不开", "图片打不开")
 # 它答应了要做事的说法：分成查询承诺与提醒承诺，各自核对实际执行证据
 LOOKUP_PROMISE_MARKERS = ("我去查", "我去搜", "我查查", "我查一下", "我搜一下",
                           "找到再告诉你", "找到告诉你", "回头告诉你", "查到告诉你")
@@ -75,6 +83,7 @@ DEFAULT_POLICY = {
     "catchphrase_min": CATCHPHRASE_MIN,
     "catchphrase_ratio": 2.0,
     "catchphrase_min_talks": 2,
+    "blind_markers": list(BLIND_MARKERS),
 }
 
 # 调参器的搜索空间。数值给一组候选值，候选值的范围就是边界；
@@ -93,6 +102,7 @@ POLICY_SPACE = {
     "catchphrase_min": (3, 4, 5, 6),
     "catchphrase_ratio": (1.5, 2.0, 3.0, 4.0),
     "catchphrase_min_talks": (2, 3),
+    "blind_markers": "subset",
 }
 
 # 每个参数只影响哪些信号：调参按信号分开调，互不牵连。
@@ -110,6 +120,7 @@ PARAM_SIGNALS = {
     "catchphrase_min": ("catchphrase",),
     "catchphrase_ratio": ("catchphrase",),
     "catchphrase_min_talks": ("catchphrase",),
+    "blind_markers": ("blind",),
 }
 
 
@@ -168,6 +179,7 @@ LABELS = {
     "promised": "只说不做",
     "catchphrase": "口头禅",
     "sensitive": "碰了敏感词",
+    "blind": "说看不见图",
     "recall_empty": "翻旧账落空",
 }
 
@@ -371,8 +383,8 @@ def find_unanswered(data, timeline, names, turn_by_message, *, now=None, policy=
     speakers = data.get("speakers") or {}
     out = []
     for row in data["incoming"]:
-        if row.get("cmd"):
-            continue
+        if row.get("cmd") or any(m in (row.get("text") or "") for m in NOT_ADDRESSED_MARKERS):
+            continue   # 「没问你小王」带着它的名字，却是叫它别插嘴：算群里的反应，不算叫了没回
         is_at = bool(row.get("at"))
         unknown_ats = [] if is_at else _unknown_at_targets(row, speakers)
         if not is_at and not unknown_ats:
@@ -408,7 +420,8 @@ def find_repeated(data, timeline, names, turn_by_message=None, policy=None):
     speakers = data.get("speakers") or {}
     by_user = defaultdict(list)
     for row in data["incoming"]:
-        text = "".join(_WORD.findall(row.get("text") or ""))
+        # 引用前缀（「[回复小王：「…」] 」）不算他说的话：两次引用同一张图提不同要求，前缀会把相似度撑高
+        text = "".join(_WORD.findall(quotes.strip(row.get("text") or "")))
         if len(text) >= p["repeat_min_chars"] and not row.get("cmd"):
             by_user[(row.get("group"), row.get("user"))].append((row, text))
     out = []
@@ -595,10 +608,24 @@ def _grams(text):
     return out
 
 
+def _common_span(texts, gram):
+    """这批句子共有的最长一段（得含着 gram）：同一句被切成几段时，报出整句。"""
+    common = texts[0] if texts else gram
+    for other in texts[1:]:
+        m = difflib.SequenceMatcher(None, common, other, autojunk=False).find_longest_match(
+            0, len(common), 0, len(other))
+        common = common[m.a:m.a + m.size]
+    common = common.strip("，。！？、 ")
+    return common[:30] if gram in common else gram
+
+
 def find_catchphrases(data, names, baseline, policy=None):
     p = policy or DEFAULT_POLICY
     hits = defaultdict(list)
     for row in data["delivery"]:
+        # 只看它自己写的：本地固定话术（「这张被图片审核拦下来了」）和平台拒收后的兜底话不算口头禅
+        if row.get("generation") != "model" or row.get("fallback"):
+            continue
         for gram in _grams(row.get("text")):
             hits[gram].append(row)
     base_days = max(1, len(baseline))
@@ -622,6 +649,15 @@ def find_catchphrases(data, names, baseline, policy=None):
         if any(gram in k[0] and k[1] >= 0.8 * count for k in kept):
             continue
         kept.append((gram, count, avg, rows))
+    # 同一句话被切成几段 6 字片段，出现在同一批句子里：只报一条，片段换成这批句子的公共部分
+    merged, by_rows = [], {}
+    for gram, count, avg, rows in kept:
+        sig = frozenset(id(r) for r in rows)
+        if sig in by_rows:
+            continue
+        by_rows[sig] = True
+        merged.append((_common_span([r.get("text") or "" for r in rows], gram), count, avg, rows))
+    kept = merged
     kept.sort(key=lambda c: -c[1])
     out = []
     day_prefix = data.get("day") or ""
@@ -664,6 +700,23 @@ def find_sensitive(data, timeline, names, turn_by_id):
                                 message_id=turn.get("message_id"), turn_ids=[turn["turn_id"]],
                                 context=_context(timeline, turn.get("group"), ts, names),
                                 key=turn["turn_id"]))
+    return out
+
+
+def find_blind(data, timeline, names, policy=None):
+    p = policy or DEFAULT_POLICY
+    out = []
+    for row in data["delivery"]:
+        text = row.get("text") or ""
+        marker = next((m for m in p["blind_markers"] if m in text), None)
+        if row.get("generation") != "model" or not marker:
+            continue
+        ts = row.get("ts") or 0.0
+        out.append(_finding("blind", row.get("group"), ts, user=row.get("user"),
+                            detail=f"它说「{text[:40]}」", message_id=row.get("source_message_id"),
+                            turn_ids=[row.get("turn_id")],
+                            context=_context(timeline, row.get("group"), ts, names),
+                            key=row.get("outgoing_id"), marker=marker))
     return out
 
 
@@ -767,7 +820,8 @@ def prepare_data(data, *, baseline=None, names=None):
             if t.get("message_id"):
                 turn_by_message[t["message_id"]].append(t)
         elif t.get("kind") == "triage" and t.get("message_id"):
-            triage_by_message[t["message_id"]] = t
+            # 同一条消息先有分诊、后可能有画图前那一问（draw_check）：留先到的分诊
+            triage_by_message.setdefault(t["message_id"], t)
     # 只有分诊、没有生成回复的消息（如 unanswered / let_it_pass），也把分诊 turn_id 挂上供一键存例
     for mid, tr in triage_by_message.items():
         if not turn_by_message.get(mid) and tr.get("turn_id"):
@@ -792,6 +846,7 @@ _DETECTORS = {
     "sensitive": lambda c, p, now: find_sensitive(
         c["data"], c["timeline"], c["names"], c["turn_by_id"]),
     "recall_empty": lambda c, p, now: find_recall_empty(c["data"], c["timeline"], c["names"]),
+    "blind": lambda c, p, now: find_blind(c["data"], c["timeline"], c["names"], policy=p),
 }
 
 

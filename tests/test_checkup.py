@@ -251,6 +251,46 @@ class CheckupSignalsTest(unittest.TestCase):
             self.write(rows, day=day)
         self.assertNotIn("catchphrase", self.signals(self.run_report()))
 
+    def test_blind_only_for_its_own_words(self):
+        """11-04 11:39 / 11:43：它两次说「只看到图片标记」，第二次对着的是它自己画的蛙。"""
+        self.write([
+            _delivery(0, "我这边只看到图片标记，图本体没显示出来", turn="t1", user="U1"),
+            _delivery(60, "我这边看不到图，等会儿再试试", generation=None),
+        ])
+        out = self.run_report()
+        (f,) = [f for f in out["findings"] if f["signal"] == "blind"]
+        self.assertEqual(f["turn_ids"], ["t1"])
+        self.assertEqual(f["marker"], "图片标记")
+
+    def test_not_addressed_is_a_bad_reaction_not_an_unanswered_call(self):
+        """11-04 11:49「没问你小王，问的罗老板」：带着名字，却是叫它别插嘴。"""
+        self.write([
+            _delivery(0, "刚发的就是那只戴黑框眼镜的青蛙图", user="U1"),
+            _incoming(11, "U2", "没问你小王，问的罗老板", "m1", at=True),
+        ])
+        sig = self.signals(self.run_report())
+        self.assertIn("bad_reaction", sig)
+        self.assertNotIn("unanswered", sig)
+
+    def test_catchphrase_skips_local_lines_and_reports_one_sentence_once(self):
+        """11-04「这张被图片审核拦下来了，换个画法吧」是本地固定话术，被切成七段 6 字片段各报一条。"""
+        line = "这张被图片审核拦下来了，换个画法吧"
+        self.write([_delivery(i * 60, line, user=f"U{i}", generation=None) for i in range(4)])
+        self.assertNotIn("catchphrase", self.signals(self.run_report()))
+        self.write([_delivery(1000 + i * 60, line, user=f"U{i}") for i in range(4)])
+        (f,) = [f for f in self.run_report()["findings"] if f["signal"] == "catchphrase"]
+        self.assertIn("这张被图片审核拦下来了", f["detail"])
+
+    def test_repeated_ignores_the_quote_prefix(self):
+        """两次引用同一张图、提不同要求：引用前缀把相似度撑过线，被当成同一句问了两遍。"""
+        quote = "[回复小王：「[图：一只明黄色小熊站在虚构的中式宫殿屋顶上，朱红屋檐、金色琉璃瓦、飞檐翘角]」] "
+        self.write([
+            _incoming(0, "U1", quote + "小王，再让它穿上红短袖", "m1", at=True),
+            _incoming(60, "U1", quote + "小王，再让他手里拿着包子", "m2", at=True),
+            _delivery(5, "穿上了", source="m1"), _delivery(65, "拿上了", source="m2"),
+        ])
+        self.assertNotIn("repeated", self.signals(self.run_report()))
+
     def test_sensitive_and_undelivered_raw(self):
         self.write([
             _delivery(0, "这句有违禁词", turn="t1"),

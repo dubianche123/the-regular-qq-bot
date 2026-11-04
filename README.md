@@ -6,7 +6,7 @@
 
 **一个住在 QQ 群里的 AI 群友：认识大家、记得群里的事，也知道什么时候该接话，什么时候该安静。**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1429-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1446-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 **中文** · [English](README_EN.md) · [信息流](#一句话进来之后) · [Decisions 输入](#decisions-究竟看到了什么) · [自己迭代](#自己迭代把这一圈做成命令) · [快速开始](#开始使用) · [设计文档](#设计文档)
 
@@ -170,7 +170,7 @@ DEPLOY=/path/to/regular-bot
 
 | 已有证据 | 测量范围 |
 | --- | --- |
-| 1429 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
+| 1446 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
 | 旧账检索 8 / 8 用例判据通过，相关证据取回 7 / 9 | [合成完整标注集](docs/self-iteration.md#local-strategy-evaluation)；新旧结果一致，预算约束造成的 2 条漏检如实计入 |
 | 接住 17 / 20 条没带名字但冲它说的话，旧方案 3 / 20 | [141 条消息、9 种写法回放](docs/when-to-reply.md)；「该接 / 不该接」由独立评审模型标注 |
 | 回复输入 token 的 75.6% 命中前缀缓存 | [线上一天 261 次调用](docs/providers.md)，与该模型和当时流量有关 |
@@ -218,7 +218,7 @@ regular --directory regular-bot run
 | --- | --- |
 | 判断交给谁 | [判断层](docs/judgment-layer.md) · [概率校准实测](docs/decision-calibration.md) · [叫到我不等于要我答](docs/addressing.md) · [引用和 @](docs/quotes.md) |
 | 什么时候开口 | [没叫它的时候](docs/when-to-reply.md) · [何时介入（旧方案存档）](docs/when-to-intervene.md) · [真托付还是整活](docs/request-sincerity.md) · [岔开话题别换台](docs/deflection.md) |
-| 能力与动作 | [画图与语音](docs/media-replies.md) · [图像生成配置](docs/image-generation.md) · [先读图再回话](docs/image-before-reply.md) · [到点提醒](docs/reminders.md) |
+| 能力与动作 | [画图与语音](docs/media-replies.md) · [图像生成配置](docs/image-generation.md) · [先读图再回话](docs/image-before-reply.md) · [画图前看一眼](docs/drawing-guard.md) · [到点提醒](docs/reminders.md) |
 | 异步 | [慢活：先回一句，做完再跟进](docs/slow-work.md) |
 | 记忆与观察 | [交情与个人证据](docs/personal-memory.md) · [互动观察](docs/interaction-observations.md) · [自己迭代](docs/self-iteration.md) |
 | 模型与供应商 | [三家模型各司其职](docs/model-roles.md) · [供应商配置](docs/providers.md) |

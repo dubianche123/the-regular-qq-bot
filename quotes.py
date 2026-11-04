@@ -87,6 +87,16 @@ def render(who, text):
     return f"[回复{who}：「{text}」] " if who else f"[回复：「{text}」] "
 
 
+def strip(text):
+    """去掉 render 拼在前面的那一截，只剩他自己说的话（体检比相似度用）。"""
+    text = text or ""
+    if text.startswith("[回复"):
+        end = text.find("」] ")
+        if end != -1:
+            return text[end + 3:]
+    return text
+
+
 class QuoteBook:
     """state.data["quotes"][群] = [[索引, 谁说的, 开头, 时间], ...]，只留最近 KEEP 条。
 
