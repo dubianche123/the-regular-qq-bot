@@ -34,6 +34,7 @@ _IMAGE_OUTCOMES = {
     True: "这张图已经发到群里了",
     None: "图发出去了，但没收到回执，群里可能看得到",
     "blocked": "这张没画成：图片审核没过",
+    "declined": "这张没画：画面合起来会被看成在影射政治人物",
     "generation_error": "这张没画成：画图服务出错了",
     "upload_error": "图画好了，但没能发进群",
     "quota": "这张没画：今天的画图额度用完了",
@@ -105,6 +106,11 @@ def record(said, outcome):
     return "\n".join(part for part in (head, said.text, f"（系统：{note}）") if part)
 
 
+def record_declined(text):
+    """画图前判了不画、它重写的那句：会话里只记说了什么和没画，不留那段画面描述 —— 留着它下一轮还会照着写。"""
+    return "\n".join(part for part in (text, f"（系统：{_IMAGE_OUTCOMES['declined']}）") if part)
+
+
 def record_reminder(recorded, remind, note):
     """提醒那一行也原样记进会话，补上记没记上 —— 下一轮它看见的是实际结果。"""
     head = "〔取消提醒〕" if remind[0] == "cancel" else f"〔提醒 {remind[1]}〕{remind[2]}"
@@ -117,7 +123,9 @@ def image_failed_line(outcome):
     小王已经用自己的话接过这单了，这里只交代结果；回执不明（None）不补 —— 图可能已经在群里。
     """
     return {
-        "blocked": "这张被图片审核拦下来了，换个画法吧",
+        # 别说「换个画法」：2026-11-04 维尼熊被拦三次之后，群友真就换着画法一步步要成了
+        "blocked": "这张被图片审核拦下来了，就不画了",
+        "declined": "这张我就不画了",
         "upload_error": "图画好了，但没发进群，等会儿再试试",
         "quota": "今天画不动了，明天再画",
         "busy": "手上那张还没画完，等会儿再叫我",

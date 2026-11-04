@@ -608,7 +608,8 @@ def create_case_from_message(archive_dir, message_id, case_id, *, interaction_di
         if turn_dir:
             for tr in turns_mod.read_day(turn_dir, d):
                 if tr.get("kind") == "triage" and tr.get("message_id"):
-                    triage_by_mid[tr["message_id"]] = tr
+                    # 同一条消息先有分诊、后可能有画图前那一问（draw_check）：留先到的分诊
+                    triage_by_mid.setdefault(tr["message_id"], tr)
 
         deliveries = [
             r for r in inter_rows

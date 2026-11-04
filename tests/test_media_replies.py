@@ -81,9 +81,11 @@ class _Reply(unittest.IsolatedAsyncioTestCase):
         self.sessions = storage.SessionStore()
         self.state = SimpleNamespace(data={}, mark_dirty=Mock())
         self.remember = Mock()
+        self.check_drawing = AsyncMock(return_value=True)
         for p in (patch.object(bot.runtime, "SESSIONS", self.sessions),
                   patch.object(bot.runtime, "STATE", self.state),
-                  patch.object(bot.runtime, "FEEDBACK", SimpleNamespace(remember=self.remember)),
+                  patch.object(bot.runtime, "FEEDBACK", SimpleNamespace(
+                      remember=self.remember, check_drawing=self.check_drawing)),
                   patch.object(bot.runtime, "INTERACTIONS", SimpleNamespace(append=Mock())),
                   patch.object(bot, "SENDER", Sender()),
                   patch.object(bot, "owner_hint_pending", return_value=False),
@@ -160,6 +162,54 @@ class ImageReplyTest(_Reply):
                 await bot.reply_in_session(self.message, "group_member", "画只猫", media=media)
                 draw.assert_not_awaited()
                 self.assertEqual(self.sent(), ["来一张"])
+
+
+class DrawGuardTest(_Reply):
+    """2026-11-04 11:43–12:10：维尼熊 → 吃包子的黄熊 → 中式宫殿 → 红短袖 → 冠冕，一步步要，
+    每一步它都照画；QQ 拒收了它两句话。画之前拿它写好的完整画面问一次判断（docs/drawing-guard.md）。"""
+
+    SPEC = "一只明黄色圆滚滚的小熊站在中式宫殿屋顶上，穿红短袖，捧着大包子，头戴金色冠冕"
+
+    async def test_declined_picture_is_not_drawn_and_it_says_no_in_its_own_words(self):
+        replies = AsyncMock(side_effect=[(f"〔画〕{self.SPEC}\n冠冕安排上了", None),
+                                         ("这张我先不接了，给熊放个假", None)])
+        self.check_drawing.return_value = False
+        with patch.object(bot, "get_ai_reply", replies), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as draw:
+            await bot.reply_in_session(self.message, "group_member", "给他加个冠冕行嘛",
+                                       media=self.media(), history=[{"sender": "member", "text": "给他加个冠冕行嘛"}])
+        draw.assert_not_awaited()
+        self.assertEqual(self.sent(), ["这张我先不接了，给熊放个假"])
+        self.assertEqual(self.check_drawing.await_args.args[2], self.SPEC)
+        # 重写那一遍带着「这张不画」，〔画〕那段画面不留进会话（留着它下一轮还会照着写）
+        self.assertIn(prompts.PROMPT_DRAW_DECLINED, replies.await_args_list[1].kwargs["media_note"])
+        self.assertNotIn("冠冕", self.last_record())
+        self.assertIn("影射政治", self.last_record())
+
+    async def test_rewrite_that_still_draws_falls_back_to_the_local_line(self):
+        self.check_drawing.return_value = False
+        with patch.object(bot, "get_ai_reply", AsyncMock(return_value=(f"〔画〕{self.SPEC}\n好", None))), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as draw:
+            await bot.reply_in_session(self.message, "group_member", "画", media=self.media())
+        draw.assert_not_awaited()
+        self.assertEqual(self.sent(), [expression.image_failed_line("declined")])
+
+    async def test_unavailable_judgement_still_draws(self):
+        self.check_drawing.return_value = None
+        with self.said("〔画〕一只橘猫\n来了"), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock(return_value=True)) as draw:
+            await bot.reply_in_session(self.message, "group_member", "画只猫", media=self.media())
+        draw.assert_awaited_once()
+
+    async def test_turns_that_cannot_draw_are_not_checked(self):
+        with self.said("〔画〕一只橘猫\n来了"):
+            await bot.reply_in_session(self.message, "group_member", "画只猫",
+                                       media=self.media(draw=False))
+        self.check_drawing.assert_not_awaited()
+
+    def test_blocked_line_does_not_invite_another_angle(self):
+        """11-04 维尼熊被生图审核拦了三次，每次都说「换个画法吧」—— 群友真就换着画法一步步要成了。"""
+        self.assertNotIn("换个画法", expression.image_failed_line("blocked"))
 
 
 class VoiceReplyTest(_Reply):

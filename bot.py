@@ -1061,15 +1061,18 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                  "group": getattr(message, "group_openid", None),
                  "user": getattr(getattr(message, "author", None), "member_openid", None),
                  "message_id": getattr(message, "id", None)}
-        token = _reply_trace.set(trace)
-        providers.reset_completion_meta()
-        try:
-            body, delta = (prepared if prepared is not None else
-                           await get_ai_reply(session_id, user_text,
-                                              allow_fallback=False, **context))
-            completion = providers.completion_meta()
-        finally:
-            _reply_trace.reset(token)
+        async def generate():
+            token = _reply_trace.set(trace)
+            providers.reset_completion_meta()
+            try:
+                body, delta = (prepared if prepared is not None else
+                               await get_ai_reply(session_id, user_text,
+                                                  allow_fallback=False, **context))
+                return body, delta, providers.completion_meta()
+            finally:
+                _reply_trace.reset(token)
+
+        body, delta, completion = await generate()
         generated = bool(body) and not prepared_local
         if not generated and prepared is None and context.get("unprompted"):
             return "", delta, None   # 没叫它的这轮没生成出来：不说，不拿兜底话凑一句
@@ -1080,6 +1083,16 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         if said.kind == "image" and not (media is not None and media.draw):
             logger.info("🎨 这一轮不认〔画〕，只发文字（%s）", session_id[-12:])
             said = expression.Said(None, "", said.text, said.remind)
+        declined = said.kind == "image" and await _drawing_declined(message, media, said, history)
+        if declined:
+            # 这张不画（见 _drawing_declined）：带着 PROMPT_DRAW_DECLINED 重写一遍，让它用自己的话推掉；
+            # 重写的还想画、或者没写出话来，就用本地那句。
+            context["media_note"] = "\n".join(
+                part for part in (context.get("media_note"), prompts.PROMPT_DRAW_DECLINED) if part)
+            body, delta, completion = await generate()
+            said = expression.parse(body) if body else expression.PASS
+            if said.kind in ("image", "pass") or not said.text:
+                said = expression.Said(None, "", expression.image_failed_line("declined"), said.remind)
         if said.kind == "voice" and not (media is not None and media.voice):
             said = expression.Said(None, "", said.text, said.remind)
         body = said.text if generated else (body or _pick_fallback())
@@ -1103,7 +1116,7 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         # 会话里记的那条：默认就是发出去的字；画了图、发了语音，换成带标记和结果的那条
         # （expression.record）—— 下一轮小王看见的是自己实际做了什么，而不是只看见一句话。
         # 记了提醒的，再把提醒那行和记没记上包在外面（expression.record_reminder）。
-        recorded = {"as": None}
+        recorded = {"as": expression.record_declined(body) if declined else None}
 
         def as_recorded(text):
             return (expression.record_reminder(text, said.remind, remind_note)
@@ -1235,6 +1248,20 @@ async def reply_unprompted(message, session_id, user_text, *, callback_note="", 
                 logger.info("🫧 居然记得：端出 1 条旧话（%s）", (member or "")[-4:])
             runtime.STATE.mark_dirty()
     return outcome
+
+
+async def _drawing_declined(message, media, said, history):
+    """〔画〕之前看一眼整张画面（2026-11-04 维尼熊 → 吃包子的黄熊 → 中式宫殿 → 冠冕那一串，
+    见 docs/drawing-guard.md）：画面加上前几句是怎么要的，判断说在影射政治，这张就不画。
+    这一轮本来就不认〔画〕的不问；判断不可用照常画（runtime.FEEDBACK.check_drawing）。"""
+    if media is None or not media.draw:
+        return False
+    verdict = await runtime.FEEDBACK.check_drawing(
+        media.group, media.user, said.spec, history=history,
+        message_id=getattr(message, "id", None) or "")
+    if verdict is False:
+        logger.info("🎨 这张不画：画面合起来像在影射政治（%s）", (media.user or "")[-4:])
+    return verdict is False
 
 
 async def _reply_with_image(message, session_id, user_text, said, media, generation, delta, *,

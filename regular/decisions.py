@@ -240,6 +240,13 @@ def parse_choices(body, questions):
     return {name: row["choice"] for name, row in answers.items()}
 
 
+# 个别题目不过弃答闸：错放和错拦的代价差得太远，偏向哪边就听哪边。写在这里而不是调用处，
+# 回放（regular/replay_worker.py）重跑同一题时用的也是同一道闸。
+QUESTION_MIN_MARGIN = {
+    "draw_check": 0.0,   # 错放一张是封号，错拦一张只是少画一张（见 check_drawing）
+}
+
+
 def usable_choices(body, questions, min_margin=None):
     """解析 + **弃答闸**：边际太小的那一题整条丢掉，让调用方退回基线。
 
@@ -259,7 +266,7 @@ def usable_choices(body, questions, min_margin=None):
     answers = parse_each(body, questions, invalid_reasons=invalid_reasons)
     if answers is None:
         return None, {}
-    floor = config.DECISION_MIN_MARGIN if min_margin is None else min_margin
+    default_floor = config.DECISION_MIN_MARGIN if min_margin is None else min_margin
     scores, choices = {}, {}
     for name, row in answers.items():
         if row is None:
@@ -269,6 +276,8 @@ def usable_choices(body, questions, min_margin=None):
         scores[name] = {"choice": row["choice"], "margin": margin,
                         "confidence": row["confidence"], "p": row["p"],
                         "probabilities": row["probabilities"]}
+        floor = (QUESTION_MIN_MARGIN.get(name, default_floor) if min_margin is None
+                 else default_floor)
         if margin is not None and floor > 0 and margin < floor:
             scores[name]["dropped"] = True
             continue
@@ -613,6 +622,32 @@ class FeedbackTracker:
         if choices is None or "callback" not in choices:
             return None   # 不可用（含被弃答闸丢掉）≠ 判过了说「先别」
         return choices["callback"] == "bring_it_up"
+
+    async def check_drawing(self, group, user, spec, *, history=(), message_id=""):
+        """〔画〕之前问一次：这张画合起来，加上前几句是怎么要的，是不是在影射政治（见 DRAW_QUESTIONS）。
+
+        返回 True（画）/ False（不画）/ None（判断不可用，调用方照常画 —— 人设里的规则和
+        生图审核还在，判断接口挂了不该连带所有画图一起停）。
+        不过弃答闸（QUESTION_MIN_MARGIN）：错放一张的代价是封号，错拦一张只是少画一张，判断偏向「不画」就听它的。
+        """
+        if not config.DECISION_ENABLED or not spec:
+            return None
+        history = [row for row in (history or []) if isinstance(row, dict)]
+        aliases = _alias_map([row.get("sender") for row in history] + [user])
+        known = self._known_ids(group, None, history, (user,))
+        payload = {"image_spec": _sanitize(spec, known),
+                   "recent_human_messages": self._input_rows(history, aliases, known),
+                   "requester": aliases.get(user, "member")}
+        _with_aliases(payload)
+        questions = decision_prompts.draw_questions()
+        body = await providers.call_decision(
+            json.dumps(payload, ensure_ascii=False), questions)
+        choices, scores = usable_choices(body, questions)   # 这一题不过弃答闸，见 QUESTION_MIN_MARGIN
+        self._log_scores(group, "draw", scores, user=user, source_message_id=message_id)
+        self._record_triage(group, user, message_id, payload, ["draw_check"], choices, False)
+        if choices is None or "draw_check" not in choices:
+            return None
+        return choices["draw_check"] == "draw"
 
 
 _MAX_LOGGED_SCORES = 40
