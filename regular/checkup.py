@@ -33,6 +33,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+import expression
 import quotes
 import turns as turns_mod
 from interactions import SCHEMA as INTERACTION_SCHEMA
@@ -216,6 +217,7 @@ def load_day(day, *, interaction_dir, turn_dir, archive_dir=None):
         "day": day,
         "incoming": [],
         "delivery": [],
+        "images": [],   # 它发的图：没有文字，不进各信号，只进时间线（见 _timeline）
         "next_delivery": [],
         "feedback": [],
         "decision": [],
@@ -230,6 +232,9 @@ def load_day(day, *, interaction_dir, turn_dir, archive_dir=None):
         elif (kind == "delivery" and row.get("status") == "delivered"
               and row.get("actor") == "assistant" and row.get("text")):
             data["delivery"].append(row)
+        elif (kind == "delivery" and row.get("status") == "delivered"
+              and row.get("route") == "image"):
+            data["images"].append(row)
         elif kind == "natural_feedback":
             data["feedback"].append(row)
         elif kind == "decision":
@@ -304,7 +309,12 @@ def load_baseline(day, *, interaction_dir, days=CATCHPHRASE_BASELINE_DAYS):
 # ── 时间线与上下文 ──
 
 def _timeline(data):
-    """按群把人和它的话排成一条时间线；每个元素 (ts, who, text, ref)。"""
+    """按群把人和它的话排成一条时间线；每个元素 (ts, who, text, ref)。
+
+    它发的图在交互日志里没有文字，按来源消息找回那一轮写的画面描述，记成「[图：…]」（跟线上
+    它自己会话里那行一样）；找不到就记「[图]」。不补的话，看前后文的人不知道群里那张图是它画的。
+    """
+    drawings = _drawings(data.get("turns") or ())
     lines = defaultdict(list)
     for row in data["incoming"]:
         lines[row.get("group")].append({"ts": row.get("ts") or 0.0, "bot": False,
@@ -315,9 +325,36 @@ def _timeline(data):
                                         "user": row.get("user"), "text": row.get("text") or "",
                                         "outgoing_id": row.get("outgoing_id"),
                                         "turn_id": row.get("turn_id")})
+    for row in data.get("images") or ():
+        drawn = _drawn(drawings, row)
+        lines[row.get("group")].append({"ts": row.get("ts") or 0.0, "bot": True,
+                                        "user": row.get("user"),
+                                        "text": f"[图：{drawn[2]}]" if drawn else "[图]",
+                                        "outgoing_id": row.get("outgoing_id"),
+                                        "turn_id": drawn[1] if drawn else None})
     for items in lines.values():
         items.sort(key=lambda r: r["ts"])
     return lines
+
+
+def _drawings(turns):
+    """每条来源消息上写了〔画〕的回复轮次：{message_id: [(ts, turn_id, 画面描述)]}，按时间排。"""
+    out = defaultdict(list)
+    for t in turns:
+        if t.get("kind") == "reply" and t.get("message_id"):
+            said = expression.parse(t.get("raw") or "")
+            if said.kind == "image":
+                out[t["message_id"]].append((t.get("ts") or 0.0, t.get("turn_id"), said.spec))
+    for items in out.values():
+        items.sort(key=lambda d: d[0])
+    return out
+
+
+def _drawn(drawings, row):
+    """这张图是哪一轮画的：同一条来源消息上、图送达之前最后一次写〔画〕的那轮。"""
+    ts = row.get("ts") or 0.0
+    before = [d for d in drawings.get(row.get("source_message_id")) or () if d[0] <= ts]
+    return before[-1] if before else None
 
 
 def _context(timeline, group, ts, names):

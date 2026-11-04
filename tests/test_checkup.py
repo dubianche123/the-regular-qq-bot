@@ -27,10 +27,10 @@ def _incoming(ts, user, text, mid, at=False):
 
 
 def _delivery(ts, text, *, source=None, user=None, out=None, turn=None,
-              generation="model", **extra):
+              generation="model", route="reply", **extra):
     return _row("delivery", ts, user=user, actor="assistant", status="delivered",
                 text=text, source_message_id=source, outgoing_id=out or f"o{ts}",
-                turn_id=turn, generation=generation, route="reply", **extra)
+                turn_id=turn, generation=generation, route=route, **extra)
 
 
 class CheckupSignalsTest(unittest.TestCase):
@@ -261,6 +261,25 @@ class CheckupSignalsTest(unittest.TestCase):
         (f,) = [f for f in out["findings"] if f["signal"] == "blind"]
         self.assertEqual(f["turn_ids"], ["t1"])
         self.assertEqual(f["marker"], "图片标记")
+
+    def test_context_shows_its_own_drawings(self):
+        """11-04 11:43：它说看不见的那张蛙是它自己画的，体检前后文里那张图却只剩一行空白。"""
+        self.write([
+            _incoming(0, "U1", "小王 画只戴眼镜的蛙", "m1", at=True),
+            _delivery(20, "", source="m1", user="U1", route="image"),
+            _delivery(30, "", source="m9", user="U1", route="image"),
+            _delivery(60, "我这边只看到图片标记，图本体没显示出来", turn="t2", user="U1"),
+        ], turns=[
+            {"turn_id": "t0", "kind": "reply", "message_id": "m1", "ts": T0 + 5,
+             "raw": "〔画〕一只青蛙\n安排"},
+            {"turn_id": "t1", "kind": "reply", "message_id": "m1", "ts": T0 + 10,
+             "raw": "〔画〕一只戴黑框眼镜的青蛙\n安排"},
+            {"turn_id": "t3", "kind": "reply", "message_id": "m1", "ts": T0 + 40,
+             "raw": "〔画〕一只戴墨镜的青蛙"},
+        ])
+        (f,) = [f for f in self.run_report()["findings"] if f["signal"] == "blind"]
+        self.assertTrue(any(line.endswith("：[图：一只戴黑框眼镜的青蛙]") for line in f["context"]))
+        self.assertTrue(any(line.endswith("：[图]") for line in f["context"]))
 
     def test_not_addressed_is_a_bad_reaction_not_an_unanswered_call(self):
         """11-04 11:49「没问你小王，问的罗老板」：带着名字，却是叫它别插嘴。"""
