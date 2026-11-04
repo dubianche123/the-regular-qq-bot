@@ -47,6 +47,11 @@ for _name in ("AI_PROVIDER", "FALLBACK_PROVIDER"):
         os.environ.setdefault(_name, "gemini" if _name == "AI_PROVIDER" else "zhipu")
 
 
+# 没叫它的一句先等同一个人说完（config.BANTER_BURST_SECONDS，线上 3 秒）：测试里不等，
+# 要测这段的用例自己 patch 一个小值。
+os.environ.setdefault("BANTER_BURST_SECONDS", "0")
+
+
 def keys_are_real(provider=None):
     """该供应商有没有至少一个非哑 Key。
 

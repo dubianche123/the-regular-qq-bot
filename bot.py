@@ -1225,6 +1225,24 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
 _unprompted_locks = collections.defaultdict(asyncio.Lock)
 
 
+def _waited(group_id, message_id):
+    """这条消息进群聊背景缓存到现在过了多久；找不到就当刚到。"""
+    for row in reversed(group_buffers.get(group_id, ())):
+        if row.get("message_id") == message_id:
+            return time.time() - float(row.get("time") or 0)
+    return 0.0
+
+
+def _said_more(group_id, member, message_id):
+    """这人在这条之后又说了话（群聊背景缓存里排在它后面）。"""
+    after = False
+    for row in group_buffers.get(group_id, ()):
+        if after and row.get("sender") == member:
+            return True
+        after = after or row.get("message_id") == message_id
+    return False
+
+
 async def reply_unprompted(message, session_id, user_text, *, callback_note="", **context):
     """没 @、没叫名字的一句：接不接小王自己定（写〔不接〕就不发），代码只交代事实、记结果。
 
@@ -1233,7 +1251,17 @@ async def reply_unprompted(message, session_id, user_text, *, callback_note="", 
     """
     group_id = getattr(message, "group_openid", None)
     member = getattr(getattr(message, "author", None), "member_openid", None)
+    message_id = getattr(message, "id", None)
+    # 同一个人连着发的几句只问最后一句：先等他说完，后面还有话就这句不问 —— 后面那句的背景里有它
+    # （2026-11-04「你发的啥」「截图看看」两秒内各回了一句；前一句接歪了，后一句看见自己刚回过就接着歪）。
+    await asyncio.sleep(max(0.0, config.BANTER_BURST_SECONDS - _waited(group_id, message_id)))
     async with _unprompted_locks[group_id]:
+        if _said_more(group_id, member, message_id):
+            runtime.INTERACTIONS.append(
+                "decision", group_id, user=member, actor="system",
+                source_message_id=message_id, route="banter",
+                selected=False, reason="said_more")
+            return "", None, None
         now = time.time()
         hints = []
         if now - group_last_random_reply.get(group_id, 0) < config.BANTER_COOLDOWN_SECONDS:

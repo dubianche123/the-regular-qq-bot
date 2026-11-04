@@ -259,6 +259,9 @@ AI_TEMPERATURE_EXPLICIT = "AI_TEMPERATURE" in os.environ
 # 12% 的骰子 × 亲密度 × 作息 × 节奏先验 × 插嘴判断 × 接纳度。这里只剩一个数：
 # 它没被叫就开过口之后多久之内，下一句要提醒它「你刚开过口」（不拦，交代给它）。
 BANTER_COOLDOWN_SECONDS = _env_float("BANTER_COOLDOWN_SECONDS", 120.0)
+# 没叫它的一句先等这么久再定接不接：同一个人连着发的几句只拿最后一句来问
+# （2026-11-04「你发的啥」「截图看看」两秒内各回了一句，见 bot.reply_unprompted）。
+BANTER_BURST_SECONDS = _env_float("BANTER_BURST_SECONDS", 3.0)
 
 # ── 主动性（2026-10-19，激活度系统的一部分，见 activation.py）──
 # 心情/作息/群温的闸门全过时，自己照着最近的话题开个话头。所有闸门见 activation.proactive_ok：

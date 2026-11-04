@@ -9,6 +9,7 @@
   - 收敛暂停窗内一律不问；跟它无关的消息不再为它发分诊调用；
   - 「下一句骂你」照旧变成跨天的证据；「居然记得」只在获批、而且它真开了口时才算数。
 """
+import asyncio
 import os
 import tempfile
 import time
@@ -397,6 +398,30 @@ class InjectionGateTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_normal_reply_is_unchanged(self):
         self.assertIn(QUOTE, await self._bits(unprompted=False))
+
+
+class BurstTest(_Base):
+    """2026-11-04 11:49「你发的啥」「截图看看」两秒内各回了一句：前一句接歪了（问的是罗老板），
+    后一句看见自己刚回过，就接着歪。同一个人连着发的几句，只拿最后一句来问。"""
+
+    async def test_same_person_burst_is_asked_once_with_both_lines_in_view(self):
+        with patch.object(config, "BANTER_BURST_SECONDS", 0.3):
+            first = asyncio.create_task(self._drive("你发的啥"))
+            await asyncio.sleep(0.05)
+            second = asyncio.create_task(self._drive("截图看看"))
+            await asyncio.gather(first, second)
+        self.assertEqual(len(self.prompts_seen), 1)
+        self.assertTrue(self.prompts_seen[0][-1]["content"].endswith("截图看看"))
+        self.assertIn("当前说话人：你发的啥", self._last_prompt())
+        self.assertIn("said_more", [g["reason"] for g in self.log.gates()])
+
+    async def test_different_people_are_each_asked(self):
+        with patch.object(config, "BANTER_BURST_SECONDS", 0.2):
+            first = asyncio.create_task(self._drive("你发的啥", sender=B))
+            await asyncio.sleep(0.05)
+            second = asyncio.create_task(self._drive("截图看看", sender=A))
+            await asyncio.gather(first, second)
+        self.assertEqual(len(self.prompts_seen), 2)
 
 
 class OwnDrawingInViewTest(_Base):
