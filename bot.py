@@ -273,6 +273,16 @@ def _own_recent_image(row, sender, now):
     """背景里这一条是不是这人两分钟内自己发的图。"""
     return (row["sender"] == sender and "[图片" in row["text"]
             and now - float(row.get("time") or 0) <= OWN_IMAGE_SECONDS)
+OWN_DRAWING_SECONDS = 600.0
+
+
+def _own_recent_drawing(line, now):
+    """它自己十分钟内画的图（own_lines 里的「[图：…]」）。背景只留最近几句，画过什么不能跟着被挤掉：
+    2026-11-04 11:43 背景里没了它 11:38 画的奶蛙，它只看见自己说过「只看到图片标记」，
+    就对着自己画的蛙说「没真看见图」（见 docs/image-before-reply.md）。"""
+    return line["text"].startswith("[图：") and now - line["time"] <= OWN_DRAWING_SECONDS
+
+
 _BG_PREAMBLE = "（每句开头标的是发言人；‘当前说话人’与眼前这位是同一人，‘你’是你自己刚在群里说的，其余是其他群友；拿不准是谁就别点名）"
 
 
@@ -2987,9 +2997,10 @@ class GroupBot(botpy.Client):
             rows = [(float(b.get("time") or 0),
                      f"- {'当前说话人' if b['sender'] == sender_openid else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}")
                     for b in prev]
-            # 同一段时间里它自己说过的话按时间插进去（见 own_lines）
+            # 同一段时间里它自己说过的话按时间插进去（见 own_lines）；它自己刚画的图往前多看一段（_own_recent_drawing）
             rows += [(o["time"], f"- 你：{o['text']}") for o in own_lines.get(group_id, ())
-                     if rows[0][0] <= o["time"] <= now_ts]
+                     if o["time"] <= now_ts
+                     and (rows[0][0] <= o["time"] or _own_recent_drawing(o, now_ts))]
             rows.sort(key=lambda row: row[0])
             context_hint = refresh_names(group_id, "\n".join(line for _, line in rows))
             # ⚠️ 这行是对着「爱翻旧账的模型」写的（实测 Gemini 会把背景里别人的言行安到

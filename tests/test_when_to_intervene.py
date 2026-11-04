@@ -399,5 +399,21 @@ class InjectionGateTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(QUOTE, await self._bits(unprompted=False))
 
 
+class OwnDrawingInViewTest(_Base):
+    """2026-11-04 11:43「这你蛤我」：背景只剩最近几句，它 11:38 画的奶蛙被挤掉了，
+    它只看见自己说过「只看到图片标记」，就说自己没看见那只蛙。它十分钟内画的图留在背景里。"""
+
+    async def test_recent_drawing_stays_in_the_background(self):
+        now = time.time()
+        bot.own_lines[G].append({"time": now - 300, "text": "[图：一只水墨奶蛙蹲在荷叶上]"})
+        bot.own_lines[G].append({"time": now - 900, "text": "[图：一只更早画的奶龙]"})
+        self._seed_buffer([(60, B, "[图片]"), (40, B, "小王这是不是奶龙")])
+        await self._drive("这你蛤我")
+        prompt = self._last_prompt()
+        self.assertIn("- 你：[图：一只水墨奶蛙蹲在荷叶上]", prompt)
+        self.assertNotIn("更早画的奶龙", prompt)
+        self.assertLess(prompt.index("水墨奶蛙"), prompt.index("小王这是不是奶龙"))
+
+
 if __name__ == "__main__":
     unittest.main()
