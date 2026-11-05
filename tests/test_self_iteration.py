@@ -336,16 +336,6 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
                 head = model.await_args.args[0][0]["content"]
                 self.assertEqual(prompts.PROMPT_ANIMATION_RULES in head, expected)
 
-    async def test_concurrent_replay_does_not_leak_media_flags_or_config(self):
-        # 复现并验证 P1-1：A 用例（remind=False）首次失败重试时，期间 B 用例（remind=True）并发插入，
-        # A 第二次重试仍须看到 remind=False，且结束后 config.REMINDER_ENABLED 必须恢复原值。
-        seen_heads = {"A": [], "B": []}
-        a_attempts = {"n": 0}
-        b_entered = asyncio.Event()
-
-        async def interleaved_model(messages, max_tokens, **kw):
-            sys_head = messages[0]["content"]
-            user_msg = messages[-1]["content"]
     async def test_generate_replay_migrates_frozen_playful_note_to_current_prompt(self):
         old_note = "【旧版语气线索】冻结在历史记录里的正文"
         current_note = "【本轮语气线索】当前代码版本的正文"
@@ -393,6 +383,16 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
                     "kwargs": {"user_text": "接着玩梗", **kwargs}, "session": []})
             self.assertEqual(result, expected)
 
+    async def test_concurrent_replay_does_not_leak_media_flags_or_config(self):
+        # 复现并验证 P1-1：A 用例（remind=False）首次失败重试时，期间 B 用例（remind=True）并发插入，
+        # A 第二次重试仍须看到 remind=False，且结束后 config.REMINDER_ENABLED 必须恢复原值。
+        seen_heads = {"A": [], "B": []}
+        a_attempts = {"n": 0}
+        b_entered = asyncio.Event()
+
+        async def interleaved_model(messages, max_tokens, **kw):
+            sys_head = messages[0]["content"]
+            user_msg = messages[-1]["content"]
             if "CASE_A" in user_msg:
                 a_attempts["n"] += 1
                 seen_heads["A"].append("〔提醒" in sys_head)
