@@ -210,7 +210,10 @@ def _choices_to_decision_body(choices_map, questions=None):
             others = [c["value"] for c in (q_by_name[name].get("choices") or ())
                       if isinstance(c, dict) and c.get("value") and c.get("value") != val]
             if others:
-                probs.append({"value": others[0], "probability": 0.05})
+                probs.extend({"value": other, "probability": 0.05 / len(others)}
+                             for other in others)
+            else:
+                probs[0]["probability"] = 1.0
         answers.append({
             "name": name,
             "type": "choice",
