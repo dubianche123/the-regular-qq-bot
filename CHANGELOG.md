@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 — 2026-11-06
+
+- Open the desktop companion first from the source launchers and the default CLI.
+  Reveal chat, notifications and settings on proximity; keep the transparent
+  character visible when switching applications. Reuse an authenticated local
+  panel or start a bounded, local-only panel service without starting QQ.
+- Preserve the original mascot with anchored PNG action frames and optional
+  reduced motion. Add adjustable size and remembered local preferences; use
+  transparent rounded controls and distinct setup, library and checkup art.
+- Add explicit local text chat through the existing bot's event loop, session
+  handling and call budget, with separate local history and no QQ delivery.
+- Rewrite the bilingual README around everyday use and setup; preserve the
+  technical README in architecture documents and add a copyable Agent install prompt.
+- Make the selected chat service authoritative over an old CHAT_PROVIDER; show
+  primary, fallback and running-versus-saved model choices. Add a knowledge entry
+  browser and structured drafts with explicit preview and save.
+- Make the voice-output process lock portable to Windows while retaining the
+  POSIX lock and cancellation cleanup.
+
 ## 0.3.0 — 2026-11-05
 
 - Make the source package a guided starting point: Windows, macOS and Linux

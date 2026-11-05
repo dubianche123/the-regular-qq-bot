@@ -1,0 +1,50 @@
+# 老群友的视觉形象
+
+这位银白发、淡紫眼睛、穿鼠尾草绿外套的小龙群友，是项目的原创 AI 生成吉祥物。形象受维护者提供的龙娘参考启发，使用独立服装与表情设计；它代表本项目，不代表 OpenAI、ChatGPT 或 QQ 官方形象。角色用于欢迎与介绍，不改变机器人原有名字或聊天人设。
+
+- README 横幅：`docs/readme/hero.png`
+- 透明角色图：`regular/assets/mascot.png`
+- 生成方式：内置 imagegen，参考图生成，角色图保留透明 alpha；2026-11-06。
+- 页面配色：暖纸白、墨绿、鼠尾草绿，少量淡紫。
+
+## 页面和桌宠怎样共用她
+
+角色设计保持一致，页面插画按用途更换姿势：
+
+| 用途 | 最终文件 |
+| --- | --- |
+| 角色原画、桌宠基准 | `regular/assets/mascot.png` |
+| 配置与聊天欢迎：捧茶坐下 | `regular/assets/mascot-welcome.png` |
+| 知识库：整理笔记 | `regular/assets/mascot-knowledge.png` |
+| 体检与改进：放大镜和记录板 | `regular/assets/mascot-checkup.png` |
+| 桌宠动作 | `mascot-idle.png`、`mascot-blink.png`、`mascot-wave-mid.png`、`mascot-wave.png`、`mascot-drag-mid.png`、`mascot-drag.png` |
+
+运行素材统一为 512×768 的透明 PNG，共约 3.38 MiB；另外保留原始高清角色与 README 横幅。情境插画允许换姿势和道具，桌宠动作固定画布、脸和躯干，避免动作时换了一位角色。
+
+挥手和眨眼由原图局部编辑，小腿动作使用原画的局部骨骼变形。动作帧序列、速度和是否循环在 `regular/assets/pet-actions.json` 中。待机不持续晃动；拖动时进入动作并保持末帧，放下回到待机。没有使用模型逐帧重画的 GIF，也不做整张贴纸旋转或交叉淡入。
+
+维护工具为 `tools/generate_mascot_poses.py` 和 `tools/mascot_expression.swift`。默认仅打印计划，明确加 `--allow-paid` 才向官方 Images API 上传原创参考图与动作描述，每项一次请求、不自动重试。试验以 GPT Image 2.6 Flare 为主，局部姿势补强使用 Sunburst；不上传群聊。候选先留临时目录，验看后只导出采用素材，失败帧不放入运行包。
+
+本轮动作与情境扩展用了 8 次生成，保留自然且一致的结果；失败的腿部接缝、切翼和失真手臂候选已淘汰。完整角色与情境提示保存在生成工具中，下面是最初原画与横幅的提示。
+
+保留生成提示，便于后续延续同一形象。横幅以角色图作为身份参考。
+
+## 角色图提示
+
+```text
+Use case: stylized-concept.
+Asset type: original cute mascot cutout for the README and local setup UI of "The Regular / 老群友", a cozy QQ group companion.
+Primary request: Design ONE charming original feminine dragon companion, clearly an adult character in a soft stylized chibi illustration (about 3.5-head proportions), full body, with a truly transparent background. She should look like a witty longtime friend who is about to add a playful comment in a group chat.
+Input image: the attached white-haired dragon woman is a visual reference ONLY for the silver hair, little pale dragon horns, pointed ears, lavender eyes and dragon tail motif. Create a distinct new costume and face design. Do not reproduce the reference's logos.
+Subject: fluffy silver-white shoulder-length hair with a tiny loose ahoge, two small rounded pearly dragon horns, warm lavender eyes, an amused gentle smile. Cozy oversized sage-green cardigan over a simple ivory knee-length casual dress, lavender scarf ribbon, clean white sneakers. A short pale lavender dragon tail curls beside her; very small folded dragon wings optional if visually uncluttered. One hand waves casually; the other holds a small blank speech bubble-shaped cushion. Her posture is relaxed, inviting, cheeky and companionable.
+Style/medium: polished Japanese anime character illustration, delicate confident ink lines, soft pastel cel shading, subtle hand-painted texture, beautiful face and expressive eyes, premium indie open-source mascot aesthetic. Charming rather than glossy mobile-game poster.
+Color palette: pearl white, pale lavender, muted sage green, warm cream; small dark forest-green accents. Broad readable silhouette at 200px height.
+Composition: one centered full character, small breathing room on all sides, no feet or horns clipped, no extra character portraits. No scene, no typography or UI.
+Constraints: actual transparent alpha background, modest everyday clothes, adult character, original design, no OpenAI/ChatGPT/QQ official emblems or any logos, no knot emblems, no watermark, no text, no panels, no checkerboard baked into the pixels.
+```
+
+## 横幅提示
+
+```text
+Create a beautiful landscape GitHub README hero banner, aspect ratio 2.5:1. Use the supplied original mascot as the exact identity reference: friendly silver-white bob-haired anime dragon woman, small pearly horns, lavender eyes, sage cardigan, ivory dress, purple scarf, pale tail. On the right 40% she waves while sitting casually on a warm ivory speech-bubble seat. On the left spacious elegant dark forest-green typography: exactly 'The Regular' then '老群友' then the smaller line '群里，多一个有趣的朋友。'. No other words. Background warm ivory paper, muted sage and lavender decorative shapes, tiny subtle chat bubbles and a microphone and picture icon. Polished delicate anime illustration, cozy expressive face, clean editorial layout, generous safe margins, exceptionally correct legible Chinese typography. A refined inviting indie project cover, playful but uncluttered. Preserve the reference character and outfit. No official OpenAI or QQ logos, no watermark, no extra people, no architecture diagrams or metrics. All text and character within frame.
+```
