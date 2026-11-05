@@ -370,6 +370,8 @@ def create_case_from_turn(turn_dir, turn_id, case_id, *, incident="", tags=(),
             "kwargs": row.get("kwargs") or {},
             "session": row.get("session") or [],
             "media": row.get("media") or {"draw": True, "voice": True, "remind": True},
+            # 录这一轮的版本：入参里冻着的提示词原文是这个版本的，回放前要认出来换掉（eval.mark_frozen_prompts）
+            "release": row.get("release") or "",
         },
         "reference": row.get("raw") if reference is None else reference,
         "checks": list(checks),

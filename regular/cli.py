@@ -524,6 +524,22 @@ def eval_command(config, args):
                 print(f"Report written to {out['report_path']}")
         return 0
 
+    if args.plan:
+        # 只说这次会把什么发到哪儿、要调多少次模型，不调任何模型：给维护者或代理的审批看
+        from regular import cases as cases_mod
+        import turns as turns_mod
+        selected = []
+        if not args.day or args.cases not in ("all", "none"):
+            selected = cases_mod.load_cases(config.CASES_DIR, selector=args.cases, include_seeds=True)
+        day_turns = 0
+        if args.day:
+            from regular import checkup as checkup_mod
+            day_turns = sum(1 for t in turns_mod.read_day(config.TURN_LOG_DIR, checkup_mod.resolve_day(args.day))
+                            if t.get("kind") == "reply")
+        for line in eval_mod.describe_traffic(config, selected, n=args.n, day_turns=day_turns):
+            print(line)
+        return 0
+
     patterns = {}
     for item in args.pattern or ():
         name, sep, rx = str(item).partition("=")
@@ -532,11 +548,15 @@ def eval_command(config, args):
         patterns[name.strip()] = rx
 
     try:
-        out = eval_mod.run_eval(
-            config, base=args.base, cand=args.cand, cases_selector=args.cases,
-            day=args.day, n=args.n, ablate=args.ablate or "",
-            patterns=patterns or None, write=not args.no_write,
-            allow_paid=args.allow_paid)
+        if args.rejudge:
+            out = eval_mod.rejudge_report(config, args.rejudge, write=not args.no_write,
+                                          allow_paid=args.allow_paid)
+        else:
+            out = eval_mod.run_eval(
+                config, base=args.base, cand=args.cand, cases_selector=args.cases,
+                day=args.day, n=args.n, ablate=args.ablate or "",
+                patterns=patterns or None, write=not args.no_write,
+                allow_paid=args.allow_paid)
     except eval_mod.PaidEvaluationRequired:
         raise
     except RuntimeError as err:   # 盲评预检没过：原因原样说出来，别吞成一句泛泛的 doctor 提示
@@ -545,9 +565,9 @@ def eval_command(config, args):
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
-        print(eval_mod.render_report(out))
+        print(eval_mod.render_report(out, samples=False))
         if out.get("report_path"):
-            print(f"Report written to {out['report_path']}")
+            print(f"Report written to {out['report_path']}（末尾有逐条输出：新旧样本和盲评理由）")
     return 0
 
 
@@ -677,6 +697,10 @@ def main(argv=None):
     ev.add_argument("--no-write", action="store_true", help="do not write report files to data/evals")
     ev.add_argument("--json", action="store_true")
     ev.add_argument("--allow-paid", action="store_true", help="authorize real model requests and quota consumption")
+    ev.add_argument("--plan", action="store_true",
+                    help="print what this run would send where (cases, live vs synthetic, models, request counts); no model calls")
+    ev.add_argument("--rejudge", metavar="REPORT",
+                    help="reuse all samples of a saved report (.json path or data/evals stamp); rerun only failed judge pairs")
     tn = sub.add_parser("tune", help="read-only offline tuning for checkup thresholds or recall policy; no network or inference")
     tn.add_argument("target", choices=("checkup", "recall"), help="which local policy to tune")
     tn.add_argument("--cases", default="retrieve", help="recall: case selector (default: retrieve)")

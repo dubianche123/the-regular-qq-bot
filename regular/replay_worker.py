@@ -486,8 +486,41 @@ def run_retrieve(config, spec, policy=None):
     return json.dumps(out, ensure_ascii=False)
 
 
+def refresh_frozen_prompts(prompts_mod, turn):
+    """把入参里冻着的提示词原文换成受测版本自己的那份（eval.mark_frozen_prompts 标出来的）。
+
+    返回 (新 turn, 换了的常量名, 受测版本里已经没有的常量名)。消融、措辞搜索改的也是 prompts 上的属性，
+    这里读到的就是改过的。长的先换、换完先占位：一段原文里套着另一个常量的原文时，短的不会在长的里面再换一遍。
+    """
+    frozen = (turn or {}).get("frozen_prompts") or ()
+    if not frozen or prompts_mod is None:
+        return turn, [], []
+    kw = dict(turn.get("kwargs") or {})
+    marks, swapped, missing = {}, set(), set()
+    for i, entry in enumerate(sorted(frozen, key=lambda e: -len(e.get("text") or ""))):
+        key, name, old = entry.get("kwarg"), entry.get("name"), entry.get("text") or ""
+        value = kw.get(key)
+        if not old or not isinstance(value, str) or old not in value:
+            continue
+        own = getattr(prompts_mod, str(name), None)
+        if not isinstance(own, str):
+            missing.add(name)
+            continue
+        mark = f"\x00{i}\x00"
+        kw[key] = value.replace(old, mark)
+        marks[mark] = (key, own)
+        if own != old:
+            swapped.add(name)
+    for mark, (key, own) in marks.items():
+        kw[key] = kw[key].replace(mark, own)
+    return {**turn, "kwargs": kw}, sorted(swapped), sorted(missing)
+
+
 async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=None):
-    """对单条用例（或单轮输入）抽样 n 次，返回 {"id": ..., "samples": [...], "errors": int}。"""
+    """对单条用例（或单轮输入）抽样 n 次，返回 {"id": ..., "samples": [...], "errors": int}。
+
+    生成层用例另带 refreshed / stale_prompts：回放前换成受测版本措辞的提示词常量、受测版本里已经没有的。
+    """
     depth = item.get("depth") or ("triage" if item.get("kind") == "triage" else "generate")
     if depth == "retrieve":
         if config is None:
@@ -502,6 +535,10 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
         bot, runtime, config = _bot, _runtime, _config
     samples = []
     errors = 0
+    refreshed = stale = ()
+    if depth == "generate":
+        turn = item.get("turn") if "turn" in item else item
+        turn, refreshed, stale = refresh_frozen_prompts(getattr(bot, "prompts", None), turn)
     for _ in range(max(1, int(n))):
         if depth == "message":
             out = await _run_message_once(bot, runtime, config, item.get("messages") or (),
@@ -511,12 +548,14 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
             spec = item.get("triage") or item.get("turn") or item
             out = await _run_triage_once(runtime, config, spec, retries=retries)
         else:
-            turn = item.get("turn") if "turn" in item else item
             out = await _run_generate_once(bot, runtime, config, turn, retries=retries)
         if out is None:
             errors += 1
         samples.append(out)
-    return {"id": item.get("id") or item.get("turn_id"), "samples": samples, "errors": errors}
+    result = {"id": item.get("id") or item.get("turn_id"), "samples": samples, "errors": errors}
+    if refreshed or stale:
+        result.update(refreshed=list(refreshed), stale_prompts=list(stale))
+    return result
 
 
 async def replay_batch(items, *, n=1, concurrency=6, retries=1):

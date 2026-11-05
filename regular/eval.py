@@ -5,16 +5,22 @@
   1. base 和 cand 各起一个 replay_worker 子进程（base 是 git commit 时用临时 git worktree 检出），
      同一份用例 / 同一天的 turns 喂给两边，不在同一进程里用 exec 换提示词。
   2. 能用代码判的检查算通过率（pass_rate）；带 judge 的用例把新旧回复打乱顺序交给不参赛的
-     kimi-k3.1-pro 盲评，算胜率（win_rate）并标越线；网络错误自动重试一次，仍失败的那对剔除并单独计数。
-     盲评跑之前先预检一次（preflight_judge），并发跑。下降要过单侧检验才算退步，够不上的记「噪声内下降」。
+     kimi-k3.1-pro 盲评，算胜率（win_rate）并标越线；网络错误自动重试一次，仍失败的那对剔除并单独计数，
+     之后可以 --rejudge 只重评这几对。盲评跑之前先预检一次（preflight_judge），并发跑。
+     下降和上升都要过同一道单侧检验，才算退步 / 改进；够不上的记「噪声内下降 / 上升」。
+  2'. 用例里冻着录制时的提示词原文（某段注记就是 prompts 里某个常量的原文）：回放前认出来，
+     每个版本换成自己的那份（mark_frozen_prompts → replay_worker），改了措辞才真的测得到。
   3. 整天回放（--day）对比整体分布：口头禅片段次数、〔不接〕比例、平均字数、碰敏感词次数、
      家务 / 假车 / 刚醒等套路正则。
-  4. 报告写到 data/evals/<时间>.md：退步的用例排最前，稳定头长度每次必记。
+  4. 报告写到 data/evals/<时间>.md：先一句结论，退步的用例排最前，稳定头长度每次必记，
+     末尾逐条摆出新旧样本和盲评理由；同名 .json 存全部样本。
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextlib
+import functools
 import json
 import os
 import random
@@ -47,11 +53,15 @@ DEFAULT_DAY_PATTERNS = {
     "just_woke": r"刚醒|开机|转圈",
 }
 
-JUDGE_SYSTEM = """你是 QQ 群聊回复的盲评裁判（不参赛）。
-你会看到群友刚才说的话、群聊背景、本条用例的关注点，以及打乱顺序的两条候选回复 A 和 B。
-比较哪一条更像自然的真人群友、更贴合关注点，且没有越线（涉政/涉黄/暴露机器编号/官方客服腔）。
+JUDGE_SYSTEM = """你是 QQ 群聊回复的盲评裁判（不参赛）。「小王」是群里的机器人，两条候选回复都是它这一轮可能说的话。
+你会看到群聊背景、小王最近几轮对话、群友刚才说的话、本条用例的关注点，以及打乱顺序的两条候选 A 和 B。
+先看哪一条更符合本条关注点；关注点上分不出高下，再比哪一条更像自然的真人群友。
+候选是「〔不接〕」表示小王这一轮不说话：按关注点判断沉默合不合适，不要因为没有内容就判它输。
+越线（涉政/涉黄/暴露机器编号/官方客服腔）的标进 crossed。
 只输出一行 JSON：
 {"winner": "A" 或 "B" 或 "tie", "crossed": [] 或 ["A"] 或 ["B"], "reason": "二十字以内原因"}"""
+
+JUDGE_HISTORY_TURNS = 4   # 盲评看小王最近几轮对话：关注点常常是「别重复上一轮」，看不见上一轮就没法判
 
 
 @contextlib.contextmanager
@@ -194,15 +204,19 @@ async def judge_pair(case, base_reply, cand_reply, *, judge_fn=None, rng=None, r
     if swap is None:
         swap = bool((rng or random).getrandbits(1))
     a_text, b_text = (cand_reply, base_reply) if swap else (base_reply, cand_reply)
-    turn_kw = (case.get("turn") or {}).get("kwargs") or {}
+    turn = case.get("turn") or {}
+    turn_kw = turn.get("kwargs") or {}
     user_text = turn_kw.get("user_text") or ""
     if not user_text and case.get("messages"):
         user_text = (case["messages"][-1].get("text") or "")
     ctx = turn_kw.get("context_hint") or ""
     criteria = "；".join(cases_mod.judge_prompts(case.get("checks"))) or "自然、贴题、不越线"
+    history = _judge_history(turn.get("session"))
+    said = f"【群友说】{'（没人叫小王，接不接由它自己定）' if turn_kw.get('unprompted') else ''}\n{user_text}"
     prompt = (
-        f"【群聊背景】\n{ctx or '（无）'}\n\n"
-        f"【群友说】\n{user_text}\n\n"
+        f"【群聊背景】（背景里的「你」就是小王）\n{ctx or '（无）'}\n\n"
+        + (f"【小王最近几轮对话】\n{history}\n\n" if history else "")
+        + f"{said}\n\n"
         f"【本条关注点】\n{criteria}\n\n"
         f"【回复 A】\n{a_text}\n\n"
         f"【回复 B】\n{b_text}"
@@ -231,6 +245,20 @@ async def judge_pair(case, base_reply, cand_reply, *, judge_fn=None, rng=None, r
     return {"winner": None, "crossed": [], "reason": "judge_error", "error": True}
 
 
+def _judge_history(session, limit=JUDGE_HISTORY_TURNS):
+    """会话里最近几句，按「群友 / 小王」排好；系统补的那行（（系统：…））去掉，裁判只看说出口的话。"""
+    lines = []
+    for msg in list(session or ())[-limit:]:
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = "\n".join(line for line in str(msg.get("content") or "").splitlines()
+                         if not line.strip().startswith(("（系统：", "(系统："))).strip()
+        if text:
+            lines.append(f"{'小王' if role == 'assistant' else '群友'}：{text[:200]}")
+    return "\n".join(lines)
+
+
 # ── 用例对比与整天指标 ──
 
 # 退步要过一道单侧检验：每条只抽几次，同一版本跑两遍也会这次 4:0、那次 3:1。
@@ -257,13 +285,29 @@ def judge_loss_p_value(base_wins, cand_wins):
     return sum(comb(n, k) for k in range(base_wins, n + 1)) / 2 ** n
 
 
+# 改进和退步用同一道检验：退步要过 REGRESSION_P，改进也要过，否则「赢一场就算改进」会把噪声报成好消息。
+# 2026-11-05 调语气那一圈：盲评新 18 旧 21 平 7，逐条看「改进」却有好几条 —— 都是 1:0、2:1 这种。
+def rise_p_value(b_pass, b_total, c_pass, c_total):
+    """新版通过数多到这个程度的单侧概率：drop_p_value 把新旧对调。"""
+    return drop_p_value(c_pass, c_total, b_pass, b_total)
+
+
+def judge_win_p_value(base_wins, cand_wins):
+    """盲评里新版赢这么多场的单侧符号检验（平局不计）。"""
+    return judge_loss_p_value(cand_wins, base_wins)
+
+
 async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rng=None,
-                         concurrency=6):
-    """汇总每条用例的确定性通过率、盲评胜率，标出退步（regressed）、噪声内下降（wobbled）与改进。
+                         concurrency=6, prior=None):
+    """汇总每条用例的确定性通过率、盲评胜率，标出退步（regressed）、噪声内下降（wobbled）、
+    改进（improved，同样要过 REGRESSION_P）与噪声内上升（lifted）。
 
     盲评先把每一对的 A/B 抽好，再并发跑（同时最多 concurrency 个）。
+    prior 是上一份报告里每条用例逐对的盲评（{用例 id: [{"swap", "winner", ...}, ...]}）：
+    评过的照用、连 A/B 摆法一起沿用，只重评失败的那几对（eval --rejudge）。
     """
     rng = rng or random
+    prior = prior or {}
     base_map = {r["id"]: r for r in base_results}
     cand_map = {r["id"]: r for r in cand_results}
     plan = []
@@ -272,20 +316,26 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         b_samples = (base_map.get(cid) or {}).get("samples") or []
         c_samples = (cand_map.get(cid) or {}).get("samples") or []
         pairs = list(zip(b_samples, c_samples))
+        old = list(prior.get(cid) or ())
+        old += [None] * (len(pairs) - len(old))
+        swaps = [bool(o["swap"]) if o and o.get("swap") is not None else bool(rng.getrandbits(1))
+                 for o in old[:len(pairs)]]
         plan.append((case, b_samples, c_samples, bool(cases_mod.judge_prompts(case.get("checks"))),
-                     pairs, [bool(rng.getrandbits(1)) for _ in pairs]))
+                     pairs, swaps, old[:len(pairs)]))
     sem = asyncio.Semaphore(max(1, int(concurrency)))
 
-    async def judge_one(case, b_s, c_s, swap):
+    async def judge_one(case, b_s, c_s, swap, old):
         if b_s is None or c_s is None:
             return None
+        if old and not old.get("error") and old.get("winner") is not None:
+            return {k: old[k] for k in ("winner", "crossed", "reason", "error") if k in old}
         async with sem:
             return await judge_pair(case, b_s, c_s, judge_fn=judge_fn, swap=swap)
 
     verdicts = iter(await asyncio.gather(*(
-        judge_one(case, b_s, c_s, swap)
-        for case, _, _, has_judge, pairs, swaps in plan if has_judge
-        for (b_s, c_s), swap in zip(pairs, swaps))))
+        judge_one(case, b_s, c_s, swap, old)
+        for case, _, _, has_judge, pairs, swaps, olds in plan if has_judge
+        for (b_s, c_s), swap, old in zip(pairs, swaps, olds))))
 
     rows = []
     totals = {
@@ -293,6 +343,7 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         "regressed": 0,
         "wobbled": 0,
         "improved": 0,
+        "lifted": 0,
         "base_passed_samples": 0,
         "base_total_samples": 0,
         "cand_passed_samples": 0,
@@ -305,7 +356,7 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         "cand_crossed": 0,
         "base_crossed": 0,
     }
-    for case, b_samples, c_samples, has_judge, pairs, _ in plan:
+    for case, b_samples, c_samples, has_judge, pairs, swaps, _ in plan:
         cid = case["id"]
         checks = case.get("checks") or []
         b_checks = [cases_mod.check_reply(s, checks) for s in b_samples if s is not None]
@@ -321,9 +372,14 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
 
         j_wins = {"cand": 0, "base": 0, "tie": 0, "dropped": 0}
         j_reasons = []
+        pair_log = []   # 逐对的盲评：报告里逐条摆出来，--rejudge 也靠它只重评失败的
         c_crossed = b_crossed = 0
-        for b_s, c_s in pairs:
+        for (b_s, c_s), swap in zip(pairs, swaps):
             verdict = next(verdicts) if has_judge else None
+            if has_judge:
+                pair_log.append({"swap": swap, **(verdict or {"winner": None, "crossed": [],
+                                                              "reason": "generation_error",
+                                                              "error": True})})
             if b_s is None or c_s is None:
                 j_wins["dropped"] += 1
                 totals["dropped_pairs"] += 1
@@ -388,15 +444,24 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
                          or (det_dropped and det_p <= REGRESSION_P)
                          or (judge_lost and judge_p <= REGRESSION_P))
         wobbled = (not regressed) and (det_dropped or judge_lost)
-        det_improved = bool(c_checks and c_rate > b_rate)
-        judge_improved = bool(has_judge and j_wins["cand"] > j_wins["base"] and c_crossed == 0)
-        improved = (not regressed) and (not wobbled) and (det_improved or judge_improved or retrieval_improved)
+        det_rose = bool(b_checks and c_checks and c_rate > b_rate)
+        rise_p = rise_p_value(b_pass, b_valid, c_pass, c_valid) if det_rose else 1.0
+        if det_rose and case.get("depth") == "retrieve":
+            rise_p = 0.0
+        judge_won = bool(has_judge and j_wins["cand"] > j_wins["base"] and c_crossed == 0)
+        win_p = judge_win_p_value(j_wins["base"], j_wins["cand"]) if judge_won else 1.0
+        clear = (not regressed) and (not wobbled)
+        improved = clear and bool(retrieval_improved or (det_rose and rise_p <= REGRESSION_P)
+                                  or (judge_won and win_p <= REGRESSION_P))
+        lifted = clear and not improved and (det_rose or judge_won)
         if regressed:
             totals["regressed"] += 1
         elif wobbled:
             totals["wobbled"] += 1
         elif improved:
             totals["improved"] += 1
+        elif lifted:
+            totals["lifted"] += 1
         failed_reasons = [d["reason"] for r in c_checks for d in r["details"]
                           if not d["passed"] and d.get("reason")]
         if gen_regressed:
@@ -426,20 +491,30 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             "regressed": regressed,
             "wobbled": wobbled,
             "improved": improved,
+            "lifted": lifted,
             "p_drop": round(det_p, 3) if det_dropped else None,
             "p_judge_loss": round(judge_p, 3) if judge_lost else None,
+            "p_rise": round(rise_p, 3) if det_rose else None,
+            "p_judge_win": round(win_p, 3) if judge_won else None,
             "evidence_complete": evidence_complete,
             "judge": j_wins if has_judge else None,
             "judge_reasons": j_reasons[:3],
             "failed_reasons": list(dict.fromkeys(failed_reasons))[:3],
             "base_sample": next((s for s in b_samples if s is not None), ""),
             "cand_sample": next((s for s in c_samples if s is not None), ""),
+            # 全部样本和逐对盲评都留着：判输判赢之后得看原文（「先说原作没提再补一句玩笑」这种，分数看不出来）
+            "base_samples": list(b_samples),
+            "cand_samples": list(c_samples),
+            "pairs": pair_log if has_judge else None,
+            "prompts_refreshed": _refreshed(base_map.get(cid), cand_map.get(cid)),
+            "prompts_missing": sorted({*((base_map.get(cid) or {}).get("stale_prompts") or ()),
+                                       *((cand_map.get(cid) or {}).get("stale_prompts") or ())}) or None,
             "retrieval": retrieval,
         })
 
-    # 退步排最前，其次噪声内下降，再次改进，其余按 id
-    rows.sort(key=lambda r: (0 if r["regressed"] else 1 if r["wobbled"] else 2 if r["improved"] else 3,
-                             r["id"]))
+    # 退步排最前，其次噪声内下降，再次改进、噪声内上升，其余按 id
+    rows.sort(key=lambda r: (0 if r["regressed"] else 1 if r["wobbled"] else 2 if r["improved"]
+                             else 3 if r["lifted"] else 4, r["id"]))
     totals["incomplete_cases"] = sum(1 for r in rows if not r.get("evidence_complete"))
     retrieval_rows = [r for r in rows if r.get("retrieval")]
     if retrieval_rows:
@@ -452,7 +527,37 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
     ) if totals["cand_total_samples"] else None
     judged = totals["judge_cand_wins"] + totals["judge_base_wins"] + totals["judge_ties"]
     totals["cand_win_rate"] = round(totals["judge_cand_wins"] / judged, 3) if judged else None
+    totals["verdict"] = overall_verdict(totals)
     return rows, totals
+
+
+def _refreshed(base_res, cand_res):
+    """回放时两边各自换成了自己措辞的提示词常量（见 mark_frozen_prompts）。"""
+    out = {side: list((res or {}).get("refreshed") or ()) for side, res in (("base", base_res), ("cand", cand_res))}
+    return out if any(out.values()) else None
+
+
+def overall_verdict(totals):
+    """整份评测一句话的结论：worse / better / unclear，外加两个合计检验的 p。
+
+    better 要有证据：有用例过了改进检验，或者盲评合计新版赢得够多；
+    「没退步」只说明没看出变差，不等于变好了（2026-11-05 调语气：新 18 旧 21 平 7，差点被当成「无退步可上线」）。
+    """
+    b_wins, c_wins = totals.get("judge_base_wins", 0), totals.get("judge_cand_wins", 0)
+    out = {
+        "p_judge_better": round(judge_win_p_value(b_wins, c_wins), 3) if c_wins + b_wins else None,
+        "p_judge_worse": round(judge_loss_p_value(b_wins, c_wins), 3) if c_wins + b_wins else None,
+        "incomplete": totals.get("incomplete_cases", 0),
+    }
+    if totals.get("regressed") or totals.get("cand_crossed"):
+        out["call"] = "worse"
+    elif (out["p_judge_worse"] or 1.0) <= REGRESSION_P:
+        out["call"] = "worse"
+    elif totals.get("improved") or (out["p_judge_better"] or 1.0) <= REGRESSION_P:
+        out["call"] = "better" if not totals.get("wobbled") else "unclear"
+    else:
+        out["call"] = "unclear"
+    return out
 
 
 def _retrieval_totals(rows):
@@ -527,8 +632,54 @@ def day_metrics(samples, *, patterns=None):
     }
 
 
-def render_report(report):
-    """渲染 Markdown 评测报告：退步排最前，包含稳定头长度对比、盲评胜率与整天指标。"""
+VERDICT_LINES = {
+    "worse": "新版更差：有退步、越线，或盲评合计明显输给旧版",
+    "better": "新版更好，有证据：有用例过了改进检验，或盲评合计明显赢旧版",
+    "unclear": "看不出新版更好：没退步不等于变好，不能拿这份报告当改进的证据",
+}
+
+
+def _cell(text, limit=140):
+    if text is None:
+        return "（生成失败）"
+    flat = str(text).replace("|", "｜").replace("\n", " ⏎ ").strip()
+    return (flat[:limit] + "…") if len(flat) > limit else (flat or "（空）")
+
+
+def _samples_section(case_rows):
+    """逐条输出：每条用例的新旧样本并排，盲评判了谁、为什么。分数说不清的（语气、较不较真）得看这里。"""
+    lines = ["", "## 逐条输出", "",
+             "盲评列是「谁赢 · 原因」；样本超过 140 字截断，完整原文在同名 .json 的 base_samples / cand_samples。"]
+    for r in case_rows:
+        b_s, c_s = r.get("base_samples"), r.get("cand_samples")
+        if not b_s and not c_s:
+            continue
+        state = ("退步" if r["regressed"] else "噪声内下降" if r.get("wobbled") else "改进" if r["improved"]
+                 else "噪声内上升" if r.get("lifted") else "持平")
+        lines += ["", f"### `{r['id']}` · {state}", "", "| # | 旧 | 新 | 盲评 |", "| --- | --- | --- | --- |"]
+        pairs = r.get("pairs") or []
+        for i in range(max(len(b_s or ()), len(c_s or ()))):
+            b = b_s[i] if b_s and i < len(b_s) else None
+            c = c_s[i] if c_s and i < len(c_s) else None
+            v = pairs[i] if i < len(pairs) else None
+            if not v:
+                judged = "—"
+            elif v.get("error") or not v.get("winner"):
+                judged = f"没评成（{v.get('reason') or '—'}）"
+            else:
+                who = {"cand": "新", "base": "旧", "tie": "平"}[v["winner"]]
+                crossed = "；越线：" + "、".join({"cand": "新", "base": "旧"}[x] for x in v["crossed"]) \
+                    if v.get("crossed") else ""
+                judged = f"{who} · {_cell(v.get('reason'), 40)}{crossed}"
+            lines.append(f"| {i + 1} | {_cell(b)} | {_cell(c)} | {judged} |")
+    return lines
+
+
+def render_report(report, samples=True):
+    """渲染 Markdown 评测报告：先一句结论，退步排最前，包含稳定头长度对比、盲评胜率与整天指标。
+
+    samples=True 时末尾附逐条输出（写进报告文件）；命令行直接打印时关掉，免得刷屏。
+    """
     b_head = (report.get("base_head") or {}).get("total_chars", "?")
     c_head = (report.get("cand_head") or {}).get("total_chars", "?")
     delta = (c_head - b_head) if isinstance(b_head, int) and isinstance(c_head, int) else 0
@@ -549,21 +700,41 @@ def render_report(report):
             "incomplete": "判断不了（有用例没生成出来，或盲评没跑完）",
         }.get(ab.get("verdict"), "—")
         lines.append(f"- 规则消融：`{ab['id']}`（-{ab.get('chars', '?')} 字）→ **{verdict}**")
+    if report.get("rejudged_from"):
+        lines.append(f"- 重评自 `{report['rejudged_from']}`：样本沿用那次的，只重跑了没评成的盲评")
     t = report.get("totals") or {}
     if t.get("cases"):
+        v = t.get("verdict") or {}
+        if v.get("call"):
+            ps = [f"盲评合计新版更好 p={v['p_judge_better']}" if v.get("p_judge_better") is not None else "",
+                  f"有 {v['incomplete']} 条证据不完整" if v.get("incomplete") else ""]
+            extra = "；".join(x for x in ps if x)
+            lines.insert(2, f"**结论：{VERDICT_LINES[v['call']]}**" + (f"（{extra}）" if extra else ""))
+            lines.insert(3, "")
         lines.append(
             f"- 用例：{t['cases']} 条（每条抽 {report.get('n', 1)} 次）| "
             f"通过率：`{t.get('base_pass_rate')}` → `{t.get('cand_pass_rate')}` | "
-            f"退步：**{t['regressed']}** 条 | 噪声内下降：{t.get('wobbled', 0)} 条 | 改进：{t['improved']} 条"
+            f"退步：**{t['regressed']}** 条 | 噪声内下降：{t.get('wobbled', 0)} 条 | "
+            f"改进：{t['improved']} 条 | 噪声内上升：{t.get('lifted', 0)} 条"
         )
         if t.get("cand_win_rate") is not None:
             lines.append(
                 f"- 盲评：新胜 {t['judge_cand_wins']} / 旧胜 {t['judge_base_wins']} / 平 {t['judge_ties']} "
                 f"（新胜率 `{t['cand_win_rate']:.0%}`，越线 新 {t['cand_crossed']} / 旧 {t['base_crossed']}）"
             )
-        if t.get("dropped_pairs"):
-            lines.append(f"- 网络/生成错误剔除对数：{t['dropped_pairs']}"
-                         + (f"（其中盲评失败 {t['judge_errors']} 对）" if t.get("judge_errors") else ""))
+    case_rows_all = report.get("cases") or []
+    if t.get("cases") and t.get("dropped_pairs"):
+        rejudgeable = any("base_samples" in r for r in case_rows_all)
+        hint = (f"，可以 `eval --rejudge {report.get('stamp', '<报告>')}` 只重评这几对" if rejudgeable else "")
+        lines.append(f"- 网络/生成错误剔除对数：{t['dropped_pairs']}"
+                     + (f"（其中盲评失败 {t['judge_errors']} 对{hint}）" if t.get("judge_errors") else ""))
+    swapped = sorted({name for r in case_rows_all for side in (r.get("prompts_refreshed") or {}).values()
+                      for name in side})
+    stale = sorted({name for r in case_rows_all for name in (r.get("prompts_missing") or ())})
+    if swapped:
+        lines.append(f"- 用例里冻着的提示词原文，回放时各自换成了受测版本的措辞：{'、'.join(swapped)}")
+    if stale:
+        lines.append(f"- 注意：受测版本里已经没有 {'、'.join(stale)}，用到它的用例照录制时的原文回放，测不到这处改动")
 
     retrieval = t.get("retrieval")
     if retrieval:
@@ -606,7 +777,7 @@ def render_report(report):
                   "| --- | --- | --- | --- | --- | --- |"]
         for r in case_rows:
             state = ("REGRESSED" if r["regressed"] else "WOBBLE" if r.get("wobbled")
-                     else "IMPROVED" if r["improved"] else "OK")
+                     else "IMPROVED" if r["improved"] else "LIFT" if r.get("lifted") else "OK")
             j = r["judge"]
             j_str = f"{j['cand']}/{j['base']}/{j['tie']}" if j else "—"
             note = "；".join(r["failed_reasons"] or r["judge_reasons"]) or "—"
@@ -631,6 +802,8 @@ def render_report(report):
         c_grams = "、".join(f"「{x['gram']}」×{x['count']}" for x in cm["catchphrases"][:5]) or "无"
         lines.append(f"| 高频口头禅 | {b_grams} | {c_grams} |")
 
+    if samples and case_rows:
+        lines += _samples_section(case_rows)
     return "\n".join(lines) + "\n"
 
 
@@ -643,6 +816,127 @@ def write_report(report, eval_dir):
     md_path.write_text(render_report(report), encoding="utf-8")
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return md_path
+
+
+# ── 冻结在用例里的提示词原文 ──
+# 生成层用例存的是当轮原样入参，其中好几段注记就是 prompts.py 里某个常量的原文（PROMPT_PLAYFUL_REQUEST、
+# PROMPT_BANTER_RECENT、PROMPT_FEEDBACK_REPAIR……）。改了这些常量，回放却还喂录制时那份，测的就不是这次改动
+# （2026-11-05 调语气：改了三版玩梗线索，回放一直用的是旧话术）。回放前把它们认出来，交给各版本换成自己的。
+
+FROZEN_MIN_CHARS = 20   # 太短的常量（标签、单个词）容易在别的文字里碰巧出现，不认
+
+
+def prompt_texts(source):
+    """从 prompts.py 源码取出顶层字符串常量 {名字: 原文}。只认字面量，不执行代码。"""
+    try:
+        tree = ast.parse(source or "")
+    except SyntaxError:
+        return {}
+    out = {}
+    for node in tree.body:
+        target = node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+            else node.target if isinstance(node, ast.AnnAssign) else None
+        value = getattr(node, "value", None)
+        if (isinstance(target, ast.Name) and target.id.isupper() and isinstance(value, ast.Constant)
+                and isinstance(value.value, str) and len(value.value) >= FROZEN_MIN_CHARS):
+            out[target.id] = value.value
+    return out
+
+
+@functools.lru_cache(maxsize=32)
+def _release_prompt_texts(release, repo):
+    proc = subprocess.run(["git", "show", f"{release}:prompts.py"], cwd=repo,
+                          capture_output=True, text=True)
+    return prompt_texts(proc.stdout) if proc.returncode == 0 else {}
+
+
+def _dir_prompt_texts(code_dir):
+    path = Path(code_dir) / "prompts.py"
+    return prompt_texts(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def mark_frozen_prompts(cases, code_dirs, *, turn_dir=None, repo_root=None):
+    """给生成层用例标出冻在入参里的提示词原文：turn.frozen_prompts = [{kwarg, name, text}]。
+
+    认得出的原文来自：两个受测版本、驱动所在的工作区（种子用例多半是从这里存的）、
+    以及录这一轮的那个版本（用例里的 turn.release；旧用例按 source_turn_id 回 data/turns 查）。
+    """
+    repo = str(Path(repo_root or Path(__file__).resolve().parent.parent).resolve())
+    shared = [_dir_prompt_texts(d) for d in (*code_dirs, repo)]
+    out = []
+    for case in cases:
+        turn = case.get("turn")
+        if (case.get("depth") or "generate") != "generate" or not isinstance(turn, dict):
+            out.append(case)
+            continue
+        release = turn.get("release")
+        if not release and turn_dir and case.get("source_turn_id"):
+            row = turns_mod.find(turn_dir, case["source_turn_id"])
+            release = (row or {}).get("release")
+        sources = shared + ([_release_prompt_texts(release, repo)] if release else [])
+        known = {(name, text) for texts in sources for name, text in texts.items()}
+        frozen = [{"kwarg": key, "name": name, "text": text}
+                  for key, value in sorted((turn.get("kwargs") or {}).items())
+                  if key != "user_text" and isinstance(value, str)
+                  for name, text in sorted(known) if text in value]
+        out.append({**case, "turn": {**turn, "frozen_prompts": frozen}} if frozen else case)
+    return out
+
+
+def _ablate_verdict(ablate, case_rows, totals, cases):
+    """规则消融的结论：删规则宁严勿松，任何一条掉了（哪怕在噪声内）都不推荐删，只是说法不同。"""
+    rule_obj = rules_mod.get_rule(ablate)
+    has_linked = any(rules_mod.matches_case(rule_obj, r["id"], r.get("tags")) for r in case_rows)
+    all_evidence_complete = bool(case_rows) and all(r.get("evidence_complete") for r in case_rows)
+    per_case_judge_ok = all(r["judge"]["base"] <= r["judge"]["cand"] for r in case_rows if r.get("judge"))
+    has_any_judge = any(cases_mod.judge_prompts(c.get("checks")) for c in cases)
+    judged_total = (totals.get("judge_cand_wins", 0) + totals.get("judge_base_wins", 0)
+                    + totals.get("judge_ties", 0))
+    judge_ok = per_case_judge_ok and ((not has_any_judge) or (
+        judged_total > 0 and totals.get("judge_base_wins", 0) <= totals.get("judge_cand_wins", 0)))
+    if not has_linked:
+        return "no_cases"
+    if not all_evidence_complete:
+        return "incomplete"
+    if totals["regressed"] or totals.get("cand_crossed", 0) or not judge_ok:
+        return "keep"
+    if totals.get("wobbled", 0):
+        return "unsure"
+    return "delete"
+
+
+def _set_ablate_verdict(ablate_info, verdict):
+    ablate_info["verdict"] = verdict
+    ablate_info["incomplete_evidence"] = verdict in ("no_cases", "incomplete")
+    ablate_info["deletion_candidate"] = verdict == "delete"
+
+
+def describe_traffic(config, cases, *, n, day_turns=0):
+    """这次评测会把什么发到哪儿（eval --plan）：给维护者或代理的审批看，不调任何模型。"""
+    paid = [c for c in cases if (c.get("depth") or "generate") != "retrieve"]
+    # 仓库里的种子是合成的、本来就公开；部署目录里自己存的用例多半取自真实群聊（画图那批没有 source_turn_id 也是）
+    seeds = {c["id"] for c in cases_mod.SEED_CASES}
+    live = [c for c in paid if c.get("source_turn_id") or c.get("source_message_id") or c["id"] not in seeds]
+    judged = [c for c in cases if cases_mod.judge_prompts(c.get("checks"))]
+    def host(url):
+        return re.sub(r"^https?://", "", str(url or "")).split("/")[0] or "—"
+
+    judge_provider = getattr(config, "EVAL_JUDGE_PROVIDER", "")
+    judge_host = host((getattr(config, "PROVIDER_PRESETS", {}).get(judge_provider) or {}).get("base_url"))
+    judge_model = getattr(config, "EVAL_JUDGE_MODEL", "") or "—"
+    reply = getattr(config, "PROVIDER", None) or {}
+    reply_model = "、".join(getattr(config, "CANDIDATE_MODELS", None) or ()) or "—"
+    reply_host = f"{getattr(config, 'AI_PROVIDER', '—')} · {host(reply.get('base_url'))}"
+    lines = [
+        f"用例 {len(cases)} 条：要调模型的 {len(paid)} 条，其中部署目录里的本地用例 {len(live)} 条"
+        f"（多半取自真实群聊，连同当时的前文、称呼档案一起发出去），其余是仓库里的合成种子；"
+        f"纯本地检索 {len(cases) - len(paid)} 条。",
+        f"回复模型：{reply_model} @ {reply_host}，新旧两版各 {len(paid)} × {n} 次"
+        + (f"，整天回放另加 {day_turns} × 2 轮" if day_turns else "") + "。",
+        f"盲评：{judge_model} @ {judge_provider} · {judge_host}，{len(judged)} 条用例 × {n} 对（只发群友那句、背景、最近几轮和两条候选）。"
+        if judged else "盲评：这批用例不用。",
+    ]
+    return lines
 
 
 def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
@@ -675,6 +969,8 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
         base_head = cand_head = None
         case_rows, totals = [], {"cases": 0, "regressed": 0, "improved": 0}
         if cases:
+            cases = mark_frozen_prompts(cases, (base_dir, cand_dir),
+                                        turn_dir=getattr(config, "TURN_LOG_DIR", None))
             b_out = worker(base_dir, cases, n=n, concurrency=concurrency)
             c_out = worker(cand_dir, cases, n=n, concurrency=concurrency, ablate=ablate)
             base_head, cand_head = b_out.get("head"), c_out.get("head")
@@ -682,38 +978,7 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
                 evaluate_cases(cases, b_out["results"], c_out["results"], judge_fn=judge_fn,
                                concurrency=concurrency))
             if ablate_info is not None:
-                rule_obj = rules_mod.get_rule(ablate)
-                has_linked = any(rules_mod.matches_case(rule_obj, r["id"], r.get("tags"))
-                                 for r in case_rows)
-                all_evidence_complete = bool(case_rows) and all(
-                    r.get("evidence_complete") for r in case_rows
-                )
-                per_case_judge_ok = all(
-                    r["judge"]["base"] <= r["judge"]["cand"]
-                    for r in case_rows if r.get("judge")
-                )
-                has_any_judge = any(cases_mod.judge_prompts(c.get("checks")) for c in cases)
-                judged_total = (totals.get("judge_cand_wins", 0)
-                                + totals.get("judge_base_wins", 0)
-                                + totals.get("judge_ties", 0))
-                judge_ok = per_case_judge_ok and ((not has_any_judge) or (
-                    judged_total > 0
-                    and totals.get("judge_base_wins", 0) <= totals.get("judge_cand_wins", 0)
-                ))
-                # 删规则宁严勿松：任何一条掉了（哪怕在噪声内）都不推荐删，只是说法不同
-                if not has_linked:
-                    verdict = "no_cases"
-                elif not all_evidence_complete:
-                    verdict = "incomplete"
-                elif totals["regressed"] or totals.get("cand_crossed", 0) or not judge_ok:
-                    verdict = "keep"
-                elif totals.get("wobbled", 0):
-                    verdict = "unsure"
-                else:
-                    verdict = "delete"
-                ablate_info["verdict"] = verdict
-                ablate_info["incomplete_evidence"] = verdict in ("no_cases", "incomplete")
-                ablate_info["deletion_candidate"] = verdict == "delete"
+                _set_ablate_verdict(ablate_info, _ablate_verdict(ablate, case_rows, totals, cases))
 
         day_eval = None
         if day:
@@ -747,6 +1012,64 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
         "cases": case_rows,
         "day_eval": day_eval,
     }
+    if write:
+        report["report_path"] = str(write_report(report, config.EVAL_DIR))
+    return report
+
+
+def load_report(config, ref):
+    """按路径或时间戳（data/evals/<stamp>.json）读一份评测报告。"""
+    path = Path(ref).expanduser()
+    if not path.is_file():
+        path = Path(config.EVAL_DIR) / (str(ref).removesuffix(".md").removesuffix(".json") + ".json")
+    if not path.is_file():
+        raise FileNotFoundError(f"找不到评测报告 {ref!r}（给 .json 路径，或 data/evals 里的时间戳）")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def rejudge_report(config, ref, *, judge_fn=None, write=True, allow_paid=True):
+    """沿用一份报告的全部样本，只重跑没评成的盲评（评审网关挂了、限流），出一份新报告。
+
+    不重新生成：省钱，也保证重评的就是当时那批回复。用例的检查项按现在的用例文件重算
+    （改了 must / judge 想重新打分也走这里）；评过的那几对照用，连 A/B 摆法一起沿用。
+    """
+    old = load_report(config, ref)
+    rows = old.get("cases") or []
+    if any("base_samples" not in r or "cand_samples" not in r for r in rows):
+        raise ValueError("这份报告是旧格式，没存全部样本，重评不了；重新跑一次 eval")
+    wanted = [r["id"] for r in rows]
+    by_id = {c["id"]: c for c in cases_mod.load_cases(config.CASES_DIR, selector="all",
+                                                       include_seeds=True)}
+    missing = [cid for cid in wanted if cid not in by_id]
+    if missing:
+        raise KeyError(f"用例文件找不到了，没法重评：{', '.join(missing)}")
+    cases = [by_id[cid] for cid in wanted]
+    todo = sum(1 for r in rows for v in (r.get("pairs") or ())
+               if v.get("error") and v.get("reason") != "generation_error")
+    todo += sum(1 for r, c in zip(rows, cases)
+                if cases_mod.judge_prompts(c.get("checks")) and r.get("pairs") is None)
+    if todo and not allow_paid:
+        raise PaidEvaluationRequired("eval --rejudge has judge pairs to run; it requires --allow-paid")
+    if todo and judge_fn is None:
+        preflight_judge(config)
+    concurrency = getattr(config, "EVAL_CONCURRENCY", 6)
+    case_rows, totals = asyncio.run(evaluate_cases(
+        cases,
+        [{"id": r["id"], "samples": r["base_samples"]} for r in rows],
+        [{"id": r["id"], "samples": r["cand_samples"]} for r in rows],
+        judge_fn=judge_fn, concurrency=concurrency,
+        prior={r["id"]: r.get("pairs") for r in rows}))
+    for row, prev in zip(sorted(case_rows, key=lambda r: r["id"]), sorted(rows, key=lambda r: r["id"])):
+        for key in ("prompts_refreshed", "prompts_missing"):
+            if prev.get(key):
+                row[key] = prev[key]
+    ablate_info = dict(old["ablate"]) if old.get("ablate") else None
+    if ablate_info:
+        _set_ablate_verdict(ablate_info, _ablate_verdict(ablate_info["id"], case_rows, totals, cases))
+    stamp = time.strftime("%Y-%m-%d_%H%M%S", time.localtime())
+    report = {**old, "stamp": stamp, "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+              "rejudged_from": old.get("stamp"), "totals": totals, "cases": case_rows, "ablate": ablate_info}
+    report.pop("report_path", None)
     if write:
         report["report_path"] = str(write_report(report, config.EVAL_DIR))
     return report

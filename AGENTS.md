@@ -115,7 +115,11 @@ DEPLOY=~/Code_repository/regular-bot
    .venv/bin/python -m regular --directory "$DEPLOY" case seed
 
    # 对比旧版本与当前改法（全量用例 + 整天回放 + 规则消融）
+   # 先 --plan：不调模型，列出会把多少条（其中多少条取自真实群聊）发给哪个回复模型和裁判，给审批看
+   .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --plan
    .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
+   # 评审网关挂了、有盲评没评成：沿用那份报告的样本，只重评失败的那几对
+   .venv/bin/python -m regular --directory "$DEPLOY" eval --rejudge <报告时间戳或 .json 路径> --allow-paid
    .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
    .venv/bin/python -m regular --directory "$DEPLOY" eval --ablate <rule_id> --allow-paid
 
@@ -130,4 +134,7 @@ DEPLOY=~/Code_repository/regular-bot
    检索用例须完整标注相关消息集合、保留干扰消息并声明语料覆盖。缺标注、截断或分母为空须单列，不能填成零误报/漏报。
    仅含本地检索且无模型评审的 `eval` 不需要 `--allow-paid`；混合或模型评测仍须显式授权。
 5. **写报告与事故记录，交由人决定上不上线**：
-   检查 `$DEPLOY/data/evals/` 下的报告（退步用例排最前，上线前任何退步都必须交代原因；「噪声内下降」加大 `-n` 只跑那几条再看；规则消融的结论分「可删除 / 仍需保留 / 说不准 / 判断不了」四种；稳定头字数不许无故只增不减），补充 `docs/` 事故记录与离线测试。上线永远由维护者手动执行。
+   检查 `$DEPLOY/data/evals/` 下的报告（第一行是结论：「看不出新版更好」不能当改进的证据，「噪声内上升」同理；
+   语气类改动要读末尾「逐条输出」里的新旧原文和盲评理由，分数看不出「先核验再接梗」这种毛病；
+   改了 `prompts.py` 常量，留意报告里「冻着的提示词原文换成了受测版本的措辞」那一行，受测版本里没有的那几条测不到改动；
+   退步用例排最前，上线前任何退步都必须交代原因；「噪声内下降」加大 `-n` 只跑那几条再看；规则消融的结论分「可删除 / 仍需保留 / 说不准 / 判断不了」四种；稳定头字数不许无故只增不减），补充 `docs/` 事故记录与离线测试。上线永远由维护者手动执行。
