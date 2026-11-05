@@ -296,13 +296,14 @@ class FireTest(_Reply):
         sender = Sender(fallback=lambda message: "这次没能发出来")
         self.message.reply.side_effect = [RuntimeError("40034006"),
                                           {"id": "fallback"}, {"id": "reminder"}]
+        before = list(bot.own_lines.get("group", ()))
         with patch.object(bot, "SENDER", sender), \
                 patch.object(bot.time, "time", return_value=at(11, 3, 9, 10)):
             await bot.deliver_carried(self.message, "group")
             self.assertIn(task["id"], self.scheduler.tasks)
             self.assertEqual(task["payload"]["ready"], "原提醒正文")
             self.assertNotIn(task["id"], bot._carried_reminders)
-            self.assertEqual(list(bot.own_lines.get("group", ())), [])
+            self.assertEqual(list(bot.own_lines.get("group", ())), before)
             await bot.deliver_carried(self.message, "group")
         self.assertEqual(self.scheduler.pending(), [])
         self.assertEqual(bot.own_lines["group"][-1]["text"], "原提醒正文")
