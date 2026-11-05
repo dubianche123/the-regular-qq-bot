@@ -6,7 +6,7 @@
 
 **An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and knows when to join in and when to leave room for others.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1502-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1504-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 [中文](README.md) · **English** · [Message flow](#one-message-through-the-system) · [Decisions input](#what-decisions-actually-sees) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
@@ -172,7 +172,7 @@ Conversation content needed for judgment and replies goes to the configured mode
 
 | Existing evidence | Scope |
 | --- | --- |
-| 1502 offline regression tests | code behavior, not a guarantee that every reply lands |
+| 1504 offline regression tests | code behavior, not a guarantee that every reply lands |
 | Archive recall passes 8 / 8 case checks, retrieves 7 / 9 relevant messages | [fully labeled synthetic cases](docs/self-iteration.md#local-strategy-evaluation); both versions agree, and the 2 budget-limited misses remain counted |
 | 17 / 20 unaddressed lines aimed at it answered, versus 3 / 20 before | [141 messages and 9 prompt variants](docs/when-to-reply.md); answer/pass labels came from a separate judge model |
 | 75.6% of reply input tokens hit the prefix cache | [261 calls from one live day](docs/providers.md), tied to that model and traffic |
@@ -213,6 +213,8 @@ Enable C2C and group events in the QQ Open Platform console. **The first private
 | `regular coverage` / `calibration` | read-only stats: personal-quote coverage, judgment probabilities vs. outcomes |
 
 Decisions, search, vision, voice and drawing need the corresponding services. See [provider configuration](docs/providers.md), [.env.example](.env.example) and [image generation](docs/image-generation.md).
+
+After deployment, use `regular --directory <instance> status --json` to check `code.release`, `code.source_root` and `image_generation`, written by the running process. Verify the expected version, source directory and GIF capability along with gateway readiness. A service pinned to a release directory also needs its `PYTHONPATH` updated and its service definition reloaded.
 
 ## Design docs
 

@@ -3300,6 +3300,23 @@ class GroupBot(botpy.Client):
 # ══════════════════════ 8. 启动 / 优雅退出 / 重连 ══════════════════════
 
 
+def _runtime_status_details():
+    """由运行进程报告已加载的代码和能力；网关 ready 不代表正在跑期望的版本。"""
+    return {
+        "code": {"release": code_release(),
+                 "source_root": os.path.dirname(os.path.abspath(__file__))},
+        "image_generation": {"model": config.IMAGE_GENERATION_MODEL,
+                             "available": bool(image_generation.available()),
+                             "gif_enabled": bool(config.IMAGE_GENERATION_GIF_ENABLED),
+                             "animation_available": bool(image_generation.animation_available())},
+        "providers": providers.status(),
+        "budget": {"day": runtime.BUDGET.today(), "used": runtime.BUDGET.used,
+                   "limit": runtime.BUDGET.limit, "remaining": runtime.BUDGET.remaining},
+        "delivery": SENDER.status(),
+        "paths": {"state": config.STATE_FILE, "archive": config.ARCHIVE_DIR,
+                  "memory": config.MEMORY_DIR, "log": config.LOG_FILE}}
+
+
 def install_signal_handlers():
     """SIGTERM/SIGINT 时先落盘再退出，别让刚聊的上下文白丢。"""
 
@@ -3369,13 +3386,7 @@ def _run_bot():
     _bot_ref["client"] = None
     STATUS.lifecycle = "starting"
     STATUS.gateway_connected = False
-    STATUS.configure(config.STATUS_FILE, lambda: {
-        "providers": providers.status(),
-        "budget": {"day": runtime.BUDGET.today(), "used": runtime.BUDGET.used,
-                   "limit": runtime.BUDGET.limit, "remaining": runtime.BUDGET.remaining},
-        "delivery": SENDER.status(),
-        "paths": {"state": config.STATE_FILE, "archive": config.ARCHIVE_DIR,
-                  "memory": config.MEMORY_DIR, "log": config.LOG_FILE}})
+    STATUS.configure(config.STATUS_FILE, _runtime_status_details)
     STATUS.write()
     install_signal_handlers()
     loop = asyncio.new_event_loop()

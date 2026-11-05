@@ -4,10 +4,53 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from health import Health
 
 
 class HealthTest(unittest.IsolatedAsyncioTestCase):
+    async def test_ready_snapshot_distinguishes_loaded_release_and_animation_capability(self):
+        import bot
+
+        with tempfile.TemporaryDirectory() as directory:
+            health = Health()
+            path = Path(directory) / "status.json"
+            health.configure(path, bot._runtime_status_details)
+            health.lifecycle = "ready"
+            health.gateway_connected = True
+            snapshots = []
+            for release, model, animated in (("release-old", "gpt-image-2.5-flare", False),
+                                             ("release-new", "gpt-image-2.6-flare", True)):
+                source = Path(directory) / "releases" / release
+                with patch.object(bot, "__file__", str(source / "bot.py")), \
+                     patch.object(bot, "code_release", return_value=release), \
+                     patch.multiple(bot.config, IMAGE_GENERATION_MODEL=model,
+                                    IMAGE_GENERATION_GIF_ENABLED=animated), \
+                     patch.object(bot.image_generation, "available", return_value=True), \
+                     patch.object(bot.image_generation, "animation_available", return_value=animated):
+                    health.write()
+                snapshot = json.loads(path.read_text())
+                self.assertEqual(snapshot["code"], {"release": release, "source_root": str(source)})
+                self.assertEqual(snapshot["image_generation"], {
+                    "model": model, "available": True, "gif_enabled": animated,
+                    "animation_available": animated})
+                self.assertEqual(snapshot["lifecycle"], "ready")
+                self.assertTrue(snapshot["gateway_connected"])
+                snapshots.append(snapshot)
+            self.assertEqual(snapshots[0]["pid"], snapshots[1]["pid"])
+            self.assertNotEqual(snapshots[0]["code"], snapshots[1]["code"])
+
+    async def test_enabled_gif_setting_does_not_claim_available_service(self):
+        import bot
+
+        with patch.object(bot.config, "IMAGE_GENERATION_GIF_ENABLED", True), \
+             patch.object(bot.image_generation, "available", return_value=False), \
+             patch.object(bot.image_generation, "animation_available", return_value=False):
+            images = bot._runtime_status_details()["image_generation"]
+        self.assertTrue(images["gif_enabled"])
+        self.assertFalse(images["available"])
+        self.assertFalse(images["animation_available"])
+
     async def test_failed_task_is_visible_in_atomic_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             health = Health()
