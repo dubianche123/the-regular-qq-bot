@@ -11,7 +11,7 @@ from regular.keys import read_api_keys
 import storage
 
 PROVIDERS = ("openai", "zhipu", "gemini")
-_BASIC_KEYS = {"QQ_APP_ID", "QQ_APP_SECRET", "BOT_NAMES", "AI_PROVIDER", "DAILY_BUDGET"}
+_BASIC_KEYS = {"QQ_APP_ID", "QQ_APP_SECRET", "BOT_NAMES", "AI_PROVIDER", "CHAT_PROVIDER", "DAILY_BUDGET"}
 
 
 def instance_dir(cfg):
@@ -51,7 +51,7 @@ def _values(cfg):
 
 
 def _provider(cfg, values, provider=None):
-    name = str(provider or values.get("AI_PROVIDER") or getattr(cfg, "AI_PROVIDER", "openai")).strip().lower()
+    name = str(provider or values.get("CHAT_PROVIDER") or values.get("AI_PROVIDER") or getattr(cfg, "AI_PROVIDER", "openai")).strip().lower()
     if name not in PROVIDERS:
         raise ValueError("请选择 OpenAI-compatible、智谱或 Gemini。")
     return name
@@ -61,7 +61,7 @@ def public_settings(cfg, provider=None):
     """Only non-secret values and configuration facts may reach a web response."""
     saved, effective = _values(cfg)
     try:
-        active = _provider(cfg, effective)
+        active = _provider(cfg, effective, effective.get("CHAT_PROVIDER") or None)
         invalid_provider = False
     except ValueError:
         active, invalid_provider = "openai", True
@@ -77,6 +77,7 @@ def public_settings(cfg, provider=None):
         # those into the public form, even when this panel did not save them.
         base = ""
     models = str(effective.get(f"{prefix}_MODELS", ",".join(preset.get("models", []))) or "").strip()
+    model_list = list(dict.fromkeys(item.strip() for item in models.split(",") if item.strip()))
     key_file = instance_dir(cfg) / f"api_keys_{selected}.txt"
     file_keys = read_api_keys(key_file) if key_file.exists() else []
     key = str(effective.get(f"{prefix}_API_KEY") or "").strip()
@@ -87,7 +88,7 @@ def public_settings(cfg, provider=None):
     if invalid_provider:
         missing.append("有效的模型供应商")
     for configured, label in ((qq_id, "QQ AppID"), (qq_secret, "QQ AppSecret"),
-                              (base, "模型接口地址"), (models, "回复模型"),
+                              (base, "模型接口地址"), (model_list, "回复模型"),
                               (bool(file_keys or key), "模型 API Key")):
         if not configured:
             missing.append(label)
@@ -100,6 +101,9 @@ def public_settings(cfg, provider=None):
         missing.append("非负每日调用上限")
     return {
         "provider": selected, "active_provider": active, "base_url": base, "models": models,
+        "primary_model": model_list[0] if model_list else "",
+        "fallback_models": ", ".join(model_list[1:]), "model_options": model_list,
+        "fallback_provider": str(effective.get("FALLBACK_PROVIDER") or "").strip().lower() if str(effective.get("FALLBACK_PROVIDER") or "").strip().lower() in PROVIDERS else "",
         "qq_app_id": qq_id, "bot_names": str(effective.get("BOT_NAMES") or ""),
         "daily_budget": budget, "qq_secret_configured": qq_secret,
         "key_configured": bool(file_keys or key), "key_source": "file" if file_keys else "environment" if key and f"{prefix}_API_KEY" in _external_keys(cfg) else "config" if key else "none",
@@ -138,12 +142,23 @@ def save_settings(cfg, values):
     saved, _ = _values(cfg)
     provider = _provider(cfg, saved, values.get("provider"))
     prefix = provider.upper()
-    changes = {"AI_PROVIDER": provider}
+    # Basic setup is the chat choice. An old CHAT_PROVIDER must not silently
+    # override the service the user just selected in this form.
+    changes = {"AI_PROVIDER": provider, "CHAT_PROVIDER": provider}
     for field, name, label in (("qq_app_id", "QQ_APP_ID", "QQ AppID"),
                                ("bot_names", "BOT_NAMES", "机器人称呼"),
                                ("models", f"{prefix}_MODELS", "模型名")):
         if field in values:
             changes[name] = _text(values[field], label)
+    if "fallback_models" in values:
+        primary = _text(values.get("models"), "聊天模型")
+        if "," in primary:
+            raise ValueError("聊天模型请只选一个；其他模型放在备用模型中。")
+        fallbacks = _text(values.get("fallback_models"), "备用模型")
+        ordered = list(dict.fromkeys(item.strip() for item in [primary, *fallbacks.split(",")] if item.strip()))
+        if fallbacks and not primary:
+            raise ValueError("请先填写聊天模型，再添加备用模型。")
+        changes[f"{prefix}_MODELS"] = ",".join(ordered)
     if "base_url" in values:
         changes[f"{prefix}_BASE_URL"] = _endpoint(_text(values["base_url"], "接口地址"))
     for field, name in (("qq_app_secret", "QQ_APP_SECRET"), ("api_key", f"{prefix}_API_KEY")):

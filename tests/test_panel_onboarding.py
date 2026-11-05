@@ -140,6 +140,70 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private-model-key", text)
         self.assertNotIn("ZHIPU_API_KEY", dotenv_values(self.file))
 
+    async def test_provider_switch_preloads_only_public_presets_and_stays_on_the_form(self):
+        self.assertEqual((await self.save()).status, 302)
+        self.file.write_text(self.file.read_text() + "\nZHIPU_API_KEY='PRIVATE_ZHIPU_KEY'\nGEMINI_API_KEY='PRIVATE_GEMINI_KEY'\n")
+        text, fields = await self.setup_form()
+        self.assertEqual(fields["provider"]["value"], "openai")
+        for name in ("openai", "zhipu", "gemini"):
+            self.assertIn(f'data-provider-option="{name}"', text)
+        self.assertIn('data-base-url="https://zhipu.example/v1"', text)
+        self.assertNotIn('href="/setup?provider=', text)
+        for secret in ("PRIVATE_ZHIPU_KEY", "PRIVATE_GEMINI_KEY", "private-model-key", "qq-private-secret"):
+            self.assertNotIn(secret, text)
+        self.assertEqual(dotenv_values(self.file)["AI_PROVIDER"], "openai")
+
+    async def test_chat_model_choice_replaces_old_route_without_starting_or_restarting(self):
+        self.assertEqual((await self.save()).status, 302)
+        self.file.write_text(self.file.read_text() + "\nCHAT_PROVIDER=gemini\nGEMINI_MODELS='old-chat,old-backup'\n")
+        text, fields = await self.setup_form()
+        self.assertEqual(fields["provider"]["value"], "gemini")
+        self.assertEqual(fields["models"]["value"], "old-chat")
+        self.assertEqual(fields["fallback_models"]["value"], "old-backup")
+        self.assertIn("聊天用这个模型", text)
+        response = await self.save(models="new-chat", fallback_models="backup-a,backup-b")
+        self.assertEqual(response.status, 302)
+        saved = dotenv_values(self.file)
+        self.assertEqual(saved["CHAT_PROVIDER"], "openai")
+        self.assertEqual(saved["OPENAI_MODELS"], "new-chat,backup-a,backup-b")
+        self.runner.start.assert_not_called()
+        self.runner.stop.assert_not_awaited()
+
+    async def test_local_chat_distinguishes_running_model_from_pending_choice(self):
+        self.assertEqual((await self.save(models="next-chat")).status, 302)
+        self.health()
+        path = Path(self.cfg.STATUS_FILE)
+        snapshot = json.loads(path.read_text())
+        snapshot["providers"] = {"providers": [{"name": "gemini", "models": ["running-chat"]}]}
+        path.write_text(json.dumps(snapshot))
+        self.managed.update(running=True, external=True, stale=False, pid=9876)
+        response = await self.client.get("/companion", headers=self.auth())
+        text = await response.text()
+        self.assertIn("运行中的聊天首选", text)
+        self.assertIn("gemini · running-chat", text)
+        self.assertIn("已保存的新选择：openai · next-chat", text)
+        self.assertIn("由你重启机器人后生效", text)
+        self.managed["stale"] = True
+        text = await (await self.client.get("/companion", headers=self.auth())).text()
+        self.assertNotIn("运行中的聊天首选", text)
+        self.assertNotIn("running-chat", text)
+        self.assertIn("还没有可核对的运行模型信息", text)
+
+    async def test_local_assets_are_authenticated_and_do_not_open_arbitrary_files(self):
+        for route, content_type in (("/assets/panel.js", "application/javascript"),
+                                    ("/assets/mascot.png", "image/png")):
+            with self.subTest(route=route):
+                self.assertEqual((await self.client.get(route)).status, 401)
+                response = await self.client.get(route, headers=self.auth())
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.content_type, content_type)
+                self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
+                self.assertIn("img-src 'self'", response.headers["Content-Security-Policy"])
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+        response = await self.client.get("/assets/.env", headers=self.auth())
+        self.assertEqual(response.status, 404)
+        self.runner.start.assert_not_called()
+
     async def test_bad_setup_returns_a_generic_error_without_echoing_url_credentials(self):
         response = await self.save(base_url="https://user:PRIVATE_URL_SECRET@model.example/v1",
                                    api_key="PRIVATE_NEW_KEY")

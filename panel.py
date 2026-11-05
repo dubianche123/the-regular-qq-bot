@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import html
 import hmac
+from importlib.resources import files
 import json
 import os
 import secrets
@@ -39,6 +40,10 @@ TOKEN_FILE = "panel_token"
 MAX_EDIT_BYTES = 256 * 1024
 MAX_MEMORY_BYTES = 512 * 1024
 TOKEN_HEADER = "X-Panel-Token"
+MASCOT_POSES = ("blink", "thinking", "celebrate", "sleeping", "wave", "drag", "knowledge", "checkup", "welcome")
+MASCOT_STATES = ("idle", *MASCOT_POSES)
+MASCOT_ASSETS = frozenset({"mascot.png", "mascot-idle.png", "mascot-wave-mid.png",
+                           *(f"mascot-{state}.png" for state in MASCOT_POSES)})
 
 
 def load_or_create_token(cfg):
@@ -154,89 +159,79 @@ def _esc(value):
     return html.escape(str(value if value is not None else ""))
 
 
-def _page(title, body, active="", refresh=0):
-    nav = [
-        ("/setup", "开始使用", "setup"),
-        ("/", "概览", "home"),
-        ("/checkup", "体检", "checkup"),
-        ("/iterate", "让 Agent 改进", "iterate"),
-        ("/knowledge", "知识库", "knowledge"),
-        ("/memory", "记忆", "memory"),
-        ("/search", "搜索", "search"),
-        ("/decision", "判断 API", "decision"),
-    ]
-    links = "".join(
-        f'<a class="{"active" if key == active else ""}" href="{href}">{label}</a>'
-        for href, label, key in nav
+def _icon(name):
+    paths = {
+        "brand": '<path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-6 4v-4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 10v2m8-2v2m-6 3h4"/>',
+        "setup": '<path d="m12 3 2.4 5.5L20 11l-5.6 2.5L12 19l-2.4-5.5L4 11l5.6-2.5Z"/><path d="M20 3v4m-2-2h4"/>',
+        "home": '<path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/>',
+        "checkup": '<path d="M9 5H6v16h13V5h-3M9 3h6v4H9Z"/><path d="m9 14 2 2 5-5"/>',
+        "iterate": '<path d="M20 8a8 8 0 0 0-14-3L3 8m0-5v5h5M4 16a8 8 0 0 0 14 3l3-3m0 5v-5h-5"/>',
+        "knowledge": '<path d="M3 4h7l2 2 2-2h7v15h-7l-2 2-2-2H3Z"/><path d="M12 6v15"/>',
+        "memory": '<path d="M4 7h16v14H4ZM3 3h18v4H3Z"/><path d="M9 11h6"/>',
+        "search": '<circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/>',
+        "decision": '<path d="M5 3v6a3 3 0 0 0 3 3h8a3 3 0 0 1 3 3v6M19 3v3a3 3 0 0 1-3 3H8a3 3 0 0 0-3 3v9"/>',
+        "companion": '<path d="M4 4h16v13H9l-5 4Z"/><path d="M8 9h8m-8 4h5"/>',
+    }
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths[name] + '</svg>'
+
+
+def _mascot(state="idle", *, image_class="mascot-image", chat=False):
+    if state not in MASCOT_STATES:
+        state = "idle"
+    if files("regular").joinpath("assets", "mascot.png").is_file():
+        source = f"/assets/mascot-{state}.png" if state in MASCOT_POSES and files("regular").joinpath("assets", f"mascot-{state}.png").is_file() else "/assets/mascot.png"
+        return (f'<span class="buddy-illustration"><img class="{image_class}" src="{source}" '
+                f'data-mascot-state="{state}" data-static-src="{source}" '
+                f'{"data-chat-mascot " if chat else ""}alt="老群友"></span>')
+    return '<span class="buddy-illustration" aria-hidden="true">' + _icon("brand") + '</span>'
+
+
+def _empty_state(title, detail, *, state="sleeping"):
+    return f'<div class="companion-empty">{_mascot(state)}<div><h3>{_esc(title)}</h3><p>{_esc(detail)}</p></div></div>'
+
+
+def _companion_dock(active):
+    messages = {
+        "setup": "先给我一个 QQ 身份，再接上回复模型。保存以后，你来决定什么时候启动。",
+        "home": "在这里确认我有没有连上 QQ。想单独聊两句，可以打开本机小窗。",
+        "checkup": "接偏的那一句，也能成为下一次进步的起点。把现场交给你的 Agent 就好。",
+        "iterate": "你说哪里不对，Agent 帮忙找原因；改得好不好，最后还是你来定。",
+        "knowledge": "群里的规矩、常用称呼和约定，可以写在这里。聊天时我会按需参考。",
+        "memory": "熟悉是慢慢攒下来的。这里放着已经整理好的群记忆。",
+        "decision": "判断帮手负责什么时候接话，也帮提醒问清意思。配好以后，再慢慢玩。",
+        "search": "先在这里检查搜索通不通。真正聊天时，只在明确需要时查一次。",
+    }
+    state = "thinking" if active in ("checkup", "iterate", "decision") else "idle"
+    return f'''<details class="companion-dock" data-companion-dock><summary aria-label="打开老群友小助手">{_mascot(state, image_class="dock-mascot")}<span>老群友在这儿<span class="dock-hint">靠近，聊两句</span></span><span class="dock-spark" aria-hidden="true">✦</span></summary>
+<div class="companion-bubble"><p>{_esc(messages.get(active, '想聊两句，或看看下一步做什么，我都在这里。'))}</p><a class="button" href="/companion">打开聊天小窗 →</a><div class="dock-links"><a href="/setup">设置</a><a href="/checkup">体检</a><a href="/iterate">让 Agent 帮忙</a></div></div></details>'''
+
+
+def _page(title, body, active="", refresh=0, *, pet=False):
+    nav = (
+        ("开始与运行", (("/setup", "开始使用", "setup"), ("/", "我的群友", "home"), ("/companion", "聊两句", "companion"))),
+        ("适应你的群", (("/checkup", "每日体检", "checkup"), ("/iterate", "让 Agent 帮忙", "iterate"),
+                    ("/knowledge", "群知识", "knowledge"), ("/memory", "群记忆", "memory"))),
+        ("维护工具", (("/decision", "判断 API", "decision"), ("/search", "搜索检查", "search"))),
     )
-    return f"""<!doctype html>
+    links = "".join('<span class="nav-label">' + label + '</span>' + "".join(
+        f'<a class="nav-item {"active" if key == active else ""}" href="{href}"'
+        f'{" aria-current=page" if key == active else ""}><span class="nav-icon">{_icon(key)}</span>'
+        f'<span class="nav-text">{text}</span></a>' for href, text, key in entries)
+        for label, entries in nav)
+    css = files("regular").joinpath("panel.css").read_text(encoding="utf-8")
+    pose_states = ",".join(state for state in MASCOT_POSES if files("regular").joinpath("assets", f"mascot-{state}.png").is_file())
+    return f'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_esc(title)} · The Regular</title>
 {f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh else ''}
-<style>
-:root {{ color-scheme: light; --bg:#f4f1ea; --card:#fffdf8; --ink:#25231f;
-  --muted:#77716a; --line:#ded7cc; --accent:#9a5b35; --bad:#a33b32; --good:#2f6b4f; }}
-* {{ box-sizing:border-box; }}
-body {{ margin:0; background:var(--bg); color:var(--ink);
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
-header {{ background:var(--card); border-bottom:1px solid var(--line); }}
-.wrap {{ max-width:1040px; margin:0 auto; padding:0 20px; }}
-header .wrap {{ display:flex; align-items:center; gap:22px; min-height:56px; padding-top:12px; padding-bottom:12px; flex-wrap:wrap; }}
-.brand {{ font-weight:700; letter-spacing:.02em; }}
-nav {{ display:flex; gap:14px; flex-wrap:wrap; }}
-nav a {{ color:var(--muted); text-decoration:none; padding:4px 0; }}
-nav a.active {{ color:var(--accent); border-bottom:2px solid var(--accent); }}
-main {{ padding:26px 0 60px; }}
-h1 {{ font-size:22px; margin:0 0 6px; }}
-h2 {{ font-size:16px; margin:24px 0 10px; }}
-p {{ margin:6px 0; }}
-.muted {{ color:var(--muted); }}
-.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }}
-.card {{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }}
-.card .label {{ color:var(--muted); font-size:12px; }}
-.card .value {{ font-size:19px; font-weight:650; margin-top:2px; }}
-.good {{ color:var(--good); }} .bad {{ color:var(--bad); }}
-table {{ width:100%; border-collapse:collapse; background:var(--card);
-  border:1px solid var(--line); border-radius:10px; overflow:hidden; }}
-th,td {{ text-align:left; padding:8px 10px; border-bottom:1px solid var(--line);
-  vertical-align:top; }}
-th {{ color:var(--muted); font-size:12px; font-weight:600; }}
-tr:last-child td {{ border-bottom:0; }}
-code,.mono {{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }}
-pre {{ background:#292721; color:#eee8dc; padding:14px; border-radius:10px;
-  overflow:auto; white-space:pre-wrap; word-break:break-word; }}
-textarea {{ width:100%; min-height:420px; padding:12px; border:1px solid var(--line);
-  border-radius:10px; font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
-  background:var(--card); color:var(--ink); }}
-input[type=text],input[type=password] {{ padding:9px 11px; border:1px solid var(--line);
-  border-radius:8px; background:var(--card); color:var(--ink); min-width:260px; }}
-form.decision input {{ width:100%; max-width:560px; min-width:0; }}
-form.setup input {{ width:100%; min-width:0; }}
-form.setup label {{ display:block; margin:14px 0; }}
-input[type=number] {{ padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }}
-.hero {{ padding:24px; margin-bottom:18px; background:var(--card); border:1px solid var(--line); border-radius:14px; }}
-.hero h1 {{ font-size:28px; }}
-.steps {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin:18px 0; }}
-.step-no {{ color:var(--accent); font-size:12px; font-weight:700; }}
-.button {{ display:inline-block; padding:9px 16px; border-radius:8px; background:var(--accent); color:white; text-decoration:none; font-weight:600; }}
-.secondary {{ background:transparent; color:var(--accent); border:1px solid var(--line); }}
-details {{ margin:16px 0; }} summary {{ cursor:pointer; font-weight:600; }}
-textarea.brief {{ min-height:240px; }}
-small {{ color:var(--muted); }}
-button {{ padding:9px 16px; border:0; border-radius:8px; background:var(--accent);
-  color:white; font-weight:600; cursor:pointer; }}
-.row {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
-.notice {{ padding:10px 14px; border-radius:9px; border:1px solid var(--line);
-  background:var(--card); margin:12px 0; }}
-.notice.bad {{ border-color:#d9b3ae; color:var(--bad); }}
-.notice.good {{ border-color:#b8d3c5; color:var(--good); }}
-.links a {{ color:var(--accent); }}
-</style></head><body>
-<header><div class="wrap"><div class="brand">The Regular · 维护面板</div>
-<nav>{links}</nav></div></header>
-<main><div class="wrap">{body}</div></main>
-</body></html>"""
+<style>{css}</style><script src="/assets/panel.js" defer></script></head><body class="{'pet-mode' if pet else ''}" data-pose-states="{pose_states}">
+<div class="app-shell"><aside class="sidebar">
+<a class="brand" href="/"><span class="brand-mark brand-portrait">{_mascot('idle', image_class='brand-mascot')}</span><span><span class="brand-name">老群友</span><span class="brand-sub">THE REGULAR</span></span></a>
+<nav aria-label="主导航">{links}</nav><div class="sidebar-footer"><strong>今天也在群里。</strong><p>一点熟悉，一点新鲜。<br>慢慢变成你们的老群友。</p></div></aside>
+<div class="main-shell"><header class="topbar"><div class="breadcrumb">你的老群友 <span aria-hidden="true">/</span> <strong>{_esc(title)}</strong></div><div class="topbar-tools"><button type="button" class="actions-toggle" data-actions-toggle aria-pressed="false" title="开启后，点击角色会短暂挥手或眨眼">角色动作：关</button><span class="workspace-pill">本机工作台</span></div></header>
+<main><div class="wrap">{body}</div></main></div></div>{'' if active == 'companion' else _companion_dock(active)}
+</body></html>'''
 
 
 def _status_cards(snapshot, state):
@@ -290,7 +285,7 @@ def _dashboard(cfg, *, csrf="", runner=None):
             f"<td>{info.get('relations', 0)}</td><td>{info.get('promises', 0)}</td>"
             f"<td>{_esc(last_text)}</td><td>{_esc(updated_text)}</td><td>{klink}</td></tr>")
     if not rows:
-        group_table = '<p class="muted">还没有群数据。</p>'
+        group_table = _empty_state("还没有群数据，先打个招呼吧", "QQ 连上后，由你先私聊认主，再把它邀请进群。熟悉就从这里开始。", state="wave")
     else:
         group_table = ("<table><thead><tr><th>群号</th><th>模式</th><th>关系档案</th>"
                        "<th>承诺</th><th>最近活动</th><th>摘要更新</th><th>知识库</th></tr></thead>"
@@ -327,41 +322,56 @@ def _setup_page(cfg, request, csrf):
     except ValueError:
         raise web.HTTPBadRequest(text="请选择页面提供的模型供应商") from None
     provider = settings["provider"]
-    choices = " ".join(f'<a class="button {"" if key == provider else "secondary"}" '
-                       f'href="/setup?provider={key}">{label}</a>' for key, label in
-                       (("openai", "OpenAI 兼容接口"), ("zhipu", "智谱"), ("gemini", "Gemini")))
-    notice = '<div class="notice good">配置已保存。运行中的机器人在下次启动时读取新配置。</div>' if request.query.get("saved") else ""
+    choices = []
+    for key, label in (("openai", "OpenAI 兼容"), ("zhipu", "智谱"), ("gemini", "Gemini")):
+        option = instance_settings.public_settings(cfg, key)
+        placeholder = "已配置，留空保留" if option["key_configured"] else "填写这个服务的 Key"
+        choices.append(f'<button type="button" class="provider-option {"selected" if key == provider else ""}" '
+                       f'data-provider-option="{key}" data-base-url="{_esc(option["base_url"])}" '
+                       f'data-models="{_esc(option["primary_model"])}" data-fallback-models="{_esc(option["fallback_models"])}" '
+                       f'data-key-placeholder="{placeholder}" '
+                       f'aria-pressed="{"true" if key == provider else "false"}">{label}</button>')
+    notice = ('<div class="notice good">配置已保存。运行中的机器人在下次启动时读取新配置。'
+              '<a href="/">去启动和检查连接 →</a></div>') if request.query.get("saved") else ""
     if settings.get("overridden"):
         notice += '<div class="notice">这些项目由启动环境设置，环境变量优先生效：' + _esc(
             "、".join(settings["overridden"])) + '。请在启动面板的环境中调整。</div>'
     missing = "、".join(settings.get("missing") or ())
-    readiness = f"启动前还需填写：{_esc(missing)}" if missing else "必填配置齐了，可以到概览启动。"
-    body = f'''<div class="hero"><div class="step-no">第一次使用 · 1 / 3</div>
-<h1>先让它走进你的 QQ 群</h1>
-<p>填好 QQ 机器人和一个回复模型，启动后先和它私聊，再邀请进群。之后可以让自己的 Agent 根据群聊反馈继续改进。</p></div>
-{notice}<p class="notice">{readiness}</p>
-<form method="post" action="/setup/save" class="setup">
+    readiness = f"还需填写：{_esc(missing)}" if missing else "必填配置齐了，可以到“我的群友”启动。"
+    qq_ready = bool(settings.get("qq_app_id") and settings.get("qq_secret_configured"))
+    model_ready = bool(settings.get("base_url") and settings.get("primary_model") and settings.get("key_configured"))
+    body = f'''<div class="setup-hero"><div class="page-heading"><span class="eyebrow">HELLO, NEW FRIEND</span>
+<h1>先让它走进你的 QQ 群</h1><p>会接梗，也知道什么时候安静。<br>先接上 QQ 和回复模型，剩下的慢慢一起玩。</p></div>{_mascot('celebrate' if request.query.get('saved') else 'welcome')}</div>
+<div class="setup-progress" aria-label="上手步骤">
+<div class="progress-item is-current" aria-current="step"><span class="progress-index">1</span><span>配置服务</span></div>
+<div class="progress-item"><span class="progress-index">2</span><span>启动确认</span></div>
+<div class="progress-item"><span class="progress-index">3</span><span>适应你的群</span></div></div>
+{notice}<div class="setup-layout"><form method="post" action="/setup/save" class="setup" data-setup-form>
 <input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="provider" value="{_esc(provider)}">
-<div class="grid"><section class="card"><h2>1. QQ 机器人</h2>
-<p>在 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台</a>创建机器人后取得这两项。</p>
-<label>AppID<input type="text" name="qq_app_id" value="{_esc(settings.get('qq_app_id'))}" autocomplete="off"></label>
-<label>AppSecret<input type="password" name="qq_app_secret" value="" autocomplete="new-password"
-placeholder="{'已配置，留空保留' if settings.get('qq_secret_configured') else '填写 QQ AppSecret'}"></label>
-<label>它的名字（可选，多个名字用逗号分隔）<input type="text" name="bot_names" value="{_esc(settings.get('bot_names'))}" placeholder="小王,老群友"></label>
-<p><small>QQ 控制台还需启用私聊与所需群消息事件，并配置测试或使用范围。平台授权需要你本人完成。</small></p></section>
-<section class="card"><h2>2. 回复模型</h2><div class="row">{choices}</div>
-<p><small>选择你已开通的服务；使用兼容网关也选 OpenAI 兼容接口。</small></p>
-<label>接口地址<input type="text" name="base_url" value="{_esc(settings.get('base_url'))}" placeholder="供应商提供的完整 API 基础地址"></label>
-<label>模型 ID<input type="text" name="models" value="{_esc(settings.get('models'))}" placeholder="供应商提供的聊天模型 ID"></label>
-<label>API Key<input type="password" name="api_key" value="" autocomplete="new-password"
-placeholder="{'已配置，留空保留' if settings.get('key_configured') else '填写这个服务的 Key'}"></label>
-<label>每日 AI 调用次数上限<input type="number" name="daily_budget" min="0" value="{_esc(settings.get('daily_budget', 3000))}"></label>
-<p><small>这是调用次数，不是金额。保存配置不会请求模型或消耗调用额度；Key 不在页面回显。</small></p></section></div>
-<div class="row" style="margin-top:18px"><button type="submit">保存配置</button><a class="button secondary" href="/">去启动和检查连接 →</a></div></form>
-<section class="card" style="margin-top:22px"><h2>3. 先完成基本聊天，再加能力</h2>
-<p>判断 API、画图、语音等可以稍后配置。判断 API 同时用于提醒的语义审核，未配置时不会保存新的提醒。</p>
-<p><a href="/decision">配置判断 API</a> · <a href="/iterate">看看怎样让你的 Agent 帮忙改进</a></p></section>
-<details><summary>配置和数据保存在哪里？</summary><p>实例：<code>{_esc(settings.get('instance_dir'))}</code></p>
+<section class="form-section"><div class="section-heading"><div><h2 class="section-title">它在 QQ 的身份</h2>
+<p class="section-description">在 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台 ↗</a>创建机器人，取得这两项。</p></div></div>
+<div class="field-grid"><label class="field"><span class="field-label">AppID</span><input type="text" name="qq_app_id" value="{_esc(settings.get('qq_app_id'))}" autocomplete="off" placeholder="QQ 机器人的 AppID"></label>
+<label class="field"><span class="field-label">AppSecret</span><input type="password" name="qq_app_secret" value="" autocomplete="new-password" placeholder="{'已配置，留空保留' if settings.get('qq_secret_configured') else '填写 QQ AppSecret'}"></label>
+<label class="field field-wide"><span class="field-label">大家怎么叫它？<small>可选</small></span><input type="text" name="bot_names" value="{_esc(settings.get('bot_names'))}" placeholder="小王,老群友"><span class="field-hint">多个名字用逗号分隔。群友叫它的名字时，它也能认出来。</span></label></div>
+<p class="form-footer-note">QQ 控制台还需启用私聊与所需群消息事件，并配置测试或使用范围。</p></section>
+<section class="form-section" id="chat-model"><div class="section-heading"><div><h2 class="section-title">聊天时，用谁来回答？</h2>
+<p class="section-description">先选聊天 API，再指定一个首选模型。QQ 回复和本机聊天共用这一选择。</p></div></div>
+<div class="provider-choices" role="group" aria-label="聊天模型服务">{''.join(choices)}</div>
+<p class="field-hint" data-provider-status aria-live="polite">切换服务会保留本页输入；只有点保存才会生效。</p>
+<div class="field-grid"><label class="field field-wide"><span class="field-label">接口地址</span><input type="text" name="base_url" value="{_esc(settings.get('base_url'))}" placeholder="供应商提供的完整 API 基础地址" autocomplete="off"></label>
+<label class="field"><span class="field-label">聊天用这个模型</span><input type="text" name="models" list="chat-model-options" value="{_esc(settings.get('primary_model'))}" placeholder="选择或填写一个聊天模型 ID" autocomplete="off"><datalist id="chat-model-options">{''.join(f'<option value="{_esc(model)}"></option>' for model in settings.get('model_options', []))}</datalist><span class="field-hint">从已配置的模型中选一个，或填写服务提供的模型 ID。</span></label>
+<label class="field"><span class="field-label">API Key</span><input type="password" name="api_key" value="" autocomplete="new-password" placeholder="{'已配置，留空保留' if settings.get('key_configured') else '填写这个服务的 Key'}"></label>
+<label class="field field-wide"><span class="field-label">同一 API 的备用模型<small>可选</small></span><input type="text" name="fallback_models" value="{_esc(settings.get('fallback_models'))}" placeholder="例如 model-b, model-c"><span class="field-hint">首选失败后才按顺序尝试，仍受整轮次数和超时限制；不是随机挑选。{'另有跨 API 备用：' + _esc(settings['fallback_provider']) + '（沿用已有配置）。' if settings.get('fallback_provider') else '没有配置跨 API 备用。'}</span></label>
+<div class="chat-choice-summary field-wide" data-chat-choice-summary aria-live="polite">QQ 和桌边聊天的首选：<strong>{_esc(provider)} · {_esc(settings.get('primary_model') or '还没选模型')}</strong><span>保存后由你重启机器人生效，判断 API 在对应页面单独配置。</span></div>
+<label class="field field-wide"><span class="field-label">每日 AI 调用次数上限</span><input type="number" name="daily_budget" min="0" value="{_esc(settings.get('daily_budget', 3000))}"><span class="field-hint">按调用次数计，不是金额。可以先保守一点，之后随时调整。</span></label></div></section>
+<div class="setup-actions"><button type="submit">保存配置 <span aria-hidden="true">→</span></button><span class="form-footer-note">保存不调用模型，不消耗额度。</span></div></form>
+<aside class="setup-aside"><div class="welcome-note"><span class="aside-kicker">YOUR NEW REGULAR</span><h2 class="aside-title">先认识，再熟悉。</h2><p>从一句招呼开始。群里的梗、大家的称呼，还有它偶尔接偏的话，都可以成为下一次改进的起点。</p></div>
+<div class="setup-checklist"><h3>准备清单</h3>
+<div class="checklist-item {'complete' if qq_ready else 'pending'}"><span>QQ 身份 <small>{'已填写' if qq_ready else '待填写'}</small></span></div>
+<div class="checklist-item {'complete' if model_ready else 'pending'}"><span>回复模型 <small>{'已填写' if model_ready else '待填写'}</small></span></div>
+<div class="checklist-item pending"><span>启动后确认 QQ 连接</span></div><p class="field-hint">{readiness}</p></div>
+<div class="welcome-note"><span class="tag lilac">之后还可以</span><h3>画图、语音、到点提醒</h3><p>先聊起来，再添喜欢的能力。判断 API 也负责提醒审核，未配置时不会保存新提醒。</p><a class="text-link" href="/decision">配置判断 API →</a></div></aside></div>
+<details class="advanced"><summary>配置和数据保存在哪里？</summary><p>实例：<code>{_esc(settings.get('instance_dir'))}</code></p>
 <p>配置：<code>{_esc(settings.get('config_file'))}</code></p><p>聊天与私有数据：<code>{_esc(settings.get('data_dir'))}</code></p>
 <p>源码可以升级，实例目录请保留。不要把配置、群聊记录或密钥推送到公开仓库。</p></details>'''
     return _page("开始使用", body, "setup")
@@ -431,61 +441,111 @@ def _iterate_page(cfg):
     source_ready = (code_root / "AGENTS.md").is_file() and (code_root / ".agents/skills/regular-iterate/SKILL.md").is_file()
     source_note = ('源码工作区已带上 AGENTS.md 与自迭代 skill。让你的编码 Agent 打开这个目录。'
                    if source_ready else '当前是运行安装包。要修改机器人，请先下载源码工作区；源码包自带 AGENTS.md 和自迭代 skill。实例数据继续用原目录。')
-    body = f'''<div class="hero"><div class="step-no">让它更懂你们的群</div><h1>把反馈交给你的 Agent</h1>
-<p>你指出哪里不对，Agent 找现场、提出改动，用新旧回放检验。你决定哪些改动上线。</p></div>
-<div class="steps"><div class="card"><div class="step-no">1 · 看现场</div><h2>截图或每日体检</h2><p>记下哪句话让你觉得不对，而不必先猜该改哪条提示词。</p><a href="/checkup">打开体检 →</a></div>
-<div class="card"><div class="step-no">2 · 让 Agent 修改</div><h2>带上目录和流程</h2><p>{source_note}</p><a href="https://github.com/dubianche123/the-regular-qq-bot/releases/latest" target="_blank" rel="noreferrer">获取源码包 →</a></div>
-<div class="card"><div class="step-no">3 · 比较后再发布</div><h2>看修好，也看改坏</h2><p>体检只在本机读日志。付费回放与真实群聊外发先预览并征得你的同意；面板不会自动上传聊天或自动改代码。</p></div></div>
-<h2>可直接交给 Agent 的说明</h2><p>下载或复制下面这段，在编码 Agent 中打开源码目录后发送。它不会自动连接或控制你的 Agent。</p>
-<p><a class="button" href="/iterate/brief">下载交接说明</a></p><textarea class="brief" readonly aria-label="交给 Agent 的任务说明">{_esc(_agent_brief(cfg))}</textarea>
-<h2>日常资料</h2><div class="row"><a href="/knowledge">维护群知识</a> · <a href="/memory">查看已生成的记忆</a> · <a href="/decision">配置判断帮手</a></div>'''
+    body = f'''<div class="iteration-hero page-heading"><div class="editorial-companion">{_mascot('thinking')}</div><span class="eyebrow">A LITTLE MORE LIKE YOUR GROUP</span><h1>越聊越熟，<br>也可以越改越合拍。</h1>
+<p>它有时会接偏，有时会错过一句梗。把那一刻交给你的 Agent，让下一次更懂你们。</p></div>
+<div class="iteration-path"><section class="iteration-step"><span class="step-number">01 / 留下那一刻</span><h2>一句反馈就够了</h2><p>截图，或说清哪句话让你觉得不对。不必先研究代码，也不用猜是哪条提示词。</p><a class="text-link" href="/checkup">看看今日体检 →</a></section>
+<section class="iteration-step"><span class="step-number">02 / 交给你的 Agent</span><h2>让它找原因、试着改</h2><p>把下面的交接说明和你的反馈一起交给编码 Agent。源码里已有找现场、改动和对比的流程。</p></section>
+<section class="iteration-step"><span class="step-number">03 / 你来定</span><h2>看过效果，再上线</h2><p>新旧版本在同样的现场比较：这句接好了，其他话有没有改坏？看过结果，再决定要不要用。</p></section></div>
+<section class="handoff-panel"><div class="row"><div><h2>把这份说明带过去</h2><p class="muted">先让 Agent 打开源码目录，再发送说明和你的反馈。</p></div><button type="button" data-copy-brief>复制给 Agent <span aria-hidden="true">↗</span></button></div>
+<p>{source_note}</p><p data-copy-status aria-live="polite"></p>
+<details><summary>展开完整交接说明</summary><textarea class="brief" readonly aria-label="交给 Agent 的任务说明" data-agent-brief>{_esc(_agent_brief(cfg))}</textarea></details>
+<div class="quiet-links"><a href="/iterate/brief">下载说明 .md ↓</a><a href="https://github.com/dubianche123/the-regular-qq-bot/releases/latest" target="_blank" rel="noreferrer">获取源码包 ↗</a></div></section>
+<p class="field-hint">面板不会自动上传聊天或自动改代码。体检只读本机记录；真实群聊外发、付费回放与上线都由你决定。</p>
+<div class="quiet-links"><span>平时也可以</span><a href="/knowledge">补一点群知识 →</a><a href="/memory">翻翻群记忆 →</a><a href="/decision">配置判断帮手 →</a></div>'''
     return _page("让 Agent 改进", body, "iterate")
 
 
+def _chat_route_card(cfg, runner=None):
+    settings = instance_settings.public_settings(cfg)
+    configured = f"{settings['active_provider']} · {settings['primary_model'] or '还没选模型'}"
+    snapshot, _state = _status(cfg)
+    managed = runner.snapshot() if runner is not None else {}
+    rows = (snapshot.get("providers") or {}).get("providers") or []
+    live = bool(managed.get("running") and not managed.get("stale")
+                and snapshot.get("pid") == managed.get("pid") and rows)
+    if live:
+        first = rows[0]
+        models = first.get("models") or []
+        active = f"{first.get('name') or first.get('label') or '已配置服务'} · {models[0] if models else '未报告模型'}"
+        changed = first.get("name") != settings["active_provider"] or models != settings["model_options"]
+        detail = (f"已保存的新选择：{configured}。由你重启机器人后生效。" if changed
+                  else "QQ 回复和这里共用此首选；失败时才尝试已配置的备用。")
+        label = "运行中的聊天首选"
+    else:
+        label, active = "已保存的聊天首选", configured
+        detail = "还没有可核对的运行模型信息；启动后以进程报告为准。"
+    return f'<div class="chat-route-card"><div><span class="eyebrow">{label}</span><strong>{_esc(active)}</strong><p>{_esc(detail)}</p></div><a href="/setup#chat-model">选择聊天模型 ↗</a></div>'
+
+
+def _companion_page(cfg, request, csrf, runner=None):
+    pet = request.query.get("mode") == "pet"
+    body = f'''<section class="companion-room" data-chat-room><header class="companion-room-heading"><div><span class="eyebrow">YOUR REGULAR, RIGHT HERE</span><h1>聊两句？</h1><p>同一个老群友，换一个安静的小窗。</p></div><a class="room-home-link" href="/">工作台 ↗</a></header>
+<div class="companion-stage">{_mascot('idle', image_class='room-mascot', chat=True)}<div class="stage-caption"><span class="tag lilac">老群友</span><p data-chat-status aria-live="polite">正在检查本机连接…</p><button type="button" class="text-button" data-chat-refresh>刷新连接状态</button></div></div>
+{_chat_route_card(cfg, runner)}
+<div class="chat-surface"><div class="chat-history" role="log" aria-live="polite" aria-label="本机对话" data-chat-history><div class="chat-message system"><span class="chat-speaker">本机小窗</span><p>机器人运行后，就能在这里和它聊聊。打开页面不会发消息，也不会请求模型。</p></div></div>
+<form class="chat-compose" action="/companion/chat" method="post" data-chat-form><input type="hidden" name="csrf" value="{_esc(csrf)}"><label class="sr-only" for="companion-message">想和老群友说的话</label><textarea id="companion-message" name="text" rows="2" maxlength="2000" placeholder="今天有什么想聊的？" required data-chat-input></textarea><div class="chat-compose-footer"><span data-chat-count>0 / 2000</span><button type="submit" disabled data-chat-submit>发送 <span aria-hidden="true">↑</span></button></div></form></div>
+<p class="chat-boundary">只在你发送时调用已运行的机器人；不执行管理指令，也不自动启动服务。</p><nav class="room-shortcuts" aria-label="工作台快捷入口"><a href="/setup">设置</a><a href="/checkup">体检</a><a href="/">运行状态</a><a href="/iterate">让 Agent 帮忙</a><button type="button" class="text-button" data-actions-toggle aria-pressed="false" title="开启后，点击角色会短暂眨眼">角色动作：关</button></nav></section>'''
+    return _page("和老群友聊聊", body, "companion", pet=pet)
+
+
 def _knowledge(cfg, request):
-    files = _knowledge_files(cfg)
-    name = request.query.get("file") or (files[0] if files else "all.md")
-    if not _safe_name(name):
-        raise web.HTTPBadRequest(text="非法知识库文件名")
+    names = _knowledge_files(cfg)
+    name = request.query.get("file") or (names[0] if names else "all.md")
     path = _knowledge_path(cfg, name)
     content = _read_text(path, limit=MAX_EDIT_BYTES)
-    parsed = knowledge_mod.KnowledgeBase(cfg.KNOWLEDGE_DIR).parse_file(path)
+    library = knowledge_mod.KnowledgeBase(cfg.KNOWLEDGE_DIR)
+    parsed = library.parse_file(path)
+    examples = {
+        "agreement": "## 群里的小约定\n关键词：群规、约定\n请替换成你们已经确认的群约定。\n",
+        "names": "## 一个称呼的来历\n关键词：称呼、昵称\n请填写群里常用的称呼及适用范围，不要填写私人身份编号。\n",
+        "routine": "## 固定活动\n关键词：活动、时间\n请填写已经确定的时间和参与方式。这里提供聊天参考，不会创建定时提醒。\n",
+    }
+    template = request.query.get("template")
+    drafted = not content.strip() and template in examples
+    if drafted:
+        content = examples[template]
     entries = "".join(
-        f"<li><b>{_esc(entry['title'])}</b> "
-        f"<span class=mono>{_esc('、'.join(entry['keywords']))}</span><br>"
-        f"{_esc(entry['content'])}</li>" for entry in parsed)
-    preview = (f"<ul>{entries}</ul>" if entries
-               else '<p class="muted">当前文件没有可解析条目。</p>')
+        f'<article class="knowledge-entry"><h3>{_esc(entry["title"])}</h3>'
+        f'<div class="knowledge-keywords">{"".join(f"<span>{_esc(word)}</span>" for word in entry["keywords"])}</div>'
+        f'<p>{_esc(entry["content"])}</p></article>' for entry in parsed)
+    preview = entries or '<div class="knowledge-blank"><h3>还没有保存的条目</h3><p>先从下面的示例开始，改成你们真实的约定后再保存。</p></div>'
     saved = ('<div class="notice good">已保存；下一条相关消息会使用新内容。</div>'
              if request.query.get("saved") else "")
-    options = "".join(
-        f'<option value="{_esc(item)}"{" selected" if item == name else ""}>{_esc(item)}</option>'
-        for item in files)
-    body = f"""
-<h1>知识库</h1>
-<p class="muted">all.md 全群共享；&lt;群号&gt;.md 只对该群生效。每个 ## 标题一条，
-关键词行写成 <span class=mono>关键词：奶茶、请客</span>。保存后下一轮生效，不需要重启。</p>
-{saved}
-<div class="row" style="margin:14px 0">
-<form method="get" action="/knowledge" class="row">
-<select name="file">{options}</select>
-<button type="submit">打开</button>
-</form>
-<form method="get" action="/knowledge" class="row">
-<input type="text" name="file" placeholder="新建：群号.md">
-<button type="submit">新建</button>
-</form>
-</div>
-<form method="post" action="/knowledge/save">
+    cards = []
+    for item in names:
+        try:
+            item_path = _knowledge_path(cfg, item)
+        except web.HTTPBadRequest:
+            continue
+        item_entries = library.parse_file(item_path)
+        scope = "所有群共享" if item == "all.md" else "指定群使用"
+        summary = " · ".join(entry["title"] for entry in item_entries[:2]) or "还没有可用条目"
+        cards.append(f'<a class="knowledge-file {"selected" if item == name else ""}" href="/knowledge?file={quote(item, safe="")}" '
+                     f'{"aria-current=page" if item == name else ""}><span>{scope}<small>{len(item_entries)} 条</small></span>'
+                     f'<strong>{_esc(item)}</strong><p>{_esc(summary)}</p></a>')
+    scope = "所有群都能参考" if name == "all.md" else "只在文件名对应的群里使用"
+    draft_notice = '<div class="notice">这是未保存的格式示例。请改成真实内容；尚未写入知识库。</div>' if drafted else ""
+    template_links = " · ".join(f'<a href="/knowledge?file={quote(name, safe="")}&amp;template={key}#knowledge-editor">{label} ↗</a>'
+                               for key, label in (("agreement", "群约定"), ("names", "称呼来历"), ("routine", "固定活动")))
+    body = f'''
+<header class="knowledge-hero"><div><span class="eyebrow">THINGS YOUR GROUP KNOWS</span><h1>有些事，不用每次都解释。</h1><p>把群里的约定、称呼和梗的来历放在这里。<br>聊到相关关键词时，老群友才取少量内容来参考。</p></div>{_mascot('knowledge')}</header>
+{saved}{draft_notice}
+<div class="knowledge-workspace"><aside class="knowledge-library"><div class="section-heading"><h2>知识文件</h2><span class="tag">{len(names)} 份</span></div>
+<nav aria-label="知识文件">{''.join(cards) or '<p class="field-hint">还没有文件。可以先写一份所有群共享的知识。</p>'}</nav>
+<a class="knowledge-shared" href="/knowledge?file=all.md">所有群共享：all.md →</a>
+<details class="knowledge-new"><summary>给某个群单独写一份</summary><form method="get" action="/knowledge"><label class="field"><span class="field-label">知识文件名</span><input type="text" name="file" placeholder="群号.md" required><span class="field-hint">使用对应群号作文件名；同名条目优先使用群内版本。</span></label><button type="submit">打开空白草稿</button></form></details>
+<p class="knowledge-permission">只由维护者在本机编辑。群聊不能写入这里，也不会自动把聊天当成事实。</p></aside>
+<section class="knowledge-main"><div class="knowledge-file-heading"><div><span class="eyebrow">{scope}</span><h2>{_esc(name)}</h2></div><span class="tag lilac">解析到 {len(parsed)} 条</span></div>
+<div class="knowledge-preview" aria-label="已保存知识条目">{preview}</div>
+<form method="post" action="/knowledge/save" class="knowledge-editor" id="knowledge-editor" data-knowledge-form>
 <input type="hidden" name="file" value="{_esc(name)}">
-<textarea name="content" spellcheck="false">{_esc(content)}</textarea>
-<div class="row" style="margin-top:10px">
-<button type="submit">保存 {_esc(name)}</button>
-<span class="muted">解析到 {len(parsed)} 条；敏感词条目会被跳过。</span>
-</div>
+<div class="section-heading"><div><h2>写下要记住的事</h2><p class="field-hint">一条一个标题，关键词写大家实际会说的词。保存后，下一轮相关聊天即可参考。</p></div></div>
+<div class="knowledge-composer"><label class="field"><span class="field-label">条目标题</span><input type="text" maxlength="80" placeholder="例如：奶茶局怎么报名" data-knowledge-title></label><label class="field"><span class="field-label">聊到哪些词时用？</span><input type="text" maxlength="160" placeholder="例如：奶茶、报名" data-knowledge-keywords></label><label class="field field-wide"><span class="field-label">具体内容</span><textarea rows="3" maxlength="3000" placeholder="写已经确认的事实或约定，尽量简短。" data-knowledge-body></textarea></label><div class="field-wide row"><button type="button" class="secondary" data-knowledge-add>加入下方草稿</button><span class="field-hint" data-knowledge-status aria-live="polite">加入草稿后，仍需点击保存才生效。</span></div></div>
+<label class="field knowledge-source"><span class="field-label">完整草稿<small>可直接修改已有条目</small></span><textarea name="content" spellcheck="false" rows="9" data-knowledge-source>{_esc(content)}</textarea></label>
+<div class="knowledge-save-row"><button type="submit">保存这份知识 <span aria-hidden="true">→</span></button><span class="field-hint">保存不调用模型，也不需要重启。</span></div>
 </form>
-<h2>解析预览</h2>{preview}
-"""
+<details class="knowledge-help"><summary>不知道写什么？看格式和使用说明</summary><p>从一个示例开始：{template_links}。仅空白文件会载入示例，不覆盖已有内容，也不会自动保存。</p><pre>## 奶茶局怎么报名\n关键词：奶茶、报名\n请在活动当天的群公告下回复。\n</pre><p>每个 <code>## 标题</code> 是一条；没有关键词行时使用标题作关键词。命中后只取少量内容，不会每轮全部发给模型。敏感词条目会在解析时跳过，保存后可在上方核对有效条目。</p><p>适合写：共同约定、固定活动、已经确认的称呼。不适合写：密码、私人身份编号、未确认的传闻。这里的活动时间只是聊天参考，需要到点提醒时仍应在 QQ 明确设置提醒。</p></details></section></div>
+'''
     return _page("知识库", body, "knowledge")
 
 
@@ -513,11 +573,13 @@ def _memory(cfg, request):
         for item in files)
     picker = (f'<form method="get" action="/memory" class="row"><select name="file">'
               f'{options}</select><button type="submit">打开</button></form>') if files else ""
+    memory_content = f"<pre>{_esc(content)}</pre>" if content else _empty_state(
+        "群记忆还在慢慢攒", "聊过、整理过的片段会留在这里。现在还没有可显示的每日记忆。", state="sleeping")
     body = f"""
 <h1>记忆</h1>
 <p class="muted">这里只读。摘要由每日压缩生成；要纠正具体事实，请改知识库。</p>
 {picker}
-<pre>{_esc(content or "暂无可显示的每日记忆。")}</pre>
+{memory_content}
 """
     return _page("记忆", body, "memory")
 
@@ -700,10 +762,11 @@ def _checkup(cfg, request, csrf):
 <p>{_esc(f['detail'])}</p>
 {ctx_html}{cmds}
 </div>""")
-    findings_html = "".join(cards) if cards else '<p class="muted">今天没有可疑的地方。</p>'
+    findings_html = "".join(cards) if cards else _empty_state(
+        "今天没有可疑的地方", "先安心聊天。有哪句让你觉得不对，也可以直接把截图交给你的 Agent。", state="thinking")
     i = out["inputs"]
     body = f"""
-<h1>每日体检</h1>
+<header class="knowledge-hero"><div><span class="eyebrow">A LITTLE CHECK-IN</span><h1>每日体检</h1><p>接偏的那一句，也能成为下一次进步的起点。</p></div>{_mascot('checkup')}</header>
 {warning}
 <p class="muted">只读扫交互日志与每轮输入，不联网、不调模型。原料：消息 {i['incoming']} 条，送达 {i['delivered']} 条，
 每轮输入 {i['turns']} 轮 / 分诊 {i['triage']} 次；基线 {i['baseline_days']} 天。</p>
@@ -755,10 +818,12 @@ def create_app(cfg, *, token):
                                 samesite="Strict", path="/")
             raise response
         response = await handler(request)
+        response.headers["X-Regular-Panel"] = "1"
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Content-Security-Policy"] = (
             "default-src 'none'; style-src 'unsafe-inline'; "
+            "script-src 'self'; img-src 'self'; connect-src 'self'; "
             "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         return response
 
@@ -809,6 +874,50 @@ def create_app(cfg, *, token):
         return web.Response(text=_agent_brief(cfg), content_type="text/plain", charset="utf-8",
                             headers={"Content-Disposition": 'attachment; filename="regular-agent-brief.md"'})
 
+    async def companion_page(request):
+        return _html(_companion_page(cfg, request, csrf, runner))
+
+    def companion_state():
+        from regular.local_chat import bridge_status
+        status = bridge_status(cfg)
+        managed = runner.snapshot()
+        return {"available": bool(status.get("available")),
+                "reason": str(status.get("reason") or ""),
+                "qq_connected": bool(managed.get("gateway_connected"))}
+
+    async def companion_status(request):
+        return web.json_response(companion_state())
+
+    async def companion_session(request):
+        # Native clients use the same panel authentication and existing CSRF.
+        # Reading a session never starts a process or sends a chat request.
+        return web.json_response({"csrf": csrf, **companion_state()})
+
+    async def companion_chat(request):
+        form = await checked_form(request)
+        text = str(form.get("text") or "").strip()
+        if not text or len(text) > 2000:
+            return web.json_response({"error": "请发送 1–2000 个字符。"}, status=400)
+        from regular.local_chat import LocalChatError, send_chat
+        try:
+            result = await send_chat(cfg, text)
+        except LocalChatError as error:
+            return web.json_response({"error": error.message}, status=error.status)
+        return web.json_response({"text": str(result.get("text") or "")})
+
+    async def panel_script(request):
+        return web.Response(text=files("regular").joinpath("panel.js").read_text(encoding="utf-8"),
+                            content_type="application/javascript", charset="utf-8")
+
+    async def mascot(request):
+        name = request.match_info["name"]
+        if name not in MASCOT_ASSETS:
+            raise web.HTTPNotFound()
+        asset = files("regular").joinpath("assets", name)
+        if not asset.is_file():
+            raise web.HTTPNotFound()
+        return web.Response(body=asset.read_bytes(), content_type="image/png")
+
     async def cleanup(app):
         await runner.close()
 
@@ -838,6 +947,12 @@ def create_app(cfg, *, token):
 
     csrf = secrets.token_urlsafe(24)
     app = web.Application(middlewares=[auth])
+    app.router.add_get("/assets/panel.js", panel_script)
+    app.router.add_get("/assets/{name}", mascot)
+    app.router.add_get("/companion", companion_page)
+    app.router.add_get("/companion/status", companion_status)
+    app.router.add_get("/companion/session", companion_session)
+    app.router.add_post("/companion/chat", companion_chat)
     app.router.add_get("/", home)
     app.router.add_get("/setup", setup_page)
     app.router.add_post("/setup/save", setup_save)

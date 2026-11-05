@@ -116,6 +116,32 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 302)
         self.assertTrue((self.knowledge_dir / "806abc.md").is_file())
 
+    async def test_knowledge_library_previews_entries_and_keeps_templates_as_unsaved_drafts(self):
+        original = (self.knowledge_dir / "all.md").read_bytes()
+        response = await self.client.get("/knowledge?file=all.md&template=names", headers=self.auth())
+        text = await response.text()
+        self.assertIn('aria-label="知识文件"', text)
+        self.assertIn('aria-label="已保存知识条目"', text)
+        self.assertIn("本群不发广告", text)
+        self.assertIn("data-knowledge-title", text)
+        self.assertIn("只由维护者在本机编辑", text)
+        self.assertNotIn("这是未保存的格式示例", text)
+        self.assertEqual((self.knowledge_dir / "all.md").read_bytes(), original)
+        response = await self.client.get("/knowledge?file=806abc.md&template=names", headers=self.auth())
+        text = await response.text()
+        self.assertIn("这是未保存的格式示例", text)
+        self.assertIn("一个称呼的来历", text)
+        self.assertFalse((self.knowledge_dir / "806abc.md").exists())
+
+    async def test_knowledge_preview_keeps_untrusted_markup_literal(self):
+        (self.knowledge_dir / "all.md").write_text(
+            '## <img src=x onerror=alert(1)>\n关键词：测试\n<script>bad()</script>\n')
+        response = await self.client.get("/knowledge", headers=self.auth())
+        text = await response.text()
+        self.assertNotIn('<img src=x', text)
+        self.assertNotIn('<script>bad()', text)
+        self.assertIn('&lt;script&gt;bad()', text)
+
     async def test_path_traversal_is_rejected(self):
         response = await self.client.post(
             "/knowledge/save",

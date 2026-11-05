@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the source checkout's venv, then open its local setup panel."""
+"""Prepare the source checkout's venv, then open the desktop companion."""
 from __future__ import annotations
 
 import argparse
@@ -32,7 +32,8 @@ def launch(root: Path, directory: Path) -> int:
     environment = root / ".venv"
     python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     marker = environment / ".regular-source-install.json"
-    expected = {"source": str(root), "version": source_version(root)}
+    desktop = sys.platform in ("darwin", "win32") or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    expected = {"source": str(root), "version": source_version(root), "desktop": desktop}
     created = not python.is_file()
     if created:
         print("首次启动：正在创建本地 Python 环境……", flush=True)
@@ -47,18 +48,18 @@ def launch(root: Path, directory: Path) -> int:
     child_env.pop("PYTHONPATH", None)
     child_env.pop("PYTHONHOME", None)
     if created or installed != expected:
-        print("正在安装或更新依赖（需要联网）；安装完成后再打开面板……", flush=True)
+        print("正在安装或更新依赖（需要联网）；安装完成后再打开老群友……", flush=True)
         subprocess.run(
-            [str(python), "-m", "pip", "install", "-e", str(root)],
+            [str(python), "-m", "pip", "install", "-e", str(root) + ("[desktop]" if desktop else "")],
             cwd=root, env=child_env, check=True,
         )
         marker.write_text(json.dumps(expected, ensure_ascii=False) + "\n", encoding="utf-8")
 
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     print(f"实例目录：{directory}", flush=True)
-    print("正在打开本机面板；网页中点击「启动机器人」后才连接 QQ。请保持本终端开启。", flush=True)
+    print("正在打开老群友；鼠标靠近人物可打开设置。设置中点击「启动机器人」后才连接 QQ。请保持本终端开启。", flush=True)
     result = subprocess.run(
-        [str(python), "-m", "regular", "--directory", str(directory), "panel", "--open"],
+        [str(python), "-m", "regular", "--directory", str(directory), "pet"],
         cwd=root, env=child_env,
     )
     return result.returncode
@@ -66,7 +67,7 @@ def launch(root: Path, directory: Path) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="为源码创建本地环境并打开老群友的首次配置面板。需要 Python 3.10+；首次安装需要联网。",
+        description="为源码创建本地环境并打开老群友桌宠。需要 Python 3.10+；首次安装需要联网。",
     )
     parser.add_argument(
         "--directory", default=None, metavar="PATH",
@@ -80,7 +81,7 @@ def main(argv=None) -> int:
     try:
         return launch(ROOT, directory)
     except subprocess.CalledProcessError as error:
-        print("依赖安装失败，面板尚未启动。请查看上面的错误后重新运行。", file=sys.stderr)
+        print("依赖安装失败，老群友尚未启动。请查看上面的错误后重新运行。", file=sys.stderr)
         return error.returncode or 1
     except (OSError, ValueError) as error:
         print(f"启动失败：{error}", file=sys.stderr)

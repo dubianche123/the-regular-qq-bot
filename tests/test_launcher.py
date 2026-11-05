@@ -1,4 +1,4 @@
-"""The source launcher never installs, starts a panel or reaches the network in tests."""
+"""Source launcher prepares desktop extras, then opens the pet without QQ autostart."""
 import contextlib
 import importlib.util
 import io
@@ -77,14 +77,23 @@ class SourceLauncherTest(unittest.TestCase):
         self.assertEqual(code, 0)
         builder.return_value.create.assert_called_once_with(self.root / ".venv")
         install, panel = run.call_args_list
-        self.assertEqual(install.args[0], [str(self.python), "-m", "pip", "install", "-e", str(self.root)])
-        self.assertEqual(panel.args[0], [str(self.python), "-m", "regular", "--directory", str(self.instance), "panel", "--open"])
+        self.assertEqual(install.args[0], [str(self.python), "-m", "pip", "install", "-e", str(self.root) + ("[desktop]" if launcher.sys.platform in ("darwin", "win32") else "")])
+        self.assertEqual(panel.args[0], [str(self.python), "-m", "regular", "--directory", str(self.instance), "pet"])
         self.assertEqual(panel.kwargs["cwd"], self.root)
         self.assertNotIn("PYTHONPATH", panel.kwargs["env"])
         self.assertNotIn("PYTHONHOME", panel.kwargs["env"])
         self.assertNotIn("shell", panel.kwargs)
         self.assertTrue(self.instance.is_dir())
         self.assertEqual(json.loads(self.marker.read_text())["version"], "0.3.0")
+
+    def test_linux_headless_skips_qt_but_desktop_profile_installs_it(self):
+        with patch.object(launcher.sys, "platform", "linux"):
+            _, _, headless = self.run_launcher(["--directory", str(self.instance)])
+            self.assertEqual(headless.call_args_list[0].args[0][-1], str(self.root))
+            self.assertFalse(json.loads(self.marker.read_text())["desktop"])
+            _, _, graphical = self.run_launcher(["--directory", str(self.instance)], env={"DISPLAY": ":1"})
+            self.assertEqual(graphical.call_args_list[0].args[0][-1], str(self.root) + "[desktop]")
+            self.assertTrue(json.loads(self.marker.read_text())["desktop"])
 
     def test_same_version_skips_install_but_upgrade_installs(self):
         args = ["--directory", str(self.instance)]

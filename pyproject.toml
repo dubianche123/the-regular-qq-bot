@@ -21,9 +21,10 @@ regular = "regular.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "build>=1,<2"]
+desktop = ["PySide6-Essentials>=6.10,<7"]
 
 [tool.setuptools]
-packages = ["regular"]
+packages = ["regular", "regular.assets"]
 py-modules = ["activation", "affinity", "archive", "bot", "config", "digest", "knowledge", "naming", "nicking", "panel", "proactive", "prompts", "providers", "qqtext", "quotes", "recall", "relations", "reminders", "runtime", "search", "storage", "turns", "wordfilter", "delivery", "media", "health", "interactions", "receptive", "scheduler", "slowwork", "image_generation", "expression", "voice_input", "voice_event", "voice_runtime", "voice_amr", "realtime_synth", "voice_budget", "voice_outbound", "voice_output_runtime"]
 
 [tool.setuptools.dynamic]
@@ -31,7 +32,7 @@ version = {attr = "regular.__version__"}
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.package-data]
-regular = ["voice_amr.mjs", "voice_encode.mjs"]
+regular = ["voice_amr.mjs", "voice_encode.mjs", "panel.css", "panel.js", "assets/*.png", "assets/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

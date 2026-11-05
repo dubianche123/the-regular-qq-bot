@@ -95,6 +95,33 @@ class InstanceSettingsTest(unittest.TestCase):
         self.assertNotIn("csrf", saved)
         self.assertEqual(saved["AI_PROVIDER"], "zhipu")
 
+    def test_chat_choice_replaces_an_old_tier_override_and_orders_explicit_fallbacks(self):
+        self.file.write_text("AI_PROVIDER=openai\nCHAT_PROVIDER=gemini\nGEMINI_MODELS=old-chat\nDIGEST_PROVIDER=gemini\n")
+        self.assertEqual(settings.public_settings(self.cfg)["active_provider"], "gemini")
+        view = settings.save_settings(self.cfg, complete_values(
+            models="chosen-chat", fallback_models="backup-a, backup-b, chosen-chat, backup-a"))
+        saved = dotenv_values(self.file)
+        self.assertEqual(saved["CHAT_PROVIDER"], "openai")
+        self.assertEqual(saved["OPENAI_MODELS"], "chosen-chat,backup-a,backup-b")
+        self.assertEqual(saved["DIGEST_PROVIDER"], "gemini")
+        self.assertEqual(view["primary_model"], "chosen-chat")
+        self.assertEqual(view["fallback_models"], "backup-a, backup-b")
+
+    def test_external_chat_choice_remains_explicitly_reported_after_save(self):
+        cfg = configuration(self.root, EXTERNAL_ENV_KEYS=frozenset({"CHAT_PROVIDER"}))
+        with patch.dict(os.environ, {"CHAT_PROVIDER": "gemini"}):
+            view = settings.save_settings(cfg, complete_values())
+        self.assertEqual(view["active_provider"], "gemini")
+        self.assertIn("CHAT_PROVIDER", view["overridden"])
+        self.assertEqual(dotenv_values(self.file)["CHAT_PROVIDER"], "openai")
+
+    def test_structured_chat_choice_does_not_silently_promote_a_backup(self):
+        for values in ({"models": "", "fallback_models": "backup"},
+                       {"models": "first,second", "fallback_models": ""}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                settings.save_settings(self.cfg, complete_values(**values))
+            self.assertFalse(self.file.exists())
+
     def test_provider_key_file_keeps_its_actual_precedence(self):
         (self.root / "api_keys_zhipu.txt").write_text("# note\nprivate-file-key\n", encoding="utf-8")
         settings.save_settings(self.cfg, complete_values(provider="zhipu", api_key="new-env-key"))

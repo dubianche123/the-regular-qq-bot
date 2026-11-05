@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "canvas": [
+    512,
+    768
+  ],
+  "actions": {
+    "idle": {
+      "frames": [
+        "mascot-idle.png"
+      ],
+      "fps": 1,
+      "loop": false
+    },
+    "drag": {
+      "frames": [
+        "mascot-drag-mid.png",
+        "mascot-drag.png"
+      ],
+      "fps": 8,
+      "loop": false
+    },
+    "land": {
+      "frames": [
+        "mascot-drag.png",
+        "mascot-drag-mid.png",
+        "mascot-idle.png"
+      ],
+      "fps": 8,
+      "loop": false
+    },
+    "blink": {
+      "frames": [
+        "mascot-idle.png",
+        "mascot-blink.png",
+        "mascot-idle.png"
+      ],
+      "fps": 9,
+      "loop": false
+    },
+    "wave": {
+      "frames": [
+        "mascot-idle.png",
+        "mascot-wave-mid.png",
+        "mascot-wave.png",
+        "mascot-wave-mid.png",
+        "mascot-idle.png"
+      ],
+      "fps": 7,
+      "loop": false
+    }
+  }
+}

@@ -631,7 +631,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="regular", description="The Regular: local demo, configuration, diagnostics and QQ runtime")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--directory", default=os.getcwd(), help="deployment directory containing .env (default: current directory)")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
     init = sub.add_parser("init", help="create a private .env without overwriting existing config")
     init.add_argument("--interactive", action="store_true", help="prompt for credentials with hidden secret input")
     sub.add_parser("setup", help="guide configuration and run local checks; no network or inference")
@@ -733,6 +733,9 @@ def main(argv=None):
     panel.add_argument("--port", type=int, default=8765, help="local port (default: 8765)")
     panel.add_argument("--open", action="store_true", dest="open_browser",
                        help="open the panel in the default browser")
+    pet = sub.add_parser("pet", help="open the desktop pet; prepare a local settings service if needed")
+    pet.add_argument("--port", type=int, default=8765, help="local settings service port (default: 8765)")
+    pet.add_argument("--browser", action="store_true", help="use a compact web page instead of a native floating window")
     sub.add_parser("run", help="validate and connect the QQ runtime")
     svc = sub.add_parser("service", help="generate a launchd or systemd definition; never install or start it")
     svc.add_argument("kind", choices=("launchd", "systemd"))
@@ -743,6 +746,8 @@ def main(argv=None):
     probe.add_argument("name", help="file stem in tests/probes, e.g. probe_cache")
     probe.add_argument("--allow-paid", action="store_true", help="authorize real model requests and quota consumption")
     args = parser.parse_args(argv)
+    if args.command is None:
+        args.command, args.port, args.browser = "pet", 8765, False
     try:
         if args.command == "init":
             return initialize(args.directory, interactive=args.interactive)
@@ -798,6 +803,9 @@ def main(argv=None):
             import panel as panel_module
             return panel_module.run(config, host=args.host, port=args.port,
                                     open_browser=args.open_browser)
+        if args.command == "pet":
+            from regular import desktop
+            return desktop.run(config, port=args.port, browser=args.browser)
         if args.command == "run":
             errors = config.validate()
             if errors:
