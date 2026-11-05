@@ -12,6 +12,7 @@ import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from botpy.errors import ForbiddenError
 
 sys.path.insert(0, "..")
 
@@ -137,6 +138,7 @@ class _Reply(unittest.IsolatedAsyncioTestCase):
                   patch.object(bot.time, "time", return_value=NOW)):
             p.start()
             self.addCleanup(p.stop)
+        self.addCleanup(bot._carried_reminders.clear)
         self.message = SimpleNamespace(
             group_openid="group", id="incoming", author=SimpleNamespace(member_openid="member"),
             timestamp=datetime.now(timezone.utc).isoformat(),
@@ -191,10 +193,12 @@ class FireTest(_Reply):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.posts = []
+        self.post_kwargs = []
         self.post_ok = True
 
         async def post(group_id, text, **kw):
             self.posts.append(text)
+            self.post_kwargs.append(kw)
             return self.post_ok
         for p in (patch.object(bot, "post_to_group", post),
                   patch.object(bot, "call_model", AsyncMock(return_value="老王，九点了，开会去")),
@@ -219,6 +223,7 @@ class FireTest(_Reply):
         self.set("11-03 09:00")
         await self.run_at(at(11, 3, 9, 0))
         self.assertEqual(self.posts, ["老王，九点了，开会去"])
+        self.assertEqual(self.post_kwargs[0]["mention_member"], "member")
         self.assertEqual(self.scheduler.pending(), [])
         self.assertEqual(bot.own_lines["group"][-1]["text"], "老王，九点了，开会去")
         await self.run_at(at(11, 3, 9, 5))
@@ -239,11 +244,80 @@ class FireTest(_Reply):
         self.assertEqual(len(self.scheduler.pending()), 1)          # 留着等捎带
         with patch.object(bot.time, "time", return_value=at(11, 3, 9, 10)):
             await bot.deliver_carried(self.message, "group")
-        self.assertEqual(self.sent(), ["老王，九点了，开会去"])
+        payload = self.message.reply.await_args.kwargs
+        self.assertEqual(payload["msg_type"], 2)
+        self.assertEqual(payload["markdown"]["content"],
+                         '<qqbot-at-user id="member" /> 老王，九点了，开会去')
         self.assertEqual(self.scheduler.pending(), [])
         with patch.object(bot.time, "time", return_value=at(11, 3, 9, 20)):
             await bot.deliver_carried(self.message, "group")         # 不重复
         self.assertEqual(len(self.sent()), 1)
+
+    async def test_carried_reminder_mentions_requester_not_the_next_speaker(self):
+        task = self.set("11-03 09:00")
+        task["payload"]["ready"] = "老王，到点了"
+        self.message.author.member_openid = "another-speaker"
+        with patch.object(bot.time, "time", return_value=at(11, 3, 9, 10)):
+            await bot.deliver_carried(self.message, "group")
+        wire = self.message.reply.await_args.kwargs["markdown"]["content"]
+        self.assertTrue(wire.startswith('<qqbot-at-user id="member" />'))
+        self.assertNotIn("another-speaker", wire)
+        self.assertEqual(self.scheduler.pending(), [])
+
+    async def test_queued_reminder_waits_for_receipt_and_is_not_queued_twice(self):
+        task = self.set("11-03 09:00")
+        task["payload"]["ready"] = "老王，到点了"
+        self.message.reply.side_effect = [ConnectionError("offline"), {"id": "sent"}]
+        with patch.object(bot.time, "time", return_value=at(11, 3, 9, 10)):
+            await bot.deliver_carried(self.message, "group")
+            self.assertIn(task["id"], self.scheduler.tasks)
+            self.assertEqual(task["payload"]["ready"], "老王，到点了")
+            await bot.deliver_carried(self.message, "group")
+            self.assertEqual(self.message.reply.await_count, 1)
+            await bot.SENDER.drain()
+        self.assertEqual(self.message.reply.await_count, 2)
+        self.assertEqual(self.scheduler.pending(), [])
+        self.assertNotIn(task["id"], bot._carried_reminders)
+
+    async def test_rejected_carried_reminder_is_kept_for_a_later_message(self):
+        task = self.set("11-03 09:00")
+        task["payload"]["ready"] = "老王，到点了"
+        self.message.reply.side_effect = [RuntimeError("rejected"), {"id": "sent"}]
+        with patch.object(bot.time, "time", return_value=at(11, 3, 9, 10)):
+            await bot.deliver_carried(self.message, "group")
+            self.assertIn(task["id"], self.scheduler.tasks)
+            self.assertNotIn(task["id"], bot._carried_reminders)
+            await bot.deliver_carried(self.message, "group")
+        self.assertEqual(self.scheduler.pending(), [])
+
+    async def test_carried_fallback_is_not_counted_as_the_requested_reminder(self):
+        task = self.set("11-03 09:00")
+        task["payload"]["ready"] = "原提醒正文"
+        sender = Sender(fallback=lambda message: "这次没能发出来")
+        self.message.reply.side_effect = [RuntimeError("40034006"),
+                                          {"id": "fallback"}, {"id": "reminder"}]
+        with patch.object(bot, "SENDER", sender), \
+                patch.object(bot.time, "time", return_value=at(11, 3, 9, 10)):
+            await bot.deliver_carried(self.message, "group")
+            self.assertIn(task["id"], self.scheduler.tasks)
+            self.assertEqual(task["payload"]["ready"], "原提醒正文")
+            self.assertNotIn(task["id"], bot._carried_reminders)
+            self.assertEqual(list(bot.own_lines.get("group", ())), [])
+            await bot.deliver_carried(self.message, "group")
+        self.assertEqual(self.scheduler.pending(), [])
+        self.assertEqual(bot.own_lines["group"][-1]["text"], "原提醒正文")
+
+    async def test_replacing_a_queued_reminder_does_not_cancel_the_new_one(self):
+        old = self.set("11-03 09:00")
+        old["payload"]["ready"] = "旧提醒"
+        self.message.reply.side_effect = ConnectionError("offline")
+        with patch.object(bot.time, "time", return_value=at(11, 3, 9, 10)):
+            await bot.deliver_carried(self.message, "group")
+            new = self.set("11-03 10:00")
+            await bot.SENDER.drain()
+        self.assertIs(self.scheduler.tasks[new["id"]], new)
+        self.assertEqual(bot.SENDER.last_status, "superseded")
+        self.assertNotIn(old["id"], bot._carried_reminders)
 
     async def test_unsent_for_an_hour_is_dropped(self):
         self.register()
@@ -288,6 +362,37 @@ class FireTest(_Reply):
         await self.run_at(at(11, 3, 9, 0))
         self.assertEqual(self.posts, [])
         self.assertEqual(self.scheduler.pending()[0]["due"], at(11, 3, 9, 3))
+
+
+class ProactiveMentionTest(_Reply):
+    async def test_wire_mentions_but_history_and_journal_keep_plain_text(self):
+        post = AsyncMock(return_value={"id": "sent"})
+        client = SimpleNamespace(api=SimpleNamespace(post_group_message=post))
+        with patch.dict(bot._bot_ref, {"client": client}), patch.object(bot, "_remember_sent") as remember:
+            ok = await bot.post_to_group("group", "到点了", mention_member="member", model_generated=True)
+        self.assertTrue(ok)
+        self.assertEqual(post.await_args.kwargs["markdown"]["content"],
+                         '<qqbot-at-user id="member" /> 到点了')
+        self.assertEqual(remember.call_args.args[-1], "到点了")
+        self.assertEqual(bot.runtime.FEEDBACK.remember.call_args.args[2], "到点了")
+        self.assertEqual(bot.runtime.INTERACTIONS.append.call_args.kwargs["text"], "到点了")
+
+    async def test_explicit_rejection_downgrades_once(self):
+        post = AsyncMock(side_effect=[ForbiddenError("markdown refused"), {"id": "sent"}])
+        client = SimpleNamespace(api=SimpleNamespace(post_group_message=post))
+        with patch.dict(bot._bot_ref, {"client": client}), patch.object(bot, "_remember_sent"):
+            self.assertTrue(await bot.post_to_group("group", "到点了", mention_member="member"))
+        self.assertEqual([c.kwargs["msg_type"] for c in post.await_args_list], [2, 0])
+        self.assertEqual(post.await_args.kwargs["content"], "到点了")
+
+    async def test_uncertain_result_does_not_cross_formats(self):
+        for failure in (ConnectionError("offline"), None):
+            with self.subTest(failure=type(failure).__name__):
+                post = AsyncMock(side_effect=failure) if failure else AsyncMock(return_value=None)
+                client = SimpleNamespace(api=SimpleNamespace(post_group_message=post))
+                with patch.dict(bot._bot_ref, {"client": client}):
+                    self.assertFalse(await bot.post_to_group("group", "到点了", mention_member="member"))
+                self.assertEqual(post.await_count, 1)
 
 
 if __name__ == "__main__":

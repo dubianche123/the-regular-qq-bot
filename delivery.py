@@ -6,6 +6,7 @@ from collections import OrderedDict, deque
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape
 import inspect
 import logging
 import time
@@ -13,6 +14,7 @@ from typing import Callable
 
 import aiohttp
 from botpy.message import C2CMessage
+from botpy.errors import ForbiddenError
 
 logger = logging.getLogger("qqbot")
 GROUP_PASSIVE_WINDOW_SECONDS = 240
@@ -38,6 +40,25 @@ def message_age_seconds(message):
 def connection_error(error):
     return isinstance(error, (ConnectionError, asyncio.TimeoutError,
                               aiohttp.ClientConnectionError))
+
+
+def group_message_payload(text, mention_member=None):
+    """Only the QQ wire payload contains a member identifier; caller state keeps plain text."""
+    if not mention_member:
+        return {"content": text, "msg_type": 0}
+    member = escape(str(mention_member), quote=True)
+    return {"msg_type": 2, "markdown": {
+        "content": f'<qqbot-at-user id="{member}" /> ' + escape(text, quote=False)}}
+
+
+def mention_rejected(error):
+    """Downgrade only after an explicit client rejection, never an uncertain server failure.
+
+    botpy maps HTTP 400 and 5xx to the same ServerError, so that ambiguous class
+    cannot safely trigger a second send with a different payload.
+    """
+    return (isinstance(error, ForbiddenError)
+            or isinstance(error, aiohttp.ClientResponseError) and error.status in (400, 403))
 
 
 
@@ -70,6 +91,7 @@ class PendingSend:
     fallback: bool = False
     # 引用回复：被引用消息的索引（事件 message_scene.ext 里的 msg_idx）；QQ 不收就去掉再发
     quote: str | None = None
+    mention_member: str | None = None
 
 
 class Sender:
@@ -156,9 +178,17 @@ class Sender:
             extra = ({"message_reference": {"message_id": item.quote,
                                             "ignore_get_message_error": True}}
                      if item.quote else {})
-            sent = await item.message.reply(content=item.text, msg_type=0, msg_seq=item.sequence,
-                                            **extra)
+            sent = await item.message.reply(**group_message_payload(item.text, item.mention_member),
+                                            msg_seq=item.sequence, **extra)
             return await self._delivered(item, sent) if sent else None
+
+    def _drop_mention(self, item, error):
+        if not item.mention_member or not mention_rejected(error):
+            return False
+        logger.warning("QQ 拒收提及消息，改发普通文本（%s）", type(error).__name__)
+        item.mention_member = None
+        item.sequence = self._next_sequence(item.message)
+        return True
 
     def _drop_quote(self, item, error):
         """引用回复被拒：引用只是让人看清回的是谁，去掉它再发一次，话不能因此丢了。"""
@@ -171,11 +201,11 @@ class Sender:
 
     async def reply(self, message, text, *, on_delivered=None, is_current=None,
                     retry_lock=None, send_lock=None, prepare=None, on_outcome=None,
-                    quote=None):
+                    quote=None, mention_member=None):
         item = PendingSend(message, text, self.clock(), self._next_sequence(message),
                            on_delivered, is_current, retry_lock, send_lock, prepare,
-                           on_outcome=on_outcome, quote=quote)
-        # 吞掉的超时只再试一次；换兜底话、去掉引用各最多一回，不占这一次
+                           on_outcome=on_outcome, quote=quote, mention_member=mention_member)
+        # 吞掉的超时只再试一次；换兜底话、去掉提及或引用各最多一回，不占这一次
         unconfirmed = 0
         while unconfirmed < 2:
             try:
@@ -188,6 +218,8 @@ class Sender:
                     item.prepare = None
                     item.fallback = True
                     item.sequence = self._next_sequence(message)
+                    continue
+                if self._drop_mention(item, error):
                     continue
                 if self._drop_quote(item, error):
                     continue
@@ -223,6 +255,9 @@ class Sender:
                         if connection_error(error):
                             self.pending.appendleft(item)
                             break
+                        if self._drop_mention(item, error):
+                            self.pending.append(item)
+                            continue
                         if self._drop_quote(item, error):
                             self.pending.append(item)
                             continue

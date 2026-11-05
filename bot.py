@@ -256,7 +256,8 @@ async def _recognize_voices(voices, event_prefix):
 
 from health import STATUS
 from delivery import (Sender, PendingSend, DeliveryResult, passive_reply_window, message_age_seconds,
-                      GROUP_PASSIVE_WINDOW_SECONDS, C2C_PASSIVE_WINDOW_SECONDS)
+                      GROUP_PASSIVE_WINDOW_SECONDS, C2C_PASSIVE_WINDOW_SECONDS,
+                      group_message_payload, mention_rejected)
 import media
 from affinity import (affinity_budget, apply_affinity_delta_capped,
                       apply_digest_affinity, apply_digest_modes, affinity_ledger)
@@ -957,7 +958,7 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
     return on_outcome
 
 
-async def safe_reply(message, reply_text, *, on_delivered=None, interaction=None,
+async def safe_reply(message, reply_text, *, on_delivered=None, interaction=None, on_outcome=None,
                      **delivery):
     """群消息才写观察日志；私聊没有 group_openid，原样发送、一行不落。
 
@@ -967,7 +968,7 @@ async def safe_reply(message, reply_text, *, on_delivered=None, interaction=None
     group_id = getattr(message, "group_openid", None)
     if not group_id:
         return await SENDER.reply(message, reply_text, on_delivered=on_delivered,
-                                  **delivery)
+                                  on_outcome=on_outcome, **delivery)
     member = getattr(getattr(message, "author", None), "member_openid", None)
     meta = dict(interaction or {})
     meta.setdefault("route", "local")
@@ -978,8 +979,15 @@ async def safe_reply(message, reply_text, *, on_delivered=None, interaction=None
     meta["user"] = member
     meta["policy_id"] = config.INTERACTION_POLICY_ID
     observer = _delivery_observer(uuid.uuid4().hex, group_id, meta, member)
+
+    def observe(result):
+        try:
+            observer(result)
+        finally:
+            if on_outcome is not None:
+                on_outcome(result)
     return await SENDER.reply(message, reply_text, on_delivered=on_delivered,
-                              on_outcome=observer, **delivery)
+                              on_outcome=observe, **delivery)
 
 
 async def resend_queue_loop():
@@ -2154,6 +2162,9 @@ async def finish_lookup(task):
     return now + 3600
 
 
+_carried_reminders = {}
+
+
 async def deliver_carried(message, group_id):
     """被动窗口和主动发言都没送出去的跟进和提醒，捎在群里下一条消息上发出去。"""
     for task in runtime.SCHEDULER.pending(kind="followup", group=group_id):
@@ -2162,18 +2173,43 @@ async def deliver_carried(message, group_id):
             runtime.STATE.mark_dirty()
             await safe_reply(message, text, interaction={"route": "followup"})
     for task in runtime.SCHEDULER.pending(kind=reminders.KIND, group=group_id):
-        text = task["payload"].pop("ready", None)
-        if text:
-            _reminder_done(task, time.time())
-            runtime.STATE.mark_dirty()
-            _note_own_line(group_id, text)
-            await safe_reply(message, text, interaction={"route": "reminder"})
+        text = task["payload"].get("ready")
+        if not text or _carried_reminders.get(task["id"]) is task:
+            continue
+
+        def current(task=task):
+            return (runtime.SCHEDULER.tasks.get(task["id"]) is task
+                    and time.time() < task["payload"]["at"] + reminders.GRACE_SECONDS)
+
+        def observe(result, task=task):
+            if result.status == "queued":
+                return
+            if _carried_reminders.get(task["id"]) is task:
+                _carried_reminders.pop(task["id"], None)
+            if (result.delivered and not result.fallback
+                    and runtime.SCHEDULER.tasks.get(task["id"]) is task):
+                task["payload"].pop("ready", None)
+                _reminder_done(task, time.time())
+                _note_own_line(group_id, result.text)
+                runtime.STATE.mark_dirty()
+
+        _carried_reminders[task["id"]] = task
+        try:
+            await safe_reply(message, text, interaction={"route": "reminder"},
+                             mention_member=task["payload"]["member"],
+                             is_current=current, on_outcome=observe)
+        except Exception:
+            if _carried_reminders.get(task["id"]) is task:
+                _carried_reminders.pop(task["id"], None)
+            raise
 
 
 # ── 到点提醒 ──
 
 def _reminder_done(task, now):
     """这一次提醒了结（送到了、或者过点太久作罢）：每天的排到下一次，一次性的撤掉。"""
+    if _carried_reminders.get(task["id"]) is task:
+        _carried_reminders.pop(task["id"], None)
     nxt = reminders.next_occurrence(task["payload"], now)
     if nxt is None:
         runtime.SCHEDULER.cancel(task["id"])
@@ -2222,6 +2258,7 @@ async def fire_reminder(task):
         return p["at"] + reminders.GRACE_SECONDS   # 写好了在等捎带
     text = await reminder_line(gid, p)
     if await post_to_group(gid, text, model_generated=True,
+                           mention_member=p["member"],
                            history=list(group_buffers.get(gid, ()))[-4:]):
         logger.info("⏰ 提醒送到了（%s，%s）", reminders.describe(p), gid[-6:])
         _note_own_line(gid, text)
@@ -2232,7 +2269,8 @@ async def fire_reminder(task):
 
 # ── 承诺催债 ──
 
-async def post_to_group(group_id, text, *, model_generated=False, history=(), turn_id=None):
+async def post_to_group(group_id, text, *, model_generated=False, history=(), turn_id=None,
+                        mention_member=None):
     """主动往群里发一句话（不是回复）。催债、定时播报都要用它。
 
     原生反馈判过「收敛」的群，窗口内主动发言一律按住 —— 点名回复
@@ -2277,7 +2315,15 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
     if runtime.FEEDBACK.quiet(group_id):
         return False
     try:
-        sent = await client.api.post_group_message(group_openid=group_id, content=text, msg_type=0)
+        try:
+            sent = await client.api.post_group_message(
+                group_openid=group_id, **group_message_payload(text, mention_member))
+        except Exception as error:
+            if not mention_member or not mention_rejected(error):
+                raise
+            logger.warning("QQ 拒收提醒的提及格式，改发普通文本")
+            sent = await client.api.post_group_message(
+                group_openid=group_id, **group_message_payload(text))
         if not sent:
             journal("unconfirmed", reason="empty receipt")
             return False
