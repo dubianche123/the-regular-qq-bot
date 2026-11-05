@@ -3,6 +3,7 @@
 api_keys_*.txt
 # 本机面板的一次性 token
 panel_token
+local-chat.json
 
 # 运行时状态 / 日志
 state.json

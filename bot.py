@@ -37,6 +37,7 @@ import expression
 import image_generation
 from regular import decisions as decisions_mod
 from regular import reminder_review
+from regular import local_chat
 import naming
 import prompts
 import qqtext
@@ -666,8 +667,9 @@ def split_cmd(raw):
 _reply_trace = contextvars.ContextVar(
     "regular_reply_trace", default=None)
 
-# 每轮输入记录里不存的入参：session_id 单列；allow_fallback 回放时一律 False。
-_TURN_SKIP_PARAMS = ("session_id", "allow_fallback")
+# 每轮输入记录里不存的入参：session_id 单列；allow_fallback 回放时一律 False；
+# raw_reply_filter 是本地渠道的输出清理函数，不是模型上下文。
+_TURN_SKIP_PARAMS = ("session_id", "allow_fallback", "raw_reply_filter")
 _release_id = None
 
 
@@ -748,7 +750,7 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        personal_note="", feedback_note="", reply_context="",
                        callback_approved=False, back_off=False, quip=False,
                        lookup_note="", playful_note="", resource_note="",
-                       media_note="", unprompted_hint="", playful_request=False):
+                       media_note="", unprompted_hint="", playful_request=False, raw_reply_filter=None):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
     返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签（协议关了，
@@ -877,7 +879,7 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         if not raw:
             _record_turn(params, head, flags, messages, max_tokens, raw, retried)
             return (_pick_fallback() if allow_fallback else None), None
-        body, payload = split_cmd(raw)
+        body, payload = split_cmd(raw_reply_filter(raw) if raw_reply_filter is not None else raw)
         # 采样乱码闸（2026-10-15 <CMD! 残片 / 10-19 0A9F%F5，均智谱 glm-4.7）：
         # 命中就重生成一次；两次都乱就照发并留痕——不在这里和模型无限拉扯。
         glitch = _garbage_run(body)
@@ -886,7 +888,7 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                            glitch[:10], raw[:140])
             retried = True
             raw = await call_model(messages, max_tokens)
-            body, payload = split_cmd(raw)
+            body, payload = split_cmd(raw_reply_filter(raw) if raw_reply_filter is not None else raw)
             glitch = _garbage_run(body)
             if glitch:
                 logger.warning("🧯 重生成仍含乱码（%s…），按原样发送", glitch[:10])
@@ -1077,12 +1079,14 @@ def media_turn(group_id, user_id, score, *, asked, remind=False):
 
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                            owner_hint_group=None, prepared=None, prepared_local=False,
-                           media=None, is_stale=None, **context):
+                           media=None, is_stale=None, reply_filter=None, raw_reply_filter=None, **context):
     """Serialize generation and send; queued delivery commits through the same callback.
 
     prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
     media=MediaTurn：这一轮认不认小王写的〔画〕〔动图〕〔语音〕（见 media_turn）；None 时标记一律当文字。
     is_stale：写好以后、发出去之前再问一次「时机过没过」，过了就不发（见 reply_unprompted）。
+    reply_filter：本地文字渠道可在执行和送达前整理候选，历史只记录整理后的实际正文。
+    raw_reply_filter：可选本地渠道清理，在通用标签清理之前移除完整内部块。
     """
     async with runtime.SESSIONS.lock(session_id):
         generation = runtime.SESSIONS.begin_turn(session_id)
@@ -1111,14 +1115,19 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             token = _reply_trace.set(trace)
             providers.reset_completion_meta()
             try:
+                generation_context = dict(context)
+                if raw_reply_filter is not None:
+                    generation_context["raw_reply_filter"] = raw_reply_filter
                 body, delta = (prepared if prepared is not None else
                                await get_ai_reply(session_id, user_text,
-                                                  allow_fallback=False, **context))
+                                                  allow_fallback=False, **generation_context))
                 return body, delta, providers.completion_meta()
             finally:
                 _reply_trace.reset(token)
 
         body, delta, completion = await generate()
+        if body and reply_filter is not None:
+            body = reply_filter(body)
         generated = bool(body) and not prepared_local
         if not generated and prepared is None and context.get("unprompted"):
             return "", delta, None   # 没叫它的这轮没生成出来：不说，不拿兜底话凑一句
@@ -1332,6 +1341,30 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             prepare=prepare if owner_hint_group else None,
             quote=_quote_if_moved_on(message))
         return body, delta, result
+
+
+_LOCAL_CHAT_NOTE = """【本机文字对话】
+这是本机面板里的普通文字聊天，对方没有因此获得 QQ 群主身份。
+这里只能用文字回应，不能发送 QQ 消息、画图、生成语音、保存或取消群提醒、改称呼。
+不能修改配置、密钥、代码或部署。不要承诺已执行这些动作；需要管理时请提示打开面板。
+只输出对话正文，不输出动作标记或内部指令。"""
+
+
+async def reply_locally(text):
+    """Run a separate private conversation inside the one live state owner."""
+    runtime.STATE.mark_dirty()
+    if not runtime.BUDGET.can_consume():
+        return "今天的 AI 调用额度用完了，明天再聊吧。"
+    message = local_chat.LocalReply()
+    _, _, result = await reply_in_session(
+        message, "local_private", text, private=True, is_owner=False,
+        media_note=_LOCAL_CHAT_NOTE, reply_filter=local_chat.text_reply,
+        raw_reply_filter=local_chat.strip_internal)
+    if result is None:
+        return "这句我先安静陪你。"
+    if not result.delivered:
+        raise local_chat.LocalChatError(503, "本机回复未确认，没有自动重试。")
+    return result.text
 
 
 _unprompted_locks = collections.defaultdict(asyncio.Lock)
@@ -3748,6 +3781,7 @@ def _run_bot():
         "flush": lambda: runtime.STATE.flush_loop(sleep=STATUS.sleep, on_error=STATUS.error),
         "watchdog": ws_watchdog_loop, "prune": prune_loop,
         "proactive": proactive_loop, "resend": resend_queue_loop,
+        "local_chat": lambda: local_chat.serve(config, reply_locally, sleep=STATUS.sleep),
     }
     if config.DIGEST_ENABLED:
         jobs["digest"] = digest_loop
