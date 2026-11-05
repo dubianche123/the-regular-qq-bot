@@ -1,7 +1,7 @@
 """按一句原话找当轮记录：截图里群友或小王说过的话 → turn_id、message_id，好拿去定位和存用例。
 
 用法（在仓库根目录跑）：
-  .venv/bin/python .agents/skills/regular-iterate/scripts/find_turn.py "那她别的地方臭吗" --directory "$DEPLOY" [--day 11-05]
+  .venv/bin/python .agents/skills/regular-iterate/scripts/find_turn.py "那只龙周一会装睡吗" --directory "$DEPLOY" [--day 11-05]
 
 翻 data/turns（当轮原样输入：生成 reply / 分诊 triage / 旧账 recall）和 data/interactions（进来的话、送达的话），
 只读，不联网。不给 --day 就从最近一天往回翻，找到为止（最多 7 天）。
@@ -52,11 +52,42 @@ def _flat(text, limit):
 
 
 def search(data_dir, needle, day):
-    hits = []
-    for t in turns_mod.read_day(data_dir / "turns", day):
-        kw = t.get("kwargs") or {}
-        blob = json.dumps({"kw": kw, "raw": t.get("raw"), "payload": t.get("payload")}, ensure_ascii=False)
+    records = [("turn", row) for row in turns_mod.read_day(data_dir / "turns", day)]
+    records += [("interaction", row) for row in _rows(data_dir / "interactions" / f"{day}.jsonl")
+                if row.get("kind") in ("incoming", "delivery")]
+    links, keys, selected = {}, [], set()
+    for i, (source, row) in enumerate(records):
+        message_id = (row.get("source_message_id") if row.get("kind") == "delivery"
+                      else row.get("message_id"))
+        row_keys = []
+        if message_id:
+            row_keys.append(("message", row.get("group") or "", message_id))
+        if row.get("turn_id"):
+            row_keys.append(("turn", row["turn_id"]))
+        keys.append(row_keys)
+        for key in row_keys:
+            links.setdefault(key, []).append(i)
+        blob = (json.dumps({"kw": row.get("kwargs"), "raw": row.get("raw"),
+                            "payload": row.get("payload")}, ensure_ascii=False)
+                if source == "turn" else str(row.get("text") or ""))
         if needle in blob:
+            selected.add(i)
+
+    # 从原话命中开始，把同一条消息的分诊、生成与送达关联起来。
+    # delivery 只有 turn_id 时，也能先找到生成，再关联回 incoming / triage。
+    pending = sorted(selected)
+    for i in pending:
+        for key in keys[i]:
+            for related in links[key]:
+                if related not in selected:
+                    selected.add(related)
+                    pending.append(related)
+
+    hits = []
+    for i in sorted(selected):
+        source, t = records[i]
+        if source == "turn":
+            kw = t.get("kwargs") or {}
             head = (f"turn {t.get('kind'):<7} {t.get('turn_id')}  msg={t.get('message_id') or '—'}"
                     f"  release={t.get('release') or '—'}")
             if t.get("kind") == "triage":
@@ -65,10 +96,13 @@ def search(data_dir, needle, day):
                 body = f"群友：{_flat(kw.get('user_text'), 60)}" + (
                     f"\n           小王：{_flat(t.get('raw'), 80)}" if t.get("raw") else "")
             hits.append((t.get("ts"), f"{head}\n           {body}"))
-    for r in _rows(data_dir / "interactions" / f"{day}.jsonl"):
-        if r.get("kind") in ("incoming", "delivery") and needle in str(r.get("text") or ""):
+        else:
+            r = t
             ref = r.get("message_id") if r["kind"] == "incoming" else f"src={r.get('source_message_id') or '—'}"
-            hits.append((r.get("ts"), f"{r['kind']:<13} {ref}  {_flat(r.get('text'), 70)}"))
+            state = (f" status={r.get('status') or '—'}"
+                     + (f" reason={_flat(r['reason'], 60)}" if r.get("reason") else "")
+                     if r["kind"] == "delivery" else "")
+            hits.append((r.get("ts"), f"{r['kind']:<13} {ref}{state}  {_flat(r.get('text'), 70)}"))
     return sorted(hits, key=lambda h: h[0] or 0)
 
 

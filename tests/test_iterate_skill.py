@@ -32,6 +32,13 @@ def _frontmatter(path):
     return {k.strip(): v.strip() for k, v in meta.items()}, body
 
 
+def _find_turn_module():
+    spec = importlib.util.spec_from_file_location("find_turn", FIND_TURN)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _commands(body):
     """代码块里每条 `-m regular` 命令（续行接上、注释去掉、<占位> 换成 X）。"""
     out = []
@@ -52,7 +59,7 @@ class _Parsed(Exception):
 class IterateSkillTest(unittest.TestCase):
     def test_frontmatter_follows_the_agent_skills_format(self):
         meta, _ = _frontmatter(SKILL)
-        self.assertEqual(set(meta), {"name", "description"})   # CodeX 拒收多出来的键
+        self.assertEqual(set(meta), {"name", "description"})   # 此入口只需最小的两项元数据
         self.assertEqual(meta["name"], SKILL.parent.name)
         self.assertRegex(meta["name"], r"^[a-z0-9-]{1,64}$")
         self.assertLessEqual(len(meta["description"]), 1024)
@@ -90,29 +97,65 @@ class IterateSkillTest(unittest.TestCase):
                 self.assertTrue((REPO / rel).exists(), rel)
 
     def test_find_turn_finds_the_reply_and_the_incoming_message(self):
-        spec = importlib.util.spec_from_file_location("find_turn", FIND_TURN)
-        find_turn = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(find_turn)
+        find_turn = _find_turn_module()
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp) / "data"
             log = turns_mod.TurnLog(str(data / "turns"), enabled=True)
             row = log.append("reply", message_id="m1",
-                             kwargs={"user_text": "那她别的地方臭吗"}, session=[], raw="〔不接〕")
+                             kwargs={"user_text": "那只龙周一会装睡吗"}, session=[], raw="〔不接〕")
             log.close()
             day = time.strftime("%Y-%m-%d", time.localtime(row["ts"]))
             (data / "interactions").mkdir(parents=True)
             (data / "interactions" / f"{day}.jsonl").write_text(json.dumps(
                 {"schema": INTERACTION_SCHEMA, "kind": "incoming", "ts": row["ts"], "message_id": "m1",
-                 "text": "那她别的地方臭吗"}, ensure_ascii=False) + "\n", encoding="utf-8")
+                 "text": "那只龙周一会装睡吗"}, ensure_ascii=False) + "\n", encoding="utf-8")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                code = find_turn.main(["别的地方臭", "--directory", tmp, "--day", day])
+                code = find_turn.main(["龙周一", "--directory", tmp, "--day", day])
             self.assertEqual(code, 0)
             self.assertIn(row["turn_id"], out.getvalue())
             self.assertIn("incoming", out.getvalue())
             self.assertIn("小王：〔不接〕", out.getvalue())
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(find_turn.main(["没人说过", "--directory", tmp, "--day", day]), 1)
+
+    def test_find_turn_links_question_reply_and_delivery_without_crossing_groups(self):
+        find_turn = _find_turn_module()
+        day = "2026-11-05"
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "data"
+            turns = [
+                {"kind": "triage", "turn_id": "triage-1", "group": "G1", "message_id": "m1",
+                 "ts": 1, "payload": {"message": "合成茶杯问题"}, "asked": ["addressed"],
+                 "choices": {"addressed": "answer"}},
+                {"kind": "reply", "turn_id": "reply-1", "group": "G1", "message_id": "m1",
+                 "ts": 2, "kwargs": {"user_text": "合成茶杯问题"}, "raw": "合成生成正文"},
+                {"kind": "reply", "turn_id": "other-group", "group": "G2", "message_id": "m1",
+                 "ts": 2, "kwargs": {"user_text": "无关群消息"}, "raw": "不应关联的另一群"},
+            ]
+            interactions = [
+                {"kind": "incoming", "group": "G1", "message_id": "m1", "ts": 0,
+                 "text": "合成茶杯问题"},
+                {"kind": "delivery", "group": "G1", "source_message_id": "m1", "ts": 3,
+                 "text": "合成送达正文", "status": "delivered"},
+                {"kind": "delivery", "group": "G1", "turn_id": "reply-1", "ts": 4,
+                 "status": "blocked", "reason": "合成拦截原因"},
+            ]
+            for name, rows in (("turns", turns), ("interactions", interactions)):
+                path = data / name / f"{day}.jsonl"
+                path.parent.mkdir(parents=True)
+                schema = turns_mod.SCHEMA if name == "turns" else INTERACTION_SCHEMA
+                path.write_text("".join(json.dumps({"schema": schema, **row}, ensure_ascii=False)
+                                        + "\n" for row in rows), encoding="utf-8")
+            for needle in ("合成茶杯问题", "合成生成正文", "合成送达正文"):
+                with self.subTest(needle=needle):
+                    hits = find_turn.search(data, needle, day)
+                    text = "\n".join(line for _, line in hits)
+                    self.assertEqual(len(hits), 5)
+                    for expected in ("triage-1", "reply-1", "incoming", "合成送达正文",
+                                     "status=blocked", "reason=合成拦截原因"):
+                        self.assertIn(expected, text)
+                    self.assertNotIn("不应关联的另一群", text)
 
 
 if __name__ == "__main__":

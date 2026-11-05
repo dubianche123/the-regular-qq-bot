@@ -17,10 +17,12 @@ description: 小王（The Regular，QQ 群机器人）的自迭代流程：读�
   ```
   `--directory .` 什么都看不见；`.venv/bin/regular` 可能是旧安装，统一用 `.venv/bin/python -m regular`。
   `--base` / `--cand` 指的才是代码：`.` 是当前工作区，`HEAD` 之类的 git 版本会临时检出。
-- 先 `git status`：工作区里有别人没提交的候选（别的代理留下的），`--cand .` 会把它一起测进去。
-  跟这次无关的，先问群主怎么处理，或者存成补丁再评（见「收尾」）。
+- 先 `git status`：已有改动会一起进入 `--cand .`。保留无关改动，必要时用独立候选目录评测；
+  收尾只整理自己本轮的候选，不替别人清理工作区。
 - **不上线、不重启、不提交**，除非群主明确说。要调模型的命令（生成、盲评、整天回放）要 `--allow-paid`；
   跑之前先 `--plan`，看清会把多少条真实群聊发给哪个模型，群主没授权过就先问。
+  扩大到全部用例、整天回放或换目的地时，重新预览并核对授权范围。
+  消息层若涉及搜索、研究等工具，模型预览未展开这些工具目的地，需按用例另行核对。
 - 部署目录里的用例（`data/cases`）、评测报告（`data/evals`）、候选补丁（`data/candidates`）都含真实群聊，
   不进仓库、不贴到公开的地方。仓库里的种子用例（`regular/cases.py`）只放合成的。
 
@@ -33,7 +35,7 @@ description: 小王（The Regular，QQ 群机器人）的自迭代流程：读�
   逐条判断是不是真问题，标上：`checkup --label <finding_id> yes|no --note "原因"`。标注攒够了 `tune checkup` 才会给调参提案。
 - **截图来的**：拿截图里一句原话找当轮记录：
   ```bash
-  .venv/bin/python .agents/skills/regular-iterate/scripts/find_turn.py "那她别的地方臭吗" --directory "$DEPLOY"
+  .venv/bin/python .agents/skills/regular-iterate/scripts/find_turn.py "那只龙周一会装睡吗" --directory "$DEPLOY"
   ```
   打出这句前后的分诊（问了哪几题、判成什么）、生成（`turn_id`、群友原话、小王原样输出）和送达记录。
 
@@ -68,7 +70,7 @@ description: 小王（The Regular，QQ 群机器人）的自迭代流程：读�
 | 回放深度 | 重放什么 | 适合测 |
 | --- | --- | --- |
 | 生成 `--turn`（reply） | 当轮入参原样喂给 `get_ai_reply`，稳定头用受测代码现拼 | 提示词措辞、换模型、推理强度 |
-| 分诊 `--turn`（triage） | 当时的 payload，按受测版本重建题目 | 判断题题面、选项说明、阈值 |
+| 分诊 `--turn`（triage） | 当时的 payload，按受测版本重建题目 | 判断题题面、选项说明、选项可用性 |
 | 消息 `--message` | 原始消息走一遍完整处理流程 | 背景怎么拼、@ 和引用、连发合并、该不该接 |
 | 检索 | 冻结的归档语料 | 旧账召回策略（不调模型） |
 
@@ -106,17 +108,23 @@ description: 小王（The Regular，QQ 群机器人）的自迭代流程：读�
   加大 `-n` 只跑那几条再看（同一版本对同一版本跑，盲评 2:0 都出现过）。越线一次就算退步。
 - **逐条输出**在报告末尾：新旧样本并排、每一对盲评判了谁、为什么。语气类改动一定要读 ——
   分数看不出「先说『原作没提』再补一句玩笑」这种毛病。
-- 有盲评没评成（网关 503、限流）就 `--rejudge`，别把缺评的当通过。
+- 有盲评没评成（网关 503、限流）就 `--rejudge`，先用 `eval --rejudge <报告> --plan` 看待补评范围。
+  补评沿用报告中的现场和判据快照；旧报告缺快照或协议变了会拒绝，不能拿当前用例的新标准混用旧分数。
+  缺生成或缺评都不是通过，也不能据此得出「新版更好」。
 - 规则消融的结论分「可删除 / 仍需保留 / 说不准 / 判断不了」。
 
 ### 7. 收尾
 
 - **数据不支持**：不上线。候选存成补丁放部署目录，工作区清干净，免得下一个人的 `--cand .` 把它带进去：
   ```bash
-  mkdir -p "$DEPLOY/data/candidates"
-  git diff -- <改过的文件> > "$DEPLOY/data/candidates/<日期>-<名字>.patch"   # 开头写几行：改了什么、评测结论、基于哪个提交
-  git checkout -- <改过的文件>
+  CANDIDATE="$DEPLOY/data/candidates/<日期>-<名字>"
+  mkdir -p "$CANDIDATE"
+  git diff --binary HEAD -- <本轮候选的已跟踪文件> > "$CANDIDATE/candidate.patch"
   ```
+  `HEAD` 对比会保存已暂存和未暂存的修改，包含暂存区中的新增文件；未跟踪的新文件需另行备份，保留相对路径。
+  另写说明，记下基准提交、改动和评测结论。确认补丁与新增文件完整可恢复后，再撤回本轮候选。
+  已跟踪文件可用 `git restore --source=HEAD --staged --worktree -- <本轮候选的已跟踪文件>`；
+  未跟踪新文件备份后移入候选目录。与别人改动共用文件时按改动块处理，不能整文件恢复，也不使用 `git clean`。
   在 `docs/` 对应的事故记录里写下试了什么、为什么没上。
 - **数据支持**：事故记录写进 `docs/`，补离线测试，按功能拆提交（群主说提交才提交）。
 - **上线**（群主明确说才做）：照 `AGENTS.md`「常用命令」里的步骤建新发布快照、改 launchd 的 `PYTHONPATH`、
