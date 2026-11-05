@@ -1,7 +1,6 @@
 """Optional group voice delivery; never used unless explicitly configured."""
 import asyncio
 import base64
-import fcntl
 import os
 import time
 import aiohttp
@@ -13,6 +12,29 @@ import delivery
 from realtime_synth import RealtimeSilkSynth
 from voice_budget import Budget
 from voice_outbound import Delivery, Settings, VoiceOutbound
+
+
+try:
+    import fcntl
+except ImportError:  # Windows has byte-range locks instead of flock.
+    import msvcrt
+
+    def _lock_file(fd):
+        # Lock the same existing byte on every handle; locking starts at its cursor.
+        if os.fstat(fd).st_size == 0:
+            os.write(fd, b"\0")
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+
+    def _unlock_file(fd):
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    def _lock_file(fd):
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock_file(fd):
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 class QQTransport:
@@ -100,7 +122,7 @@ class VoiceOutputRuntime:
                 lock_path = Path(c.DATA_DIR) / 'voice-outbound.lock'
                 lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
                 try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    _lock_file(lock_fd)
                 except OSError:
                     os.close(lock_fd)
                     return None, None
@@ -120,5 +142,7 @@ class VoiceOutputRuntime:
                                            tone_context=(tone,) if tone else ())
                 return result, transport.receipt
             finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
+                try:
+                    _unlock_file(lock_fd)
+                finally:
+                    os.close(lock_fd)
