@@ -183,8 +183,9 @@ DRAW_QUESTIONS = [
         "type": "choice",
         "name": "draw_check",
         "instructions": (
-            "A QQ group companion bot is about to generate a picture from image_spec, the "
-            "self-contained description it wrote for an illustrator. recent_human_messages "
+            "A QQ group companion bot is about to generate a still picture or looping GIF from image_spec, the "
+            "self-contained description it wrote for an illustrator. For a GIF, judge the entire "
+            "motion sequence as well as its subjects and setting. recent_human_messages "
             "are what group members said just before, oldest first; a picture can be built "
             "up across several requests (first an animal, then a setting, then clothes, food "
             "or a crown), each harmless on its own. Judge the finished picture as a whole "

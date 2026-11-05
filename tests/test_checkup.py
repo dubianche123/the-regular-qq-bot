@@ -281,6 +281,19 @@ class CheckupSignalsTest(unittest.TestCase):
         self.assertTrue(any(line.endswith("：[图：一只戴黑框眼镜的青蛙]") for line in f["context"]))
         self.assertTrue(any(line.endswith("：[图]") for line in f["context"]))
 
+    def test_context_preserves_delivered_animation_type_and_motion(self):
+        spec = "一只鸡站在球场上，运球后收回篮球，回到起始姿势，无缝循环"
+        self.write([
+            _incoming(0, "U1", "小王 画一个正在打篮球的鸡的动图", "m1", at=True),
+            _delivery(20, "", source="m1", user="U1", route="image"),
+            _delivery(60, "我这边只看到图片标记", turn="t2", user="U1"),
+        ], turns=[
+            {"turn_id": "t1", "kind": "reply", "message_id": "m1", "ts": T0 + 10,
+             "raw": f"〔动图〕{spec}\n安排"},
+        ])
+        (finding,) = [f for f in self.run_report()["findings"] if f["signal"] == "blind"]
+        self.assertTrue(any(line.endswith(f"：[动图：{spec}]") for line in finding["context"]))
+
     def test_not_addressed_is_a_bad_reaction_not_an_unanswered_call(self):
         """11-04 11:49「没问你小王，问的罗老板」：带着名字，却是叫它别插嘴。"""
         self.write([

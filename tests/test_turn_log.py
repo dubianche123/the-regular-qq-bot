@@ -82,8 +82,10 @@ class GetAiReplyRecordsTurnTest(unittest.IsolatedAsyncioTestCase):
         sid = "turn_rec_1"
         runtime.SESSIONS.record(sid, "上一句", "上一答")
         self.addCleanup(lambda: runtime.SESSIONS._sessions.pop(sid, None))
-        await bot.get_ai_reply(sid, "在吗", context_hint="- 阿强：今天天气不错",
-                               group_memory="【群记忆】黑猴", media_note="画不了")
+        flags = {"draw": True, "animate": True, "voice": False, "remind": True}
+        with patch.object(bot, "media_flags", return_value=flags):
+            await bot.get_ai_reply(sid, "在吗", context_hint="- 阿强：今天天气不错",
+                                   group_memory="【群记忆】黑猴", media_note="画不了")
         (row,) = self.rows()
         self.assertEqual(row["kind"], "reply")
         self.assertEqual(row["route"], "reply")
@@ -98,7 +100,8 @@ class GetAiReplyRecordsTurnTest(unittest.IsolatedAsyncioTestCase):
         head = self.calls[0][0]["content"]
         self.assertEqual(row["head_chars"], len(head))
         self.assertEqual(len(row["head_sha"]), 12)
-        self.assertEqual(set(row["media"]), {"draw", "voice", "remind"})
+        self.assertEqual(row["media"], flags)
+        self.assertIn(bot.prompts.PROMPT_ANIMATION_RULES, head)
         self.assertEqual(row["raw"], "行，记下了。")
         self.assertTrue(row["release"])
 

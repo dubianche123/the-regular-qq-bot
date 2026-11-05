@@ -439,6 +439,13 @@ class OwnDrawingInViewTest(_Base):
         self.assertNotIn("更早画的奶龙", prompt)
         self.assertLess(prompt.index("水墨奶蛙"), prompt.index("小王这是不是奶龙"))
 
+    async def test_recent_animation_keeps_its_motion_in_the_background(self):
+        now = time.time()
+        bot.own_lines[G].append({"time": now - 300, "text": "[动图：一只鸡原地运篮球，固定镜头循环]"})
+        self._seed_buffer([(60, B, "聊点别的"), (40, B, "这球运得不错")])
+        await self._drive("这鸡动作挺丝滑")
+        self.assertIn("- 你：[动图：一只鸡原地运篮球，固定镜头循环]", self._last_prompt())
+
 
 class MovedOnTest(_Base):
     """2026-11-04：人一多，小王一下冒出两三句（四天 39 次，约 25 次里有没叫它的插话）。

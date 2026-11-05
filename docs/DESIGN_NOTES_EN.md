@@ -40,6 +40,21 @@ The [README](../README_EN.md) is the single setup guide for installation, config
 
 Use the README for macOS, Linux and Docker services as well. Deployment commands are not repeated here, so research notes do not become a second configuration guide.
 
+### Current still-image and GIF responsibilities (2026-11-05)
+
+Drawing follows “the speaker decides”: in the same reply, the chat model selects `〔画〕` for a still image or `〔动图〕` for a GIF and writes the full visual description.
+A request such as “draw an animated chicken playing basketball” is enough. The model supplies a short motion loop and a fixed camera without asking members for a storyboard, frame count or duration.
+Ordinary drawing requests remain still images. Code selects the format from the action marker, without enumerating natural-language triggers or adding another Decisions or prompt-expansion call.
+The existing Decisions `draw_check` reviews the full visual description and request context, including animated actions.
+
+`expression.Said` represents both outputs with the same `image` kind and an `animated` field; `bot.py` passes them to the same generation entry point.
+Code owns capability switches, output parameters, quotas, single concurrency and actual delivery outcomes. Disabled GIF support is not advertised to the reply model.
+The default image model is GPT Image 2.6 Flare: `1024x1024` for stills and `512x512`, 9 frames × 200 ms for GIFs, with `medium` quality and complexity.
+Stills and GIFs share the existing drawing ledger. Original PNG or GIF data is uploaded to QQ from memory, without transcoding or automatic retries.
+
+This is short-loop text-to-image output; reference-image editing and video generation are not integrated. A [live acceptance test on 2026-11-05](gif-acceptance-2026-11-05.md) passed a short basketball-chicken request through the real reply model, Decisions and image model to produce a nine-frame GIF. The same file was uploaded and sent to QQ, and the user confirmed seeing the animated image in the group. Image generation took about 14.6 seconds in this one case; this is not a performance benchmark.
+See [image and GIF configuration](image-generation.md) and [image and voice behavior](media-replies.md) for the protocol, compatible services and limits.
+
 ---
 
 ## Early feature and parameter snapshot

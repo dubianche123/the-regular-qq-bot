@@ -1,4 +1,4 @@
-"""小王回复里的「〔画〕」「〔语音〕」「〔不接〕」「〔提醒 …〕」标记（2026-11-02，见 docs/media-replies.md）。
+"""小王回复里的「〔画〕」「〔动图〕」「〔语音〕」「〔不接〕」「〔提醒 …〕」标记（见 docs/media-replies.md）。
 
 画不画、念不念、画什么、用什么语气，都由小王自己在回复里写（提示词见
 prompts.PROMPT_DRAW_RULES / PROMPT_VOICE_RULES）；代码只认标记、管额度、记结果。
@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 
 # 第一行的标记；全角半角括号、方括号都认 —— 模型偶尔换括号，不值得为此丢一张图。
-_TAG = re.compile(r"^\s*[〔【\[［]\s*(画|语音|不接)\s*[〕】\]］]\s*(.*)$")
+_TAG = re.compile(r"^\s*[〔【\[［]\s*(画|动图|语音|不接)\s*[〕】\]］]\s*(.*)$")
 # 「〔提醒 11-03 09:00〕提醒什么」「〔取消提醒〕」。设提醒必须带时间：「【提醒】」当小标题用的那种不算。
 _REMIND = re.compile(r"^\s*[〔【\[［]\s*(?:(取消提醒)|提醒\s+([^〕】\]］]+?))\s*[〕】\]］]\s*(.*)$")
 # 会话记录里系统补的那行（见 record）。模型照着写出来的一律删掉：它不许替系统作证。
@@ -51,6 +51,7 @@ class Said:
     spec: str           # image：给画师的描述；voice：语气（可以为空）
     text: str           # 发在群里的那句 / 要念的那句
     remind: tuple | None = None   # ("set", 时间, 提醒什么) / ("cancel", "", "")；见 reminders.apply
+    animated: bool = False        # image：同一次画图请求的 GIF 输出，不是第二种工具或额外一张图
 
 
 PASS = Said("pass", "", "")
@@ -71,11 +72,12 @@ def parse(body):
             remind = (("cancel", "", "") if m.group(1)
                       else ("set", m.group(2).strip(), m.group(3).strip()))
     lines = kept
-    kind, spec, rest = None, "", []
+    kind, spec, rest, animated = None, "", [], False
     for line in lines:
         m = _TAG.match(line)
         if m and kind is None:
-            kind = "image" if m.group(1) == "画" else "voice"
+            animated = m.group(1) == "动图"
+            kind = "image" if m.group(1) in ("画", "动图") else "voice"
             spec = m.group(2).strip()
             continue
         if m:
@@ -92,14 +94,17 @@ def parse(body):
         spec = _LABEL.sub("", spec, count=1)
     if kind == "image" and not spec:
         kind = None   # 只有标记没有描述：没法画，当普通文字
-    return Said(kind, spec, text, remind)
+        animated = False
+    return Said(kind, spec, text, remind, animated)
 
 
 def record(said, outcome):
     """记进会话的那条：原样保留标记（小王下次照着写），再补一行实际结果。"""
     if said.kind == "image":
-        head = f"〔画〕{said.spec}"
+        head = ("〔动图〕" if said.animated else "〔画〕") + said.spec
         note = _IMAGE_OUTCOMES.get(outcome, _IMAGE_OUTCOMES[False])
+        if said.animated:
+            note = note.replace("这张图", "这张动图").replace("图发出去了", "动图发出去了")
     else:
         head = "〔语音〕" + (f"（{said.spec}）" if said.spec else "")
         note = VOICE_SENT if outcome else VOICE_AS_TEXT

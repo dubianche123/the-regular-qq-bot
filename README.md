@@ -6,13 +6,13 @@
 
 **一个住在 QQ 群里的 AI 群友：认识大家、记得群里的事，也知道什么时候该接话，什么时候该安静。**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1454-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1502-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 **中文** · [English](README_EN.md) · [信息流](#一句话进来之后) · [Decisions 输入](#decisions-究竟看到了什么) · [自己迭代](#自己迭代把这一圈做成命令) · [快速开始](#开始使用) · [设计文档](#设计文档)
 
 </div>
 
-老群友听群友聊天，被叫到时接话，没被叫到时判断这句是不是冲它来的；能接玩笑和纠正，也会在被嫌烦时退一退。看图、听语音、查资料、画图、发语音、到点提醒，都要落到代码确认的实际结果。
+老群友听群友聊天，被叫到时接话，没被叫到时判断这句是不是冲它来的；能接玩笑和纠正，也会在被嫌烦时退一退。看图、听语音、查资料、画静图或短循环动图、发语音、到点提醒，都要落到代码确认的实际结果。
 
 同一套系统有两条相连的链路。**线上负责把眼前这句话接好，离线改进负责让出过的问题变成下一次改动的证据。** 记录把两者连接起来，改法由编码代理提出，是否上线由维护者决定。
 
@@ -33,7 +33,9 @@
 
 ![同一信息流中的线上接话、慢任务返回和离线改进](docs/readme/flow-cn.svg)
 
-这里有三个不同的决定：**本地代码选择路径，Decisions 给出有边界的语义判断，回复模型决定说什么、是否回应，以及要不要提出动作。** 平台 @ 与只喊名字走不同路径；没点名的消息由回复模型自己选择接话或 `〔不接〕`。`〔画〕`、`〔语音〕`、`〔提醒 …〕` 是动作意图，服务、格式、词表、额度和执行结果都由代码核对。模型下一轮看到的是实际结果。
+这里有三个不同的决定：**本地代码选择路径，Decisions 给出有边界的语义判断，回复模型决定说什么、是否回应，以及要不要提出动作。** 平台 @ 与只喊名字走不同路径；没点名的消息由回复模型自己选择接话或 `〔不接〕`。`〔画〕`、`〔动图〕`、`〔语音〕`、`〔提醒 …〕` 是动作意图，服务、格式、词表、额度和执行结果都由代码核对。模型下一轮看到的是实际结果。
+
+比如「画个打篮球的鸡的动图」：回复模型自己补全短循环动作，代码按 `〔动图〕` 请求 GIF；群友不必提供分镜、帧数或时长。静图和动图共用画图额度，默认使用 GPT Image 2.6 Flare，见[画图与动图配置](docs/image-generation.md)。 已用这句短请求完成真实生成和 QQ 群投递，见[实测记录](docs/gif-acceptance-2026-11-05.md)。
 
 这些决定和当轮输入一起留下来，供[离线改进](#自己迭代把这一圈做成命令)重放。要看模块细节，可展开[详细架构图](docs/readme/architecture-cn.svg)，或读[画图与语音](docs/media-replies.md)、[引用与 @](docs/quotes.md)。
 
@@ -170,7 +172,7 @@ DEPLOY=/path/to/regular-bot
 
 | 已有证据 | 测量范围 |
 | --- | --- |
-| 1454 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
+| 1502 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
 | 旧账检索 8 / 8 用例判据通过，相关证据取回 7 / 9 | [合成完整标注集](docs/self-iteration.md#local-strategy-evaluation)；新旧结果一致，预算约束造成的 2 条漏检如实计入 |
 | 接住 17 / 20 条没带名字但冲它说的话，旧方案 3 / 20 | [141 条消息、9 种写法回放](docs/when-to-reply.md)；「该接 / 不该接」由独立评审模型标注 |
 | 回复输入 token 的 75.6% 命中前缀缓存 | [线上一天 261 次调用](docs/providers.md)，与该模型和当时流量有关 |

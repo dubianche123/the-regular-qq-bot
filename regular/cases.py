@@ -2,7 +2,7 @@
 """用例库与确定性检查（docs/self-iteration.md ③）。
 
 一个用例 = 一份现场（turn 或 messages）+ 要检查什么（checks）：
-  - 能直接判的用代码判：must / must_not（正则）、tag_present / tag_absent（〔画〕〔语音〕〔不接〕〔提醒〕）、
+  - 能直接判的用代码判：must / must_not（正则）、tag_present / tag_absent（〔画〕〔动图〕〔语音〕〔不接〕〔提醒〕）、
     remind_time（提醒时间算对没有）、replied（回没回）、max_chars（长度上限）。
   - 要人味判断的写 {"judge": "..."}，交给 regular/eval.py 的盲评模型（kimi-k3.1-pro）两两对比。
   - 检索用例（depth=retrieve）只考旧账召回挑了哪几条：retrieved / not_retrieved（消息编号）、
@@ -253,6 +253,8 @@ def judge_prompts(checks):
 def _has_tag(said, tag):
     if tag in ("画", "image"):
         return said.kind == "image"
+    if tag in ("动图", "gif"):
+        return said.kind == "image" and said.animated
     if tag in ("语音", "voice"):
         return said.kind == "voice"
     if tag in ("不接", "pass"):

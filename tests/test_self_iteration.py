@@ -123,6 +123,20 @@ class CasesAndChecksTest(unittest.TestCase):
             self.assertEqual(loaded[0]["id"], "2026-11-03-orange-irish")
             self.assertEqual(loaded[0]["reference"], "老任我刚醒")
 
+    def test_animation_checks_distinguish_gif_from_still_images(self):
+        animation = "〔动图〕一只鸡运球后回到起始姿势，固定镜头，无缝循环\n看这只鸡"
+        still = "〔画〕一只正在打篮球的鸡\n看这只鸡"
+        for tag in ("动图", "gif"):
+            with self.subTest(tag=tag):
+                self.assertTrue(cases_mod.check_reply(animation, [{"tag_present": tag}])["passed"])
+                self.assertFalse(cases_mod.check_reply(still, [{"tag_present": tag}])["passed"])
+                self.assertTrue(cases_mod.check_reply(still, [{"tag_absent": tag}])["passed"])
+                self.assertFalse(cases_mod.check_reply(animation, [{"tag_absent": tag}])["passed"])
+                self.assertFalse(cases_mod.check_reply("〔动图〕\n稍等", [{"tag_present": tag}])["passed"])
+        for tag in ("画", "image"):
+            self.assertTrue(cases_mod.check_reply(animation, [{"tag_present": tag}])["passed"])
+            self.assertTrue(cases_mod.check_reply(still, [{"tag_present": tag}])["passed"])
+
 
 class RuleLedgerTest(unittest.TestCase):
     def test_rules_parsed_and_ablate_reduces_head(self):
@@ -278,18 +292,20 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(any("[回复" in t and "这杯叫橘光爱尔兰" in t for t in seen), seen)
 
     async def test_message_replay_never_really_sends_voice_or_draws(self):
-        # 消息层回放走真的 reply_in_session：它写了〔语音〕〔画〕，不许真合成、真画图 ——
+        # 消息层回放走真的 reply_in_session：它写了媒体标记，不许真合成、真画图 ——
         # 那会花钱，语音还会记进部署目录里线上那份语音额度
         real_voice = AsyncMock(side_effect=AssertionError("回放里真发了语音"))
         real_image = AsyncMock(side_effect=AssertionError("回放里真画了图"))
         for tag, reply, stub in (("voice", "〔语音〕\n早上好", "_no_voice"),
-                                 ("image", "〔画〕一只戴墨镜的橘猫\n来了", "_no_image")):
+                                 ("image", "〔画〕一只戴墨镜的橘猫\n来了", "_no_image"),
+                                 ("gif", "〔动图〕一只橘猫眨眼后回到原样，无缝循环\n来了", "_no_image")):
             spy = AsyncMock(wraps=getattr(replay_worker, stub))
             case = {"id": f"media-{tag}", "depth": "message", "messages": [
                 {"sender": "U_MEDIA", "text": "小王来一个", "at": True, "message_id": f"m_{tag}"}]}
             with patch.object(bot._VOICE_OUT, "ready", lambda: True), \
                     patch.object(bot._VOICE_OUT, "attempt", real_voice), \
                     patch.object(bot.image_generation, "available", lambda: True), \
+                    patch.object(bot.image_generation, "animation_available", lambda: True), \
                     patch.object(bot.image_generation, "precheck", lambda *a, **k: "normal"), \
                     patch.object(bot.image_generation, "generate_and_send", real_image), \
                     patch.object(replay_worker, stub, spy), \
@@ -299,6 +315,25 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(spy.await_count, f"{tag}: 回放没走到发{tag}那一步，这条测试没测到东西")
         real_voice.assert_not_called()
         real_image.assert_not_called()
+
+    async def test_generate_replay_uses_recorded_animation_capability(self):
+        for media, expected in (
+                ({"draw": True, "animate": True, "voice": False, "remind": False}, True),
+                ({"draw": True, "animate": False, "voice": False, "remind": False}, False),
+                ({"draw": True, "voice": False, "remind": False}, False)):
+            with self.subTest(media=media):
+                case = {"id": "gif-capability", "depth": "generate", "turn": {
+                    "kwargs": {"user_text": "画一个正在打篮球的鸡的动图"},
+                    "session": [], "media": media,
+                }}
+                model = AsyncMock(return_value="来了")
+                with patch.object(bot, "call_model", model), \
+                        patch.object(bot.image_generation, "animation_available", lambda: not expected):
+                    result = await replay_worker.replay_item(
+                        case, n=1, bot=bot, runtime=runtime, config=config)
+                self.assertEqual(result["errors"], 0)
+                head = model.await_args.args[0][0]["content"]
+                self.assertEqual(prompts.PROMPT_ANIMATION_RULES in head, expected)
 
     async def test_concurrent_replay_does_not_leak_media_flags_or_config(self):
         # 复现并验证 P1-1：A 用例（remind=False）首次失败重试时，期间 B 用例（remind=True）并发插入，

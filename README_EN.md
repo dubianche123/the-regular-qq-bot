@@ -6,13 +6,13 @@
 
 **An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and knows when to join in and when to leave room for others.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1454-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1502-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 [中文](README.md) · **English** · [Message flow](#one-message-through-the-system) · [Decisions input](#what-decisions-actually-sees) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
 </div>
 
-The Regular listens to group chat, answers when addressed, decides whether an unaddressed line is for it, joins jokes and corrections, and backs off when unwelcome. Reading images, hearing voice, looking things up, drawing, speaking and reminders all end in an actual result confirmed by code.
+The Regular listens to group chat, answers when addressed, decides whether an unaddressed line is for it, joins jokes and corrections, and backs off when unwelcome. Reading images, hearing voice, looking things up, drawing still images or short looping GIFs, speaking and reminders all end in an actual result confirmed by code.
 
 The same system has two connected paths. **The live path handles the message in front of it; the improvement path turns earlier failures into evidence for the next change.** Recorded scenes connect them. A coding agent proposes changes, and a maintainer decides what ships.
 
@@ -33,7 +33,9 @@ Code deduplicates the event, resolves @ mentions and quotes, and prepares image 
 
 ![One information flow connecting live replies, slow-work delivery and offline improvement](docs/readme/flow.svg)
 
-There are three decisions here: **local code selects the path, Decisions returns a bounded semantic choice, and the reply model chooses what to say, whether to answer and whether to propose an action.** Platform @ mentions and names take different routes; for an unaddressed line, the reply model chooses to answer or return `〔不接〕` (pass). `〔画〕`, `〔语音〕` and `〔提醒 …〕` propose drawing, voice and reminders. Code checks context, services, format, sensitive words and quota before execution. The next turn sees the actual result.
+There are three decisions here: **local code selects the path, Decisions returns a bounded semantic choice, and the reply model chooses what to say, whether to answer and whether to propose an action.** Platform @ mentions and names take different routes; for an unaddressed line, the reply model chooses to answer or return `〔不接〕` (pass). `〔画〕`, `〔动图〕`, `〔语音〕` and `〔提醒 …〕` propose still images, animated GIFs, voice and reminders. Code checks context, services, format, sensitive words and quota before execution. The next turn sees the actual result.
+
+For “draw an animated chicken playing basketball,” the reply model fills in a short motion loop and code requests GIF output from its `〔动图〕` marker. Members need no storyboard, frame count or duration. Still images and GIFs share the drawing quota and default to GPT Image 2.6 Flare; see [image and GIF configuration](docs/image-generation.md). This short request has passed live generation and QQ group delivery; see the [acceptance record](docs/gif-acceptance-2026-11-05.md).
 
 The inputs, judgments and outcomes also become the evidence for [offline improvement](#self-iteration-the-loop-as-commands). For modules, see the [detailed architecture](docs/readme/architecture.svg), [image and voice](docs/media-replies.md), and [quotes and @](docs/quotes.md).
 
@@ -170,7 +172,7 @@ Conversation content needed for judgment and replies goes to the configured mode
 
 | Existing evidence | Scope |
 | --- | --- |
-| 1454 offline regression tests | code behavior, not a guarantee that every reply lands |
+| 1502 offline regression tests | code behavior, not a guarantee that every reply lands |
 | Archive recall passes 8 / 8 case checks, retrieves 7 / 9 relevant messages | [fully labeled synthetic cases](docs/self-iteration.md#local-strategy-evaluation); both versions agree, and the 2 budget-limited misses remain counted |
 | 17 / 20 unaddressed lines aimed at it answered, versus 3 / 20 before | [141 messages and 9 prompt variants](docs/when-to-reply.md); answer/pass labels came from a separate judge model |
 | 75.6% of reply input tokens hit the prefix cache | [261 calls from one live day](docs/providers.md), tied to that model and traffic |

@@ -1,5 +1,7 @@
 """一次生图与 QQ 群图片投递；生成、上传、发送均不自动重试。"""
 import asyncio
+import base64
+import binascii
 import logging
 from urllib.parse import urlsplit
 
@@ -23,6 +25,8 @@ _SAFE_ERROR_CODES = frozenset({
     "model_not_found", "billing_hard_limit_reached",
 })
 _BLOCKED_CODES = frozenset({"moderation_blocked", "content_policy_violation"})
+# QQ file_data 直传要求小于 5M；按十进制上限保守处理。
+_QQ_FILE_DATA_LIMIT = 5_000_000
 
 
 def _log_generation_error(exc):
@@ -62,6 +66,11 @@ def available():
                 and config.IMAGE_GENERATION_MODEL and _key())
 
 
+def animation_available():
+    """动图使用同一个 Images API 与额度，由部署配置声明支持能力。"""
+    return bool(config.IMAGE_GENERATION_GIF_ENABLED and available())
+
+
 def precheck(group_id, user_id, score):
     """生成回复之前看一眼：normal / exception / extra 能画，tired / busy / off 不能。
 
@@ -85,8 +94,15 @@ def _expired(message):
     return age is not None and age >= delivery.passive_reply_window(message) - 5
 
 
-async def _generate(prompt, key):
+async def _generate(prompt, key, *, animated=False):
     # 独立实例不会继承聊天客户端的重试；一轮只有一次付费生成请求。
+    extra = {}
+    if config.IMAGE_GENERATION_COMPLEXITY:
+        extra["complexity"] = config.IMAGE_GENERATION_COMPLEXITY
+    if animated:
+        extra.update(output_format="gif",
+                     frame_count=config.IMAGE_GENERATION_GIF_FRAME_COUNT,
+                     frame_duration_ms=config.IMAGE_GENERATION_GIF_FRAME_DURATION_MS)
     async with httpx.AsyncClient(verify=config.SSL_VERIFY,
                                  mounts={"all://127.0.0.1": None,
                                          "all://localhost": None}) as http:
@@ -94,14 +110,17 @@ async def _generate(prompt, key):
                              http_client=http, max_retries=0)
         result = await client.images.generate(
             model=config.IMAGE_GENERATION_MODEL, prompt=prompt,
-            quality=config.IMAGE_GENERATION_QUALITY, size=config.IMAGE_GENERATION_SIZE,
-            n=1, timeout=config.IMAGE_GENERATION_TIMEOUT_SECONDS)
+            quality=config.IMAGE_GENERATION_QUALITY,
+            size=config.IMAGE_GENERATION_GIF_SIZE if animated else config.IMAGE_GENERATION_SIZE,
+            n=1, timeout=config.IMAGE_GENERATION_TIMEOUT_SECONDS,
+            # 兼容本仓库现有 SDK；新 Images 参数按原字段透传，不依赖 SDK 类型枚举。
+            **({"extra_body": extra} if extra else {}))
     data = getattr(result, "data", None) or []
     return getattr(data[0], "b64_json", None) if data else None
 
 
 async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_seq=1,
-                            before_send=None):
+                            before_send=None, animated=False):
     """True=确认送达，None=发送结果未知；False=本地不可用。
 
     quota=额度用完、busy=正在画、blocked=模型拒绝、generation_error=生成失败、
@@ -109,7 +128,8 @@ async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_se
 
     只把图片内容交给 QQ 的 file_data 接口，不存盘、不记录生成提示或图片内容。
     """
-    if not prompt or not available() or _expired(message):
+    if (not prompt or not available() or _expired(message)
+            or (animated and not config.IMAGE_GENERATION_GIF_ENABLED)):
         return False
     if _lock.locked():
         return "busy"
@@ -148,7 +168,8 @@ async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_se
             try:
                 request_started = True
                 image_data = await asyncio.wait_for(
-                    _generate(prompt, _key()), timeout=config.IMAGE_GENERATION_TIMEOUT_SECONDS)
+                    _generate(prompt, _key(), **({"animated": True} if animated else {})),
+                    timeout=config.IMAGE_GENERATION_TIMEOUT_SECONDS)
             except BadRequestError as exc:
                 code = _log_generation_error(exc)
                 return "blocked" if code in _BLOCKED_CODES else "generation_error"
@@ -158,10 +179,21 @@ async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_se
             if not image_data or _expired(message):
                 return "generation_error"
             try:
+                # 原样上传编码，解码仅校验格式与大小，不转码、不丢 GIF 帧。
+                try:
+                    decoded = base64.b64decode(image_data, validate=True)
+                except (binascii.Error, TypeError, ValueError):
+                    return "generation_error"
+                if animated and not decoded.startswith((b"GIF87a", b"GIF89a")):
+                    return "generation_error"
+                if len(decoded) >= _QQ_FILE_DATA_LIMIT:
+                    return "upload_error"
+                del decoded
                 # botpy 尚未封装 file_data；与其 post_group_file 使用同一 QQ 路由。
                 route = Route("POST", "/v2/groups/{group_openid}/files", group_openid=group_id)
                 media = await asyncio.wait_for(message._api._http.request(route, json={
                     "file_type": 1, "file_data": image_data, "srv_send_msg": False,
+                    "file_name": "generated.gif" if animated else "generated.png",
                 }), timeout=30)
                 file_info = media.get("file_info") if isinstance(media, dict) else None
                 if not isinstance(file_info, str) or not file_info or _expired(message):
@@ -186,7 +218,9 @@ async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_se
                 logger.warning("图片发送未确认: empty receipt")
                 return None
             # 群友常引用这张图说话（「这图反了」）：记进引用索引，认得出是在回小王的图
-            runtime.QUOTES.remember(group_id, quotes.receipt_ref(receipt), quotes.SELF, f"[图：{prompt}]")
+            label = "动图" if animated else "图"
+            runtime.QUOTES.remember(group_id, quotes.receipt_ref(receipt), quotes.SELF,
+                                    f"[{label}：{prompt}]")
             return True
         finally:
             if not possible_delivery:

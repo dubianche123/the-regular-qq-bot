@@ -19,6 +19,10 @@ def inspect_config(overrides):
 print(json.dumps({"provider": config.AI_PROVIDER,"vision_enabled":config.VISION_ENABLED,
  "vision_provider":config.VISION_PROVIDER,"vision_model":config.VISION_MODEL,
  "vision_inherited":config.VISION_MODEL_INHERITED,"vision":providers.configuration()["vision"],
+ "image":{"model":config.IMAGE_GENERATION_MODEL,"complexity":config.IMAGE_GENERATION_COMPLEXITY,
+ "gif_enabled":config.IMAGE_GENERATION_GIF_ENABLED,"gif_size":config.IMAGE_GENERATION_GIF_SIZE,
+ "gif_frames":config.IMAGE_GENERATION_GIF_FRAME_COUNT,
+ "gif_frame_ms":config.IMAGE_GENERATION_GIF_FRAME_DURATION_MS},
  "errors":config.validate()}))"""
         result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True,
                                 text=True, check=True)
@@ -88,3 +92,34 @@ class ProviderConfigurationTest(unittest.TestCase):
         cfg = inspect_config({**GENERIC, "VISION_ENABLED": "false", "VISION_PROVIDER": "gemini"})
         self.assertFalse(cfg["vision_enabled"])
         self.assertEqual(cfg["errors"], [])
+
+    def test_image_defaults_use_26_with_bounded_short_animation(self):
+        cfg = inspect_config(GENERIC)
+        self.assertEqual(cfg["image"], {"model": "gpt-image-2.6-flare", "complexity": "medium",
+                                       "gif_enabled": True, "gif_size": "512x512", "gif_frames": 9,
+                                       "gif_frame_ms": 200})
+        self.assertEqual(cfg["errors"], [])
+
+    def test_old_image_endpoint_can_omit_complexity_and_disable_gif(self):
+        cfg = inspect_config({**GENERIC, "IMAGE_GENERATION_MODEL": "legacy-image",
+                              "IMAGE_GENERATION_COMPLEXITY": "", "IMAGE_GENERATION_GIF_ENABLED": "false"})
+        self.assertEqual(cfg["image"]["complexity"], "")
+        self.assertFalse(cfg["image"]["gif_enabled"])
+        self.assertEqual(cfg["errors"], [])
+
+    def test_gif_settings_validate_published_api_limits(self):
+        invalid = {"IMAGE_GENERATION_COMPLEXITY": ("max",),
+                   "IMAGE_GENERATION_GIF_FRAME_COUNT": ("1", "65", "abc"),
+                   "IMAGE_GENERATION_GIF_FRAME_DURATION_MS": ("10", "2010", "25"),
+                   "IMAGE_GENERATION_GIF_SIZE": ("512", "0x512", "511x512", "512x-512", "512x512x512")}
+        for name, values in invalid.items():
+            for value in values:
+                with self.subTest(name=name, value=value):
+                    cfg = inspect_config({**GENERIC, name: value})
+                    self.assertTrue(any(name in error for error in cfg["errors"]), cfg["errors"])
+        for overrides in ({"IMAGE_GENERATION_GIF_FRAME_COUNT": "2", "IMAGE_GENERATION_GIF_SIZE": "auto",
+                           "IMAGE_GENERATION_GIF_FRAME_DURATION_MS": "20"},
+                          {"IMAGE_GENERATION_GIF_FRAME_COUNT": "64", "IMAGE_GENERATION_GIF_SIZE": "512x768",
+                           "IMAGE_GENERATION_GIF_FRAME_DURATION_MS": "2000"}):
+            with self.subTest(overrides=overrides):
+                self.assertEqual(inspect_config({**GENERIC, **overrides})["errors"], [])

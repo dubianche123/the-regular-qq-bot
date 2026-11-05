@@ -27,6 +27,27 @@ class ParseTest(unittest.TestCase):
     def test_image_marker_splits_brief_and_line(self):
         s = expression.parse("〔画〕一只橘猫趴在键盘上，水彩风\n给你整一只")
         self.assertEqual((s.kind, s.spec, s.text), ("image", "一只橘猫趴在键盘上，水彩风", "给你整一只"))
+        self.assertFalse(s.animated)
+
+    def test_animation_marker_keeps_the_whole_motion_description(self):
+        spec = "一只鸡原地运篮球，球落地弹回翅膀，恢复起始姿势，固定镜头无缝循环"
+        s = expression.parse(f"〔动图〕{spec}\n让它运起来")
+        self.assertEqual((s.kind, s.spec, s.text, s.animated),
+                         ("image", spec, "让它运起来", True))
+        self.assertEqual(expression.parse(f"【动图】完整描述：{spec}\n来了").spec, spec)
+
+    def test_animation_without_description_cannot_be_executed(self):
+        s = expression.parse("〔动图〕\n这次先算了")
+        self.assertEqual((s.kind, s.text, s.animated), (None, "这次先算了", False))
+
+    def test_first_media_tag_alone_selects_the_image_format(self):
+        self.assertFalse(expression.parse("〔画〕小鸡运球\n〔动图〕小鸡跑步\n来了").animated)
+        self.assertTrue(expression.parse("〔动图〕小鸡运球\n〔画〕小鸡跑步\n来了").animated)
+
+    def test_animation_and_reminder_keep_independent_fields(self):
+        s = expression.parse("〔动图〕小鸡原地运球循环\n来了\n〔提醒 11-06 09:00〕打篮球")
+        self.assertTrue(s.animated)
+        self.assertEqual(s.remind, ("set", "11-06 09:00", "打篮球"))
 
     def test_bracket_variants_and_label_prefix(self):
         s = expression.parse("【画】完整描述：雨夜的霓虹街道\n来了")
@@ -57,8 +78,22 @@ class ParseTest(unittest.TestCase):
         self.assertIn("审核没过", expression.record(said, "blocked"))
         self.assertIn("用语音发的", expression.record(expression.Said("voice", "困", "早"), True))
 
+    def test_animation_history_records_its_actual_type_and_delivery(self):
+        said = expression.Said("image", "小鸡运球循环", "来了", animated=True)
+        self.assertEqual(expression.record(said, True),
+                         "〔动图〕小鸡运球循环\n来了\n（系统：这张动图已经发到群里了）")
+        self.assertIn("没收到回执", expression.record(said, None))
+        self.assertIn("审核没过", expression.record(said, "blocked"))
+
 
 class HeadTest(unittest.TestCase):
+    def test_animation_capability_is_explicit_and_frozen_for_replay(self):
+        animated = bot.media_rules({"draw": True, "animate": True})
+        self.assertIn(prompts.PROMPT_ANIMATION_RULES, animated)
+        for flags in ({"draw": True, "animate": False}, {"draw": True},
+                      {"draw": False, "animate": True}):
+            self.assertNotIn(prompts.PROMPT_ANIMATION_RULES, bot.media_rules(flags))
+
     def test_rules_are_in_stable_head_only_when_available(self):
         with patch.object(bot.image_generation, "available", return_value=True), \
              patch.object(bot._VOICE_OUT, "ready", return_value=False):
@@ -101,7 +136,7 @@ class _Reply(unittest.IsolatedAsyncioTestCase):
         return patch.object(bot, "get_ai_reply", AsyncMock(return_value=(body, None)))
 
     def media(self, **kw):
-        base = dict(group="group", user="member", score=0, draw=True, voice=True, note="")
+        base = dict(group="group", user="member", score=0, draw=True, animate=True, voice=True, note="")
         base.update(kw)
         return bot.MediaTurn(**base)
 
@@ -113,6 +148,43 @@ class _Reply(unittest.IsolatedAsyncioTestCase):
 
 
 class ImageReplyTest(_Reply):
+    async def test_short_animation_request_uses_one_drawing_with_motion_and_records_the_result(self):
+        spec = "一只卡通鸡原地运篮球，球落地弹起回到翅膀，恢复起始姿势，固定镜头无缝循环"
+        order = []
+
+        async def draw(message, **kw):
+            self.assertEqual(kw["prompt"], spec)
+            self.assertTrue(kw["animated"])
+            await kw["before_send"]()
+            order.append("gif")
+            return True
+
+        self.message.reply.side_effect = lambda **kw: order.append("text") or {"id": "t"}
+        with self.said(f"〔动图〕{spec}\n让它运两下"), \
+             patch.object(bot.image_generation, "generate_and_send", side_effect=draw) as generate, \
+             patch.object(bot, "_note_own_line") as note:
+            await bot.reply_in_session(self.message, "group_member", "画一个正在打篮球的鸡的动图",
+                                       media=self.media())
+        self.assertEqual(order, ["text", "gif"])
+        self.assertEqual(generate.call_count, 1)
+        self.check_drawing.assert_awaited_once()
+        self.assertEqual(self.check_drawing.await_args.args[2], spec)
+        self.assertTrue(self.last_record().startswith(f"〔动图〕{spec}"))
+        self.assertIn("这张动图已经发到群里了", self.last_record())
+        note.assert_called_once_with("group", f"[动图：{spec}]")
+        self.assertIn(f"[动图：{spec}]", self.remember.call_args.args[2])
+
+    async def test_animation_requires_both_drawing_permission_and_animation_capability(self):
+        for media in (None, self.media(draw=False), self.media(animate=False)):
+            with self.subTest(media=media), self.said("〔动图〕小鸡运球循环\n来了"), \
+                 patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as draw:
+                self.message.reply.reset_mock()
+                self.check_drawing.reset_mock()
+                await bot.reply_in_session(self.message, "group_member", "画个动图", media=media)
+                draw.assert_not_awaited()
+                self.check_drawing.assert_not_awaited()
+                self.assertEqual(self.sent(), ["来了"])
+
     async def test_line_goes_first_then_image_and_record_says_what_was_drawn(self):
         order = []
 
@@ -201,6 +273,18 @@ class DrawGuardTest(_Reply):
             await bot.reply_in_session(self.message, "group_member", "画只猫", media=self.media())
         draw.assert_awaited_once()
 
+    async def test_animation_runs_the_same_guard_and_cannot_bypass_a_decline(self):
+        spec = self.SPEC + "，转身举起冠冕后回到原姿势，循环"
+        self.check_drawing.return_value = False
+        with patch.object(bot, "get_ai_reply", AsyncMock(return_value=(f"〔动图〕{spec}\n来了", None))), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as draw:
+            await bot.reply_in_session(self.message, "group_member", "让它动起来", media=self.media())
+        draw.assert_not_awaited()
+        self.check_drawing.assert_awaited_once()
+        self.assertEqual(self.check_drawing.await_args.args[2], spec)
+        self.assertEqual(self.sent(), [expression.image_failed_line("declined")])
+        self.assertNotIn(spec, self.last_record())
+
     async def test_turns_that_cannot_draw_are_not_checked(self):
         with self.said("〔画〕一只橘猫\n来了"):
             await bot.reply_in_session(self.message, "group_member", "画只猫",
@@ -253,6 +337,7 @@ class VoiceReplyTest(_Reply):
 class MediaTurnTest(unittest.TestCase):
     def turn(self, state, *, asked=True, tired=False):
         with patch.object(bot.image_generation, "available", return_value=True), \
+             patch.object(bot.image_generation, "animation_available", return_value=True), \
              patch.object(bot.image_generation, "precheck", return_value=state), \
              patch.object(bot._VOICE_OUT, "ready", return_value=True), \
              patch.object(bot._VOICE_OUT, "tired", return_value=tired):
@@ -269,7 +354,13 @@ class MediaTurnTest(unittest.TestCase):
 
     def test_unasked_turns_never_draw_but_may_speak(self):
         t = self.turn("normal", asked=False)
-        self.assertEqual((t.draw, t.voice), (False, True))
+        self.assertEqual((t.draw, t.animate, t.voice), (False, False, True))
+
+    def test_animation_follows_the_same_turn_quota(self):
+        self.assertTrue(self.turn("normal").animate)
+        self.assertTrue(self.turn("exception").animate)
+        self.assertFalse(self.turn("tired").animate)
+        self.assertFalse(self.turn("busy").animate)
 
     def test_voice_quota_is_said_not_silently_dropped(self):
         t = self.turn("normal", tired=True)

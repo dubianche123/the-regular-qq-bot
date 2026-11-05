@@ -277,10 +277,10 @@ OWN_DRAWING_SECONDS = 600.0
 
 
 def _own_recent_drawing(line, now):
-    """它自己十分钟内画的图（own_lines 里的「[图：…]」）。背景只留最近几句，画过什么不能跟着被挤掉：
+    """它自己十分钟内画的静图或动图。背景只留最近几句，画过什么不能跟着被挤掉：
     2026-11-04 11:43 背景里没了它 11:38 画的奶蛙，它只看见自己说过「只看到图片标记」，
     就对着自己画的蛙说「没真看见图」（见 docs/image-before-reply.md）。"""
-    return line["text"].startswith("[图：") and now - line["time"] <= OWN_DRAWING_SECONDS
+    return line["text"].startswith(("[图：", "[动图：")) and now - line["time"] <= OWN_DRAWING_SECONDS
 
 
 _BG_PREAMBLE = "（每句开头标的是发言人；‘当前说话人’与眼前这位是同一人，‘你’是你自己刚在群里说的，其余是其他群友；拿不准是谁就别点名）"
@@ -988,8 +988,9 @@ async def resend_queue_loop():
 
 
 def media_flags():
-    """稳定头里那几段开没开：画图 / 语音 / 提醒。每轮输入记录存这个，回放时照着拼同一个头。"""
-    return {"draw": bool(image_generation.available()), "voice": bool(_VOICE_OUT.ready()),
+    """稳定头里那几段开没开：静图 / 动图 / 语音 / 提醒。每轮输入记录存这个，回放时照着拼同一个头。"""
+    return {"draw": bool(image_generation.available()),
+            "animate": bool(image_generation.animation_available()), "voice": bool(_VOICE_OUT.ready()),
             "remind": bool(config.REMINDER_ENABLED)}
 
 
@@ -1002,6 +1003,8 @@ def media_rules(flags=None):
     parts = []
     if flags.get("draw"):
         parts.append(prompts.PROMPT_DRAW_RULES)
+        if flags.get("animate"):
+            parts.append(prompts.PROMPT_ANIMATION_RULES)
     if flags.get("voice"):
         parts.append(prompts.PROMPT_VOICE_RULES)
     if parts:
@@ -1012,13 +1015,13 @@ def media_rules(flags=None):
 
 
 class MediaTurn(SimpleNamespace):
-    """这一轮小王能用哪几样（draw / voice / remind）、额度记在谁头上、即时提示里要补的那句（note）。"""
+    """这一轮小王能用哪几样（draw / animate / voice / remind）、额度记在谁头上、即时提示里要补的那句。"""
 
 
 def media_turn(group_id, user_id, score, *, asked, remind=False):
     """在生成**之前**定这一轮的画图、语音条件，好让小王写回复时就知道。
 
-    asked=True：有人在跟它说话、它在正经回（不是插嘴、短接、喊停、慢活）—— 只有这时才认〔画〕：
+    asked=True：有人在跟它说话、它在正经回（不是插嘴、短接、喊停、慢活）—— 只有这时才认〔画〕/〔动图〕：
     没人找它画就不花钱。语音便宜，插嘴也认，但喊停和慢活不认（调用方传 voice=False 的那几种）。
     画累了、正在画、破例、嗓子用完：都写进 note，小王自己用人话说出来（群主 2026-11-01：
     「额度用完了也要像人一样说今天累了」）—— 以前这几句是代码里的固定话术。
@@ -1045,7 +1048,8 @@ def media_turn(group_id, user_id, score, *, asked, remind=False):
     if remind:
         notes.append(reminders.render_note(
             runtime.SCHEDULER.tasks.get(reminders.task_id(group_id, user_id)), time.time()))
-    return MediaTurn(group=group_id, user=user_id, score=score, draw=draw, voice=voice,
+    return MediaTurn(group=group_id, user=user_id, score=score, draw=draw,
+                     animate=draw and image_generation.animation_available(), voice=voice,
                      remind=remind, note="\n".join(notes))
 
 
@@ -1055,7 +1059,7 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
     """Serialize generation and send; queued delivery commits through the same callback.
 
     prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
-    media=MediaTurn：这一轮认不认小王写的〔画〕〔语音〕（见 media_turn）；None 时标记一律当文字。
+    media=MediaTurn：这一轮认不认小王写的〔画〕〔动图〕〔语音〕（见 media_turn）；None 时标记一律当文字。
     is_stale：写好以后、发出去之前再问一次「时机过没过」，过了就不发（见 reply_unprompted）。
     """
     async with runtime.SESSIONS.lock(session_id):
@@ -1094,8 +1098,9 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         if is_stale is not None and is_stale():
             logger.info("⌛ 写好了没发：群里已经接着聊了（%s）", session_id[-12:])
             return "", delta, None
-        if said.kind == "image" and not (media is not None and media.draw):
-            logger.info("🎨 这一轮不认〔画〕，只发文字（%s）", session_id[-12:])
+        if said.kind == "image" and not (media is not None and media.draw
+                and (not said.animated or getattr(media, "animate", False))):
+            logger.info("🎨 这一轮不认作图标记，只发文字（%s）", session_id[-12:])
             said = expression.Said(None, "", said.text, said.remind)
         declined = said.kind == "image" and await _drawing_declined(message, media, said, history)
         if declined:
@@ -1338,7 +1343,7 @@ async def reply_unprompted(message, session_id, user_text, *, callback_note="", 
 
 
 async def _drawing_declined(message, media, said, history):
-    """〔画〕之前看一眼整张画面（2026-11-04 维尼熊 → 吃包子的黄熊 → 中式宫殿 → 冠冕那一串，
+    """〔画〕/〔动图〕之前看一眼完整画面与动作（2026-11-04 维尼熊 → 吃包子的黄熊 → 中式宫殿 → 冠冕那一串，
     见 docs/drawing-guard.md）：画面加上前几句是怎么要的，判断说在影射政治，这张就不画。
     这一轮本来就不认〔画〕的不问；判断不可用照常画（runtime.FEEDBACK.check_drawing）。"""
     if media is None or not media.draw:
@@ -1368,7 +1373,7 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
 
     task = asyncio.create_task(image_generation.generate_and_send(
         message, group_id=media.group, user_id=media.user, score=media.score,
-        prompt=said.spec, before_send=after_text))
+        prompt=said.spec, animated=said.animated, before_send=after_text))
     result = None
     try:
         if said.text:
@@ -1388,14 +1393,15 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
     delivered_text = said.text if getattr(result, "status", None) == "delivered" else ""
     if current():
         runtime.SESSIONS.record(session_id, user_text, expression.record(
-            expression.Said("image", said.spec, delivered_text), outcome))
+            expression.Said("image", said.spec, delivered_text, animated=said.animated), outcome))
         runtime.STATE.mark_dirty()
     if outcome is True:
-        _note_own_line(media.group, f"[图：{said.spec}]")
+        image_note = f"[{'动图' if said.animated else '图'}：{said.spec}]"
+        _note_own_line(media.group, image_note)
         outgoing_id = uuid.uuid4().hex
         # 分诊看得见「它刚画了什么」：「画的什么玩意」是在评这张图，不是新的画图请求。
         runtime.FEEDBACK.remember(
-            media.group, media.user, f"{delivered_text}\n[图：{said.spec}]".strip(),
+            media.group, media.user, f"{delivered_text}\n{image_note}".strip(),
             route="reply", outgoing_id=outgoing_id, history=list(history or [])[-4:])
         runtime.INTERACTIONS.append(
             "delivery", media.group, user=media.user, actor="assistant",

@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import json
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
@@ -9,6 +11,10 @@ from openai import BadRequestError
 import image_generation as image
 from storage import DailyBudget
 from regular.resource_quota import ResourceQuotas
+
+
+PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+GIF_BASE64 = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
 
 
 class ImageGenerationTest(IsolatedAsyncioTestCase):
@@ -22,7 +28,12 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
         self.config = patch.multiple(image.config, IMAGE_GENERATION_ENABLED=True,
                                     IMAGE_GENERATION_BASE_URL="https://example.invalid/v1",
                                     IMAGE_GENERATION_API_KEY="test-key",
-                                    IMAGE_GENERATION_MODEL="gpt-image-2.5-flare",
+                                    IMAGE_GENERATION_MODEL="gpt-image-2.6-flare",
+                                    IMAGE_GENERATION_COMPLEXITY="medium",
+                                    IMAGE_GENERATION_GIF_ENABLED=True,
+                                    IMAGE_GENERATION_GIF_SIZE="512x512",
+                                    IMAGE_GENERATION_GIF_FRAME_COUNT=9,
+                                    IMAGE_GENERATION_GIF_FRAME_DURATION_MS=200,
                                     IMAGE_GENERATION_TIMEOUT_SECONDS=1)
         self.config.start()
         self.addCleanup(self.config.stop)
@@ -36,7 +47,7 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
         self.patch_quotas = patch.object(image.runtime, "RESOURCE_QUOTAS", self.quotas)
         self.patch_quotas.start()
         self.addCleanup(self.patch_quotas.stop)
-        self.gen = patch.object(image, "_generate", AsyncMock(return_value="base64-image"))
+        self.gen = patch.object(image, "_generate", AsyncMock(return_value=PNG_BASE64))
         self.generate = self.gen.start()
         self.addCleanup(self.gen.stop)
 
@@ -49,7 +60,7 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
         self.state.save_now.assert_called_once()
         self.generate.assert_awaited_once_with("cat", "test-key")
         self.assertEqual(self.upload.await_args.kwargs["json"], {
-            "file_type": 1, "file_data": "base64-image", "srv_send_msg": False})
+            "file_type": 1, "file_data": PNG_BASE64, "srv_send_msg": False, "file_name": "generated.png"})
         self.message.reply.assert_awaited_once_with(msg_type=7, media={"file_info": "qq-file"}, msg_seq=4)
 
     async def test_failures_consume_once_but_do_not_send(self):
@@ -59,6 +70,73 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.budget.used, 1)
         self.assertEqual(self.quotas._used("image", "g", "u"), 0)
         self.assertEqual(self.state.save_now.call_count, 2)
+        self.upload.assert_not_awaited()
+        self.message.reply.assert_not_awaited()
+
+    async def test_gif_bytes_are_uploaded_unchanged_and_share_image_quota(self):
+        self.generate.return_value = GIF_BASE64
+        with patch.object(image.runtime.QUOTES, "remember") as remember:
+            self.assertIs(await image.generate_and_send(
+                self.message, group_id="g", user_id="u", score=0,
+                prompt="chicken dribbling a basketball", animated=True), True)
+        self.generate.assert_awaited_once_with(
+            "chicken dribbling a basketball", "test-key", animated=True)
+        self.assertEqual(self.upload.await_args.kwargs["json"], {
+            "file_type": 1, "file_data": GIF_BASE64, "file_name": "generated.gif", "srv_send_msg": False})
+        self.assertIn("[动图：", remember.call_args.args[-1])
+        self.assertEqual(self.quotas._used("image", "g", "u"), 1)
+        self.assertIs(await image.generate_and_send(
+            self.message, group_id="g", user_id="u", score=0, prompt="still chicken"), True)
+        self.assertEqual(self.quotas._used("image", "g", "u"), 2)
+        self.assertEqual(self.budget.used, 2)
+        self.assertEqual(await image.generate_and_send(
+            self.message, group_id="g", user_id="u", score=0,
+            prompt="another animation", animated=True), "quota")
+        self.assertEqual(self.generate.await_count, 2)
+
+    async def test_disabled_animation_does_not_fall_back_or_reserve_quota(self):
+        with patch.object(image.config, "IMAGE_GENERATION_GIF_ENABLED", False):
+            self.assertTrue(image.available())
+            self.assertFalse(image.animation_available())
+            self.assertIs(await image.generate_and_send(
+                self.message, group_id="g", user_id="u", score=0,
+                prompt="chicken playing basketball", animated=True), False)
+        self.generate.assert_not_awaited()
+        self.upload.assert_not_awaited()
+        self.message.reply.assert_not_awaited()
+        self.assertEqual(self.budget.used, 0)
+        self.assertEqual(self.quotas._used("image", "g", "u"), 0)
+        self.state.save_now.assert_not_called()
+
+    async def test_gif_generation_failure_never_retries_as_a_still(self):
+        self.generate.side_effect = asyncio.TimeoutError()
+        self.assertEqual(await image.generate_and_send(
+            self.message, group_id="g", user_id="u", score=0,
+            prompt="looping chicken", animated=True), "generation_error")
+        self.generate.assert_awaited_once_with("looping chicken", "test-key", animated=True)
+        self.assertEqual(self.budget.used, 1)
+        self.assertEqual(self.quotas._used("image", "g", "u"), 0)
+        self.upload.assert_not_awaited()
+
+    async def test_qq_size_limit_rejects_oversized_gif_without_retrying(self):
+        large_gif = b"GIF89a" + b"x" * (image._QQ_FILE_DATA_LIMIT - 6)
+        self.generate.return_value = base64.b64encode(large_gif).decode("ascii")
+        self.assertEqual(await image.generate_and_send(
+            self.message, group_id="g", user_id="u", score=0,
+            prompt="large animation", animated=True), "upload_error")
+        self.generate.assert_awaited_once()
+        self.upload.assert_not_awaited()
+        self.message.reply.assert_not_awaited()
+        self.assertEqual(self.budget.used, 1)
+        self.assertEqual(self.quotas._used("image", "g", "u"), 0)
+
+    async def test_invalid_base64_and_wrong_gif_format_never_reach_qq(self):
+        for encoded in ("not valid base64!", PNG_BASE64):
+            with self.subTest(encoded=encoded[:12]):
+                self.generate.return_value = encoded
+                self.assertEqual(await image.generate_and_send(
+                    self.message, group_id="g", user_id="u", score=0,
+                    prompt="chicken", animated=True), "generation_error")
         self.upload.assert_not_awaited()
         self.message.reply.assert_not_awaited()
 
@@ -98,7 +176,7 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
         async def pending(*args):
             started.set()
             await finish.wait()
-            return "base64-image"
+            return PNG_BASE64
 
         self.generate.side_effect = pending
         first = asyncio.create_task(image.generate_and_send(self.message, group_id="g", user_id="u", score=0, prompt="cat"))
@@ -260,8 +338,47 @@ class ImageGenerationTest(IsolatedAsyncioTestCase):
             self.assertEqual(await image._generate("prompt", "key"), "encoded")
         self.assertEqual(factory.call_args.kwargs["max_retries"], 0)
         generate.assert_awaited_once()
-        self.assertEqual(generate.await_args.kwargs["model"], "gpt-image-2.5-flare")
+        self.assertEqual(generate.await_args.kwargs["model"], "gpt-image-2.6-flare")
         self.assertEqual(generate.await_args.kwargs["quality"], image.config.IMAGE_GENERATION_QUALITY)
+        self.assertEqual(generate.await_args.kwargs["size"], image.config.IMAGE_GENERATION_SIZE)
+        self.assertEqual(generate.await_args.kwargs["extra_body"], {"complexity": "medium"})
+
+    async def test_existing_sdk_serializes_gif_fields_without_network(self):
+        """新模型/格式不在旧 SDK 的枚举中，真实序列化仍须完整发送新字段。"""
+        self.gen.stop()
+        requests = []
+
+        async def serve(request):
+            requests.append(request)
+            return httpx.Response(200, json={"created": 1, "data": [{"b64_json": GIF_BASE64}]})
+
+        original_client = httpx.AsyncClient
+
+        class LocalClient(original_client):
+            def __init__(self, **kwargs):
+                super().__init__(transport=httpx.MockTransport(serve), trust_env=False, **kwargs)
+
+        with patch.object(image.httpx, "AsyncClient", LocalClient):
+            self.assertEqual(await image._generate("chicken dribbling", "key", animated=True), GIF_BASE64)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].url.path, "/v1/images/generations")
+        body = json.loads(requests[0].content)
+        self.assertEqual(body, {
+            "model": "gpt-image-2.6-flare", "prompt": "chicken dribbling",
+            "quality": image.config.IMAGE_GENERATION_QUALITY, "size": "512x512", "n": 1,
+            "complexity": "medium", "output_format": "gif", "frame_count": 9,
+            "frame_duration_ms": 200})
+
+    async def test_blank_complexity_keeps_old_static_api_compatible(self):
+        self.gen.stop()
+        generate = AsyncMock(return_value=SimpleNamespace(data=[SimpleNamespace(b64_json="encoded")]))
+        client = SimpleNamespace(images=SimpleNamespace(generate=generate))
+        with patch.object(image, "AsyncOpenAI", return_value=client), \
+             patch.object(image.config, "IMAGE_GENERATION_COMPLEXITY", ""), \
+             patch.object(image.config, "IMAGE_GENERATION_MODEL", "legacy-image"):
+            self.assertEqual(await image._generate("prompt", "key"), "encoded")
+        self.assertNotIn("extra_body", generate.await_args.kwargs)
+        self.assertEqual(generate.await_args.kwargs["model"], "legacy-image")
 
     async def test_decision_key_only_reused_between_official_endpoints(self):
         official = {"endpoint": "https://api.openai.com/v1/decisions", "api_key": "decision-key"}

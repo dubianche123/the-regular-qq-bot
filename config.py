@@ -307,9 +307,15 @@ VOICE_OUTPUT_SILK_ENTRY = _env_str("VOICE_OUTPUT_SILK_ENTRY", str(
 IMAGE_GENERATION_ENABLED = _env_bool("IMAGE_GENERATION_ENABLED", True)
 IMAGE_GENERATION_BASE_URL = _env_str("IMAGE_GENERATION_BASE_URL", PROVIDER_PRESETS["openai"]["base_url"] or "https://api.openai.com/v1")
 IMAGE_GENERATION_API_KEY = _env_str("IMAGE_GENERATION_API_KEY")
-IMAGE_GENERATION_MODEL = _env_str("IMAGE_GENERATION_MODEL", "gpt-image-2.5-flare")
+IMAGE_GENERATION_MODEL = _env_str("IMAGE_GENERATION_MODEL", "gpt-image-2.6-flare")
 IMAGE_GENERATION_QUALITY = _env_str("IMAGE_GENERATION_QUALITY", "medium")
 IMAGE_GENERATION_SIZE = _env_str("IMAGE_GENERATION_SIZE", "1024x1024")
+# 空串表示不传此参数，兼容不支持 complexity 的旧模型或网关。
+IMAGE_GENERATION_COMPLEXITY = os.environ.get("IMAGE_GENERATION_COMPLEXITY", "medium").strip()
+IMAGE_GENERATION_GIF_ENABLED = _env_bool("IMAGE_GENERATION_GIF_ENABLED", True)
+IMAGE_GENERATION_GIF_SIZE = _env_str("IMAGE_GENERATION_GIF_SIZE", "512x512")
+IMAGE_GENERATION_GIF_FRAME_COUNT = _env_int("IMAGE_GENERATION_GIF_FRAME_COUNT", 9)
+IMAGE_GENERATION_GIF_FRAME_DURATION_MS = _env_int("IMAGE_GENERATION_GIF_FRAME_DURATION_MS", 200)
 IMAGE_GENERATION_DAILY_CAP = _env_int("IMAGE_GENERATION_DAILY_CAP", 40)
 IMAGE_USER_DAILY_CAP = _env_int("IMAGE_USER_DAILY_CAP", 5)
 IMAGE_USER_EXTRA_ACQUAINTANCE = _env_int("IMAGE_USER_EXTRA_ACQUAINTANCE", 1)
@@ -576,6 +582,18 @@ def validate():
         errors.append("AI_TIMEOUT_SECONDS 和 AI_TOTAL_TIMEOUT 必须大于 0")
     if not math.isfinite(IMAGE_GENERATION_TIMEOUT_SECONDS) or IMAGE_GENERATION_TIMEOUT_SECONDS <= 0:
         errors.append("IMAGE_GENERATION_TIMEOUT_SECONDS 必须大于 0")
+    if IMAGE_GENERATION_COMPLEXITY not in ("", "low", "medium", "high"):
+        errors.append("IMAGE_GENERATION_COMPLEXITY 必须是 low、medium、high 或空串")
+    if not 2 <= IMAGE_GENERATION_GIF_FRAME_COUNT <= 64:
+        errors.append("IMAGE_GENERATION_GIF_FRAME_COUNT 必须在 2~64 之间")
+    if (not 20 <= IMAGE_GENERATION_GIF_FRAME_DURATION_MS <= 2000
+            or IMAGE_GENERATION_GIF_FRAME_DURATION_MS % 10):
+        errors.append("IMAGE_GENERATION_GIF_FRAME_DURATION_MS 必须在 20~2000 之间且是 10 的倍数")
+    if IMAGE_GENERATION_GIF_SIZE != "auto":
+        parts = IMAGE_GENERATION_GIF_SIZE.split("x")
+        if (len(parts) != 2 or not all(part.isascii() and part.isdecimal()
+                                      and int(part) > 0 and int(part) % 16 == 0 for part in parts)):
+            errors.append("IMAGE_GENERATION_GIF_SIZE 必须是 auto 或两边均为正的 16 倍数，如 512x512")
     for provider_name in dict.fromkeys((AI_PROVIDER, *TIER_PROVIDERS.values(),
                                         FALLBACK_PROVIDER, RESEARCH_PROVIDER)):
         if not provider_name:
