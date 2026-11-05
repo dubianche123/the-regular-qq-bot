@@ -28,7 +28,9 @@
 - **成本边界**：SDK 自动重试关闭；显式候选、尝试上限、单次/整轮超时和日预算。思考模型的 reasoning token 也占 `*_MAX_TOKENS`，截断时调上限而不是盲目重试。
 - **隐私与安全**：openid、群号、机器编号不进入模型上下文或群回复；记忆/归档/知识库出口都过敏感词检查；知识库只允许维护者改文件或本机面板，不开放群聊写入。
 - **搜索边界**：只读 DuckDuckGo 的标题/摘要/链接，不打开结果页、不跑 JS、不自动连续搜索；结果必须以“不可信外部资料”包装，默认直连，不继承网关代理。
-- **线上进程**：不要在未获用户明确要求时重启/停止正在运行的 bot；验证重启使用 launchd，并检查 `bot.log` 启动行。
+- **线上进程**：不要在未获用户明确要求时重启/停止正在运行的 bot。线上 launchd（`io.github.the-regular`）的
+  `PYTHONPATH` 指向部署目录里固定的发布快照 `releases/the-regular-<sha>`：更新仓库、重装、`kickstart` 都换不了代码。
+  上线步骤见「常用命令」；验收看 `status` 里进程自己报的 `code.release` / `code.source_root`，不能只看 `bot.log` 启动行。
 
 ## 工程原则
 
@@ -54,8 +56,14 @@ regular --directory . panel
 # 前台运行
 regular --directory . run
 
-# 仅在用户明确要求时重启线上实例
-launchctl kickstart -k gui/$(id -u)/com.qqbot.xiaowang
+# 仅在用户明确要求时上线：建新快照 → 改 PYTHONPATH → 重新加载 launchd 定义（kickstart 不重读 plist）
+DEPLOY=~/Code_repository/regular-bot; SHA=$(git rev-parse --short HEAD)
+PLIST=~/Library/LaunchAgents/io.github.the-regular.plist; REL="$DEPLOY/releases/the-regular-$SHA"
+git clone -q . "$REL" && git -C "$REL" checkout -q "$SHA"
+mkdir -p "$DEPLOY/data/deploy-backups" && cp "$PLIST" "$DEPLOY/data/deploy-backups/release-$SHA-$(date +%H%M%S).plist"
+plutil -replace EnvironmentVariables.PYTHONPATH -string "$REL" "$PLIST"
+launchctl bootout gui/$(id -u)/io.github.the-regular; launchctl bootstrap gui/$(id -u) "$PLIST"
+.venv/bin/python -m regular --directory "$DEPLOY" status --json   # code.release 必须等于 $SHA
 ```
 
 ## 代码地图
