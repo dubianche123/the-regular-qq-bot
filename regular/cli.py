@@ -509,6 +509,30 @@ def case_command(config, args):
 def eval_command(config, args):
     """跑用例评测、整天回放、规则消融或窄口子措辞搜索（docs/self-iteration.md ③④⑦）。"""
     from regular import eval as eval_mod
+    if args.n < 1:
+        raise ValueError("eval -n 必须至少为 1")
+    if args.plan:
+        # 必须先于任何付费分支；不支持的组合也只能报错，绝不能执行真实评测。
+        if args.search_wording:
+            print("--search-wording 暂不支持 --plan；未调用模型或写入报告。", file=sys.stderr)
+            return 1
+        if args.rejudge:
+            for line in eval_mod.describe_rejudge_traffic(config, args.rejudge):
+                print(line)
+            return 0
+        from regular import cases as cases_mod
+        import turns as turns_mod
+        selected = []
+        if not args.day or args.cases not in ("all", "none"):
+            selected = cases_mod.load_cases(config.CASES_DIR, selector=args.cases, include_seeds=True)
+        day_turns = 0
+        if args.day:
+            from regular import checkup as checkup_mod
+            day_turns = sum(1 for t in turns_mod.read_day(config.TURN_LOG_DIR, checkup_mod.resolve_day(args.day))
+                            if t.get("kind") == "reply")
+        for line in eval_mod.describe_traffic(config, selected, n=args.n, day_turns=day_turns):
+            print(line)
+        return 0
     if args.search_wording:
         if not args.allow_paid:
             raise eval_mod.PaidEvaluationRequired(
@@ -522,22 +546,6 @@ def eval_command(config, args):
             print(eval_mod.render_search_report(out))
             if out.get("report_path"):
                 print(f"Report written to {out['report_path']}")
-        return 0
-
-    if args.plan:
-        # 只说这次会把什么发到哪儿、要调多少次模型，不调任何模型：给维护者或代理的审批看
-        from regular import cases as cases_mod
-        import turns as turns_mod
-        selected = []
-        if not args.day or args.cases not in ("all", "none"):
-            selected = cases_mod.load_cases(config.CASES_DIR, selector=args.cases, include_seeds=True)
-        day_turns = 0
-        if args.day:
-            from regular import checkup as checkup_mod
-            day_turns = sum(1 for t in turns_mod.read_day(config.TURN_LOG_DIR, checkup_mod.resolve_day(args.day))
-                            if t.get("kind") == "reply")
-        for line in eval_mod.describe_traffic(config, selected, n=args.n, day_turns=day_turns):
-            print(line)
         return 0
 
     patterns = {}

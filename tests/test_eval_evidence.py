@@ -4,16 +4,20 @@
 全部样本和逐对盲评都留着，评审挂了能只重评失败的那几对；用例里冻着的提示词原文回放前换成受测版本的。
 """
 import asyncio
+import contextlib
+import io
 import json
 import os
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import turns as turns_mod
 from regular import cases as cases_mod
 from regular import eval as eval_mod
 from regular import replay_worker
+from regular import cli
 
 PLAYFUL_OLD = "【本轮语气线索】这轮更像在逗你玩，轻轻接住就收，事实问题可以悬着。"
 PLAYFUL_NEW = "【本轮语气线索】群友在拿问句逗你：直接接调侃，别先交代出处。"
@@ -111,6 +115,25 @@ class SymmetricEvidenceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p["winner"] for p in rows[0]["pairs"]], ["cand"] * 3)
         self.assertTrue(all(isinstance(p["swap"], bool) for p in rows[0]["pairs"]))
 
+    async def test_missing_generation_cannot_be_an_improvement_even_if_every_judged_pair_wins(self):
+        case = _case()
+        rows, totals = await eval_mod.evaluate_cases(
+            [case], [{"id": case["id"], "samples": [f"旧{i}" for i in range(5)]}],
+            [{"id": case["id"], "samples": [f"新{i}" for i in range(4)] + [None]}],
+            judge_fn=_side("cand"))
+        self.assertFalse(rows[0]["evidence_complete"])
+        self.assertFalse(rows[0]["improved"])
+        self.assertEqual(totals["verdict"]["call"], "unclear")
+
+    async def test_aggregate_wins_rounded_to_zero_still_count(self):
+        cases = [_case(f"c{i}") for i in range(12)]
+        rows, totals = await eval_mod.evaluate_cases(
+            cases, [{"id": c["id"], "samples": ["旧"]} for c in cases],
+            [{"id": c["id"], "samples": ["新"]} for c in cases], judge_fn=_side("cand"))
+        self.assertFalse(any(r["improved"] for r in rows))
+        self.assertEqual(totals["verdict"]["p_judge_better"], 0.0)
+        self.assertEqual(totals["verdict"]["call"], "better")
+
     async def test_prior_verdicts_are_reused_and_only_failures_rejudged(self):
         calls = []
 
@@ -193,6 +216,44 @@ class RejudgeTest(unittest.TestCase):
         with self.assertRaises(eval_mod.PaidEvaluationRequired):
             eval_mod.rejudge_report(self.config, "2026-11-05_130000", allow_paid=False, write=False)
 
+    def test_rejudge_uses_original_case_after_the_case_file_changes(self):
+        self._first_run()
+        changed = _case()
+        changed["checks"] = [{"judge": "完全不同的新判据"}]
+        cases_mod.save_case(self.config.CASES_DIR, changed)
+        seen = []
+
+        async def judge(messages):
+            seen.append(messages[-1]["content"])
+            return json.dumps({"winner": "tie", "crossed": [], "reason": "补评"})
+
+        out = eval_mod.rejudge_report(self.config, "2026-11-05_130000", judge_fn=judge, write=False)
+        self.assertEqual(len(seen), 1)
+        self.assertIn("别重复上一轮的核验判词", seen[0])
+        self.assertNotIn("完全不同的新判据", seen[0])
+        self.assertEqual(out["cases"][0]["case_snapshot"]["checks"], _case()["checks"])
+
+    def test_rejudge_plan_counts_only_failed_pairs_without_loading_current_cases(self):
+        self._first_run()
+        with patch.object(cases_mod, "load_cases", side_effect=AssertionError("不可读取当前用例")), \
+                patch.object(eval_mod, "preflight_judge", side_effect=AssertionError("不可调模型")), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            code = cli.eval_command(self.config, SimpleNamespace(
+                n=4, plan=True, search_wording=None, rejudge="2026-11-05_130000"))
+        self.assertEqual(code, 0)
+        self.assertIn("待补评 1 对", out.getvalue())
+        self.assertIn("不重新生成", out.getvalue())
+
+    def test_full_sample_report_without_a_case_snapshot_is_refused(self):
+        self._first_run()
+        report = eval_mod.load_report(self.config, "2026-11-05_130000")
+        report["cases"][0].pop("case_snapshot")
+        path = os.path.join(self.config.EVAL_DIR, "unsafe.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(report, f)
+        with self.assertRaisesRegex(ValueError, "快照"):
+            eval_mod.rejudge_report(self.config, path, judge_fn=_always("A"), write=False)
+
     def test_old_reports_without_samples_are_refused(self):
         path = os.path.join(self.config.EVAL_DIR, "old.json")
         os.makedirs(self.config.EVAL_DIR, exist_ok=True)
@@ -269,6 +330,40 @@ class FrozenPromptsTest(unittest.TestCase):
 
 
 class TrafficPlanTest(unittest.TestCase):
+    def test_search_plan_never_enters_the_paid_branch_even_when_paid_is_allowed(self):
+        with patch.object(eval_mod, "search_wording") as search, \
+                patch.object(eval_mod, "write_report") as write, \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = cli.eval_command(SimpleNamespace(), SimpleNamespace(
+                n=4, plan=True, search_wording="banter", rejudge=None, allow_paid=True))
+        self.assertEqual(code, 1)
+        search.assert_not_called()
+        write.assert_not_called()
+
+    def test_plan_uses_independent_decision_settings_and_chat_fallbacks(self):
+        from regular import decision_settings
+        with tempfile.TemporaryDirectory() as tmp:
+            decision_settings.save_settings(tmp, endpoint="https://decision.example/v1/decisions",
+                                            model="decision-model", api_key="never-print-this-key")
+            config = SimpleNamespace(
+                DATA_DIR=tmp, DECISION_ENABLED=True, AI_PROVIDER="openai", FALLBACK_PROVIDER="zhipu",
+                TIER_PROVIDERS={"chat": "openai"},
+                PROVIDER_PRESETS={"openai": {"base_url": "https://chat.example/v1", "models": ["reply-model"]},
+                                  "zhipu": {"base_url": "https://fallback.example/v1", "models": ["fallback-model"]}})
+            text = "\n".join(eval_mod.describe_traffic(config, [_case(), {"id": "t", "depth": "triage"}], n=2))
+        self.assertIn("decision-model @ decision.example", text)
+        self.assertIn("fallback-model @ zhipu · fallback.example", text)
+        self.assertIn("分诊层新旧两版各 1 × 2", text)
+        self.assertNotIn("never-print-this-key", text)
+
+    def test_retrieve_with_judging_still_counts_as_external_local_data(self):
+        config = SimpleNamespace()
+        case = {"id": "local-retrieve", "depth": "retrieve", "checks": [{"judge": "完整性"}]}
+        text = "\n".join(eval_mod.describe_traffic(config, [case], n=1))
+        self.assertIn("要调模型的 1 条，其中本地用例 1 条", text)
+        self.assertNotIn("回复模型候选", text)
+        self.assertIn("检索本身只在本地计算", text)
+
     def test_plan_counts_local_cases_as_possibly_real_and_names_destinations(self):
         config = SimpleNamespace(
             EVAL_JUDGE_PROVIDER="zhipu", EVAL_JUDGE_MODEL="cn:kimi-k3.1-pro",
@@ -283,6 +378,32 @@ class TrafficPlanTest(unittest.TestCase):
         self.assertIn("gpt-6-luna @ openai · api.openai.com", text)
         self.assertIn("cn:kimi-k3.1-pro @ zhipu · 127.0.0.1:17863", text)
         self.assertIn("整天回放另加 5 × 2 轮", text)
+
+
+class DayReplayPromptsTest(unittest.TestCase):
+    def test_whole_day_replay_marks_frozen_notes_before_both_workers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code_dirs = []
+            for label, text in (("base", PLAYFUL_OLD), ("cand", PLAYFUL_NEW)):
+                directory = os.path.join(tmp, label)
+                os.makedirs(directory)
+                with open(os.path.join(directory, "prompts.py"), "w", encoding="utf-8") as f:
+                    f.write(f"PROMPT_PLAYFUL_REQUEST = {text!r}\n")
+                code_dirs.append(contextlib.nullcontext(directory))
+            row = {"kind": "reply", "turn_id": "day1", "kwargs": {"user_text": "一起玩", "playful_note": PLAYFUL_OLD}}
+            seen = []
+
+            def worker(code_dir, items, **kw):
+                seen.append(items)
+                return {"head": {}, "results": [{"id": "day1", "samples": ["回复"]}]}
+
+            with patch.object(eval_mod, "checkout_version", side_effect=code_dirs), \
+                    patch.object(eval_mod.turns_mod, "read_day", return_value=[row]):
+                eval_mod.run_eval(SimpleNamespace(TURN_LOG_DIR=tmp), cases_selector="none", day="2026-11-05",
+                                  worker_fn=worker, write=False)
+        self.assertEqual(len(seen), 2)
+        for items in seen:
+            self.assertEqual(items[0]["frozen_prompts"][0]["name"], "PROMPT_PLAYFUL_REQUEST")
 
 
 if __name__ == "__main__":

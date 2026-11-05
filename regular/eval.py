@@ -32,6 +32,7 @@ import time
 from collections import Counter
 from math import comb
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import expression
 import turns as turns_mod
@@ -414,6 +415,7 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         evidence_complete = bool(
             b_valid > 0
             and c_valid > 0
+            and b_valid == c_valid
             and b_valid == len(b_samples)
             and c_valid == len(c_samples)
             and (not has_judge or (judged_pairs > 0 and j_wins["dropped"] == 0))
@@ -451,7 +453,7 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         judge_won = bool(has_judge and j_wins["cand"] > j_wins["base"] and c_crossed == 0)
         win_p = judge_win_p_value(j_wins["base"], j_wins["cand"]) if judge_won else 1.0
         clear = (not regressed) and (not wobbled)
-        improved = clear and bool(retrieval_improved or (det_rose and rise_p <= REGRESSION_P)
+        improved = clear and evidence_complete and bool(retrieval_improved or (det_rose and rise_p <= REGRESSION_P)
                                   or (judge_won and win_p <= REGRESSION_P))
         lifted = clear and not improved and (det_rose or judge_won)
         if regressed:
@@ -484,6 +486,8 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             "incident": case.get("incident") or "",
             "tags": case.get("tags") or [],
             "depth": case.get("depth") or "generate",
+            "case_snapshot": json.loads(json.dumps(case)),
+            "judge_protocol": {"system": JUDGE_SYSTEM, "history_turns": JUDGE_HISTORY_TURNS},
             "base_pass": f"{b_pass}/{len(b_checks)}",
             "cand_pass": f"{c_pass}/{len(c_checks)}",
             "base_pass_rate": round(b_rate, 3),
@@ -551,9 +555,12 @@ def overall_verdict(totals):
     }
     if totals.get("regressed") or totals.get("cand_crossed"):
         out["call"] = "worse"
-    elif (out["p_judge_worse"] or 1.0) <= REGRESSION_P:
+    elif out["p_judge_worse"] is not None and out["p_judge_worse"] <= REGRESSION_P:
         out["call"] = "worse"
-    elif totals.get("improved") or (out["p_judge_better"] or 1.0) <= REGRESSION_P:
+    elif out["incomplete"]:
+        out["call"] = "unclear"
+    elif totals.get("improved") or (out["p_judge_better"] is not None
+                                  and out["p_judge_better"] <= REGRESSION_P):
         out["call"] = "better" if not totals.get("wobbled") else "unclear"
     else:
         out["call"] = "unclear"
@@ -911,31 +918,86 @@ def _set_ablate_verdict(ablate_info, verdict):
     ablate_info["deletion_candidate"] = verdict == "delete"
 
 
-def describe_traffic(config, cases, *, n, day_turns=0):
-    """这次评测会把什么发到哪儿（eval --plan）：给维护者或代理的审批看，不调任何模型。"""
-    paid = [c for c in cases if (c.get("depth") or "generate") != "retrieve"]
-    # 仓库里的种子是合成的、本来就公开；部署目录里自己存的用例多半取自真实群聊（画图那批没有 source_turn_id 也是）
-    seeds = {c["id"] for c in cases_mod.SEED_CASES}
-    live = [c for c in paid if c.get("source_turn_id") or c.get("source_message_id") or c["id"] not in seeds]
-    judged = [c for c in cases if cases_mod.judge_prompts(c.get("checks"))]
-    def host(url):
-        return re.sub(r"^https?://", "", str(url or "")).split("/")[0] or "—"
+def _traffic_host(url):
+    """预览只显示目的主机，不回显 URL 中可能夹带的凭据或查询参数。"""
+    try:
+        parts = urlsplit(str(url or ""))
+        name = parts.hostname or "—"
+        return f"{name}:{parts.port}" if parts.port else name
+    except ValueError:
+        return "（无效地址）"
 
-    judge_provider = getattr(config, "EVAL_JUDGE_PROVIDER", "")
-    judge_host = host((getattr(config, "PROVIDER_PRESETS", {}).get(judge_provider) or {}).get("base_url"))
-    judge_model = getattr(config, "EVAL_JUDGE_MODEL", "") or "—"
-    reply = getattr(config, "PROVIDER", None) or {}
-    reply_model = "、".join(getattr(config, "CANDIDATE_MODELS", None) or ()) or "—"
-    reply_host = f"{getattr(config, 'AI_PROVIDER', '—')} · {host(reply.get('base_url'))}"
+
+def _possibly_live_cases(cases):
+    # 本地文件可能覆盖同名种子；只有内容也等于仓库种子的才认作公开合成用例。
+    seeds = {c["id"]: c for c in cases_mod.SEED_CASES}
+    return [c for c in cases if c.get("source_turn_id") or c.get("source_message_id")
+            or c != seeds.get(c["id"])]
+
+
+def _judge_destination(config):
+    name = getattr(config, "EVAL_JUDGE_PROVIDER", "")
+    preset = (getattr(config, "PROVIDER_PRESETS", {}).get(name) or {})
+    return f"{getattr(config, 'EVAL_JUDGE_MODEL', '') or '—'} @ {name} · {_traffic_host(preset.get('base_url'))}"
+
+
+def _completion_destinations(config, tier="chat"):
+    presets = getattr(config, "PROVIDER_PRESETS", {})
+    primary = (getattr(config, "TIER_PROVIDERS", {}).get(tier)
+               or getattr(config, "AI_PROVIDER", "—"))
+    names = list(dict.fromkeys(filter(None, (primary, getattr(config, "FALLBACK_PROVIDER", "")))))
+    out = []
+    for name in names:
+        preset = presets.get(name) or (getattr(config, "PROVIDER", {}) if name == primary else {})
+        models = preset.get("models" if tier == "chat" else f"models_{tier}") or preset.get("models")
+        if not models and name == primary:
+            models = getattr(config, "CANDIDATE_MODELS", ())
+        out.append(f"{'、'.join(models or ()) or '—'} @ {name} · {_traffic_host(preset.get('base_url'))}")
+    return "；备用 ".join(out)
+
+
+def describe_traffic(config, cases, *, n, day_turns=0):
+    """按实际回放深度列目的地和逻辑样本数；物理请求受路由、失败重放和候选上限影响。"""
+    counts = Counter(c.get("depth") or "generate" for c in cases)
+    judged = [c for c in cases if cases_mod.judge_prompts(c.get("checks"))]
+    outbound = [c for c in cases if (c.get("depth") or "generate") != "retrieve"
+                or cases_mod.judge_prompts(c.get("checks"))]
+    live = _possibly_live_cases(outbound)
     lines = [
-        f"用例 {len(cases)} 条：要调模型的 {len(paid)} 条，其中部署目录里的本地用例 {len(live)} 条"
-        f"（多半取自真实群聊，连同当时的前文、称呼档案一起发出去），其余是仓库里的合成种子；"
-        f"纯本地检索 {len(cases) - len(paid)} 条。",
-        f"回复模型：{reply_model} @ {reply_host}，新旧两版各 {len(paid)} × {n} 次"
-        + (f"，整天回放另加 {day_turns} × 2 轮" if day_turns else "") + "。",
-        f"盲评：{judge_model} @ {judge_provider} · {judge_host}，{len(judged)} 条用例 × {n} 对（只发群友那句、背景、最近几轮和两条候选）。"
-        if judged else "盲评：这批用例不用。",
+        f"用例 {len(cases)} 条：要调模型的 {len(outbound)} 条，其中本地用例 {len(live)} 条"
+        "（可能含真实群聊、前文和称呼档案）；只有与仓库种子内容相同的才按公开合成数据计算。",
+        f"深度：生成 {counts['generate']}，分诊 {counts['triage']}，消息 {counts['message']}，检索 {counts['retrieve']}。",
     ]
+    if counts["generate"] or counts["message"] or day_turns:
+        lines.append(
+            f"回复模型候选：{_completion_destinations(config)}；生成层新旧两版各 {counts['generate']} × {n} 个样本"
+            + (f"，整天回放另加 {day_turns} × 2 轮" if day_turns else "") + "。")
+    if counts["triage"] or counts["message"]:
+        from regular import decision_settings
+        data_dir = getattr(config, "DATA_DIR", None)
+        settings = decision_settings.public_settings(data_dir) if data_dir else None
+        if not getattr(config, "DECISION_ENABLED", True):
+            destination = "已禁用，不发原生分诊请求"
+        elif settings and settings["key_configured"]:
+            destination = f"{settings['model']} @ {_traffic_host(settings['endpoint'])}（无聊天供应商回退）"
+        else:
+            destination = "未配置，当前不会发原生分诊请求"
+        lines.append(f"Decisions：{destination}；分诊层新旧两版各 {counts['triage']} × {n} 个样本。")
+    if counts["message"]:
+        lines.extend([
+            f"消息层新旧两版各 {counts['message']} × {n} 次入口回放，回复和分诊次数取决于消息、路由及预置答案；不能按一条用例一次请求计算。",
+            f"消息路由还可能使用审核候选：{_completion_destinations(config, 'judge')}；摘要候选：{_completion_destinations(config, 'digest')}。",
+            "消息层的搜索、研究等工具目的地未在此展开，涉及这些路径时需另行核对。",
+        ])
+    lines.append(
+        f"盲评：{_judge_destination(config)}，{len(judged)} 条用例 × {n} 对"
+        "（只发群友那句、背景、最近几轮和两条候选）；相同输出不发请求，失败可重试一次，另加 1 次合成预检。"
+        if judged else "盲评：这批用例不用。")
+    if counts["retrieve"]:
+        lines.append("检索本身只在本地计算；带 judge 判据的检索用例仍会把评审输入外发。")
+    lines.append(
+        f"以上按当前部署配置预览；每个样本失败可再回放一次，单次回复最多尝试 {getattr(config, 'AI_MAX_ATTEMPTS', 3)} 个候选。"
+        "受测版本若改变模型路由，需另行核对其配置；这不是精确账单。")
     return lines
 
 
@@ -985,6 +1047,11 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
             resolved_day = checkup_mod.resolve_day(day)
             day_turns = [t for t in turns_mod.read_day(config.TURN_LOG_DIR, resolved_day)
                          if t.get("kind") == "reply"]
+            # 整天回放也要刷新冻在 kwargs 里的注记；不能只让用例回放测到新措辞。
+            day_cases = [{"id": t["turn_id"], "depth": "generate", "turn": t} for t in day_turns]
+            marked = mark_frozen_prompts(day_cases, (base_dir, cand_dir),
+                                         turn_dir=getattr(config, "TURN_LOG_DIR", None))
+            day_turns = [c["turn"] for c in marked]
             b_day = worker(base_dir, day_turns, n=1, concurrency=concurrency)
             c_day = worker(cand_dir, day_turns, n=1, concurrency=concurrency, ablate=ablate)
             base_head = base_head or b_day.get("head")
@@ -1027,27 +1094,51 @@ def load_report(config, ref):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def rejudge_report(config, ref, *, judge_fn=None, write=True, allow_paid=True):
-    """沿用一份报告的全部样本，只重跑没评成的盲评（评审网关挂了、限流），出一份新报告。
-
-    不重新生成：省钱，也保证重评的就是当时那批回复。用例的检查项按现在的用例文件重算
-    （改了 must / judge 想重新打分也走这里）；评过的那几对照用，连 A/B 摆法一起沿用。
-    """
+def _rejudge_inputs(config, ref):
+    """只读恢复报告里的同一现场和判据；不把当前可变用例混进旧评审。"""
     old = load_report(config, ref)
     rows = old.get("cases") or []
     if any("base_samples" not in r or "cand_samples" not in r for r in rows):
         raise ValueError("这份报告是旧格式，没存全部样本，重评不了；重新跑一次 eval")
-    wanted = [r["id"] for r in rows]
-    by_id = {c["id"]: c for c in cases_mod.load_cases(config.CASES_DIR, selector="all",
-                                                       include_seeds=True)}
-    missing = [cid for cid in wanted if cid not in by_id]
-    if missing:
-        raise KeyError(f"用例文件找不到了，没法重评：{', '.join(missing)}")
-    cases = [by_id[cid] for cid in wanted]
-    todo = sum(1 for r in rows for v in (r.get("pairs") or ())
-               if v.get("error") and v.get("reason") != "generation_error")
-    todo += sum(1 for r, c in zip(rows, cases)
-                if cases_mod.judge_prompts(c.get("checks")) and r.get("pairs") is None)
+    protocol = {"system": JUDGE_SYSTEM, "history_turns": JUDGE_HISTORY_TURNS}
+    if any(not isinstance(r.get("case_snapshot"), dict) or r.get("judge_protocol") != protocol
+           for r in rows):
+        raise ValueError("报告缺少原用例/评审协议快照，或评审协议已改变；不能混用新旧判据，请重新跑 eval")
+    cases = [r["case_snapshot"] for r in rows]
+    todo = 0
+    pending = []
+    for row, case in zip(rows, cases):
+        if not cases_mod.judge_prompts(case.get("checks")):
+            continue
+        prior = row.get("pairs") or []
+        needed = 0
+        for i, (b, c) in enumerate(zip(row["base_samples"], row["cand_samples"])):
+            prev = prior[i] if i < len(prior) else None
+            if b is None or c is None or b.strip() == c.strip():
+                continue
+            if not prev or prev.get("error") or prev.get("winner") is None:
+                needed += 1
+        if needed:
+            pending.append(case)
+            todo += needed
+    return old, rows, cases, pending, todo
+
+
+def describe_rejudge_traffic(config, ref):
+    """补评预览只列出待补评样本，不重新生成、不读取当前用例。"""
+    old, _, _, pending, todo = _rejudge_inputs(config, ref)
+    live = _possibly_live_cases(pending)
+    return [
+        f"重评报告 {old.get('stamp') or ref}：沿用原样本、原现场和原判据，不重新生成。",
+        f"待补评 {todo} 对，来自 {len(pending)} 条用例，其中本地用例 {len(live)} 条（可能含真实群聊及前文）。",
+        f"盲评：{_judge_destination(config)}；最多 {todo} × 2 次样本请求（失败可重试一次）"
+        + ("，另加 1 次合成预检。" if todo else "，无需预检或模型调用。"),
+    ]
+
+
+def rejudge_report(config, ref, *, judge_fn=None, write=True, allow_paid=True):
+    """沿用报告冻结的全部样本、现场与判据，只补失败盲评；修改判据须新跑 eval。"""
+    old, rows, cases, _, todo = _rejudge_inputs(config, ref)
     if todo and not allow_paid:
         raise PaidEvaluationRequired("eval --rejudge has judge pairs to run; it requires --allow-paid")
     if todo and judge_fn is None:
