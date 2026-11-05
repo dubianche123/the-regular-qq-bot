@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0 — 2026-11-05
+
+- Make the source package a guided starting point: Windows, macOS and Linux
+  launchers prepare a local environment and open the browser panel. Keep private
+  instance data separate from the source workspace.
+- Add browser configuration for QQ, the chat provider and a daily call limit.
+  Preserve blank passwords, show environment overrides, and save without model
+  requests. Explicitly start a bot from the panel and stop only its owned child;
+  report connection readiness from the matching live process.
+- Introduce an Agent handoff page: review findings, download a task brief, open
+  the source workspace, and follow the bundled iteration skill. Recorded scenes,
+  regression cases, bounded replay and independent judging support changes that
+  the maintainer chooses to release.
+- Give proactive speech a bounded chronological scene with people, relative
+  times, image evidence and the bot's actual delivery outcomes. Persist recent
+  outcomes and proactive cooldowns across restarts. Quote the selected older
+  message, with a visible text reference when a native reference is unavailable.
+- Distinguish delivered, failed and uncertain media outcomes; an uncertain voice
+  receipt no longer becomes a successful voice delivery in conversation history.
+- Include the intervening replay, checkup/recall strategy evaluation, reminder
+  review and cancellation, precise reminder mentions, and still/GIF support.
+  Proactive image/voice selection remains a separate follow-up.
+
 ## 0.2.0 — 2026-10-20
 
 - Publish installable wheel and source archives in the GitHub Release. End users

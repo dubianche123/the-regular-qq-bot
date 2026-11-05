@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "the-regular"
-description = "A QQ group companion with code-owned relationships and memory"
+description = "A QQ group companion you can improve with your coding agent and group feedback"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
