@@ -6,7 +6,7 @@
 
 **Let your coding agent help improve a QQ companion for your group, guided by real chat feedback.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1621-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1689-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 [中文](README.md) · **English** · [Message flow](#one-message-through-the-system) · [Decisions input](#what-decisions-actually-sees) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
@@ -38,6 +38,8 @@ Code deduplicates the event, resolves @ mentions and quotes, and prepares image 
 There are three decisions here: **local code selects the path, Decisions returns a bounded semantic choice, and the reply model chooses what to say, whether to answer and whether to propose an action.** Platform @ mentions and names take different routes; for an unaddressed line, the reply model chooses to answer or return `〔不接〕` (pass). `〔画〕`, `〔动图〕`, `〔语音〕` and `〔提醒 …〕` propose still images, animated GIFs, voice and reminders. Code checks context, services, format, sensitive words and quota before execution. The next turn sees the actual result.
 
 For “draw an animated chicken playing basketball,” the reply model fills in a short motion loop and code requests GIF output from its `〔动图〕` marker. Members need no storyboard, frame count or duration. Still images and GIFs share the drawing quota and default to GPT Image 2.6 Flare; see [image and GIF configuration](docs/image-generation.md). This short request has passed live generation and QQ group delivery; see the [acceptance record](docs/gif-acceptance-2026-11-05.md).
+
+When speaking after a quiet interval, the model sees a bounded recent timeline with names, timing, human messages and the bot's actual text, image or voice outcomes. Failed and unconfirmed delivery stay distinct. It can quote the earlier line it is answering, skips the turn if chat resumes, and retains its proactive cooldown across restarts. **Proactive image and voice selection are deferred; this change focuses on context and text.** See [proactive quotes](docs/quotes.md#proactive-quote) and [scene construction](docs/self-iteration.md#proactive-scene).
 
 The inputs, judgments and outcomes also become the evidence for [offline improvement](#self-iteration-the-loop-as-commands). For modules, see the [detailed architecture](docs/readme/architecture.svg), [image and voice](docs/media-replies.md), and [quotes and @](docs/quotes.md).
 
@@ -189,36 +191,38 @@ Earlier iterations also examined [three image-reading failures](docs/image-befor
 
 ## Quick start
 
-You need Python 3.10 or later, a QQ bot, and a compatible model service. The terminal demo runs without QQ credentials or an API key:
+Install **Python 3.10 or later**, then download **Source code (zip)** from [GitHub Releases](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) and extract it. A Git clone also works. The launchers need the full source tree; a wheel does not include this source entry point.
+
+1. **Open the local panel.** Double-click `start.bat` on Windows or `start.command` on macOS; on Linux, run `bash start.sh` in the extracted directory. The first launch creates a local `.venv` and downloads dependencies; a version change updates the installation before opening your browser. If macOS blocks the double-click, run `bash start.sh` in a terminal in the project directory. Python and environment setup are covered in the [getting-started guide](docs/getting-started.md) (Chinese).
+2. **Fill in the minimum configuration.** A new instance opens “开始使用” (Setup): enter QQ AppID, AppSecret, bot names, and one reply model's base URL, model ID, API key and daily call limit. Saving makes no model request. Blank password fields retain existing values; basic configuration takes effect the next time the bot starts.
+3. **Start explicitly.** On “概览” (Overview), click “启动机器人” (Start bot), then wait for the actual “已连上 QQ” connection status. Opening the page or saving settings does not connect QQ. Keep the panel terminal running. Closing the browser tab does not stop the bot; exiting the panel service stops the bot it started.
+4. **Message it privately before inviting others.** Enable C2C and the required group events and configure test/access scope in the QQ console. The first nonempty private message claims ownership, so send it yourself. Add the bot to your group, allow group messages, and try an @ mention or a configured name.
+
+Private instance data defaults to **`~/.the-regular`**, separate from downloaded source. Later launches reuse that instance without taking over an existing deployment. Set `REGULAR_INSTANCE_DIR` or pass launcher `--directory` to choose another location. See the [first-use guide](docs/getting-started.md) for installation, Windows commands, later launches and troubleshooting.
+
+![Local setup panel: QQ, reply model and daily budget (Chinese interface)](docs/readme/setup.jpg)
+
+After installation, the terminal demo works without QQ credentials or an API key:
 
 ```bash
-git clone https://github.com/dubianche123/the-regular-qq-bot.git
-cd the-regular-qq-bot
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-regular demo
+# macOS / Linux; on Windows use .venv\Scripts\python.exe
+.venv/bin/python -m regular demo
 ```
 
-To connect a QQ bot, prepare its AppID and AppSecret and your model-service credentials, then run:
-
-```bash
-regular --directory regular-bot setup
-regular --directory regular-bot run
-```
-
-Enable C2C and group events in the QQ Open Platform console. **The first private message to the running bot claims ownership**; send it yourself before inviting others. After adding the bot to a group, allow it to receive all group messages in the group settings. You can address it with an @ mention or a configured name.
+The panel's checkup page reads local records. “让 Agent 改进” (Improve with your agent) provides steps and a downloadable handoff containing the source directory, instance directory and workflow; it does not control your coding agent. A source ZIP has no Git history, so compare baseline and candidate directories. Wheel users should obtain a source workspace first.
 
 | Command | What it does |
 | --- | --- |
 | `regular demo` | offline demo through the production message handler |
 | `regular setup` / `init` | guided setup / only create a private `.env` |
 | `regular doctor` / `status` | local checks / read the runtime snapshot |
-| `regular panel` | local maintenance panel (127.0.0.1 only) |
+| `regular --directory ~/.the-regular panel --open` | open the local configuration and maintenance panel (127.0.0.1 only) |
 | `regular service` | generate a launchd / systemd definition (never installs it) |
 | `regular coverage` / `calibration` | read-only stats: personal-quote coverage, judgment probabilities vs. outcomes |
 
 Decisions, search, vision, voice and drawing need the corresponding services. See [provider configuration](docs/providers.md), [.env.example](.env.example) and [image generation](docs/image-generation.md).
+
+The panel can stop only the bot it started. Existing terminal, launchd or systemd processes are read-only here and remain managed through their original launch method.
 
 After deployment, use `regular --directory <instance> status --json` to check `code.release`, `code.source_root` and `image_generation`, written by the running process. Verify the expected version, source directory and GIF capability along with gateway readiness. A service pinned to a release directory also needs its `PYTHONPATH` updated and its service definition reloaded.
 

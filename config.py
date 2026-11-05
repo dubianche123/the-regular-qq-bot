@@ -7,12 +7,17 @@
 import math
 import os
 from pathlib import Path
-from dotenv import load_dotenv as _load_dotenv
+from dotenv import dotenv_values as _dotenv_values, load_dotenv as _load_dotenv
 from regular.keys import read_api_keys
 
 # CLI sets REGULAR_HOME explicitly; direct source runs keep the old project root.
 BASE_DIR = str(Path(os.environ.get("REGULAR_HOME", Path(__file__).parent)).expanduser().resolve())
 CONFIG_ERRORS = []
+# The panel must distinguish explicit parent environment from values imported
+# from .env, so a newly saved file is read afresh by a child bot process.
+EXTERNAL_ENV_KEYS = frozenset(os.environ)
+DOTENV_KEYS_AT_IMPORT = frozenset(_dotenv_values(
+    os.path.join(BASE_DIR, ".env"), interpolate=False, encoding="utf-8"))
 
 
 def load_dotenv(path=None):

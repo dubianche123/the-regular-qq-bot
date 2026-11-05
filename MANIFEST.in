@@ -1,5 +1,8 @@
 include .env.example sensitive_nicks.example.txt README_EN.md CHANGELOG.md CONTRIBUTING.md .python-version Dockerfile compose.yaml .dockerignore
 include knowledge/README.md
+include start.sh start.command start.bat AGENTS.md .gemini/settings.json
+recursive-include .agents/skills/regular-iterate *.md *.py
+recursive-include .claude/skills/regular-iterate *.md
 recursive-include tools *.py *.sh *.md
-recursive-include docs *.md *.svg
+recursive-include docs *.md *.svg *.jpg
 recursive-include tests *.py

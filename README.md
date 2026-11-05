@@ -6,7 +6,7 @@
 
 **让你的 Agent 根据群聊反馈，帮你迭代出更懂你们的 QQ 群机器人。**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1621-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1689-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 **中文** · [English](README_EN.md) · [信息流](#一句话进来之后) · [Decisions 输入](#decisions-究竟看到了什么) · [自己迭代](#自己迭代把这一圈做成命令) · [快速开始](#开始使用) · [设计文档](#设计文档)
 
@@ -38,6 +38,8 @@
 这里有三个不同的决定：**本地代码选择路径，Decisions 给出有边界的语义判断，回复模型决定说什么、是否回应，以及要不要提出动作。** 平台 @ 与只喊名字走不同路径；没点名的消息由回复模型自己选择接话或 `〔不接〕`。`〔画〕`、`〔动图〕`、`〔语音〕`、`〔提醒 …〕` 是动作意图，服务、格式、词表、额度和执行结果都由代码核对。模型下一轮看到的是实际结果。
 
 比如「画个打篮球的鸡的动图」：回复模型自己补全短循环动作，代码按 `〔动图〕` 请求 GIF；群友不必提供分镜、帧数或时长。静图和动图共用画图额度，默认使用 GPT Image 2.6 Flare，见[画图与动图配置](docs/image-generation.md)。 已用这句短请求完成真实生成和 QQ 群投递，见[实测记录](docs/gif-acceptance-2026-11-05.md)。
+
+隔一阵主动接话时，模型看到有称呼、时间顺序的近期现场，包括群友原话和机器人实际送达的文字、图片或语音结果；失败和送达未确认会明确区分。针对旧话可以引用原句，群聊恢复活动就跳过本轮，主动发言冷却也会跨重启保留。**主动选择画图或语音暂缓，本次先把现场和文字接话接准。** 见[主动引用](docs/quotes.md#proactive-quote)和[现场修复说明](docs/self-iteration.md#proactive-scene)。
 
 这些决定和当轮输入一起留下来，供[离线改进](#自己迭代把这一圈做成命令)重放。要看模块细节，可展开[详细架构图](docs/readme/architecture-cn.svg)，或读[画图与语音](docs/media-replies.md)、[引用与 @](docs/quotes.md)。
 
@@ -189,36 +191,38 @@ DEPLOY=/path/to/regular-bot
 
 ## 开始使用
 
-需要 Python 3.10 或以上、QQ 机器人账号，以及可用的模型服务。可以先在终端体验，不需要 QQ 账号或 API Key：
+先安装 **Python 3.10 或以上**，再从 [GitHub Releases](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) 下载 **Source code (zip)** 并解压。也可以用 Git 克隆仓库。启动文件需要完整源码，wheel 安装包不包含这套源码入口。
+
+1. **打开本机面板。** Windows 双击 `start.bat`；macOS 双击 `start.command`；Linux 在解压目录运行 `bash start.sh`。首次启动会创建本地 `.venv` 并联网安装依赖，版本变化时更新安装，然后打开浏览器。macOS 若阻止双击，可在项目目录终端运行 `bash start.sh`；找不到 Python 或创建环境失败时，按[新手指南](docs/getting-started.md)处理。
+2. **填写最小配置。** 新实例会进入「开始使用」页：填 QQ `AppID`、`AppSecret`、机器人名字，以及一个回复模型的接口地址、模型 ID、API Key 和每日调用次数上限。保存不调用模型；密码留空会保留已有值，基础配置下次启动机器人时生效。
+3. **明确点击启动。** 在「概览」点击「启动机器人」，等页面显示实际 **已连上 QQ**。仅打开网页、保存配置都不会连接 QQ。保持面板服务的终端开启；关网页不停止机器人，退出面板服务会停止它自己启动的机器人。
+4. **由你先私聊，再进群。** 在 QQ 开放平台启用私聊与所需群消息事件、配置测试或使用范围；首次非空私聊会认主，请你先发。拉进群并允许接收群消息后，用 @ 或配置的名字试一句。
+
+默认私有实例放在 **`~/.the-regular`**，与下载的源码分开；重复启动沿用该目录，不自动接管已有部署。也可用 `REGULAR_INSTANCE_DIR` 或启动器 `--directory` 指定。完整安装、Windows 命令、再次启动和问题排查见[第一次使用指南](docs/getting-started.md)。
+
+![首次配置：QQ 机器人、回复模型与预算在同一页](docs/readme/setup.jpg)
+
+安装完成后，可以先离线体验，不需要 QQ 账号或 API Key：
 
 ```bash
-git clone https://github.com/dubianche123/the-regular-qq-bot.git
-cd the-regular-qq-bot
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-regular demo
+# macOS / Linux；Windows 使用 .venv\Scripts\python.exe
+.venv/bin/python -m regular demo
 ```
 
-要接入自己的 QQ 机器人，准备 `AppID`、`AppSecret` 和模型服务凭据，运行配置向导并启动：
-
-```bash
-regular --directory regular-bot setup
-regular --directory regular-bot run
-```
-
-在 QQ 开放平台开启私聊和群消息事件。上线后第一个私聊机器人并发消息的人会被认作主人，请由你先完成这一步；把它拉进群，并在群设置中允许机器人获取群消息，就可以 @ 它或用配置的名字聊天。
+面板「体检」只读本机记录；「让 Agent 改进」提供操作步骤和可下载的交接说明，把源码目录、实例目录和迭代流程交给你自己的编码 Agent，不会自动控制 Agent。源码 ZIP 没有 Git 历史，比较时使用基线与候选目录；wheel 用户先获取源码工作区。
 
 | 命令 | 做什么 |
 | --- | --- |
 | `regular demo` | 离线体验，走的是生产的消息处理链路 |
 | `regular setup` / `init` | 配置向导 / 只生成私有 `.env` |
 | `regular doctor` / `status` | 本地体检 / 读运行时状态快照 |
-| `regular panel` | 本机维护面板（只绑 127.0.0.1） |
+| `regular --directory ~/.the-regular panel --open` | 打开本机配置与维护面板（只绑 127.0.0.1） |
 | `regular service` | 生成 launchd / systemd 定义（不自动安装） |
 | `regular coverage` / `calibration` | 只读统计：个人原话覆盖率、判断概率对照实际结果 |
 
 判断接口、联网、识图、语音和画图需要对应服务和配置。配置方法见[供应商说明](docs/providers.md)、[示例配置](.env.example)和[画图说明](docs/image-generation.md)。
+
+面板只会停止它自己启动的机器人；已有终端、launchd 或 systemd 进程在这里仅查看状态，由原来的方式管理。
 
 发布后用 `regular --directory <部署目录> status --json` 核对运行进程写出的 `code.release`、`code.source_root` 和 `image_generation`。除 QQ 网关就绪外，代码版本、来源目录和动图能力也应与预期一致；固定发布目录的服务还要同步更新 `PYTHONPATH` 并重新加载服务定义。
 

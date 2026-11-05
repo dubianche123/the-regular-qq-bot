@@ -1,10 +1,11 @@
-"""本机维护面板 —— 只绑定 loopback，单独进程，不碰 QQ 连接和模型。
+"""本机配置与维护面板 —— 只绑定 loopback，不直接连接 QQ 或请求模型。
 
 用途是维护者视角的几个高频动作：
   · 看运行状态、预算、群列表；
   · 直接编辑 knowledge/*.md，保存后 bot 下一轮自动重载；
   · 查看每日记忆 MD（只读，摘要仍归压缩流程）；
   · 手动跑一次 DuckDuckGo，检查搜索是否可用。
+  · 配置实例；用户点击后启动机器人，只停止本面板持有的子进程。
 
 它不是远程后台：默认只监听 127.0.0.1，并要求本地 token。知识库保存走
 storage.atomic_write_text，文件名校验后再落盘，避免路径穿越。
@@ -17,6 +18,8 @@ import hmac
 import json
 import os
 import secrets
+import shlex
+import sys
 import time
 import webbrowser
 from pathlib import Path
@@ -25,6 +28,8 @@ from urllib.parse import quote
 from aiohttp import web
 
 from regular import decision_settings
+from regular import instance_settings
+from regular.panel_runtime import PanelRuntime
 
 import knowledge as knowledge_mod
 import search as search_mod
@@ -149,10 +154,12 @@ def _esc(value):
     return html.escape(str(value if value is not None else ""))
 
 
-def _page(title, body, active=""):
+def _page(title, body, active="", refresh=0):
     nav = [
+        ("/setup", "开始使用", "setup"),
         ("/", "概览", "home"),
         ("/checkup", "体检", "checkup"),
+        ("/iterate", "让 Agent 改进", "iterate"),
         ("/knowledge", "知识库", "knowledge"),
         ("/memory", "记忆", "memory"),
         ("/search", "搜索", "search"),
@@ -166,6 +173,7 @@ def _page(title, body, active=""):
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_esc(title)} · The Regular</title>
+{f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh else ''}
 <style>
 :root {{ color-scheme: light; --bg:#f4f1ea; --card:#fffdf8; --ink:#25231f;
   --muted:#77716a; --line:#ded7cc; --accent:#9a5b35; --bad:#a33b32; --good:#2f6b4f; }}
@@ -174,7 +182,7 @@ body {{ margin:0; background:var(--bg); color:var(--ink);
   font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
 header {{ background:var(--card); border-bottom:1px solid var(--line); }}
 .wrap {{ max-width:1040px; margin:0 auto; padding:0 20px; }}
-header .wrap {{ display:flex; align-items:center; gap:22px; height:56px; }}
+header .wrap {{ display:flex; align-items:center; gap:22px; min-height:56px; padding-top:12px; padding-bottom:12px; flex-wrap:wrap; }}
 .brand {{ font-weight:700; letter-spacing:.02em; }}
 nav {{ display:flex; gap:14px; flex-wrap:wrap; }}
 nav a {{ color:var(--muted); text-decoration:none; padding:4px 0; }}
@@ -204,6 +212,18 @@ textarea {{ width:100%; min-height:420px; padding:12px; border:1px solid var(--l
 input[type=text],input[type=password] {{ padding:9px 11px; border:1px solid var(--line);
   border-radius:8px; background:var(--card); color:var(--ink); min-width:260px; }}
 form.decision input {{ width:100%; max-width:560px; min-width:0; }}
+form.setup input {{ width:100%; min-width:0; }}
+form.setup label {{ display:block; margin:14px 0; }}
+input[type=number] {{ padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }}
+.hero {{ padding:24px; margin-bottom:18px; background:var(--card); border:1px solid var(--line); border-radius:14px; }}
+.hero h1 {{ font-size:28px; }}
+.steps {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin:18px 0; }}
+.step-no {{ color:var(--accent); font-size:12px; font-weight:700; }}
+.button {{ display:inline-block; padding:9px 16px; border-radius:8px; background:var(--accent); color:white; text-decoration:none; font-weight:600; }}
+.secondary {{ background:transparent; color:var(--accent); border:1px solid var(--line); }}
+details {{ margin:16px 0; }} summary {{ cursor:pointer; font-weight:600; }}
+textarea.brief {{ min-height:240px; }}
+small {{ color:var(--muted); }}
 button {{ padding:9px 16px; border:0; border-radius:8px; background:var(--accent);
   color:white; font-weight:600; cursor:pointer; }}
 .row {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
@@ -225,14 +245,17 @@ def _status_cards(snapshot, state):
     main = (providers.get("providers") or [{}])[0]
     age = time.time() - float(snapshot.get("updated_at") or 0) if snapshot else None
     age_text = "无快照" if age is None else f"{age:.0f}s 前"
-    lifecycle = snapshot.get("lifecycle") or "unknown"
-    gateway = snapshot.get("gateway_connected")
+    lifecycle = {"ready": "运行中", "starting": "启动中", "stopped": "已停止",
+                 "error": "运行出错"}.get(snapshot.get("lifecycle"), "尚无运行记录")
+    if age is not None and age > 120:
+        lifecycle = "状态已过期"
+    gateway = snapshot.get("gateway_connected") and age is not None and age <= 120
     budget_text = f"{budget.get('used', '?')} / {budget.get('limit', '?')}"
     model = (main.get("models") or ["?"])[0]
     vision = providers.get("vision") or {}
     groups = len(_groups(state))
     cards = [
-        ("运行状态", lifecycle + (" · 网关在线" if gateway else " · 网关离线")),
+        ("运行状态", lifecycle + (" · QQ 在线" if gateway else " · QQ 待确认")),
         ("快照", age_text),
         ("今日预算", budget_text),
         ("主模型", f"{main.get('label') or main.get('name') or '?'} · {model}"),
@@ -245,8 +268,11 @@ def _status_cards(snapshot, state):
         for label, value in cards)
 
 
-def _dashboard(cfg):
+def _dashboard(cfg, *, csrf="", runner=None):
     snapshot, state = _status(cfg)
+    managed = runner.snapshot() if runner is not None else {}
+    if runner is not None:
+        snapshot = {**snapshot, "gateway_connected": managed.get("gateway_connected", False)}
     groups = _groups(state)
     rows = []
     for gid in sorted(groups):
@@ -283,14 +309,137 @@ def _dashboard(cfg):
                        + "".join(files) + "</tbody></table>") if files else '<p class="muted">知识库还没有文件。</p>'
     log = _tail(cfg.LOG_FILE)
     body = f"""
-<h1>概览</h1>
-<p class="muted">只读状态来自 status.json；知识库保存后 bot 下一轮自动重载。</p>
+<h1>你的老群友</h1>
+<p class="muted">看它是否连上 QQ、今天的消耗，以及下一步可以做什么。</p>
+{_runtime_controls(cfg, csrf, runner) if runner is not None else ''}
 <div class="grid">{_status_cards(snapshot, state)}</div>
 <h2>群</h2>{group_table}
 <h2>知识库</h2>{knowledge_table}
 <h2>最近日志</h2><pre>{_esc(log or "暂无日志")}</pre>
 """
-    return _page("概览", body, "home")
+    return _page("概览", body, "home", refresh=5 if managed.get("owned") and managed.get("running")
+                 and not managed.get("gateway_connected") else 0)
+
+
+def _setup_page(cfg, request, csrf):
+    try:
+        settings = instance_settings.public_settings(cfg, request.query.get("provider"))
+    except ValueError:
+        raise web.HTTPBadRequest(text="请选择页面提供的模型供应商") from None
+    provider = settings["provider"]
+    choices = " ".join(f'<a class="button {"" if key == provider else "secondary"}" '
+                       f'href="/setup?provider={key}">{label}</a>' for key, label in
+                       (("openai", "OpenAI 兼容接口"), ("zhipu", "智谱"), ("gemini", "Gemini")))
+    notice = '<div class="notice good">配置已保存。运行中的机器人在下次启动时读取新配置。</div>' if request.query.get("saved") else ""
+    if settings.get("overridden"):
+        notice += '<div class="notice">这些项目由启动环境设置，环境变量优先生效：' + _esc(
+            "、".join(settings["overridden"])) + '。请在启动面板的环境中调整。</div>'
+    missing = "、".join(settings.get("missing") or ())
+    readiness = f"启动前还需填写：{_esc(missing)}" if missing else "必填配置齐了，可以到概览启动。"
+    body = f'''<div class="hero"><div class="step-no">第一次使用 · 1 / 3</div>
+<h1>先让它走进你的 QQ 群</h1>
+<p>填好 QQ 机器人和一个回复模型，启动后先和它私聊，再邀请进群。之后可以让自己的 Agent 根据群聊反馈继续改进。</p></div>
+{notice}<p class="notice">{readiness}</p>
+<form method="post" action="/setup/save" class="setup">
+<input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="provider" value="{_esc(provider)}">
+<div class="grid"><section class="card"><h2>1. QQ 机器人</h2>
+<p>在 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台</a>创建机器人后取得这两项。</p>
+<label>AppID<input type="text" name="qq_app_id" value="{_esc(settings.get('qq_app_id'))}" autocomplete="off"></label>
+<label>AppSecret<input type="password" name="qq_app_secret" value="" autocomplete="new-password"
+placeholder="{'已配置，留空保留' if settings.get('qq_secret_configured') else '填写 QQ AppSecret'}"></label>
+<label>它的名字（可选，多个名字用逗号分隔）<input type="text" name="bot_names" value="{_esc(settings.get('bot_names'))}" placeholder="小王,老群友"></label>
+<p><small>QQ 控制台还需启用私聊与所需群消息事件，并配置测试或使用范围。平台授权需要你本人完成。</small></p></section>
+<section class="card"><h2>2. 回复模型</h2><div class="row">{choices}</div>
+<p><small>选择你已开通的服务；使用兼容网关也选 OpenAI 兼容接口。</small></p>
+<label>接口地址<input type="text" name="base_url" value="{_esc(settings.get('base_url'))}" placeholder="供应商提供的完整 API 基础地址"></label>
+<label>模型 ID<input type="text" name="models" value="{_esc(settings.get('models'))}" placeholder="供应商提供的聊天模型 ID"></label>
+<label>API Key<input type="password" name="api_key" value="" autocomplete="new-password"
+placeholder="{'已配置，留空保留' if settings.get('key_configured') else '填写这个服务的 Key'}"></label>
+<label>每日 AI 调用次数上限<input type="number" name="daily_budget" min="0" value="{_esc(settings.get('daily_budget', 3000))}"></label>
+<p><small>这是调用次数，不是金额。保存配置不会请求模型或消耗调用额度；Key 不在页面回显。</small></p></section></div>
+<div class="row" style="margin-top:18px"><button type="submit">保存配置</button><a class="button secondary" href="/">去启动和检查连接 →</a></div></form>
+<section class="card" style="margin-top:22px"><h2>3. 先完成基本聊天，再加能力</h2>
+<p>判断 API、画图、语音等可以稍后配置。判断 API 同时用于提醒的语义审核，未配置时不会保存新的提醒。</p>
+<p><a href="/decision">配置判断 API</a> · <a href="/iterate">看看怎样让你的 Agent 帮忙改进</a></p></section>
+<details><summary>配置和数据保存在哪里？</summary><p>实例：<code>{_esc(settings.get('instance_dir'))}</code></p>
+<p>配置：<code>{_esc(settings.get('config_file'))}</code></p><p>聊天与私有数据：<code>{_esc(settings.get('data_dir'))}</code></p>
+<p>源码可以升级，实例目录请保留。不要把配置、群聊记录或密钥推送到公开仓库。</p></details>'''
+    return _page("开始使用", body, "setup")
+
+
+def _runtime_controls(cfg, csrf, runner):
+    settings = instance_settings.public_settings(cfg)
+    managed = runner.snapshot()
+    snapshot, state = _status(cfg)
+    age = time.time() - float(snapshot.get("updated_at") or 0) if snapshot else None
+    online = bool(managed.get("gateway_connected"))
+    if managed.get("owned") and managed.get("running"):
+        controls = f'<form method="post" action="/runtime/stop"><input type="hidden" name="csrf" value="{_esc(csrf)}"><button class="secondary">停止本面板启动的机器人</button></form>'
+    elif managed.get("external"):
+        controls = '<p class="muted">机器人由其他终端或常驻服务管理，请在原启动方式中操作；本面板不会停止它。</p>'
+    elif settings.get("ready"):
+        controls = f'<form method="post" action="/runtime/start"><input type="hidden" name="csrf" value="{_esc(csrf)}"><button>启动机器人</button></form>'
+    else:
+        controls = '<a class="button" href="/setup">完成首次配置 →</a>'
+    if online:
+        headline, detail = '已连上 QQ', '先给机器人发一条私聊，绑定你为维护者；再在群里叫它的名字试一句。'
+    elif managed.get("running"):
+        headline, detail = '进程已启动，等待 QQ 连接确认', '启动成功以真实 QQ 网关就绪为准。若迟迟没有连上，请检查 AppID、AppSecret 和下方日志。'
+    else:
+        headline, detail = '准备好后，启动你的老群友', '运行需要保持本机和启动面板的终端开启。常驻运行的设置可以稍后再做。'
+    if age is not None and age > 120:
+        detail = '运行状态已超过两分钟未更新，不能据此判断在线。请检查原进程或下方启动日志。'
+    owner_path = getattr(cfg, "OWNER_FILE", str(Path(cfg.DATA_DIR) / "owner.txt"))
+    owner = bool(_read_text(owner_path).strip())
+    code = snapshot.get("code") or {}
+    boot_log = managed.get("log_file") or str(Path(cfg.DATA_DIR) / "panel-start.log")
+    return f'''<section class="hero"><div class="step-no">运行与连接</div><h2>{headline}</h2><p>{detail}</p>
+<div class="row">{controls}<a href="/">刷新状态</a> · <a href="/setup">查看或修改配置</a></div></section>
+<div class="steps"><div class="card"><div class="step-no">1 · 服务配置</div><h2>{'已填齐' if settings.get('ready') else '尚待填写'}</h2><a href="/setup">QQ 与回复模型</a></div>
+<div class="card"><div class="step-no">2 · QQ 连接</div><h2>{'已确认' if online else '等待确认'}</h2><p>以运行进程的实际状态为准</p></div>
+<div class="card"><div class="step-no">3 · 你的群</div><h2>{len(_groups(state))} 个群 · {'已认主' if owner else '待私聊认主'}</h2><p>首次非空私聊会静默绑定维护者</p></div>
+<div class="card"><div class="step-no">下一步 · 适应你的群</div><h2>从反馈开始</h2><a href="/checkup">看今日体检</a> · <a href="/iterate">交给自己的 Agent</a></div></div>
+<details><summary>当前版本与启动日志</summary><p>运行代码：<code>{_esc(code.get('release') or '尚无运行记录')}</code></p>
+<p>代码位置：<code>{_esc(code.get('source_root') or '—')}</code></p><pre>{_esc(_tail(str(boot_log)) or '暂无本面板启动日志')}</pre></details>'''
+
+
+def _agent_brief(cfg):
+    directory = instance_settings.public_settings(cfg)["instance_dir"]
+    code_root = Path(__file__).resolve().parent
+    command = shlex.join([sys.executable, "-m", "regular", "--directory", directory,
+                          "checkup", "--day", "today"])
+    return f'''请帮助我改进 The Regular · 老群友，让它更适应我的 QQ 群。
+运行实例（私有配置和数据）：{directory}
+当前安装代码位置：{code_root}
+
+先在源码工作区阅读 AGENTS.md 和 .agents/skills/regular-iterate/SKILL.md。
+如果当前只有安装包，先准备独立源码工作区，保留上面的实例目录，不把私有数据拷进公开仓库。
+先运行只读体检：{command}
+根据我指出的表现找到当轮输入和实际送达结果，区分代码问题与提示词问题，保存回归用例。
+修改后在相同现场比较新旧版本，同时检查正常场景是否被改坏。
+任何含真实群聊的外发评测，先用 --plan 告诉我会把哪些内容发给哪些模型，获得授权后再 --allow-paid。
+源码 ZIP 没有 Git 历史时，用基线目录与候选目录比较，不假定 HEAD 存在。
+把结论、未覆盖项和上线建议交给我；提交、发布、重启机器人都等我明确要求。
+
+我观察到的问题：
+（在这里补一句描述，或把截图交给 Agent；这份交接说明本身不包含群聊或密钥。）
+'''
+
+
+def _iterate_page(cfg):
+    code_root = Path(__file__).resolve().parent
+    source_ready = (code_root / "AGENTS.md").is_file() and (code_root / ".agents/skills/regular-iterate/SKILL.md").is_file()
+    source_note = ('源码工作区已带上 AGENTS.md 与自迭代 skill。让你的编码 Agent 打开这个目录。'
+                   if source_ready else '当前是运行安装包。要修改机器人，请先下载源码工作区；源码包自带 AGENTS.md 和自迭代 skill。实例数据继续用原目录。')
+    body = f'''<div class="hero"><div class="step-no">让它更懂你们的群</div><h1>把反馈交给你的 Agent</h1>
+<p>你指出哪里不对，Agent 找现场、提出改动，用新旧回放检验。你决定哪些改动上线。</p></div>
+<div class="steps"><div class="card"><div class="step-no">1 · 看现场</div><h2>截图或每日体检</h2><p>记下哪句话让你觉得不对，而不必先猜该改哪条提示词。</p><a href="/checkup">打开体检 →</a></div>
+<div class="card"><div class="step-no">2 · 让 Agent 修改</div><h2>带上目录和流程</h2><p>{source_note}</p><a href="https://github.com/dubianche123/the-regular-qq-bot/releases/latest" target="_blank" rel="noreferrer">获取源码包 →</a></div>
+<div class="card"><div class="step-no">3 · 比较后再发布</div><h2>看修好，也看改坏</h2><p>体检只在本机读日志。付费回放与真实群聊外发先预览并征得你的同意；面板不会自动上传聊天或自动改代码。</p></div></div>
+<h2>可直接交给 Agent 的说明</h2><p>下载或复制下面这段，在编码 Agent 中打开源码目录后发送。它不会自动连接或控制你的 Agent。</p>
+<p><a class="button" href="/iterate/brief">下载交接说明</a></p><textarea class="brief" readonly aria-label="交给 Agent 的任务说明">{_esc(_agent_brief(cfg))}</textarea>
+<h2>日常资料</h2><div class="row"><a href="/knowledge">维护群知识</a> · <a href="/memory">查看已生成的记忆</a> · <a href="/decision">配置判断帮手</a></div>'''
+    return _page("让 Agent 改进", body, "iterate")
 
 
 def _knowledge(cfg, request):
@@ -410,7 +559,7 @@ def _decision(cfg, request, csrf):
     saved_path = os.path.join(str(cfg.DATA_DIR), decision_settings.FILENAME)
     notice = ""
     if request.query.get("saved"):
-        notice = '<div class="notice good">已保存。下一步在聊天里告诉它「填好了」。</div>'
+        notice = '<div class="notice good">已保存。后续判断会读取这份配置；保存本身没有调用模型。</div>'
     elif not settings["key_configured"] and os.path.isfile(saved_path):
         # 文件在但读不出合法配置：只给通用提示，不回显文件内容
         notice = '<div class="notice bad">已保存的配置暂时无法读取，请重新填写并保存。</div>'
@@ -419,8 +568,8 @@ def _decision(cfg, request, csrf):
     body = f"""
 <h1>判断 API</h1>
 <p class="muted">给老群友接一个判断帮手：理解反馈、挑选记忆、拿捏介入。
-这里只保存独立配置，不改当前聊天模型，也不重启机器人。保存后在聊天里告诉我「填好了」，
-我会用模拟群聊先做最多 6 次真实调用。</p>
+这里只保存独立配置，不改当前聊天模型，也不重启机器人。需要验证时，
+可在「让 Agent 改进」页取得交接说明，请自己的编码 Agent 先预览调用范围，再经你同意测试。</p>
 {notice}
 <div class="card">
 <p><span class="label">接口形态</span>：OpenAI 原生 GPT Decisions
@@ -590,6 +739,8 @@ async def _checkup_label(cfg, request, csrf):
 
 
 def create_app(cfg, *, token):
+    runner = PanelRuntime(cfg)
+
     @web.middleware
     async def auth(request, handler):
         supplied = (request.query.get("token") or request.headers.get(TOKEN_HEADER)
@@ -612,7 +763,54 @@ def create_app(cfg, *, token):
         return response
 
     async def home(request):
-        return _html(_dashboard(cfg))
+        settings = instance_settings.public_settings(cfg)
+        snapshot, state = _status(cfg)
+        if not settings.get("ready") and not snapshot and not state:
+            return _html(_setup_page(cfg, request, csrf))
+        return _html(_dashboard(cfg, csrf=csrf, runner=runner))
+
+    async def setup_page(request):
+        return _html(_setup_page(cfg, request, csrf))
+
+    async def checked_form(request):
+        form = await request.post()
+        if not hmac.compare_digest(str(form.get("csrf") or ""), csrf):
+            raise web.HTTPBadRequest(text="请求无效，请刷新页面后重试")
+        return form
+
+    async def setup_save(request):
+        form = await checked_form(request)
+        try:
+            instance_settings.save_settings(cfg, form)
+        except (ValueError, OSError):
+            raise web.HTTPBadRequest(text="保存失败：请检查接口地址、模型、每日上限与文件权限。") from None
+        raise web.HTTPFound("/setup?saved=1")
+
+    async def runtime_start(request):
+        await checked_form(request)
+        try:
+            runner.start()
+        except (ValueError, OSError, RuntimeError):
+            raise web.HTTPBadRequest(text="未能启动：请检查配置，或确认这个实例是否已由其他终端运行。") from None
+        raise web.HTTPFound("/")
+
+    async def runtime_stop(request):
+        await checked_form(request)
+        try:
+            await runner.stop()
+        except (ValueError, OSError, RuntimeError):
+            raise web.HTTPConflict(text="此进程不是本面板启动的，或已由其他方式结束。请刷新状态。") from None
+        raise web.HTTPFound("/")
+
+    async def iterate_page(request):
+        return _html(_iterate_page(cfg))
+
+    async def iterate_brief(request):
+        return web.Response(text=_agent_brief(cfg), content_type="text/plain", charset="utf-8",
+                            headers={"Content-Disposition": 'attachment; filename="regular-agent-brief.md"'})
+
+    async def cleanup(app):
+        await runner.close()
 
     async def knowledge(request):
         return _html(_knowledge(cfg, request))
@@ -641,6 +839,12 @@ def create_app(cfg, *, token):
     csrf = secrets.token_urlsafe(24)
     app = web.Application(middlewares=[auth])
     app.router.add_get("/", home)
+    app.router.add_get("/setup", setup_page)
+    app.router.add_post("/setup/save", setup_save)
+    app.router.add_post("/runtime/start", runtime_start)
+    app.router.add_post("/runtime/stop", runtime_stop)
+    app.router.add_get("/iterate", iterate_page)
+    app.router.add_get("/iterate/brief", iterate_brief)
     app.router.add_get("/checkup", checkup_page)
     app.router.add_post("/checkup/label", checkup_label)
     app.router.add_get("/knowledge", knowledge)
@@ -649,6 +853,7 @@ def create_app(cfg, *, token):
     app.router.add_get("/search", search)
     app.router.add_get("/decision", decision)
     app.router.add_post("/decision/save", decision_save)
+    app.on_cleanup.append(cleanup)
     return app
 
 
