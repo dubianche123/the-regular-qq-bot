@@ -36,6 +36,7 @@ import digest as digest_mod
 import expression
 import image_generation
 from regular import decisions as decisions_mod
+from regular import reminder_review
 import naming
 import prompts
 import qqtext
@@ -1055,11 +1056,12 @@ def media_turn(group_id, user_id, score, *, asked, remind=False):
     # 每轮都写 —— 它得照着算时间，被问「我那条还在吗」也答得上来。
     remind = remind and config.REMINDER_ENABLED and bool(group_id and user_id)
     if remind:
-        notes.append(reminders.render_note(
-            runtime.SCHEDULER.tasks.get(reminders.task_id(group_id, user_id)), time.time()))
+        task = runtime.SCHEDULER.tasks.get(reminders.task_id(group_id, user_id))
+        notes.append(_reminder_note(task, time.time()))
     return MediaTurn(group=group_id, user=user_id, score=score, draw=draw,
                      animate=draw and image_generation.animation_available(), voice=voice,
-                     remind=remind, note="\n".join(notes))
+                     remind=remind, reminder_revision=_reminder_revisions[group_id],
+                     note="\n".join(notes))
 
 
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
@@ -1073,11 +1075,20 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
     """
     async with runtime.SESSIONS.lock(session_id):
         generation = runtime.SESSIONS.begin_turn(session_id)
+        reminder_revision = getattr(media, "reminder_revision",
+                                    _reminder_revisions[getattr(media, "group", None)])
         # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
         # 从这里摘走，别漏进 get_ai_reply 的关键字里。
         history = context.pop("history", ())
         if media is not None and media.note:
             context["media_note"] = media.note
+        reminder_intent = getattr(media, "reminder_intent", None)
+        if getattr(media, "remind", False) and reminder_intent in ("clarify", "decline"):
+            context["media_note"] = "\n".join(filter(None, (
+                context.get("media_note"), prompts.PROMPT_REMIND_OUTCOME[reminder_intent])))
+        elif getattr(media, "remind", False) and reminder_intent == "clear":
+            context["media_note"] = "\n".join(filter(None, (
+                context.get("media_note"), prompts.PROMPT_REMIND_CLEAR)))
         # 本轮的注入痕迹 + 实际应答候选：都先重置再取，被 mock/失败的调用
         # 不会带着上一轮的出处来冒充。
         trace = {"personal_memory_used": False,
@@ -1101,7 +1112,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         if not generated and prepared is None and context.get("unprompted"):
             return "", delta, None   # 没叫它的这轮没生成出来：不说，不拿兜底话凑一句
         said = expression.parse(body) if generated else expression.Said(None, "", body or "")
-        if said.kind == "pass":
+        if said.kind == "pass" and not (getattr(media, "remind", False)
+                                        and reminder_intent in ("clarify", "decline")):
             logger.info("🤐 这句不接（%s）", session_id[-12:])
             return "", delta, None
         if is_stale is not None and is_stale():
@@ -1127,12 +1139,71 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         # 〔提醒 …〕：发出去之前就登记，记不上的原因补在它那句话后面（它已经答应了，得说实话）
         remind_note = ""
         remind_applied = None
-        if said.remind and getattr(media, "remind", False):
-            remind_note, remind_line = reminders.apply(
-                runtime.SCHEDULER, media.group, media.user, said.remind, time.time(),
-                blocked=wordfilter.has_hit)
-            remind_applied = bool(
-                remind_note.startswith("提醒记下了：") or remind_note.startswith("提醒取消了"))
+        recorded_remind = said.remind
+        reminder_verdict = None
+        if getattr(media, "remind", False) and (
+                said.remind or reminder_intent in ("clarify", "decline")):
+            proposed = said.remind
+            ids = (media.group, media.user, trace.get("message_id"), runtime.OWNER_OPENID,
+                   *(row.get("sender") for row in history if isinstance(row, dict)))
+            if proposed is None:
+                reminder_verdict = reminder_intent
+            elif proposed[0] == "set":
+                proposed = ("set", proposed[1], (proposed[2] or "").strip()[:100])
+                ids = (media.group, media.user, trace.get("message_id"), runtime.OWNER_OPENID,
+                       *(row.get("sender") for row in history if isinstance(row, dict)))
+                review_kwargs = {
+                    "context": "\n".join(filter(None, (context.get("context_hint"),
+                                            context.get("reply_context"), context.get("media_note")))),
+                    "history": runtime.SESSIONS._sessions.get(session_id, {}).get("messages", ())[-4:],
+                    "known_ids": ids}
+                if reminder_revision != _reminder_revisions[media.group]:
+                    reminder_verdict = "superseded"
+                elif reminder_intent in ("clarify", "decline"):
+                    reminder_verdict = reminder_intent
+                else:
+                    reminder_verdict = await reminder_review.review_reminder(
+                        user_text, proposed[2], proposed[1], **review_kwargs)
+                    _record_reminder_review(trace, user_text, proposed, review_kwargs, reminder_verdict)
+                if reminder_revision != _reminder_revisions[media.group]:
+                    reminder_verdict = "superseded"
+            if reminder_verdict in (None, "allow"):
+                remind_note, remind_line = reminders.apply(
+                    runtime.SCHEDULER, media.group, media.user, proposed, time.time(),
+                    blocked=reminder_review.task_blocked)
+                remind_applied = bool(
+                    remind_note.startswith("提醒记下了：") or remind_note.startswith("提醒取消了"))
+                if remind_applied and proposed[0] == "set":
+                    payload = runtime.SCHEDULER.tasks[reminders.task_id(media.group, media.user)]["payload"]
+                    payload.update(review_policy=reminder_review.POLICY_VERSION,
+                                   reviewed_what=payload["what"], reviewed_daily=payload["daily"])
+                recorded_remind = proposed
+            else:
+                # 先前答应的正文不能继续用；只重写一次，仍写功能标记则落准确的本地说明。
+                old = runtime.SCHEDULER.tasks.get(reminders.task_id(media.group, media.user))
+                note = prompts.PROMPT_REMIND_OUTCOME[reminder_verdict]
+                if old is not None:
+                    note += "\n已有提醒保持原状，不要声称取消或改了它。"
+                context["media_note"] = "\n".join(filter(None, (context.get("media_note"), note)))
+                if proposed is None:
+                    parsed = said   # 前置分诊已约束过第一次生成；不再为无动作的回复循环改写。
+                else:
+                    rewritten, delta, completion = await generate()
+                    parsed = expression.parse(rewritten)
+                valid = bool(parsed.kind is None and parsed.remind is None and parsed.text)
+                if valid:
+                    valid = await reminder_review.check_response(
+                        parsed.text, reminder_verdict, request=user_text, known_ids=ids)
+                    _record_reminder_response(trace, parsed.text, reminder_verdict, user_text, ids, valid)
+                body = parsed.text if valid else _reminder_not_saved_line(reminder_verdict)
+                said = expression.Said(None, "", body)
+                recorded_remind = None
+                remind_applied = False
+                remind_note = _reminder_not_saved_line(reminder_verdict)
+                old = runtime.SCHEDULER.tasks.get(reminders.task_id(media.group, media.user))
+                remind_line = f"（{remind_note}{'；原来的提醒没改' if old is not None else ''}）"
+                if body == remind_note:
+                    remind_line = "（原来的提醒没改）" if old is not None else ""
             runtime.STATE.mark_dirty()
             logger.info("⏰ %s（%s）", remind_note, session_id[-12:])
             body = "\n".join(part for part in (body, remind_line) if part) or remind_note
@@ -1147,8 +1218,11 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         recorded = {"as": expression.record_declined(body) if declined else None}
 
         def as_recorded(text):
-            return (expression.record_reminder(text, said.remind, remind_note)
-                    if remind_note else text)
+            if not remind_note:
+                return text
+            if recorded_remind is not None:
+                return expression.record_reminder(text, recorded_remind, remind_note)
+            return f"{text}\n（系统：{remind_note}）"
 
         def prepare():
             return hinted if generated and owner_hint_pending(owner_hint_group) else body
@@ -1183,6 +1257,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             interaction.update(completion)  # 真正答上来的 provider/model/tier/finish
         if remind_applied is not None:
             interaction["remind_applied"] = remind_applied
+        if reminder_verdict is not None:
+            interaction["reminder_review"] = reminder_verdict
         if trace.get("turn_id"):
             interaction["turn_id"] = trace["turn_id"]   # 这句话是哪一轮输入生成的（data/turns）
         # 只有「本群 + 有源发言者 + 有源消息 ID」的 AI 会话回复才可被反馈绑定；
@@ -1233,7 +1309,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         result = await safe_reply(
             message, body, on_delivered=commit,
             interaction=interaction,
-            is_current=lambda: runtime.SESSIONS.generation(session_id) == generation,
+            is_current=lambda: (runtime.SESSIONS.generation(session_id) == generation
+                                and (not remind_applied or reminder_revision == _reminder_revisions[media.group])),
             retry_lock=runtime.SESSIONS.lock(session_id),
             send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
             prepare=prepare if owner_hint_group else None,
@@ -1468,6 +1545,43 @@ class BudgetGate:
         return True
 
 
+def is_cancel_all_reminders(text):
+    """一个明确的完整命令，不把引用、转述或请求中的一段话当成清空动作。"""
+    text = strip_call((text or "").strip())
+    separators = " \t\n，,。.!！?？:："
+    for name in sorted(naming.bot_names(), key=len, reverse=True):
+        if name and text.startswith(name):
+            rest = text[len(name):]
+            if rest and rest[0] in separators:
+                text = rest.lstrip(separators)
+                break
+    return text.strip(separators) == "停止所有定时任务"
+
+
+async def handle_cancel_all_reminders(message, group_id, is_owner):
+    if not is_owner:
+        await safe_reply(message, "清空本群提醒得群主来；你自己的那条可以直接说取消提醒")
+        return
+    # 先作废仍在分诊/生成/审核中的旧请求，再清已保存的任务。
+    _reminder_revisions[group_id] += 1
+    count = reminders.cancel_all(runtime.SCHEDULER, group_id)
+    for tid, task in list(_carried_reminders.items()):
+        if task["group"] == group_id:
+            _carried_reminders.pop(tid, None)
+    runtime.STATE.mark_dirty()
+    try:
+        runtime.STATE.save_now(force=True)
+    except OSError:
+        logger.warning("本群提醒已从内存撤下，但取消结果没能落盘")
+        await safe_reply(message, "本群提醒当前已撤下，但保存没成功，重启后可能恢复；稍后再取消一次")
+        return
+    runtime.INTERACTIONS.append("reminder_control", group_id, actor="system",
+                                action="cancel_all", cancelled=count)
+    text = (f"本群 {count} 条到点提醒都取消了，每天重复的也一起撤了" if count
+            else "本群当前没有待发的到点提醒")
+    await safe_reply(message, text)
+
+
 def is_control_command(text):
     """这条是不是「本地控制指令」（不经过模型的那种操作）？
 
@@ -1478,7 +1592,8 @@ def is_control_command(text):
     2026-11-01 手动模式和查榜、骰子、翻旧账这些指令都删了（27 天 1930 条消息里加起来
     不到 20 次，大半是第一周试着玩）：现在本地指令只剩起名开关；起名本身另有判断。
     """
-    return bool(relations.parse_nick_lock_command((text or "").strip()))
+    return bool(is_cancel_all_reminders(text)
+                or relations.parse_nick_lock_command((text or "").strip()))
 
 
 # 正文里 @ 人时留下的**明文昵称**（QQ 群消息不给昵称字段，只给 openid）。
@@ -2163,6 +2278,83 @@ async def finish_lookup(task):
 
 
 _carried_reminders = {}
+_reminder_revisions = collections.defaultdict(int)
+
+
+def _reminder_not_saved_line(verdict):
+    return {"clarify": "这条还没记，具体要提醒什么？",
+            "decline": "这条没记",
+            "unavailable": "这条暂时没记上",
+            "superseded": "这条没记，本群刚清空了旧提醒"}[verdict]
+
+
+def _record_reminder_review(trace, request, proposed, kwargs, verdict):
+    try:
+        payload = reminder_review.review_payload(request, proposed[2], proposed[1], **kwargs)
+        runtime.TURNS.append(
+            "triage", group=trace.get("group"), user=trace.get("user"),
+            message_id=trace.get("message_id"), source_reply_turn_id=trace.get("turn_id"),
+            payload=payload, asked=["reminder_write"],
+            choices={"reminder_write": verdict} if verdict != "unavailable" else {},
+            release=code_release())
+    except Exception:
+        logger.warning("提醒审核记录失败，不影响处理")
+
+
+def _record_reminder_response(trace, text, verdict, request, ids, valid):
+    try:
+        runtime.TURNS.append(
+            "triage", group=trace.get("group"), user=trace.get("user"),
+            message_id=trace.get("message_id"), source_reply_turn_id=trace.get("turn_id"),
+            payload=reminder_review.response_payload(text, verdict, request=request, known_ids=ids),
+            asked=["reminder_response"], choices={"reminder_response": "valid" if valid else "invalid"},
+            release=code_release())
+    except Exception:
+        logger.warning("提醒回复核对记录失败，不影响处理")
+
+
+def _reminder_review_valid(task):
+    p = task["payload"]
+    return (p.get("review_policy") == reminder_review.POLICY_VERSION
+            and p.get("reviewed_what") == p.get("what")
+            and p.get("reviewed_daily") == p.get("daily")
+            and not reminder_review.task_blocked(p.get("what"),
+                                                known_ids=(task["group"], p.get("member"))))
+
+
+def _reminder_note(task, now):
+    if task and (task["payload"].get("paused") or not _reminder_review_valid(task)):
+        return (reminders.now_line(now) + "\n【此前的提醒】已暂停，未经过当前写入审核或事项已失效，"
+                "不会到点播报。请对方重新说清具体事项和时间再定；不要说它仍会照常提醒。")
+    return reminders.render_note(task, now)
+
+
+def _pause_reminder(task):
+    """保留可查询/可取消的旧任务，绝不拿缺失语境的事项重新猜一次含义。"""
+    if runtime.SCHEDULER.tasks.get(task["id"]) is not task:
+        return
+    task["payload"]["paused"] = True
+    task["payload"].pop("ready", None)
+    task["due"] = time.time() + 86400
+    _carried_reminders.pop(task["id"], None)
+    runtime.STATE.mark_dirty()
+
+
+def _pause_unreviewed_reminders():
+    paused = 0
+    for task in runtime.SCHEDULER.pending(kind=reminders.KIND):
+        if not task["payload"].get("paused") and not _reminder_review_valid(task):
+            _pause_reminder(task)
+            paused += 1
+    return paused
+
+
+def _reminder_current(task, text=""):
+    p = task["payload"]
+    return (runtime.SCHEDULER.tasks.get(task["id"]) is task
+            and not p.get("paused") and _reminder_review_valid(task)
+            and time.time() < p["at"] + reminders.GRACE_SECONDS
+            and not reminder_review.task_blocked(text, known_ids=(task["group"], p.get("member"))))
 
 
 async def deliver_carried(message, group_id):
@@ -2176,10 +2368,12 @@ async def deliver_carried(message, group_id):
         text = task["payload"].get("ready")
         if not text or _carried_reminders.get(task["id"]) is task:
             continue
+        if not _reminder_review_valid(task) or reminder_review.task_blocked(text):
+            _pause_reminder(task)
+            continue
 
-        def current(task=task):
-            return (runtime.SCHEDULER.tasks.get(task["id"]) is task
-                    and time.time() < task["payload"]["at"] + reminders.GRACE_SECONDS)
+        def current(task=task, text=text):
+            return _reminder_current(task, text)
 
         def observe(result, task=task):
             if result.status == "queued":
@@ -2208,6 +2402,8 @@ async def deliver_carried(message, group_id):
 
 def _reminder_done(task, now):
     """这一次提醒了结（送到了、或者过点太久作罢）：每天的排到下一次，一次性的撤掉。"""
+    if runtime.SCHEDULER.tasks.get(task["id"]) is not task:
+        return None
     if _carried_reminders.get(task["id"]) is task:
         _carried_reminders.pop(task["id"], None)
     nxt = reminders.next_occurrence(task["payload"], now)
@@ -2240,8 +2436,8 @@ async def reminder_line(group_id, payload):
             config.AI_MAX_TOKENS_BANTER)
     except Exception as exc:
         logger.warning("⏰ 提醒那句没生成出来（%s），用本地话术", type(exc).__name__)
-    text = wordfilter.scrub((text or "").strip().strip('"「」'))
-    return text or f"{who}，到点了：{what}"
+    text = (text or "").strip().strip('"「」') or f"{who}，到点了：{what}"
+    return "" if reminder_review.task_blocked(text, known_ids=(group_id, payload["member"])) else text
 
 
 async def fire_reminder(task):
@@ -2250,19 +2446,44 @@ async def fire_reminder(task):
     重启前就过了点的同理：晚一小时以上的提醒多半已经没用了（「九点提醒大家我回来了」下午才发）。
     """
     gid, p, now = task["group"], task["payload"], time.time()
+    if runtime.SCHEDULER.tasks.get(task["id"]) is not task:
+        return None
+    if not _reminder_review_valid(task) or p.get("paused"):
+        _pause_reminder(task)
+        return now + 86400
     if now - p["at"] >= reminders.GRACE_SECONDS:   # >=：等捎带那条会正好在这一刻回来
         logger.info("⏰ 提醒过点太久没送出去，作罢（%s，%s）", reminders.describe(p), gid[-6:])
         p.pop("ready", None)
         return _reminder_done(task, now)
     if p.get("ready"):
+        if reminder_review.task_blocked(p["ready"], known_ids=(gid, p["member"])):
+            _pause_reminder(task)
+            return now + 86400
         return p["at"] + reminders.GRACE_SECONDS   # 写好了在等捎带
     text = await reminder_line(gid, p)
+    if runtime.SCHEDULER.tasks.get(task["id"]) is not task:
+        return None
+    if (not text or not _reminder_review_valid(task)
+            or reminder_review.task_blocked(text, known_ids=(gid, p["member"]))):
+        _pause_reminder(task)
+        return now + 86400
+    if time.time() >= p["at"] + reminders.GRACE_SECONDS:
+        return _reminder_done(task, time.time())
     if await post_to_group(gid, text, model_generated=True,
                            mention_member=p["member"],
+                           is_current=lambda: _reminder_current(task, text),
                            history=list(group_buffers.get(gid, ()))[-4:]):
         logger.info("⏰ 提醒送到了（%s，%s）", reminders.describe(p), gid[-6:])
         _note_own_line(gid, text)
         return _reminder_done(task, now)
+    if runtime.SCHEDULER.tasks.get(task["id"]) is not task:
+        return None
+    if (not _reminder_review_valid(task)
+            or reminder_review.task_blocked(text, known_ids=(gid, p["member"]))):
+        _pause_reminder(task)
+        return time.time() + 86400
+    if time.time() >= p["at"] + reminders.GRACE_SECONDS:
+        return _reminder_done(task, time.time())
     p["ready"] = text
     return p["at"] + reminders.GRACE_SECONDS
 
@@ -2270,7 +2491,7 @@ async def fire_reminder(task):
 # ── 承诺催债 ──
 
 async def post_to_group(group_id, text, *, model_generated=False, history=(), turn_id=None,
-                        mention_member=None):
+                        mention_member=None, is_current=None):
     """主动往群里发一句话（不是回复）。催债、定时播报都要用它。
 
     原生反馈判过「收敛」的群，窗口内主动发言一律按住 —— 点名回复
@@ -2281,7 +2502,7 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
     client = _bot_ref.get("client")
     if client is None or not text:
         return False
-    if runtime.FEEDBACK.quiet(group_id):
+    if runtime.FEEDBACK.quiet(group_id) or (is_current is not None and not is_current()):
         logger.info("🔇 [主动发言] 原生反馈收敛期内，本轮按住（%s）", group_id[-6:])
         return False
     # 主动广播也落观察日志：route=proactive、不可反馈；只记确认送达的全文，
@@ -2312,7 +2533,7 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
             logger.warning("主动发言的观察记录失败（%s），发送结果不变", status)
 
     # 发送前一刻再查一次：生成期间落下的收敛信号照样按住这条主动发言。
-    if runtime.FEEDBACK.quiet(group_id):
+    if runtime.FEEDBACK.quiet(group_id) or (is_current is not None and not is_current()):
         return False
     try:
         try:
@@ -2321,6 +2542,8 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
         except Exception as error:
             if not mention_member or not mention_rejected(error):
                 raise
+            if is_current is not None and not is_current():
+                return False
             logger.warning("QQ 拒收提醒的提及格式，改发普通文本")
             sent = await client.api.post_group_message(
                 group_openid=group_id, **group_message_payload(text))
@@ -2582,6 +2805,7 @@ class GroupBot(botpy.Client):
         raw_content = message.content or ""
         group_id = message.group_openid
         sender_openid = message.author.member_openid
+        reminder_revision_at_receipt = _reminder_revisions[group_id]
         voices = getattr(message, "_voice_attachments", ())
         if voices:
             suffix = "（附件过多，暂未识别）" if len(voices) > 3 else ""
@@ -2690,6 +2914,12 @@ class GroupBot(botpy.Client):
             "incoming", group_id, user=sender_openid, actor="user",
             message_id=message.id, text=heard,
             at=bool(is_at), cmd=is_control_command(user_input))
+
+        # 清空命令先于捎带和任何模型判断；不能先把待取消的提醒发出去。
+        if is_cancel_all_reminders(user_input):
+            await handle_cancel_all_reminders(
+                message, group_id, bool(runtime.OWNER_OPENID and sender_openid == runtime.OWNER_OPENID))
+            return
 
         # 3.45 慢活跟进没送出去（被动窗口过了、主动发言也被拒）：捎在这条消息上。
         await deliver_carried(message, group_id)
@@ -3211,6 +3441,12 @@ class GroupBot(botpy.Client):
                 logger.info("🗣 个人原话：%d 条命中（%s）",
                             personal_note.count("\n- "), session_id[-12:])
 
+        if (not back_off and feedback_result.get("target") == "bot_response"
+                and feedback_result.get("source_route") == "reply"
+                and feedback_result.get("reminder_request") == "clear"):
+            # 这是在回答它刚问的具体事项，算正式办理提醒；仍须过实际提案审核。
+            unprompted = False
+
         reply_kwargs = dict(
             on_delivered=commit_milestone, owner_hint_group=group_id,
             is_owner=is_owner,
@@ -3241,6 +3477,9 @@ class GroupBot(botpy.Client):
             this_turn = (None if back_off or search_note else
                          media_turn(group_id, sender_openid, resource_score,
                                     asked=not quip, remind=not unprompted))
+            if this_turn is not None:
+                this_turn.reminder_revision = reminder_revision_at_receipt
+                this_turn.reminder_intent = feedback_result.get("reminder_request")
             if unprompted:
                 outcome = await reply_unprompted(message, session_id, user_input,
                                                  media=this_turn, callback_note=callback_note,
@@ -3313,6 +3552,10 @@ class GroupBot(botpy.Client):
 
         is_owner = runtime.OWNER_OPENID is not None and sender_openid == runtime.OWNER_OPENID
 
+        if is_cancel_all_reminders(user_input):
+            await safe_reply(message, "请到要清空提醒的那个群里说，私聊这里没有目标群")
+            return
+
         # 私聊不办改名：称呼是按群存的（`群号|openid`），这条消息里没有群号 ——
         # 改了也不知道该改在哪儿。必须**明说**：以前这句话直接喂给模型，被当成闲聊
         # 回了个玩笑，当事人完全不知道命令没生效，还以为「叫不动它」。0 token，不占额度。
@@ -3355,6 +3598,9 @@ def _runtime_status_details():
                              "available": bool(image_generation.available()),
                              "gif_enabled": bool(config.IMAGE_GENERATION_GIF_ENABLED),
                              "animation_available": bool(image_generation.animation_available())},
+        "reminders": {"review_policy": reminder_review.POLICY_VERSION,
+                      "paused": sum(bool(t["payload"].get("paused"))
+                                    for t in runtime.SCHEDULER.pending(kind=reminders.KIND))},
         "providers": providers.status(),
         "budget": {"day": runtime.BUDGET.today(), "used": runtime.BUDGET.used,
                    "limit": runtime.BUDGET.limit, "remaining": runtime.BUDGET.remaining},
@@ -3450,6 +3696,9 @@ def _run_bot():
             schedule_promises(gid)
     runtime.SCHEDULER.register("followup", finish_lookup)
     if config.REMINDER_ENABLED:
+        paused = _pause_unreviewed_reminders()
+        if paused:
+            logger.info("⏸ 暂停 %d 条未通过当前审核的旧提醒，保留供重新设定或取消", paused)
         runtime.SCHEDULER.register(reminders.KIND, fire_reminder, hold=_reminder_hold)
     jobs["schedule"] = scheduler_loop
     for name, factory in jobs.items():

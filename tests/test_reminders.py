@@ -132,6 +132,8 @@ class _Reply(unittest.IsolatedAsyncioTestCase):
                   patch.object(bot.runtime, "FEEDBACK", SimpleNamespace(
                       remember=Mock(), quiet=Mock(return_value=False), quiet_seconds=180.0)),
                   patch.object(bot.runtime, "INTERACTIONS", SimpleNamespace(append=Mock())),
+                  patch.object(bot.runtime, "TURNS", SimpleNamespace(append=Mock())),
+                  patch.object(bot.reminder_review, "review_reminder", AsyncMock(return_value="allow")),
                   patch.object(bot, "SENDER", Sender()),
                   patch.object(bot, "owner_hint_pending", return_value=False),
                   patch.object(bot, "_delivery_observer", return_value=Mock()),
@@ -209,7 +211,14 @@ class FireTest(_Reply):
 
     def set(self, when):
         reminders.apply(self.scheduler, "group", "member", ("set", when, "叫我开会"), NOW)
-        return self.scheduler.tasks[reminders.task_id("group", "member")]
+        task = self.scheduler.tasks[reminders.task_id("group", "member")]
+        self.approve(task)
+        return task
+
+    def approve(self, task):
+        p = task["payload"]
+        p.update(review_policy=bot.reminder_review.POLICY_VERSION,
+                 reviewed_what=p["what"], reviewed_daily=p["daily"])
 
     async def run_at(self, now):
         with patch.object(bot.time, "time", return_value=now):
@@ -343,6 +352,7 @@ class FireTest(_Reply):
         """规则让小王把提醒的人写成「TA」；原样交给到点那次生成，它会把「TA」当名字念出来。"""
         self.register()
         reminders.apply(self.scheduler, "group", "member", ("set", "11-03 09:00", "提醒TA收衣服"), NOW)
+        self.approve(self.scheduler.tasks[reminders.task_id("group", "member")])
         await self.run_at(at(11, 3, 9, 0))
         prompt = bot.call_model.await_args.args[0][-1]["content"]
         self.assertIn("要提醒的事：提醒老王收衣服", prompt)

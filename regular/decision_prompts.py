@@ -389,6 +389,21 @@ def nickname_questions():
     return deepcopy(NICKNAME_QUESTIONS)
 
 
+def reminder_questions():
+    from regular.reminder_review import reminder_questions as questions
+    return questions()
+
+
+def reminder_response_questions():
+    from regular.reminder_review import response_questions
+    return response_questions()
+
+
+def reminder_request_questions():
+    from regular.reminder_review import request_questions
+    return request_questions()
+
+
 def recall_questions():
     return deepcopy(RECALL_QUESTIONS)
 

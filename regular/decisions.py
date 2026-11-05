@@ -454,6 +454,8 @@ class FeedbackTracker:
         # 仅与对机器人说话或跟进它的回复有关时问；与分诊共用一次调用。
         if calls_bot or reply:
             questions += decision_prompts.request_kind_questions()
+        if (calls_bot or reply) and config.REMINDER_ENABLED:
+            questions += decision_prompts.reminder_request_questions()
         # 对已有 bot 回复，原历史是该回复的证据；但群友可能在它之后、当前句之前
         # 连发了几条。调用方提供的是接收当前消息时的快照，按时间再排除旧句和未来句。
         # 前后两段分开，避免把“回复之后的发言”错放在 bot 回复之前。
@@ -534,7 +536,8 @@ class FeedbackTracker:
         result.update(addressed=choices.get("addressed"),
                       nickname=choices.get("nickname"),
                       recall=choices.get("recall"),
-                      lookup=choices.get("lookup"))
+                      lookup=choices.get("lookup"),
+                      reminder_request=choices.get("reminder_request"))
         # 只用「低真心」的一侧；必须确实选了 playful、三项概率完整且有可比边际。
         # 题面来自本地实验；线上语境和样本不同，不把它当成真实意图的定论。
         request_score = scores.get("request_kind") or {}

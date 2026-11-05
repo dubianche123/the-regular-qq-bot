@@ -52,7 +52,7 @@ class WhichQuestionsTest(_Base):
 
     async def test_named_asks_addressed_and_tone(self):
         out = await self.tracker.assess(G, A, "小王傻", named=True, history=HIST, now=10.0)
-        self.assertEqual(self.asked(), {"addressed", "next_move", "request_kind"})
+        self.assertEqual(self.asked(), {"addressed", "next_move", "request_kind", "reminder_request"})
         self.assertEqual(out["asked"], sorted(self.asked()))
         self.assertIn(out["addressed"], ("answer", "quip", "let_it_pass"))
 

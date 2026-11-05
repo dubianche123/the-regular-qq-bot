@@ -40,6 +40,18 @@ def task_id(group, member):
     return f"{KIND}:{group}:{member}"
 
 
+def cancel_all(scheduler, group):
+    """撤掉本群所有到点提醒，返回实际撤掉的条数。
+
+    调用方负责确认群主权限。pending 返回快照，因此逐条撤销不会改动正在迭代的任务表；
+    只选 reminder，不影响其它群，也不触碰催债、跟进等内部任务。
+    """
+    cancelled = 0
+    for task in scheduler.pending(kind=KIND, group=group):
+        cancelled += scheduler.cancel(task["id"])
+    return cancelled
+
+
 def _at(year, month, day, hour, minute):
     """本地时间 → 时间戳；日期不存在（2 月 30 日）就抛 Rejected。"""
     stamp = time.mktime((year, month, day, hour, minute, 0, 0, 0, -1))

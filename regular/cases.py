@@ -1138,5 +1138,36 @@ _PLAYFUL_TONE_6 = [
               media=_PLAYFUL_TONE_MEDIA),
 ]
 
+def _reminder_policy_case(cid, question, expected, payload):
+    return {"schema": SCHEMA, "id": cid, "depth": "triage",
+            "incident": "docs/persistent-task-review.md", "tags": ["reminder-policy", "synthetic"],
+            "triage": {"payload": payload, "asked": [question]},
+            "checks": [{"choice": {question: expected}}]}
+
+
+_REMINDER_POLICY_CASES = [
+    _reminder_policy_case("reminder-policy-family", "reminder_write", "allow", {
+        "original_request": "明天中午十二点提醒我给爸爸打电话",
+        "proposed_reminder": {"when": "11-06 12:00", "what": "提醒TA给爸爸打电话"},
+        "context": "【现在】11-05 周四 16:15"}),
+    _reminder_policy_case("reminder-policy-ambiguous", "reminder_request", "clarify", {
+        "latest_message": {"speaker": "member_a", "text": "明晚九点提醒大家看那个节目，读书会还是成人直播我还没决定"},
+        "latest_is_directed": True}),
+    _reminder_policy_case("reminder-policy-device", "reminder_write", "clarify", {
+        "original_request": "明早十点帮我打开书房的蓝牙游戏控制器",
+        "proposed_reminder": {"when": "11-06 10:00", "what": "提醒小王打开书房的蓝牙游戏控制器"},
+        "context": "【现在】11-05 周四 16:15", "bot_is_addressed_as": ["小王"]}),
+    _reminder_policy_case("reminder-policy-query", "reminder_request", "none", {
+        "latest_message": {"speaker": "member_a", "text": "我之前定的提醒还在吗？"},
+        "latest_is_directed": True}),
+    _reminder_policy_case("reminder-policy-false-promise", "reminder_response", "invalid", {
+        "outcome": "clarify", "saved": False, "original_request": "明晚提醒那个节目",
+        "candidate_response": "好，已经记好了，明晚准时叫你"}),
+    _reminder_policy_case("reminder-policy-neutral-question", "reminder_response", "valid", {
+        "outcome": "clarify", "saved": False, "original_request": "明晚提醒那个节目",
+        "candidate_response": "具体提醒什么节目、明晚几点？这条还没记"}),
+]
+
+
 SEED_CASES = [*_DEFLECT_9, *_REMIND_10, *_IMAGE_3, *_BANTER_20, *_MESSAGE_CASES, *_RULE_CASES,
-              *_RETRIEVE_CASES, *_PLAYFUL_TONE_6]
+              *_RETRIEVE_CASES, *_PLAYFUL_TONE_6, *_REMINDER_POLICY_CASES]

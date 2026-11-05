@@ -196,7 +196,8 @@ def _questions_for_asked(decision_prompts, asked):
     pool = {}
     for fn_name in ("feedback_questions", "addressed_questions", "recall_questions",
                     "lookup_questions", "request_kind_questions", "nickname_questions",
-                    "callback_questions", "draw_questions"):
+                    "callback_questions", "draw_questions", "reminder_questions", "reminder_response_questions",
+                    "reminder_request_questions"):
         fn = getattr(decision_prompts, fn_name, None)
         if callable(fn):
             for q in fn():
