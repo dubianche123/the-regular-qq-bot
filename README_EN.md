@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="docs/readme/cover.svg" alt="The Regular: a QQ group companion that remembers shared stories" width="100%" />
+<img src="docs/readme/cover.svg" alt="The Regular: a QQ group companion you can improve for your group with your coding agent" width="100%" />
 
 # The Regular · 老群友
 
-**An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and knows when to join in and when to leave room for others.**
+**Let your coding agent help improve a QQ companion for your group, guided by real chat feedback.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1621-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
@@ -12,9 +12,11 @@
 
 </div>
 
-The Regular listens to group chat, answers when addressed, decides whether an unaddressed line is for it, joins jokes and corrections, and backs off when unwelcome. Reading images, hearing voice, looking things up, drawing still images or short looping GIFs, speaking and reminders all end in an actual result confirmed by code.
+The Regular lives in your QQ group, gets to know the people, remembers shared stories, and judges when to join in and when to leave room for others. It joins jokes and corrections and backs off when unwelcome. Reading images, hearing voice, looking things up, drawing still images or short looping GIFs, speaking and reminders all end in an actual result confirmed by code.
 
-The same system has two connected paths. **The live path handles the message in front of it; the improvement path turns earlier failures into evidence for the next change.** Recorded scenes connect them. A coding agent proposes changes, and a maintainer decides what ships.
+**Every group has its own jokes, names and ways of getting along.** The Regular records scene inputs, judgments and actual outcomes, so your coding agent can diagnose problems from your group's feedback, edit code or prompts, and compare old and new versions on the same scenes. You choose which changes go live, gradually shaping the bot around your group.
+
+Everyday companionship and continued improvement share two connected paths: **the live path handles the message in front of it; the improvement path turns earlier failures into evidence for the next change.**
 
 | Path | Flow |
 | --- | --- |
@@ -87,9 +89,9 @@ Members can cancel their own reminder. When the owner explicitly says `停止所
 
 ## Self-iteration: the loop as commands
 
-Each iteration produces **a candidate change, new regression cases and an old/new comparison report**. The live bot records inputs, judgments and actual delivery. `checkup` reads those records and flags suspicious scenes; a separate judge model labels them in another maintenance step. An external coding agent diagnoses and edits, evaluation commands replay and compare, and a maintainer decides what ships.
+You can ask your coding agent to improve the bot from your group's actual feedback. Each iteration produces **a candidate change, new regression cases and an old/new comparison report**. The live bot records inputs, judgments and actual delivery. `checkup` reads those records and flags suspicious scenes; a separate judge model labels them in another maintenance step. The coding agent diagnoses and edits, evaluation commands replay and compare, and a maintainer decides what ships.
 
-**Plugging in an external agent**: the repository ships a self-iteration skill, [`.agents/skills/regular-iterate`](.agents/skills/regular-iterate/SKILL.md). Claude Code, CodeX and Gemini CLI discover it when they open the repository (Claude Code through a pointer in `.claude/skills/`; Gemini CLI also reads `AGENTS.md` via `.gemini/settings.json`). Hand the agent a screenshot of the bot misbehaving, or ask it to review today's checkup, and it walks the loop: find the scene, save a case, replay old and new, read the report. Going live still waits for your word.
+**Let your agent follow the loop**: the repository ships a self-iteration skill, [`.agents/skills/regular-iterate`](.agents/skills/regular-iterate/SKILL.md). Claude Code, CodeX and Gemini CLI can read this workflow (Claude Code through a pointer in `.claude/skills/`; Gemini CLI also reads `AGENTS.md` via `.gemini/settings.json`). Give your agent a screenshot of the bot misbehaving, or ask it to review today's checkup, and it has tools and steps to find the scene, save a case, replay old and new, and read the report. Going live still waits for your word.
 
 ![Self-iteration: independent complete labels, training and validation, baseline versus candidate, false positives and misses, and approved code or policy activation](docs/readme/iteration.svg)
 

@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="docs/readme/cover.svg" alt="The Regular · 老群友：一个陪你聊天、记得群里的事的 QQ 群友" width="100%" />
+<img src="docs/readme/cover.svg" alt="The Regular · 老群友：让你的 Agent 根据群聊反馈，帮你迭代出更懂你们的 QQ 群机器人" width="100%" />
 
 # The Regular · 老群友
 
-**一个住在 QQ 群里的 AI 群友：认识大家、记得群里的事，也知道什么时候该接话，什么时候该安静。**
+**让你的 Agent 根据群聊反馈，帮你迭代出更懂你们的 QQ 群机器人。**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1621-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
@@ -12,9 +12,11 @@
 
 </div>
 
-老群友听群友聊天，被叫到时接话，没被叫到时判断这句是不是冲它来的；能接玩笑和纠正，也会在被嫌烦时退一退。看图、听语音、查资料、画静图或短循环动图、发语音、到点提醒，都要落到代码确认的实际结果。
+老群友住在你的 QQ 群里，认识大家、记得群里的事，也判断什么时候该接话、什么时候该安静。它能接玩笑和纠正，在被嫌烦时退一退；看图、听语音、查资料、画静图或短循环动图、发语音、到点提醒，都要落到代码确认的实际结果。
 
-同一套系统有两条相连的链路。**线上负责把眼前这句话接好，离线改进负责让出过的问题变成下一次改动的证据。** 记录把两者连接起来，改法由编码代理提出，是否上线由维护者决定。
+**每个群都有自己的梗、称呼和相处方式。** 老群友把现场输入、判断和实际结果留下来，让你的编码 Agent 根据这个群的反馈定位问题、修改代码或提示词，再用同一份现场对比新旧版本。你决定哪些改动上线，让它逐步适应你们的群。
+
+这把日常陪伴和持续改进连在了一起：**线上接好眼前这句话，离线把出过的问题变成下一次改动的证据。**
 
 | 链路 | 怎样走 |
 | --- | --- |
@@ -87,9 +89,9 @@ Decisions 收到的是**现场 `input` + 一组 `questions`**。`input` 装当�
 
 ## 自己迭代：把这一圈做成命令
 
-一次迭代会产出**候选改动、新的回归用例和新旧对比报告**。线上留下输入、判断与实际送达；`checkup` 只读这些记录、列出可疑片段，独立评审模型另行标注。外接编码代理据此定位原因并修改，评测命令负责重放与比较，维护者决定是否发布。
+你可以让自己的编码 Agent 围绕这个群的真实反馈改进机器人。一次迭代会产出**候选改动、新的回归用例和新旧对比报告**。线上留下输入、判断与实际送达；`checkup` 只读这些记录、列出可疑片段，独立评审模型另行标注。编码 Agent 据此定位原因并修改，评测命令负责重放与比较，维护者决定是否发布。
 
-**接入外部代理**：仓库自带一份自迭代 skill，[`.agents/skills/regular-iterate`](.agents/skills/regular-iterate/SKILL.md)。Claude Code、CodeX、Gemini CLI 打开仓库就能发现它（Claude Code 从 `.claude/skills/` 指过去，Gemini CLI 另由 `.gemini/settings.json` 读 `AGENTS.md`）。把小王出岔子的截图丢给代理，或者说一句「看看今天的体检」，它会照着走完找现场 → 存用例 → 新旧回放 → 读报告这一圈；上线仍然等你一句话。
+**让你的 Agent 接手这一圈**：仓库自带一份自迭代 skill，[`.agents/skills/regular-iterate`](.agents/skills/regular-iterate/SKILL.md)。Claude Code、CodeX、Gemini CLI 可以读取这份流程（Claude Code 从 `.claude/skills/` 指过去，Gemini CLI 另由 `.gemini/settings.json` 读 `AGENTS.md`）。把小王出岔子的截图丢给 Agent，或者说一句「看看今天的体检」，它便有找现场 → 存用例 → 新旧回放 → 读报告的现成工具和步骤；上线仍然等你一句话。
 
 ![自迭代闭环：独立完整标注、训练与验证、新旧对照、误报漏报，以及代码部署与策略人工生效](docs/readme/iteration-cn.svg)
 

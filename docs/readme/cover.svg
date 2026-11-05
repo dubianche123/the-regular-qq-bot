@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="cover-title cover-desc">
   <title id="cover-title">The Regular · 老群友</title>
-  <desc id="cover-desc">一位住在 QQ 群里的 AI 群友：理解上下文，记住共同的事，在合适的时候接话，也能按需查找、画图和发语音。</desc>
+  <desc id="cover-desc">一位住在 QQ 群里的 AI 群友：在你的编码 Agent 协助下，从群聊反馈中持续迭代，逐步适应你的群；新旧回放提供依据，维护者决定上线。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop stop-color="#192A40"/><stop offset="1" stop-color="#28354B"/>
@@ -25,15 +25,15 @@
     </g>
     <text x="65" y="159" fill="#F9FAFC" font-size="52" font-weight="700" letter-spacing="-.8">The Regular</text>
     <text x="67" y="214" fill="#F2C795" font-size="32" font-weight="600">老群友</text>
-    <text x="67" y="272" fill="#E2EAF4" font-size="22">会接话，也会留白。</text>
-    <text x="67" y="307" fill="#B5C3D5" font-size="16">An AI companion that finds its place in the conversation.</text>
+    <text x="67" y="272" fill="#E2EAF4" font-size="22">让你的 Agent 帮它更懂你的群。</text>
+    <text x="67" y="307" fill="#B5C3D5" font-size="16">Improve it for your group, with your coding agent.</text>
     <path d="M67 355H544" stroke="#5B6B80" stroke-opacity=".65"/>
-    <text x="67" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">群聊上下文</text>
+    <text x="67" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">群聊反馈</text>
     <circle cx="177" cy="389" r="2" fill="#E6B980"/>
-    <text x="195" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">共同记忆</text>
+    <text x="195" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">新旧回放</text>
     <circle cx="286" cy="389" r="2" fill="#E6B980"/>
-    <text x="304" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">有边界的能力</text>
-    <text x="67" y="443" fill="#8395AA" font-size="12" font-weight="700" letter-spacing="1.5">CHAT  ·  MEMORY  ·  LOOKUP  ·  IMAGES  ·  VOICE</text>
+    <text x="304" y="394" fill="#B7C6D7" font-size="15" letter-spacing=".7">Agent 协助迭代</text>
+    <text x="67" y="443" fill="#8395AA" font-size="12" font-weight="700" letter-spacing="1.5">CHAT  ·  MEMORY  ·  REPLAY  ·  ITERATE</text>
 
     <rect x="649" y="57" width="558" height="366" rx="21" fill="#15263A" fill-opacity=".66" stroke="#60718A" stroke-opacity=".48"/>
     <rect x="649" y="57" width="558" height="57" rx="21" fill="#30465E" fill-opacity=".72"/>
