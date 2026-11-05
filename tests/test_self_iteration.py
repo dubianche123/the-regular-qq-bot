@@ -34,7 +34,7 @@ from regular import rules as rules_mod
 
 class CasesAndChecksTest(unittest.TestCase):
     def test_seed_cases_cover_all_documented_batches(self):
-        self.assertEqual(len(cases_mod.SEED_CASES), 68)
+        self.assertEqual(len(cases_mod.SEED_CASES), 74)
         for case in cases_mod.SEED_CASES:
             cases_mod.validate_case(case)
         deflect = [c for c in cases_mod.SEED_CASES if "deflect" in c.get("tags", ())]
@@ -43,12 +43,14 @@ class CasesAndChecksTest(unittest.TestCase):
         banter = [c for c in cases_mod.SEED_CASES if "banter" in c.get("tags", ())]
         msg_depth = [c for c in cases_mod.SEED_CASES if c.get("depth") == "message"]
         retrieve_depth = [c for c in cases_mod.SEED_CASES if c.get("depth") == "retrieve"]
+        playful = [c for c in cases_mod.SEED_CASES if "playful-tone" in c.get("tags", ())]
         self.assertEqual(len(deflect), 9)
         self.assertEqual(len(remind), 10)
         self.assertEqual(len(image), 3)
         self.assertEqual(len(banter), 20)
         self.assertEqual(len(msg_depth), 1)
         self.assertEqual(len(retrieve_depth), 8)
+        self.assertEqual(len(playful), 6)
         # 账本上每条规则都至少挂上一条种子用例，拿掉它重跑才有东西可比
         for rule in rules_mod.load_rules():
             linked = [c["id"] for c in cases_mod.SEED_CASES
@@ -62,6 +64,14 @@ class CasesAndChecksTest(unittest.TestCase):
                   if c["turn"]["kwargs"].get("unprompted_hint")]
         self.assertIn(True, hinted)
         self.assertIn(False, hinted)
+
+    def test_optional_playful_followup_accepts_silence_or_a_short_reply(self):
+        case = next(c for c in cases_mod.SEED_CASES if c["id"] == "playful-tone-synth-optional")
+        for reply in ("〔不接〕", "它周一第一招就是装成存档点"):
+            with self.subTest(reply=reply):
+                self.assertTrue(cases_mod.check_reply(reply, case["checks"])["passed"])
+        # 沉默是模型的有效选择；生成失败仍然不是合格回复。
+        self.assertFalse(cases_mod.check_reply(None, case["checks"])["passed"])
 
     def test_deterministic_checks_all_kinds(self):
         checks = [

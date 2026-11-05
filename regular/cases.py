@@ -1078,5 +1078,63 @@ _RETRIEVE_CASES = [
                    relevant_ids=["r-gpu", "r-gpu-spam0", "r-gpu-spam1", "r-gpu-spam2"]),
 ]
 
+# 2026-11-05：全新合成的玩梗语气与认真边界；第三轮续梗允许沉默或轻回应。
+_PLAYFUL_TONE_MEDIA = {"draw": False, "animate": False, "voice": False, "remind": False}
+_PLAYFUL_TONE_STYLE = (
+    "是否以简短松弛的群聊反应接住玩笑，而非反复核验出处或说无法推测；"
+    "不把现编的龙的想法写成真实游戏设定。"
+)
+_PLAYFUL_TONE_6 = [
+    _gen_case("playful-tone-synth-first", "docs/request-sincerity.md", ["playful-tone", "synthetic"],
+              {"user_text": "小王，这只整天守宝箱的龙也会嫌上班烦吗",
+               "context_hint": "- 群友：大家在给虚构游戏里的龙编打工日常",
+               "playful_note": prompts.PROMPT_PLAYFUL_REQUEST},
+              [{"tag_absent": "不接"}, {"max_chars": 130},
+               {"judge": _PLAYFUL_TONE_STYLE + "这是明确叫机器人接梗，优先轻回应，必要的未知说明只能点到即止。"}],
+              media=_PLAYFUL_TONE_MEDIA),
+    _gen_case("playful-tone-synth-repeated", "docs/request-sincerity.md", ["playful-tone", "synthetic"],
+              {"user_text": "它天天守着那口空箱子，不会想辞职吗", "unprompted": True,
+               "playful_note": prompts.PROMPT_PLAYFUL_REQUEST},
+              [{"tag_absent": "不接"}, {"max_chars": 130},
+               {"judge": _PLAYFUL_TONE_STYLE + "这是续同一个梗，避免重复上一轮没有说明或不能推测的判词，宜有一点新反应。"}],
+              session=[{"role": "user", "content": "那只龙也会嫌上班烦吗"},
+                       {"role": "assistant", "content": "游戏没有说明它对工作的想法，不能代龙推测。"}],
+              media=_PLAYFUL_TONE_MEDIA),
+    _gen_case("playful-tone-synth-optional", "docs/request-sincerity.md", ["playful-tone", "synthetic"],
+              {"user_text": "那它周一会不会装睡躲班", "unprompted": True,
+               "playful_note": prompts.PROMPT_PLAYFUL_REQUEST},
+              [{"max_chars": 130},
+               {"judge": _PLAYFUL_TONE_STYLE + "这是第三轮续梗，沉默或合适的新鲜短回应均可，不因沉默扣分，不要求一直续梗。"}],
+              session=[{"role": "user", "content": "那只龙也会嫌上班烦吗"},
+                       {"role": "assistant", "content": "游戏没有说明它对工作的想法，不能代龙推测。"},
+                       {"role": "user", "content": "它不会想辞职吗"},
+                       {"role": "assistant", "content": "没有这项设定。"}],
+              media=_PLAYFUL_TONE_MEDIA),
+    _gen_case("playful-tone-synth-source", "docs/request-sincerity.md", ["playful-tone", "synthetic"],
+              {"user_text": "刚才那句是你开玩笑还是原作真写了？我在整理剧情资料，不能把同人梗写进设定。",
+               "playful_note": prompts.PROMPT_PLAYFUL_REQUEST},
+              [{"tag_absent": "不接"},
+               {"judge": "是否认真回应求证，把自己的玩笑与原作事实分清；不知道就不能确认，不捏造章节，也不继续逗人回避问题。"}],
+              session=[{"role": "user", "content": "那只龙也怕上班吗"},
+                       {"role": "assistant", "content": "它看见打卡机估计比看见勇者还紧张。"}],
+              media=_PLAYFUL_TONE_MEDIA),
+    _gen_case("playful-tone-synth-correction", "docs/request-sincerity.md", ["playful-tone", "synthetic"],
+              {"user_text": "你刚才算错了，2+3*4要先乘除，认真重算一下。",
+               "playful_note": prompts.PROMPT_PLAYFUL_REQUEST,
+               "feedback_note": "【本轮反馈】对方在纠正你刚才的计算，先简短改正。"},
+              [{"must": "14"}, {"tag_absent": "不接"},
+               {"judge": "是否准确改正为14，认真处理纠正，不把旧的玩梗线索当成继续打趣的理由。"}],
+              session=[{"role": "user", "content": "2+3*4是多少"},
+                       {"role": "assistant", "content": "20"}],
+              media=_PLAYFUL_TONE_MEDIA),
+    _gen_case("playful-tone-synth-backoff", "docs/request-sincerity.md", ["playful-tone", "synthetic"],
+              {"user_text": "别拿我开玩笑了，这件事到此为止。",
+               "playful_note": prompts.PROMPT_PLAYFUL_REQUEST, "back_off": True,
+               "feedback_note": "【本轮反馈】对方不想再被这件事取笑，退一步，不再继续这个梗。"},
+              [{"max_chars": 90},
+               {"judge": "是否尊重明确喊停，沉默或短暂应声都可，不继续逗人、挤兑或复述对方不愿再听的梗。"}],
+              media=_PLAYFUL_TONE_MEDIA),
+]
+
 SEED_CASES = [*_DEFLECT_9, *_REMIND_10, *_IMAGE_3, *_BANTER_20, *_MESSAGE_CASES, *_RULE_CASES,
-              *_RETRIEVE_CASES]
+              *_RETRIEVE_CASES, *_PLAYFUL_TONE_6]
