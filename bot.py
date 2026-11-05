@@ -735,7 +735,7 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        personal_note="", feedback_note="", reply_context="",
                        callback_approved=False, back_off=False, quip=False,
                        lookup_note="", playful_note="", resource_note="",
-                       media_note="", unprompted_hint=""):
+                       media_note="", unprompted_hint="", playful_request=False):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
     返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签（协议关了，
@@ -826,8 +826,9 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
             # 原生反馈的即时话术（收敛/短修）：压在本层尾部、关系档案之后；
             # 出现它时个人原话与知识/旧账材料同轮不建（调用方已拦）。
             bits.append(feedback_note)
-        if playful_note and not back_off and not feedback_note:
-            bits.append(playful_note)
+        if (playful_request or playful_note) and not back_off and not feedback_note:
+            # 记录语义结论，措辞由当前版本提供；旧调用方传入的 note 仍兼容。
+            bits.append(prompts.PROMPT_PLAYFUL_REQUEST if playful_request else playful_note)
         if resource_note:
             bits.append(resource_note)
         if media_note:
@@ -3174,9 +3175,8 @@ class GroupBot(botpy.Client):
             personal_note=personal_note,
             callback_approved=bool(callback_note),
             feedback_note=feedback_note, reply_context=reply_context,
-            playful_note=(prompts.PROMPT_PLAYFUL_REQUEST
-                          if feedback_result.get("playful_request") and not lookup
-                          and not search_note else ""),
+            playful_request=bool(feedback_result.get("playful_request") and not lookup
+                                 and not search_note),
             resource_note=resource_note,
             back_off=back_off, quip=quip,
             history=list(buf or [])[-4:],

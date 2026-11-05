@@ -132,6 +132,14 @@ async def _run_generate_once(bot, runtime, config, turn, retries=1):
     kw = dict(turn.get("kwargs") or {})
     user_text = kw.pop("user_text", "")
     sig = inspect.signature(bot.get_ai_reply)
+    if "playful_request" in sig.parameters and kw.get("playful_note"):
+        # 旧记录冻结了提示词正文；支持语义标记的版本要使用自身当版措辞。
+        kw["playful_request"] = True
+        kw["playful_note"] = ""
+    elif ("playful_request" not in sig.parameters and "playful_note" in sig.parameters
+          and kw.get("playful_request") and not kw.get("playful_note")):
+        # 新记录回放旧签名时，用受测版本自己的措辞还原同一个语义结论。
+        kw["playful_note"] = bot.prompts.PROMPT_PLAYFUL_REQUEST
     if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
         kw = {k: v for k, v in kw.items() if k in sig.parameters}
     media = dict(turn.get("media") or {"draw": True, "voice": True, "remind": True})

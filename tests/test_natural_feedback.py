@@ -297,6 +297,35 @@ class StaleAndPrivacyTest(_Base):
             old_reply["outgoing_id"])
 
 class PromptLayerTest(_Base):
+    async def test_playful_semantic_flag_uses_current_prompt_only_in_dynamic_layer(self):
+        current_note = "【本轮语气线索】当版提示"
+        with patch.object(prompts, "PROMPT_PLAYFUL_REQUEST", current_note):
+            await bot.get_ai_reply(
+                "sess-playful-semantic", "接个梗", playful_request=True,
+                playful_note="旧版被冻结的提示")
+        messages = self.model_calls[-1]
+        self.assertIn(current_note, messages[-1]["content"])
+        self.assertNotIn(current_note, "\n".join(m["content"] for m in messages[:-1]))
+        self.assertNotIn("旧版被冻结的提示", "\n".join(m["content"] for m in messages))
+
+    async def test_legacy_playful_note_remains_supported(self):
+        await bot.get_ai_reply(
+            "sess-playful-legacy", "接个梗", playful_note="【兼容语气线索】旧调用")
+        messages = self.model_calls[-1]
+        self.assertIn("【兼容语气线索】旧调用", messages[-1]["content"])
+        self.assertNotIn("【兼容语气线索】", "\n".join(m["content"] for m in messages[:-1]))
+
+    async def test_backoff_and_feedback_suppress_semantic_and_legacy_playful_cues(self):
+        for cue in ({"playful_request": True}, {"playful_note": "【旧版玩笑线索】"}):
+            for priority in ({"back_off": True}, {"feedback_note": prompts.PROMPT_FEEDBACK_REPAIR}):
+                with self.subTest(cue=cue, priority=priority):
+                    await bot.get_ai_reply("sess-playful-priority", "接着说", **cue, **priority)
+                    tail = self.model_calls[-1][-1]["content"]
+                    self.assertNotIn("【本轮语气线索】", tail)
+                    self.assertNotIn("【旧版玩笑线索】", tail)
+                    self.assertIn((prompts.PROMPT_BACK_OFF_NOTE if priority.get("back_off")
+                                   else prompts.PROMPT_FEEDBACK_REPAIR).strip(), tail)
+
     async def test_feedback_note_suppresses_competing_material(self):
         """直接调 get_ai_reply：feedback_note 在场时知识/旧账/搜索/个人全不注。"""
         captured = {}
@@ -509,7 +538,7 @@ class PlayfulRequestRoutingTest(_Base):
         messages = self.model_calls[-1]
         marker = "【本轮语气线索】"
         self.assertIn(marker, messages[-1]["content"])
-        self.assertIn("不要揪着学历", messages[-1]["content"])
+        self.assertIn(prompts.PROMPT_PLAYFUL_REQUEST, messages[-1]["content"])
         self.assertNotIn(marker, "\n".join(m["content"] for m in messages[:-1]))
 
     async def test_no_playful_signal_leaves_no_extra_hint(self):
@@ -537,7 +566,7 @@ class PlayfulRequestRoutingTest(_Base):
              patch.object(bot, "answer_with_lookup", AsyncMock(return_value=None)) as lookup:
             msg = await self._drive("帮我查一下单招报名时间", is_at=True)
         lookup.assert_awaited_once()
-        self.assertEqual(lookup.await_args.kwargs["reply_kwargs"]["playful_note"], "")
+        self.assertIs(lookup.await_args.kwargs["reply_kwargs"]["playful_request"], False)
         self.assertIn("没查成", msg.reply.await_args.kwargs["content"])
 
 

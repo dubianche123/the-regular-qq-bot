@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import archive as archive_mod
@@ -345,6 +346,53 @@ class ArchiveAndMessageReplayTest(unittest.IsolatedAsyncioTestCase):
         async def interleaved_model(messages, max_tokens, **kw):
             sys_head = messages[0]["content"]
             user_msg = messages[-1]["content"]
+    async def test_generate_replay_migrates_frozen_playful_note_to_current_prompt(self):
+        old_note = "【旧版语气线索】冻结在历史记录里的正文"
+        current_note = "【本轮语气线索】当前代码版本的正文"
+        case = {"id": "playful-note-migration", "depth": "generate", "turn": {
+            "kwargs": {"user_text": "接着玩梗", "playful_note": old_note},
+            "session": [],
+        }}
+        model = AsyncMock(return_value="接一句")
+        with patch.object(bot, "call_model", model), \
+                patch.object(prompts, "PROMPT_PLAYFUL_REQUEST", current_note):
+            result = await replay_worker.replay_item(
+                case, n=1, bot=bot, runtime=runtime, config=config)
+        self.assertEqual(result["errors"], 0)
+        messages = model.await_args.args[0]
+        self.assertIn(current_note, messages[-1]["content"])
+        self.assertNotIn(current_note, "\n".join(m["content"] for m in messages[:-1]))
+        self.assertNotIn(old_note, "\n".join(m["content"] for m in messages))
+        self.assertEqual(case["turn"]["kwargs"]["playful_note"], old_note)
+
+    async def test_generate_replay_keeps_frozen_note_for_legacy_signature(self):
+        old_note = "旧版仍用记录里的玩笑提示"
+
+        async def old_get_ai_reply(session_id, user_text, allow_fallback=True, playful_note=""):
+            return playful_note, None
+
+        with patch.object(bot, "get_ai_reply", old_get_ai_reply):
+            result = await replay_worker._run_generate_once(bot, runtime, config, {
+                "kwargs": {"user_text": "接着玩梗", "playful_note": old_note}, "session": []})
+        self.assertEqual(result, old_note)
+
+    async def test_generate_replay_maps_semantic_flag_to_legacy_versions_own_prompt(self):
+        target_note = "受测旧版本自己的语气提示"
+
+        async def old_get_ai_reply(session_id, user_text, allow_fallback=True, playful_note=""):
+            return playful_note, None
+
+        for kwargs, expected in (
+                ({"playful_request": True}, target_note),
+                ({"playful_request": False}, ""),
+                ({"playful_request": True, "playful_note": "显式旧记录提示"}, "显式旧记录提示")):
+            with self.subTest(kwargs=kwargs), \
+                    patch.object(bot, "get_ai_reply", old_get_ai_reply), \
+                    patch.object(bot, "prompts", SimpleNamespace(PROMPT_PLAYFUL_REQUEST=target_note)):
+                result = await replay_worker._run_generate_once(bot, runtime, config, {
+                    "kwargs": {"user_text": "接着玩梗", **kwargs}, "session": []})
+            self.assertEqual(result, expected)
+
             if "CASE_A" in user_msg:
                 a_attempts["n"] += 1
                 seen_heads["A"].append("〔提醒" in sys_head)
