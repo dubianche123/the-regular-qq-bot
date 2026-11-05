@@ -6,7 +6,7 @@
 
 **An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and knows when to join in and when to leave room for others.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1538-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1611-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 [中文](README.md) · **English** · [Message flow](#one-message-through-the-system) · [Decisions input](#what-decisions-actually-sees) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
@@ -65,7 +65,7 @@ The diagram shows decoded `input`; the HTTP request encodes it as a JSON string.
 }
 ```
 
-Question wording, choice descriptions and examples within instructions live in [`regular/decision_prompts.py`](regular/decision_prompts.py), so they can be iterated. **Use triage replay for question edits; use message replay for changes to fields, trimming or context construction.** Relevant questions share one call. Actions use rankings and sufficiently supported choices; probability calibration is checked [separately](docs/decision-calibration.md). See the [Decisions input guide](docs/self-iteration.md#decisions-input) for full packaging and coverage.
+Question wording, choice descriptions and examples live in [`regular/decision_prompts.py`](regular/decision_prompts.py); reminder checks live in [`regular/reminder_review.py`](regular/reminder_review.py). Both can be iterated. **Use triage replay for question edits; use message replay for changes to fields, trimming or context construction.** Relevant questions share one call. Actions use rankings and sufficiently supported choices; probability calibration is checked [separately](docs/decision-calibration.md). See the [Decisions input guide](docs/self-iteration.md#decisions-input) for full packaging and coverage.
 
 <a id="slow-work-answer-first-follow-up-when-done"></a>
 
@@ -79,7 +79,9 @@ Image reading, lookups and deeper research may not finish during the first respo
 | Longer than the live wait, currently 6 seconds | a short local progress line | an in-flight task or recoverable handle |
 | Background work completes | a follow-up; after the passive window, try a proactive post, then carry it with a later message | completion state, task association and delivery outcome |
 
-A reminder is another use of the same job table. The model writes a fixed time tag; code parses, checks and registers it. Each person has one reminder, and a new one replaces it. Job state and quotas persist across restarts. See [slow work](docs/slow-work.md), [image follow-ups](docs/image-before-reply.md), and [reminder formats](docs/reminders.md).
+A reminder uses the same job table, with one per person per group and state that survives restarts. The existing triage call first identifies requests that need clarification. The model then proposes a time and task; code runs a separate semantic check before saving. Ordinary tasks and harmless jokes can proceed. Genuine ambiguity gets a clarification question, with nothing saved and the old reminder retained. Explicit harassment or inappropriate group broadcasts can receive a light joke, followed by a clear “this wasn't saved.” The check uses native Decisions configured in the local panel; missing, disabled or unavailable checks leave the task unsaved. A new reminder replaces the old one only after confirmation where needed and approval. Legacy unreviewed jobs, or jobs whose approval is no longer valid, pause until the member restates and resets them.
+
+Members can cancel their own reminder. When the owner explicitly says `停止所有定时任务` (“stop all scheduled tasks”), code clears **all member-created reminders in this group**, including daily reminders and messages waiting to be carried, and invalidates requests and queued confirmations still in progress before the cancellation. Other groups, background maintenance and promise follow-ups keep running; new reminders can still be created afterward. See [slow work](docs/slow-work.md), [image follow-ups](docs/image-before-reply.md), and [reminder formats](docs/reminders.md).
 
 <a id="how-it-evolves-incident--replay--change--regression"></a>
 
@@ -174,7 +176,7 @@ Conversation content needed for judgment and replies goes to the configured mode
 
 | Existing evidence | Scope |
 | --- | --- |
-| 1538 offline regression tests | code behavior, not a guarantee that every reply lands |
+| 1611 offline regression tests | code behavior, not a guarantee that every reply lands |
 | Archive recall passes 8 / 8 case checks, retrieves 7 / 9 relevant messages | [fully labeled synthetic cases](docs/self-iteration.md#local-strategy-evaluation); both versions agree, and the 2 budget-limited misses remain counted |
 | 17 / 20 unaddressed lines aimed at it answered, versus 3 / 20 before | [141 messages and 9 prompt variants](docs/when-to-reply.md); answer/pass labels came from a separate judge model |
 | 75.6% of reply input tokens hit the prefix cache | [261 calls from one live day](docs/providers.md), tied to that model and traffic |

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1050" viewBox="0 0 1280 1050" role="img" aria-labelledby="diagram-title diagram-desc" xml:lang="zh-CN">
   <title id="diagram-title">一人一条，到点把话送到</title>
-  <desc id="diagram-desc">回复里的提醒标记由代码登记到落盘任务表，同一人新定替换旧的，取消标记撤掉。到点主动投递，主动发言被拒时等群里下一条消息捎带；送达则完成，过点一小时仍未送达或重启已错过一小时以上则作罢。送达或作罢后，一次性的撤掉，每天的排到下一天。</desc>
+  <desc id="diagram-desc">模型提出提醒，写入前语义审核允许才保存；歧义先问清，拒绝或审核不可用都保留旧提醒。旧版未审核的任务暂停，重新说清并重定后才继续。到点主动投递，主动发言被拒时等群里下一条消息捎带；送达则完成，过点一小时仍未送达则作罢。一次性的撤掉，每天的排到下一天。群主可明确停止本群所有提醒，包括在途旧请求，其他群和后台任务继续运行。</desc>
   <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
   <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
     <rect x="1" y="1" width="1278" height="1048" rx="24" fill="#F6F8FC" stroke="#D7E0EB"/>
@@ -8,12 +8,12 @@
     <text x="48" y="101" font-size="32" fill="#213249" font-weight="700" >一人一条，到点把话送到</text>
     <text x="48" y="140" font-size="21" fill="#56677E" font-weight="400" >任务、投递状态和下次时间由代码维护，随本地状态落盘。</text>
     <rect x="48" y="180" width="1184" height="92" rx="16" fill="#FFF4E4" stroke="#E6D6BE"/>
-    <text x="72" y="216" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1">登记 / 替换 / 取消</text>
-    <text x="72" y="249" font-size="22" fill="#213249" font-weight="600" >〔提醒 …〕登记一条；同一人再定就顶掉旧的。〔取消提醒〕撤掉自己那条。</text>
+    <text x="72" y="216" font-size="16" fill="#A7783E" font-weight="700" letter-spacing="1">写前审核 / 允许才存</text>
+    <text x="72" y="249" font-size="22" fill="#213249" font-weight="600" >正常事项可记；歧义先问，拒绝或暂不可审均不改旧提醒。</text>
     <rect x="48" y="312" width="352" height="156" rx="18" fill="white" stroke="#D7E0EB"/>
-    <text x="72" y="348" font-size="16" fill="#A7783E" font-weight="700" >01 / 已登记</text>
+    <text x="72" y="348" font-size="16" fill="#A7783E" font-weight="700" >01 / 已审核并登记</text>
     <text x="72" y="390" font-size="25" fill="#213249" font-weight="650" >每人每群一条</text>
-    <text x="72" y="432" font-size="20" fill="#56677E" font-weight="400" >重启后恢复任务</text>
+    <text x="72" y="432" font-size="18" fill="#56677E" font-weight="400" >重启恢复；旧版未审先暂停</text>
     <path d="M408 390h48" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
     <rect x="464" y="312" width="352" height="156" rx="18" fill="white" stroke="#D7E0EB"/>
     <text x="488" y="348" font-size="16" fill="#A7783E" font-weight="700" >02 / 到点</text>
@@ -49,6 +49,6 @@
     <text x="96" y="927" font-size="23" fill="#397D70" font-weight="650" >一次性的 → 撤掉这条任务</text>
     <rect x="632" y="889" width="576" height="58" rx="12" fill="#F0EBF8" stroke="#F0EBF8"/>
     <text x="656" y="927" font-size="22" fill="#7962A7" font-weight="650" >每天的 → 排到下一天同一时间</text>
-    <text x="48" y="1014" font-size="19" fill="#56677E" font-weight="400" >本地代码负责投递与改期；每天的提醒会继续，直到取消或被新的顶掉。</text>
+    <text x="48" y="1014" font-size="19" fill="#56677E" font-weight="400" >群主「停止所有定时任务」清本群提醒（含在途旧请求）；其他群和后台照常。</text>
   </g>
 </svg>

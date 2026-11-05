@@ -6,7 +6,7 @@
 
 **一个住在 QQ 群里的 AI 群友：认识大家、记得群里的事，也知道什么时候该接话，什么时候该安静。**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1538-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1611-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 **中文** · [English](README_EN.md) · [信息流](#一句话进来之后) · [Decisions 输入](#decisions-究竟看到了什么) · [自己迭代](#自己迭代把这一圈做成命令) · [快速开始](#开始使用) · [设计文档](#设计文档)
 
@@ -65,7 +65,7 @@ Decisions 收到的是**现场 `input` + 一组 `questions`**。`input` 装当�
 }
 ```
 
-题面、选项说明和说明里的语义例子在 [`regular/decision_prompts.py`](regular/decision_prompts.py)，属于可迭代对象。**改题面用分诊回放；改它能看到的字段、裁剪或前后文构造，要用消息回放。** 题目按场景组合进一次调用，排序和有把握的结果才用于动作，概率刻度另做[校准验证](docs/decision-calibration.md)。完整封装与覆盖范围见 [Decisions 输入说明](docs/self-iteration.md#decisions-input)。
+题面、选项说明和说明里的语义例子在 [`regular/decision_prompts.py`](regular/decision_prompts.py)，提醒审核题在 [`regular/reminder_review.py`](regular/reminder_review.py)，都属于可迭代对象。**改题面用分诊回放；改它能看到的字段、裁剪或前后文构造，要用消息回放。** 题目按场景组合进一次调用，排序和有把握的结果才用于动作，概率刻度另做[校准验证](docs/decision-calibration.md)。完整封装与覆盖范围见 [Decisions 输入说明](docs/self-iteration.md#decisions-input)。
 
 <a id="慢的事先回一句做完再跟进"></a>
 
@@ -79,7 +79,9 @@ Decisions 收到的是**现场 `input` + 一组 `questions`**。`input` 装当�
 | 超过线上等待时间（当前 6 秒） | 先回一句本地进度说明 | 在途任务或可恢复的把手 |
 | 后台完成 | 跟进原任务；被动窗口过了尝试主动发言，再不行捎在后续消息上 | 完成状态、关联关系与投递结果 |
 
-到点提醒是同一张任务表上的另一个用途：模型写固定时间标记，代码解析、校验并登记；一人一条，新的顶掉旧的。任务状态和额度随本地状态保存，重启后恢复。协议、读图时序和提醒格式分别见[慢活](docs/slow-work.md)、[先读图再回话](docs/image-before-reply.md)、[到点提醒](docs/reminders.md)。
+到点提醒也用这张任务表，一人每群一条，重启后恢复。现有分诊先识别是否需要问清楚，再由模型提出时间和事项，代码在保存前另做一次语义审核：正常事项和无害玩笑照常记；有实际歧义先问清楚，本轮不存、旧提醒保留；明确借提醒整人或播不当内容，可以接梗，但要说清“这条没记”。审核使用本机面板配置的原生 Decisions，未配置、禁用或暂不可用时先不存，确认并审核通过的新提醒才顶掉旧的。旧版未审核或审核后内容已失效的任务会暂停，重新说清并重定后才继续。
+
+群友可以取消自己的提醒；群主明确说“停止所有定时任务”，会实际清掉**本群所有群友创建的到点提醒**，包括每日提醒和待捎带消息，并作废取消前仍在处理的旧请求和旧确认。其他群、后台维护和承诺催债继续运行，之后仍能新建提醒。协议、读图时序和提醒格式分别见[慢活](docs/slow-work.md)、[先读图再回话](docs/image-before-reply.md)、[到点提醒](docs/reminders.md)。
 
 <a id="怎么迭代的事故--回放--改--回归"></a>
 
@@ -174,7 +176,7 @@ DEPLOY=/path/to/regular-bot
 
 | 已有证据 | 测量范围 |
 | --- | --- |
-| 1538 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
+| 1611 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
 | 旧账检索 8 / 8 用例判据通过，相关证据取回 7 / 9 | [合成完整标注集](docs/self-iteration.md#local-strategy-evaluation)；新旧结果一致，预算约束造成的 2 条漏检如实计入 |
 | 接住 17 / 20 条没带名字但冲它说的话，旧方案 3 / 20 | [141 条消息、9 种写法回放](docs/when-to-reply.md)；「该接 / 不该接」由独立评审模型标注 |
 | 回复输入 token 的 75.6% 命中前缀缓存 | [线上一天 261 次调用](docs/providers.md)，与该模型和当时流量有关 |
