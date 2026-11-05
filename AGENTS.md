@@ -91,58 +91,17 @@ launchctl bootout gui/$(id -u)/io.github.the-regular; launchctl bootstrap gui/$(
 
 修改任何模块前先读它和它的直接调用方；不确定的边界先查看 `docs/DESIGN_NOTES.md` 和对应测试。
 
-## 自我迭代标准流程（见 `docs/self-iteration.md`）
+## 自我迭代：先读 skill
 
-代理（Claude Code / CodeX）排查线上问题与迭代提示词/代码时，统一通过以下只读和评测命令操作，**严禁自动上线或重启线上机器人**：
+排查小王的表现（群主发来截图、看每日体检）、改提示词或判断题、跑回放和盲评、决定上不上线，
+**先读 `.agents/skills/regular-iterate/SKILL.md`**，照着走一圈。CodeX 和 Gemini CLI 会自动发现 `.agents/skills/`，
+Claude Code 里它是 `regular-iterate` skill。设计和来龙去脉在 `docs/self-iteration.md`。
 
-**在代码仓库里执行，数据目录指向部署目录。** 下面的 `$DEPLOY` 是部署目录（线上 `.env` 和 `data/` 所在，
-Pro 上是 `~/Code_repository/regular-bot`）。仓库自己的 `data/` 和 `.env` 都不是线上那份，
-写成 `--directory .` 体检什么都看不见，评测用的也不是线上配置。`--base` / `--cand` 指的才是代码：
-`.` 是当前工作区，`HEAD` 之类的 git 版本会临时检出。命令统一用 `.venv/bin/python -m regular`
-（`.venv/bin/regular` 可能是旧安装，没有这些子命令）。
+没读 skill 也必须守的：
 
-```bash
-DEPLOY=~/Code_repository/regular-bot
-```
-
-1. **读每日体检，挑最严重的候选**：
-   ```bash
-   .venv/bin/python -m regular --directory "$DEPLOY" checkup --day today
-   .venv/bin/python -m regular --directory "$DEPLOY" checkup --label <finding_id> yes|no
-   ```
-2. **定位原因（先分清是代码问题还是提示词问题）**：
-   对照部署目录下的 `data/turns/YYYY-MM-DD.jsonl`（按 `turn_id` 查当轮原样入参）、`data/interactions/YYYY-MM-DD.jsonl` 和 `data/archive/YYYY-MM-DD.jsonl` 定位根因。代码能解决的（如 `@` 识别、引用拼接、冷却边界）不往提示词里堆刹车。
-3. **提两种范围的改法（Harness² 分范围对比）**：
-   - 通用改法（不绑特定话题/句式）；
-   - 针对本群与人设的改法；
-   若改 `prompts.py`，在对应字符串前挂 `# rule: <id> | <date> | <doc> | cases: <pattern>`（可用 `.venv/bin/python -m regular rules` 查看账本与稳定头字数；日期写这段措辞第一次进仓库的那天，`git log -S` 可查）。
-4. **存成回归用例，跑全量评测与整天回放**：
-   ```bash
-   # 从体检输出的 turn_id 存成用例（或初始化种子用例）；分诊用例要用 --choice / --choice-not 写明该判成什么
-   .venv/bin/python -m regular --directory "$DEPLOY" case add --turn <turn_id> --id <case_id> --incident docs/xxx.md --must-not "刚醒|洗衣"
-   .venv/bin/python -m regular --directory "$DEPLOY" case seed
-
-   # 对比旧版本与当前改法（全量用例 + 整天回放 + 规则消融）
-   # 先 --plan：不调模型，列出会把多少条（其中多少条取自真实群聊）发给哪个回复模型和裁判，给审批看
-   .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --plan
-   .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
-   # 评审网关挂了、有盲评没评成：沿用那份报告的样本，只重评失败的那几对
-   .venv/bin/python -m regular --directory "$DEPLOY" eval --rejudge <报告时间戳或 .json 路径> --allow-paid
-   .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
-   .venv/bin/python -m regular --directory "$DEPLOY" eval --ablate <rule_id> --allow-paid
-
-   # 本地体检与旧账检索策略的离线调参（0 token，只出提案，维护者 policy apply 后生效）
-   .venv/bin/python -m regular --directory "$DEPLOY" tune checkup
-   .venv/bin/python -m regular --directory "$DEPLOY" tune checkup --benchmark <完整独立标注集.json>
-   .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases retrieve -n 1
-   .venv/bin/python -m regular --directory "$DEPLOY" tune recall
-   .venv/bin/python -m regular --directory "$DEPLOY" policy show
-   ```
-   体检候选 `yes/no` 只有局部确认信息，不能推出总体漏报率。完整体检 benchmark 要冻结正负单元并分开训练与验证；
-   检索用例须完整标注相关消息集合、保留干扰消息并声明语料覆盖。缺标注、截断或分母为空须单列，不能填成零误报/漏报。
-   仅含本地检索且无模型评审的 `eval` 不需要 `--allow-paid`；混合或模型评测仍须显式授权。
-5. **写报告与事故记录，交由人决定上不上线**：
-   检查 `$DEPLOY/data/evals/` 下的报告（第一行是结论：「看不出新版更好」不能当改进的证据，「噪声内上升」同理；
-   语气类改动要读末尾「逐条输出」里的新旧原文和盲评理由，分数看不出「先核验再接梗」这种毛病；
-   改了 `prompts.py` 常量，留意报告里「冻着的提示词原文换成了受测版本的措辞」那一行，受测版本里没有的那几条测不到改动；
-   退步用例排最前，上线前任何退步都必须交代原因；「噪声内下降」加大 `-n` 只跑那几条再看；规则消融的结论分「可删除 / 仍需保留 / 说不准 / 判断不了」四种；稳定头字数不许无故只增不减），补充 `docs/` 事故记录与离线测试。上线永远由维护者手动执行。
+- 在仓库里执行，数据目录指向部署目录：`.venv/bin/python -m regular --directory "$DEPLOY" …`
+  （Pro 上 `DEPLOY=~/Code_repository/regular-bot`；`--directory .` 看不见线上数据）。
+- 要调模型的评测先 `--plan` 看会把多少条真实群聊发给谁，再加 `--allow-paid`；群主没授权过的先问。
+- 部署目录里的用例、评测报告、候选补丁含真实群聊，不进仓库；仓库里的种子用例只放合成的。
+- 评测报告第一行的结论是「看不出新版更好」就不是改进的证据；没被数据支持的候选存成补丁、清出工作区。
+- **严禁自动上线或重启线上机器人**；群主明确要求时按「常用命令」上线，验收看 `code.release`。

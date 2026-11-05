@@ -128,7 +128,7 @@
 | 本地体检信号 | [regular/checkup.py](../regular/checkup.py)：各信号的时间窗、重合度、口头禅门槛与筛子词表；可由 `regular tune checkup` 按独立标注离线调参 | 完整 benchmark 固定正负单元与 train / validation，比较误报漏报；旧候选 yes/no 仅作局部确认依据 |
 | 本地执行与异步 | [expression.py](../expression.py)、[reminders.py](../reminders.py)、[slowwork.py](../slowwork.py)、[delivery.py](../delivery.py)：解析、时间计算、任务状态与发送降级 | 消息层及模块测试；真实查询、画图、语音和平台投递另做 smoke |
 | 模型与调用参数 | [providers.py](../providers.py)、[config.py](../config.py)：候选模型、推理强度、token 上限、超时与成本边界 | 同条件回放加供应商测试；两版默认共用部署配置，不等于比较了两套配置 |
-| 改进与评测流程 | [regular/eval.py](../regular/eval.py)、[regular/cases.py](../regular/cases.py)、[AGENTS.md](../AGENTS.md)：判据、评审题面、统计与经验复用 | 固定验证集及独立检查；修改评审后，不能只凭它自己的分数证明它更好 |
+| 改进与评测流程 | [regular/eval.py](../regular/eval.py)、[regular/cases.py](../regular/cases.py)、[迭代 skill](../.agents/skills/regular-iterate/SKILL.md)：判据、评审题面、统计与经验复用 | 固定验证集及独立检查；修改评审后，不能只凭它自己的分数证明它更好 |
 
 “能改”和“已有自动搜索”分开看。现有 `--search-wording` 只支持 `remind`（提醒格式说明）
 和 `banter`（**聊天生成层**的接话说明）。Decisions 题面可以由编码代理修改后跑分诊评测，
@@ -622,8 +622,9 @@ CodeX 用这套命令改了八版玩梗线索、真实回放加合成留出场�
 
 落地要四样东西：
 
-- **一份流程说明进代码库**：写进 `AGENTS.md` 的一节（或做成项目技能），就是上面五步加每步用哪条命令。
-  Claude Code 和 CodeX 读同一份，换谁跑都一样。
+- **一份流程说明进代码库**：项目技能 `.agents/skills/regular-iterate/SKILL.md`，就是上面五步加每步用哪条命令、
+  报告怎么读、候选怎么搁置。CodeX 和 Gemini CLI 自动发现 `.agents/skills/`，Claude Code 从
+  `.claude/skills/regular-iterate` 指过去，`AGENTS.md` 里也只留一句「先读 skill」和几条硬约束。换谁跑都读同一份。
 - **在 Pro 上跑**：数据在那儿，CodeX 本来也在那儿。代理读群聊数据，跟现在人工迭代一样，内容作为模型输入发给
   Anthropic 或 OpenAI。
 - **权限卡死**：只能读 `data/`、跑这几条命令、开分支；不给 `.env`，不能 `launchctl`，不能重启机器人。
@@ -653,7 +654,7 @@ CodeX 用这套命令改了八版玩梗线索、真实回放加合成留出场�
 | 3 | ③ 用例格式、`regular eval`、整天回放；搬种子用例 | 1 | 中 |
 | 4 | ④ 规则标识和拿掉重跑 | 3 | 小 |
 | 5 | 消息层回放：归档补原始 @ 和引用索引 | 3 | 中 |
-| 6 | 流程说明写进 `AGENTS.md`；代理先手动触发、跑顺后每天凌晨跑，出报告和分支 | 2、3 跑顺两三周以后 | 小 |
+| 6 | 流程说明做成项目技能（`.agents/skills/regular-iterate`，已做）；代理先手动触发、跑顺后每天凌晨跑，出报告和分支 | 2、3 跑顺两三周以后 | 小 |
 | 7 | 窄口子的措辞自动搜索（提醒时间格式、生成层接话说明；原生分诊题面搜索未接入） | 3 | 小 |
 
 第 1 步越早上线越好：每晚一天，就少一天能原样回放的现场。

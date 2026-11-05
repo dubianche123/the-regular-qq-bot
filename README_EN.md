@@ -6,7 +6,7 @@
 
 **An AI companion for QQ group chats: it gets to know the people, remembers shared stories, and knows when to join in and when to leave room for others.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1532-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-1538-3A9F82)](tests) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 [中文](README.md) · **English** · [Message flow](#one-message-through-the-system) · [Decisions input](#what-decisions-actually-sees) · [Self-iteration](#self-iteration-the-loop-as-commands) · [Quick start](#quick-start) · [Design docs](#design-docs)
 
@@ -86,6 +86,8 @@ A reminder is another use of the same job table. The model writes a fixed time t
 ## Self-iteration: the loop as commands
 
 Each iteration produces **a candidate change, new regression cases and an old/new comparison report**. The live bot records inputs, judgments and actual delivery. `checkup` reads those records and flags suspicious scenes; a separate judge model labels them in another maintenance step. An external coding agent diagnoses and edits, evaluation commands replay and compare, and a maintainer decides what ships.
+
+**Plugging in an external agent**: the repository ships a self-iteration skill, [`.agents/skills/regular-iterate`](.agents/skills/regular-iterate/SKILL.md). Claude Code, CodeX and Gemini CLI discover it when they open the repository (Claude Code through a pointer in `.claude/skills/`; Gemini CLI also reads `AGENTS.md` via `.gemini/settings.json`). Hand the agent a screenshot of the bot misbehaving, or ask it to review today's checkup, and it walks the loop: find the scene, save a case, replay old and new, read the report. Going live still waits for your word.
 
 ![Self-iteration: independent complete labels, training and validation, baseline versus candidate, false positives and misses, and approved code or policy activation](docs/readme/iteration.svg)
 
@@ -172,7 +174,7 @@ Conversation content needed for judgment and replies goes to the configured mode
 
 | Existing evidence | Scope |
 | --- | --- |
-| 1532 offline regression tests | code behavior, not a guarantee that every reply lands |
+| 1538 offline regression tests | code behavior, not a guarantee that every reply lands |
 | Archive recall passes 8 / 8 case checks, retrieves 7 / 9 relevant messages | [fully labeled synthetic cases](docs/self-iteration.md#local-strategy-evaluation); both versions agree, and the 2 budget-limited misses remain counted |
 | 17 / 20 unaddressed lines aimed at it answered, versus 3 / 20 before | [141 messages and 9 prompt variants](docs/when-to-reply.md); answer/pass labels came from a separate judge model |
 | 75.6% of reply input tokens hit the prefix cache | [261 calls from one live day](docs/providers.md), tied to that model and traffic |
