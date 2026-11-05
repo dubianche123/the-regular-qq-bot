@@ -43,6 +43,7 @@ _IMAGE_OUTCOMES = {
 }
 VOICE_SENT = "这句是用语音发的"
 VOICE_AS_TEXT = "这句本来要用语音，没发成，发的是文字"
+VOICE_UNCONFIRMED = "这句语音送达未确认，群里可能听得到，不要重复发送"
 
 
 @dataclass(frozen=True)
@@ -107,7 +108,7 @@ def record(said, outcome):
             note = note.replace("这张图", "这张动图").replace("图发出去了", "动图发出去了")
     else:
         head = "〔语音〕" + (f"（{said.spec}）" if said.spec else "")
-        note = VOICE_SENT if outcome else VOICE_AS_TEXT
+        note = VOICE_UNCONFIRMED if outcome is None else VOICE_SENT if outcome else VOICE_AS_TEXT
     return "\n".join(part for part in (head, said.text, f"（系统：{note}）") if part)
 
 

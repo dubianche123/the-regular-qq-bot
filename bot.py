@@ -41,6 +41,7 @@ import naming
 import prompts
 import qqtext
 import quotes
+import proactive
 import recall as recall_mod
 import relations
 import reminders
@@ -303,17 +304,27 @@ group_buffers = collections.defaultdict(
 for gid, items in (runtime.STATE.data.get("buffers") or {}).items():
     group_buffers[gid] = collections.deque(items, maxlen=config.GROUP_BUFFER_SIZE)
 
-# 小王自己在群里说过的话（只记确认送达的模型回复；纯内存，重启就空）。拼进【群聊最近背景】：
+# 小王自己的实际结果。沿用有界 own_lines，随已有群状态保存；重启后仍能看见刚才做过什么。
 # group_buffers 和归档只收人话，背景里看不见它自己，就分不出眼前这句是不是在接它刚才的话
 # （2026-11-02 改成没叫它的消息也由它自己定接不接，这一条就成了必需的）。
 own_lines = collections.defaultdict(
     lambda: collections.deque(maxlen=config.GROUP_BUFFER_SIZE)
 )
+for gid, slot in (runtime.STATE.data.get("groups") or {}).items():
+    own_lines[gid].extend((slot.get("own_lines") or [])[-config.GROUP_BUFFER_SIZE:])
 
 
-def _note_own_line(group_id, text):
+def _note_own_line(group_id, text, *, medium="text", status="delivered"):
     if group_id and text:
-        own_lines[group_id].append({"time": time.time(), "text": text})
+        if text.startswith("[图："):
+            medium = "image"
+        elif text.startswith("[动图："):
+            medium = "animation"
+        own_lines[group_id].append({"time": time.time(), "text": text,
+                                    "medium": medium, "status": status})
+        slot = runtime.STATE.data.setdefault("groups", {}).setdefault(group_id, {})
+        slot["own_lines"] = list(own_lines[group_id])[-config.GROUP_BUFFER_SIZE:]
+        runtime.STATE.mark_dirty()
 
 
 # ── 认出「这是在跟小王说话」：引用它的话、@ 它（2026-11-03，见 quotes.py）──
@@ -932,6 +943,7 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             # 平台拒收后的兜底文案，都算「实际送达」；被拒的原稿不算。
             fields["text"] = result.text
             _remember_sent(group_id, result.receipt, result.text)
+            _note_own_line(group_id, result.text, medium=meta.get("medium", "text"))
             rid = result.receipt
             rid = rid.get("id") if isinstance(rid, dict) else getattr(rid, "id", None)
             if isinstance(rid, (str, int)):
@@ -945,7 +957,6 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             if (meta.get("generation") == "model"
                     and meta.get("route") in ("reply", "banter")
                     and not result.fallback):
-                _note_own_line(group_id, result.text)
                 try:
                     runtime.FEEDBACK.remember(
                         group_id, meta.get("user"), result.text,
@@ -1278,23 +1289,28 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                     except Exception:
                         # 意外异常可能发生在 QQ 已收下语音之后：保守起见不再补发文字。
                         logger.warning("语音发送状态不明，停止本轮投递")
+                        _note_own_line(getattr(message, "group_openid", None), body,
+                                       medium="voice", status="unconfirmed")
                         return body, delta, DeliveryResult("unknown", body)
                 status = getattr(voice_result, "status", None)
                 if status == "sent":
                     recorded["as"] = expression.record(said, True)
                     meta = dict(interaction)
+                    meta["medium"] = "voice"
                     meta.update(source_message_id=source_id, user=member,
                                 policy_id=config.INTERACTION_POLICY_ID)
-                    observer = _delivery_observer(uuid.uuid4().hex, owner_hint_group, meta, member)
+                    observer = _delivery_observer(uuid.uuid4().hex, getattr(message, "group_openid", None), meta, member)
                     item = PendingSend(message, body, time.time(), on_delivered=commit,
                                        on_outcome=observer)
                     result = await SENDER._delivered(item, receipt)
                     return body, delta, result
                 if status == "delivery_unknown":
-                    # 语音可能已经在群里了：不能再补一条文字，会话里按发过记。
+                    # 语音可能已经在群里了：不能再补一条文字，也不能记成确认送达。
+                    _note_own_line(getattr(message, "group_openid", None), body,
+                                   medium="voice", status="unconfirmed")
                     if runtime.SESSIONS.generation(session_id) == generation:
                         runtime.SESSIONS.record(session_id, user_text,
-                                                as_recorded(expression.record(said, True)))
+                                                as_recorded(expression.record(said, None)))
                     return body, delta, DeliveryResult("unknown", body)
                 # 其余情况都确定没发出去（含合成被拒、念的和写的对不上）：同一句话改发文字。
                 # 这句本来就是小王写给群里看的，语音没成不等于这句话不能说。
@@ -1493,7 +1509,11 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
             "delivery", media.group, user=media.user, actor="assistant",
             outgoing_id=outgoing_id, source_message_id=getattr(message, "id", None),
             status="delivered", route="image", generation="model")
-    elif outcome is not None:
+    else:
+        detail = "QQ 送达回执不明" if outcome is None else expression.image_failed_line(outcome)
+        _note_own_line(media.group, f"{said.spec}；{detail}", medium="animation" if said.animated else "image",
+                       status="unconfirmed" if outcome is None else "failed")
+    if outcome is not True and outcome is not None:
         line = expression.image_failed_line(outcome)
         logger.info("🎨 这张没画成（%s）", outcome)
         await safe_reply(message, line)
@@ -2064,15 +2084,28 @@ async def proactive_loop():
             gid, buf = max(candidates, key=lambda kv: max(
                 float(x.get("time") or 0) for x in kv[1]))
             last_msg_ts = max(float(x.get("time") or 0) for x in buf)
+            slot = (runtime.STATE.data.get("groups") or {}).get(gid) or {}
+            last_proactive = max(_last_proactive.get(gid, 0), float(slot.get("last_proactive") or 0))
             ok, why = activation.proactive_ok(
-                mood_v, hour, now, _last_proactive.get(gid, 0), last_msg_ts)
+                mood_v, hour, now, last_proactive, last_msg_ts)
             if not ok:
                 continue
             fresh = [b for b in buf if now - float(b.get("time") or 0)
                      <= config.GROUP_BUFFER_TTL_SECONDS]
             if len(fresh) < 2:
                 continue
-            topics = "\n".join(f"- {b.get('text', '')[:60]}" for b in fresh[-4:])
+            sources = [dict(row) for row in fresh[-min(config.GROUP_BUFFER_SIZE, proactive.HUMAN_LIMIT):]]
+            own = [dict(row) for row in own_lines.get(gid, ())
+                   if 0 <= now - float(row.get("time") or 0) <= config.GROUP_BUFFER_TTL_SECONDS]
+            topics = refresh_names(gid, proactive.render_context(
+                sources, own, now=now, label=lambda sender: _who_label(gid, sender)))
+            latest = (buf[-1].get("message_id"), buf[-1].get("time"))
+            own_latest = list(own_lines.get(gid, ()))
+
+            def is_current():
+                live = group_buffers.get(gid)
+                return bool(live and (live[-1].get("message_id"), live[-1].get("time")) == latest
+                            and list(own_lines.get(gid, ())) == own_latest)
             if runtime.FEEDBACK.quiet(gid, now=now):
                 continue    # 反馈收敛期内不主动开口
             ok, _ = runtime.GROUP_BUCKET.try_acquire(gid)
@@ -2080,7 +2113,8 @@ async def proactive_loop():
                 continue
             # 说不说由小王自己定：没什么想说的就写〔不接〕（以前先问一次插嘴判断，
             # 判断说接得上才让它写；2026-11-02 起和群里没叫它的消息同一个口径）。
-            prompt = naming.render(prompts.PROMPT_PROACTIVE).replace("{topics}", topics)
+            prompt = naming.render(prompts.PROMPT_PROACTIVE).replace(
+                "{topics}", "（见本轮【群聊最近背景】里的编号原话与实际结果。）")
             trace = {"route": "proactive", "group": gid}
             token = _reply_trace.set(trace)
             try:
@@ -2090,14 +2124,23 @@ async def proactive_loop():
                     allow_fallback=False)
             finally:
                 _reply_trace.reset(token)
-            # 主动开口没有可回的那条消息，画不了也发不了语音：写了标记只留正文；〔不接〕就是空的
-            body = expression.parse(body).text if body else body
-            if not body or _garbage_run(body):
+            # 先用本轮编号找原句，再剥媒体标记。引用是主动消息的关联，不借用过期的被动回复窗口。
+            candidate = proactive.parse(body, sources)
+            if candidate is None:
+                continue
+            body, source = candidate
+            if _garbage_run(body) or not is_current():
                 continue    # 没生成出来 / 又抽风了 —— 这轮不说话
+            quote = source.get("msg_idx") if source is not None else None
+            quote_text = (quotes.render(_who_label(gid, source.get("sender")), source.get("text")).strip() + "\n"
+                          if source is not None else "")
             if await post_to_group(gid, body.strip(),
-                                   model_generated=True, history=fresh[-4:],
-                                   turn_id=trace.get("turn_id")):
+                                   model_generated=True, history=sources,
+                                   turn_id=trace.get("turn_id"), quote=quote,
+                                   quote_text=quote_text, is_current=is_current):
                 _last_proactive[gid] = time.time()
+                runtime.STATE.data.setdefault("groups", {}).setdefault(gid, {})["last_proactive"] = _last_proactive[gid]
+                runtime.STATE.mark_dirty()
                 logger.info("🌙 [自发开口] 距上次群消息 %.0f 分钟", (time.time() - last_msg_ts) / 60)
         except asyncio.CancelledError:
             raise
@@ -2384,7 +2427,6 @@ async def deliver_carried(message, group_id):
                     and runtime.SCHEDULER.tasks.get(task["id"]) is task):
                 task["payload"].pop("ready", None)
                 _reminder_done(task, time.time())
-                _note_own_line(group_id, result.text)
                 runtime.STATE.mark_dirty()
 
         _carried_reminders[task["id"]] = task
@@ -2474,7 +2516,6 @@ async def fire_reminder(task):
                            is_current=lambda: _reminder_current(task, text),
                            history=list(group_buffers.get(gid, ()))[-4:]):
         logger.info("⏰ 提醒送到了（%s，%s）", reminders.describe(p), gid[-6:])
-        _note_own_line(gid, text)
         return _reminder_done(task, now)
     if runtime.SCHEDULER.tasks.get(task["id"]) is not task:
         return None
@@ -2491,13 +2532,14 @@ async def fire_reminder(task):
 # ── 承诺催债 ──
 
 async def post_to_group(group_id, text, *, model_generated=False, history=(), turn_id=None,
-                        mention_member=None, is_current=None):
+                        mention_member=None, is_current=None, quote=None, quote_text=""):
     """主动往群里发一句话（不是回复）。催债、定时播报都要用它。
 
     原生反馈判过「收敛」的群，窗口内主动发言一律按住 —— 点名回复
     （safe_reply 那条路）不受影响。model_generated=True 的确认送达
     会登记进反馈缓存，让随后的人话反馈能认到这句群发。
     turn_id：这句是哪一轮输入生成的（data/turns），只进观察日志。
+    quote 是本地 msg_idx；quote_text 是缺索引/明确拒收后的可见原话前缀。
     """
     client = _bot_ref.get("client")
     if client is None or not text:
@@ -2509,6 +2551,9 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
     # 空回执/异常只算「未确认」（SDK 可能吞掉超时），不记正文。
     outgoing_id = uuid.uuid4().hex
     policy_id = config.INTERACTION_POLICY_ID   # 发起这一刻定版
+    reference_mode = "native" if quote else "text" if quote_text else "none"
+    if quote_text and not quote:
+        text = quote_text + text
 
     def journal(status, receipt=None, reason=""):
         try:
@@ -2516,6 +2561,10 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
                       "status": status, "route": "proactive",
                       "feedback_eligible": False,
                       "policy_id": policy_id}
+            if reference_mode != "none":
+                fields["reference_mode"] = reference_mode
+            if quote:
+                fields["ref_msg_idx"] = quote
             if reason:
                 fields["reason"] = reason
             if turn_id:
@@ -2537,14 +2586,20 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
         return False
     try:
         try:
+            reference = ({"message_reference": {"message_id": quote,
+                                                "ignore_get_message_error": False}}
+                         if quote else {})
             sent = await client.api.post_group_message(
-                group_openid=group_id, **group_message_payload(text, mention_member))
+                group_openid=group_id, **group_message_payload(text, mention_member), **reference)
         except Exception as error:
-            if not mention_member or not mention_rejected(error):
+            if not (mention_member or quote) or not mention_rejected(error):
                 raise
             if is_current is not None and not is_current():
                 return False
-            logger.warning("QQ 拒收提醒的提及格式，改发普通文本")
+            if quote:
+                text = quote_text + text
+                reference_mode = "text" if quote_text else "none"
+            logger.warning("QQ 明确拒收主动消息的引用或提及格式，改发普通文本")
             sent = await client.api.post_group_message(
                 group_openid=group_id, **group_message_payload(text))
         if not sent:
@@ -2552,6 +2607,7 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
             return False
         logger.info("📢 [主动发言] 群 %s | %s", group_id[-6:], text.replace("\n", " ")[:150])
         _remember_sent(group_id, sent, text)
+        _note_own_line(group_id, text)
         # 确认送达的模型生成群发才登记反馈缓存：静态模式播报/本地文案不算。
         if model_generated:
             try:
@@ -2935,7 +2991,10 @@ class GroupBot(botpy.Client):
         buf = group_buffers[group_id]
         if (not buf or image_url or voices or buf[-1]["sender"] != sender_openid
                 or buf[-1]["text"] != heard):
-            buf.append({"sender": sender_openid, "text": heard, "time": time.time(), "message_id": message.id})
+            row = {"sender": sender_openid, "text": heard, "time": time.time(), "message_id": message.id}
+            if scene.get("msg_idx"):
+                row["msg_idx"] = scene["msg_idx"]
+            buf.append(row)
             runtime.STATE.data["buffers"][group_id] = list(buf)
         # 记录消息到达时已存在的近期上下文，后续异步处理不把更晚消息倒插到这轮。
         receipt_time = time.time()
@@ -3359,7 +3418,9 @@ class GroupBot(botpy.Client):
                      f"- {'当前说话人' if b['sender'] == sender_openid else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}")
                     for b in prev]
             # 同一段时间里它自己说过的话按时间插进去（见 own_lines）；它自己刚画的图往前多看一段（_own_recent_drawing）
-            rows += [(o["time"], f"- 你：{o['text']}") for o in own_lines.get(group_id, ())
+            rows += [(o["time"], "- 你：" + (proactive.own_text(o)
+                      if o.get("medium", "text") != "text" or o.get("status", "delivered") != "delivered"
+                      else o["text"])) for o in own_lines.get(group_id, ())
                      if o["time"] <= now_ts
                      and (rows[0][0] <= o["time"] or _own_recent_drawing(o, now_ts))]
             rows.sort(key=lambda row: row[0])

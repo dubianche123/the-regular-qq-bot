@@ -24,6 +24,9 @@ import scheduler as scheduler_mod
 import storage
 from delivery import Sender
 
+_REAL_POST_TO_GROUP = bot.post_to_group
+_REAL_DELIVERY_OBSERVER = bot._delivery_observer
+
 
 def at(month, day, hour, minute, year=2026):
     return time.mktime((year, month, day, hour, minute, 0, 0, 0, -1))
@@ -201,8 +204,13 @@ class FireTest(_Reply):
         async def post(group_id, text, **kw):
             self.posts.append(text)
             self.post_kwargs.append(kw)
-            return self.post_ok
+            if not self.post_ok:
+                return False
+            api = SimpleNamespace(post_group_message=AsyncMock(return_value={"id": "timer-receipt"}))
+            with patch.dict(bot._bot_ref, {"client": SimpleNamespace(api=api)}):
+                return await _REAL_POST_TO_GROUP(group_id, text, **kw)
         for p in (patch.object(bot, "post_to_group", post),
+                  patch.object(bot, "_delivery_observer", _REAL_DELIVERY_OBSERVER),
                   patch.object(bot, "call_model", AsyncMock(return_value="老王，九点了，开会去")),
                   patch.object(bot, "_who_label", return_value="老王")):
             p.start()
@@ -312,7 +320,9 @@ class FireTest(_Reply):
             self.assertIn(task["id"], self.scheduler.tasks)
             self.assertEqual(task["payload"]["ready"], "原提醒正文")
             self.assertNotIn(task["id"], bot._carried_reminders)
-            self.assertEqual(list(bot.own_lines.get("group", ())), before)
+            actual = list(bot.own_lines.get("group", ()))[len(before):]
+            self.assertEqual([row["text"] for row in actual], ["这次没能发出来"])
+            self.assertTrue(all(row["status"] == "delivered" for row in actual))
             await bot.deliver_carried(self.message, "group")
         self.assertEqual(self.scheduler.pending(), [])
         self.assertEqual(bot.own_lines["group"][-1]["text"], "原提醒正文")

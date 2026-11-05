@@ -467,7 +467,7 @@ class ProactiveLoopTickTest(_Base):
         bot.group_buffers[self.G] = collections.deque(
             [{"sender": self.A, "text": f"第{i}句", "time": time.time()}
              for i in range(3)])
-        gen = AsyncMock(return_value=("开场白", None))
+        gen = AsyncMock(return_value=("〔新话题〕\n开场白", None))
         post = AsyncMock(return_value=True)
         for target, name, value in (
                 (bot.activation, "proactive_ok",
