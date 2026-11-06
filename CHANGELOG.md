@@ -33,6 +33,8 @@
   hops and flinches stay crisp; reduced motion turns it off).
   `tools/pet_sprites.py build --only` rebuilds single strips and keeps strips it
   does not own in `sprites.json`.
+- Remove 13 README diagrams no page links to any more and `tools/doctor.py`,
+  which `regular doctor` replaced.
 - Add `tests/test_design_state_layer.py` covering the state layer, shipped
   strips, navigation folding, and removal of the native menu.
 - Bind the whole app to one OpenAI key. The console now asks for an API key in
