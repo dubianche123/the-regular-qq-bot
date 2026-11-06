@@ -164,9 +164,9 @@ def test_bad_panel_policy_warns_without_overwriting_existing_report(tmp_path):
     original = '{"day": "2026-11-03", "findings": [], "keep": "original"}'
     report.write_text(original, encoding="utf-8")
     html = panel._checkup(cfg, SimpleNamespace(query={"day": "2026-11-03"}), "csrf")
-    assert "体检策略文件无效" in html
+    assert "体检设置暂时无法读取" in html
     assert "已有报告保持不变" in html
-    assert "候选标注确认率" in html
+    assert "确认比例" in html
     assert report.read_text(encoding="utf-8") == original
 
 
