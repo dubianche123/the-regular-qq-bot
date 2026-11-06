@@ -1050,15 +1050,18 @@ class MediaTurn(SimpleNamespace):
     """这一轮小王能用哪几样（draw / animate / voice / remind）、额度记在谁头上、即时提示里要补的那句。"""
 
 
-def media_turn(group_id, user_id, score, *, asked, remind=False):
+def media_turn(group_id, user_id, score, *, asked, remind=False, voice=True):
     """在生成**之前**定这一轮的画图、语音条件，好让小王写回复时就知道。
 
-    asked=True：有人在跟它说话、它在正经回（不是插嘴、短接、喊停、慢活）—— 只有这时才认〔画〕/〔动图〕：
-    没人找它画就不花钱。语音便宜，插嘴也认，但喊停和慢活不认（调用方传 voice=False 的那几种）。
+    asked=True：有人在跟它说话、它在正经回（不是插嘴、短接、喊停）—— 只有这时才认〔画〕/〔动图〕：
+    没人找它画就不花钱。先查再答的那几轮也认〔画〕：「查查新款长啥样再画一张」，查完那句得画得出来
+    （2026-11-06 查完写了〔画〕被当文字丢掉，只剩一句「我先按介绍图来画了」）。
+    语音便宜，插嘴也认，但查资料那几轮不念（voice=False）：念一段查来的资料太长。
     画累了、正在画、破例、嗓子用完：都写进 note，小王自己用人话说出来（群主 2026-11-01：
     「额度用完了也要像人一样说今天累了」）—— 以前这几句是代码里的固定话术。
     """
-    draw = voice = False
+    speak, voice = voice, False
+    draw = False
     notes = []
     if asked and image_generation.available():
         state = image_generation.precheck(group_id, user_id, score)
@@ -1069,7 +1072,7 @@ def media_turn(group_id, user_id, score, *, asked, remind=False):
             notes.append(prompts.PROMPT_DRAW_BUSY)
         elif state == "exception":
             notes.append(prompts.PROMPT_DRAW_EXCEPTION)
-    if _VOICE_OUT.ready():
+    if speak and _VOICE_OUT.ready():
         if _VOICE_OUT.tired():
             notes.append(prompts.PROMPT_VOICE_TIRED)
         else:
@@ -2273,9 +2276,10 @@ async def await_images(message, own, others):
             logger.info("🖼 背景里的图没读完，先回话")
 
 
-async def answer_with_lookup(message, session_id, user_input, kind, query, *, reply_kwargs):
+async def answer_with_lookup(message, session_id, user_input, kind, query, *, reply_kwargs, media=None):
     """先查再答。线上等得到就一条回复；等不到先回一句在查，把手交给定时任务跟进。
 
+    media：这一轮认不认〔画〕（见 media_turn）。转后台时只记「这轮能画」和分值，跟进那一刻重新看额度。
     起不了头、或当场就失败了，返回 None：调用方照常回复（不带资料），别让人干等。
     """
     job = slowwork.JOBS[kind]
@@ -2288,19 +2292,24 @@ async def answer_with_lookup(message, session_id, user_input, kind, query, *, re
         logger.info("🌐 联网查询当场回来了（%s）", kind)
         return await reply_in_session(message, session_id, user_input,
                                       search_note=search_mod.render_brief(result),
-                                      **reply_kwargs)
+                                      media=media, **reply_kwargs)
     if state == slowwork.FAILED:
         return None
     outcome = await reply_in_session(message, session_id, user_input,
                                      prepared=("我去查查，等我一会儿。", None),
                                      prepared_local=True, **reply_kwargs)
     now = time.time()
+    member = getattr(getattr(message, "author", None), "member_openid", None)
     runtime.SCHEDULER.at("followup", message.group_openid, now + job.poll_every, {
         "job": kind, "handle": handle, "session": session_id, "question": user_input,
-        "member": getattr(getattr(message, "author", None), "member_openid", None),
+        "member": member,
         "msg_id": message.id, "msg_ts": str(getattr(message, "timestamp", "") or ""),
-        "is_owner": bool(reply_kwargs.get("is_owner")), "started": now})
+        "is_owner": bool(reply_kwargs.get("is_owner")), "started": now,
+        "media": media is not None, "score": getattr(media, "score", 0)})
     runtime.STATE.mark_dirty()
+    # 桌宠（regular/presence.py）看得到她在查资料；只记慢活种类，不记要查的话。
+    runtime.INTERACTIONS.append("lookup", message.group_openid, user=member, actor="assistant",
+                                source_message_id=message.id, job=kind, status="background")
     logger.info("⏳ %s转后台，先回了一句（%s）", "深度研究" if kind == "research" else "联网查询",
                 message.group_openid[-6:])
     return outcome
@@ -2315,10 +2324,11 @@ def _reply_target(group_id, payload):
             return None
         return await client.api.post_group_message(
             group_openid=group_id, msg_id=payload["msg_id"], **kwargs)
+    # _api：跟进那句要是〔画〕，图得经它上传（image_generation 用 message._api）。
     return SimpleNamespace(group_openid=group_id, id=payload["msg_id"],
                            timestamp=payload.get("msg_ts") or None,
                            author=SimpleNamespace(member_openid=payload.get("member")),
-                           reply=reply)
+                           reply=reply, _api=getattr(_bot_ref.get("client"), "api", None))
 
 
 async def finish_lookup(task):
@@ -2342,6 +2352,8 @@ async def finish_lookup(task):
                  else prompts.PROMPT_LOOKUP_DONE)
     history = list(group_buffers.get(gid, ()))[-4:]
     completed = state == slowwork.DONE
+    media = (media_turn(gid, p.get("member"), p.get("score", 0), asked=True, voice=False)
+             if completed and p.get("media") else None)
     body, _delta, delivery = await reply_in_session(
         _reply_target(gid, p), p["session"], p["question"],
         is_owner=p.get("is_owner", False),
@@ -2350,7 +2362,7 @@ async def finish_lookup(task):
         lookup_note=done_note if completed else "",
         prepared=None if completed else ("这次没查成，等会儿再试试。", None),
         prepared_local=not completed,
-        history=history)
+        media=media, history=history)
     status = getattr(delivery, "status", None)
     logger.info("🌐 慢活跟进（%s，%s，%.0f 秒）：%s", p["job"], state, now - p["started"], status)
     if status != "expired" or not body:
@@ -3566,23 +3578,24 @@ class GroupBot(botpy.Client):
             back_off=back_off, quip=quip,
             history=list(buf or [])[-4:],
         )
+        # 画不画、说不说语音由小王在回复里自己决定；这里只定它这一轮「能不能」。
+        # 喊停这轮不画也不念：对方已经不想听了。先查再答的那轮能画、不念、不办提醒（见 media_turn）。
+        # （别叫 media：那是读图模块的名字，同一个函数里前面还在用它）
+        researching = bool(lookup or search_note)
+        this_turn = (None if back_off else
+                     media_turn(group_id, sender_openid, resource_score, asked=not quip,
+                                remind=not unprompted and not researching, voice=not researching))
+        if this_turn is not None:
+            this_turn.reminder_revision = reminder_revision_at_receipt
+            this_turn.reminder_intent = feedback_result.get("reminder_request")
         outcome = None
         if lookup:
             outcome = await answer_with_lookup(message, session_id, user_input,
-                                               *lookup, reply_kwargs=reply_kwargs)
+                                               *lookup, reply_kwargs=reply_kwargs, media=this_turn)
             if outcome is None:
                 await safe_reply(message, "这次没查成，等会儿再试试。")
                 return
         if outcome is None:
-            # 画不画、说不说语音由小王在回复里自己决定；这里只定它这一轮「能不能」。
-            # 搜索、喊停这轮不画也不念：前者要的是资料，后者对方已经不想听了。
-            # （别叫 media：那是读图模块的名字，同一个函数里前面还在用它）
-            this_turn = (None if back_off or search_note else
-                         media_turn(group_id, sender_openid, resource_score,
-                                    asked=not quip, remind=not unprompted))
-            if this_turn is not None:
-                this_turn.reminder_revision = reminder_revision_at_receipt
-                this_turn.reminder_intent = feedback_result.get("reminder_request")
             if unprompted:
                 outcome = await reply_unprompted(message, session_id, user_input,
                                                  media=this_turn, callback_note=callback_note,

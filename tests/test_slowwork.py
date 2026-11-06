@@ -237,6 +237,62 @@ class LookupFlowTest(_Base):
         sent = self.posted[-1]
         self.assertEqual((sent["msg_id"], sent["msg_seq"]), (msg.id, 2))  # 同一条消息的第二句
 
+    def can_draw(self):
+        for target, name, value in ((bot.image_generation, "available", lambda: True),
+                                    (bot.image_generation, "animation_available", lambda: False),
+                                    (bot.image_generation, "precheck", lambda *a: "normal"),
+                                    (bot, "_drawing_declined", AsyncMock(return_value=False))):
+            ctx = patch.object(target, name, value)
+            ctx.start()
+            self.addCleanup(ctx.stop)
+        draw = AsyncMock(return_value=True)
+        ctx = patch.object(bot.image_generation, "generate_and_send", draw)
+        ctx.start()
+        self.addCleanup(ctx.stop)
+        return draw
+
+    async def test_look_it_up_then_draw_draws_after_a_slow_lookup(self):
+        """2026-11-06：「画个介绍新款触摸 MacBook Pro 的图」→ 查询转后台 → 跟进写了〔画〕，
+        当时这轮不认标记，只发了一句「我先按介绍图来画了」，图没画。"""
+        draw = self.can_draw()
+        fake = FakeJob("search", [slowwork.RUNNING] * 2)
+        self.use(fake)
+        msg = await self._drive("小王 给我画个介绍新款触摸 MacBook Pro 的图")
+        self.assertIn("查查", msg.reply.await_args.kwargs["content"])
+        lookup = [r for r in self.log.rows if r["kind"] == "lookup"]
+        self.assertEqual([(r["job"], r["status"]) for r in lookup], [("search", "background")])
+        self.assertNotIn("MacBook", json.dumps(lookup, ensure_ascii=False))   # 桌宠只知道她在查
+        task = next(iter(self.sched.tasks.values()))
+        json.dumps(task)
+        fake.states = [slowwork.DONE]
+        self.reply_text = "〔画〕新款触摸 MacBook Pro 产品介绍信息图\n按查到的样子画了"
+        self.assertIsNone(await bot.finish_lookup(task))
+        draw.assert_awaited_once()
+        self.assertEqual(draw.await_args.kwargs["prompt"], "新款触摸 MacBook Pro 产品介绍信息图")
+        self.assertIs(draw.await_args.args[0]._api, self.client.api)   # 跟进那句的图也传得上去
+        self.assertEqual(self.posted[-1]["content"], "按查到的样子画了")
+
+    async def test_a_fast_lookup_can_draw_too(self):
+        draw = self.can_draw()
+        self.use(FakeJob("search", [slowwork.DONE]))
+        self.reply_text = "〔画〕新款触摸 MacBook Pro 产品介绍信息图\n画好了"
+        await self._drive("小王 给我画个介绍新款触摸 MacBook Pro 的图")
+        draw.assert_awaited_once()
+        self.assertIn(search.LOOKUP_MARK, self.turn())
+
+    async def test_a_lookup_queued_before_this_change_still_answers_in_words(self):
+        draw = self.can_draw()
+        fake = FakeJob("search", [slowwork.RUNNING])
+        self.use(fake)
+        await self._drive("小王 给我画个介绍新款触摸 MacBook Pro 的图")
+        task = next(iter(self.sched.tasks.values()))
+        for key in ("media", "score"):
+            task["payload"].pop(key)
+        fake.states = [slowwork.DONE]
+        self.reply_text = "〔画〕新款触摸 MacBook Pro 产品介绍信息图\n按查到的样子画了"
+        await bot.finish_lookup(task)
+        draw.assert_not_awaited()
+
     async def test_research_easter_egg_answers_right_away(self):
         self.calls.side_effect = answer({"addressed": "answer", "lookup": "research"})
         fake = FakeJob("research", [slowwork.RUNNING], wait_first=False)

@@ -335,13 +335,18 @@ class VoiceReplyTest(_Reply):
 
 
 class MediaTurnTest(unittest.TestCase):
-    def turn(self, state, *, asked=True, tired=False):
+    def turn(self, state, *, asked=True, tired=False, voice=True):
         with patch.object(bot.image_generation, "available", return_value=True), \
              patch.object(bot.image_generation, "animation_available", return_value=True), \
              patch.object(bot.image_generation, "precheck", return_value=state), \
              patch.object(bot._VOICE_OUT, "ready", return_value=True), \
              patch.object(bot._VOICE_OUT, "tired", return_value=tired):
-            return bot.media_turn("group", "member", 0, asked=asked)
+            return bot.media_turn("group", "member", 0, asked=asked, voice=voice)
+
+    def test_lookup_turns_can_draw_but_do_not_read_results_aloud(self):
+        t = self.turn("normal", tired=True, voice=False)
+        self.assertEqual((t.draw, t.voice), (True, False))
+        self.assertNotIn(prompts.PROMPT_VOICE_TIRED, t.note)
 
     def test_states_become_notes_for_xiaowang(self):
         self.assertEqual((self.turn("normal").draw, self.turn("normal").note), (True, ""))
