@@ -107,12 +107,14 @@ class SourceLauncherTest(unittest.TestCase):
         self.assertEqual(json.loads(self.marker.read_text())["version"], "0.3.1")
 
     def test_macos_default_builds_and_opens_a_branded_app_in_the_instance(self):
-        with patch.object(launcher.sys, "platform", "darwin"):
+        mac_python = self.root / ".venv" / "bin" / "python"
+        with patch.object(launcher.sys, "platform", "darwin"), \
+             patch.object(self, "python", mac_python):
             code, _, run = self.run_launcher(["--directory", str(self.instance)], native_app=True)
         self.assertEqual(code, 0)
         install, build, opened = run.call_args_list
         self.assertEqual(install.args[0][-1], str(self.root) + "[desktop-build]")
-        self.assertEqual(build.args[0], [str(self.python), str(self.root / "tools/build_desktop.py"),
+        self.assertEqual(build.args[0], [str(mac_python), str(self.root / "tools/build_desktop.py"),
                                        "--source", str(self.root), "--output", str(self.instance / "desktop")])
         self.assertEqual(opened.args[0], [str(self.instance / "desktop/老群友.app/Contents/MacOS/老群友"),
                                          "--directory", str(self.instance), "pet"])

@@ -72,7 +72,9 @@ class DesktopPetTest(unittest.TestCase):
         self.pet._finished("session", {"ok": True, "value": {
             "csrf": CSRF, "available": True, "reason": "", "qq_connected": True}})
 
-    def mouse(self, kind, where, *, button=Qt.MouseButton.LeftButton, buttons=None):
+    def mouse(self, kind, where, *, button=None, buttons=None):
+        if button is None:
+            button = Qt.MouseButton.LeftButton
         return QMouseEvent(kind, QPointF(10, 10), QPointF(*where), button,
                            button if buttons is None else buttons, Qt.KeyboardModifier.NoModifier)
 
