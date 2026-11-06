@@ -17,13 +17,18 @@
 | 配置与聊天欢迎：捧茶坐下 | `regular/assets/mascot-welcome.png` |
 | 知识库：整理笔记 | `regular/assets/mascot-knowledge.png` |
 | 体检与改进：放大镜和记录板 | `regular/assets/mascot-checkup.png` |
-| 桌宠动作 | `mascot-idle.png`、`mascot-blink.png`、`mascot-wave-mid.png`、`mascot-wave.png`、`mascot-drag-mid.png`、`mascot-drag.png` |
+| 网页点击反馈 | `mascot-blink.png`、`mascot-wave.png` |
+| 桌宠与网页小助手（Q 版动作） | `regular/assets/pet/*.webp` + `sprites.json` |
 
-运行素材统一为 512×768 的透明 PNG，共约 3.38 MiB；另外保留原始高清角色与 README 横幅。情境插画允许换姿势和道具，桌宠动作固定画布、脸和躯干，避免动作时换了一位角色。
+网页插画统一为 512×768 的透明 PNG；另外保留原始高清角色与 README 横幅。情境插画允许换姿势和道具。
 
-挥手和眨眼由原图局部编辑，小腿动作使用原画的局部骨骼变形。动作帧序列、速度和是否循环在 `regular/assets/pet-actions.json` 中。待机不持续晃动；拖动时进入动作并保持末帧，放下回到待机。没有使用模型逐帧重画的 GIF，也不做整张贴纸旋转或交叉淡入。
+## 桌宠的 Q 版动作
 
-维护工具为 `tools/generate_mascot_poses.py` 和 `tools/mascot_expression.swift`。默认仅打印计划，明确加 `--allow-paid` 才向官方 Images API 上传原创参考图与动作描述，每项一次请求、不自动重试。试验以 GPT Image 2.6 Flare 为主，局部姿势补强使用 Sunburst；不上传群聊。候选先留临时目录，验看后只导出采用素材，失败帧不放入运行包。
+桌宠用的是同一角色的 Q 版（约 3 头身、成年角色）。2026-11-06 以 `mascot.png` 为身份参考，用 GPT Image 2.6 Flare 生成定稿（Sunburst 版本对比后差别不大，未采用），再以定稿和走路表为参照生成整张动作表：待机/张望、走路 6 帧、挥手、跳、坐下、睡着、被拎起、掉落与落地、托腮/看手机、说话、伸懒腰、看书、画画、唱歌、生气、害羞、被戳、庆祝、喝茶、东张西望、吃饼干、敲电脑。同一张表里的几帧由模型一次画出，脸、服装和比例一致，远好于逐帧重画；眨眼只编辑待机帧的眼睛椭圆并羽化合回，身体像素不变。
+
+`tools/pet_sprites.py` 记录全部提示词：`generate` 默认只打印计划，加 `--allow-paid` 才向官方 Images API 上传原创角色图与动作描述，每张一次请求、不自动重试，原始表只放仓库外目录；`build` 离线切帧、以头部重心和脚底对齐、按待机身高统一比例并导出 WebP。本轮共约 26 次生成，被拎起的第一版没画成悬空、已淘汰重做。生成图自带一圈浅色贴纸描边，在深色桌面上反而更醒目，保留。
+
+网页插画的维护工具为 `tools/generate_mascot_poses.py` 和 `tools/mascot_expression.swift`。默认仅打印计划，明确加 `--allow-paid` 才向官方 Images API 上传原创参考图与动作描述，每项一次请求、不自动重试。试验以 GPT Image 2.6 Flare 为主，局部姿势补强使用 Sunburst；不上传群聊。候选先留临时目录，验看后只导出采用素材，失败帧不放入运行包。
 
 本轮动作与情境扩展用了 8 次生成，保留自然且一致的结果；失败的腿部接缝、切翼和失真手臂候选已淘汰。完整角色与情境提示保存在生成工具中，下面是最初原画与横幅的提示。
 

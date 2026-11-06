@@ -186,7 +186,7 @@ DEPLOY=/path/to/regular-bot
 先安装 **Python 3.10 或以上**，再从 [GitHub Releases](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) 下载 **Source code (zip)** 并解压。也可以用 Git 克隆仓库。启动文件需要完整源码，wheel 安装包不包含这套源码入口。
 
 1. **打开桌宠，从设置进入面板。** Windows 双击 `start.bat`；macOS 双击 `start.command`；Linux 在解压目录运行 `bash start.sh`。首次启动会创建本地 `.venv` 并安装依赖，先显示透明人物；靠近后点击「设置」。原生组件不可用时提示使用网页。安装和排错见[新手指南](getting-started.md)。
-2. **填写最小配置。** 新实例会进入「开始使用」页：填 QQ `AppID`、`AppSecret`、机器人名字，以及一个回复模型的接口地址、模型 ID、API Key 和每日调用次数上限。保存不调用模型；密码留空会保留已有值，基础配置下次启动机器人时生效。
+2. **填写最小配置。** 新实例首页会带你进入「设置 → QQ 与模型」页：填 QQ `AppID`、`AppSecret`、机器人名字，以及一个回复模型的接口地址、模型 ID、API Key 和每日调用次数上限。保存不调用模型；密码留空会保留已有值，基础配置下次启动机器人时生效。
 3. **明确点击启动。** 在「我的群友」点击「启动机器人」，等页面显示实际 **已连上 QQ**。仅打开网页、保存配置都不会连接 QQ。保持面板服务的终端开启；关网页不停止机器人，退出面板服务会停止它自己启动的机器人。
 4. **由你先私聊，再进群。** 在 QQ 开放平台启用私聊与所需群消息事件、配置测试或使用范围；首次非空私聊会认主，请你先发。拉进群并允许接收群消息后，用 @ 或配置的名字试一句。
 
@@ -251,11 +251,15 @@ flowchart LR
 
 本机会话没有 QQ 身份，不走 C2C 自动认主，不附带 QQ 群目标，也不执行模型输出的媒体或提醒动作。连接文件含随机私有 token、PID 和本机临时端口，仅本机读取且权限为 0600；面板核对进程和状态新鲜度，不跟随重定向，不自动重试。开启、关闭人物不会启动或停止机器人。
 
-人物可见性和工具栏显隐分开。80ms 本机指针采样检查人物附近与工具栏区域的并集，离开 600ms 收起；拖动、对话框和维护菜单会保留控件。macOS 设置 `WA_MacAlwaysShowToolWindow`，避免 `Qt::Tool` 随应用失去激活而隐藏。
+本机聊天同时承担有限的管家入口：每轮动态层附上能力状态与今日交互数量，模型最多提出一项开关调整或 Agent 交接。`regular/local_chat.py` 解析固定提议，网页与桌宠显示确认卡；用户点确认后才通过本机认证与 CSRF 写入单项开关。`regular manage` 为编码 Agent 提供同一份状态与配置接口，代码修改、评测与部署仍由外部编码 Agent 按自迭代流程完成。能力开关对新请求生效，服务地址、模型和额度等在机器人下次启动时加载，详见[能力与服务](capabilities.md)。
 
-大小、位置和动作偏好只写实例的 `data/desktop-pet.json`，调整或退出时原子保存，不随每一帧写盘。恢复时检查现有屏幕范围，外屏断开也能找回人物；聊天和通知使用透明外层的圆角浮卡。
+桌宠分两层：`regular/pet_brain.py` 是纯计算的大脑，持有行为计划、站/坐/躺过渡、重力与落地、拖拽单摆、摸头/戳/投喂和 agent 事件映射，不依赖 Qt；`regular/desktop_pet.py` 是 Qt 外壳，每帧把指针和时间喂给大脑，再按 `pose()` 画精灵帧与程序变换。人物、点击穿透的特效层、对话气泡和侧边快捷栏是独立透明窗口；人物窗口只在落地静止时按当前帧 alpha 设遮罩，拖拽和下落时取消遮罩以免旋转被裁。静止 30 fps、移动 60 fps。
 
-角色共用原始 PNG 和局部肢体、表情关键帧，固定画布和锚点，由 `assets/pet-actions.json` 描述帧序列与 fps。拖起优先，放下回到待机；关闭动态效果时只保留原画。不循环播放整幅生成 GIF，不旋转整张人物假装肢体动作。使用说明和参考项目见[桌宠与本机聊天](companion.md)。
+agent 状态只读：面板的 `/companion/presence` 由 `regular/presence.py` 读 `status.json`（在线与新鲜度）、`state.json` 的 `mood`（`activation.mood_from_state` 同一半衰期）、作息和当天交互日志尾部 128 KB，映射成 `mention / replying / said / chimed / proactive / searching / drawing / drew / singing / voice / media_end` 与群内 5 分钟消息数（`searching` 来自查询转后台时的 `lookup` 行，`drawing / singing / media_end` 来自机器人在开始画、开始录和没发成时记的 `media` 行），不返回文字、群号、openid 或消息 ID。`POST /companion/cue`（token + CSRF）让编码 Agent 在固定动作表内让桌宠表态，只存在面板内存，不触达 QQ。
+
+大小、地面横坐标、「待在原地」和动作偏好只写实例的 `data/desktop-pet.json`，调整或退出时原子保存，不随每一帧写盘；旧版 `position` 格式自动迁移。地面取人物所在屏幕的可用区域底边，外屏断开也会落回现有屏幕。
+
+动作素材是 `regular/assets/pet` 的 24 条 WebP 动作条与 `sprites.json`（统一 360px 画布、头部列与脚底锚点），由 `tools/pet_sprites.py` 从生成的动作表切帧对齐；帧序列与 fps 在 `pet_brain.CLIPS`，网页端渲染同一份表。关闭动态效果时不走动、不跳跃、不出粒子，只切姿势。退出用 `QApplication.exit()`：macOS 上 `quit()` 经 NSApp terminate 直接结束进程，启动器来不及停掉本次开启的面板。使用说明和参考项目见[桌宠与本机聊天](companion.md)。
 
 面板「聊天用这个模型」对应实际 `CHAT_PROVIDER` 与该家 `*_MODELS` 的首项，同接口备用保留后续顺序；保存同步聊天服务，避免旧覆盖项悄悄指向别家。聊天页从新鲜且 PID 匹配的状态行显示运行进程的首选，与尚待重启生效的配置区分。面板不为生成下拉列表请求模型元数据。
 

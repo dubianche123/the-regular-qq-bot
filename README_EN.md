@@ -57,11 +57,11 @@ Prepare **Python 3.10+, your own QQ Open Platform bot's AppID / AppSecret, and a
 | --- | --- | --- |
 | Double-click `start.bat` | Double-click `start.command` | Run `bash start.sh` in the project directory |
 
-The first launch downloads dependencies and places the transparent character on your desktop. Move the pointer near it to reveal chat, notifications and settings. It stays visible when you switch applications. If macOS blocks the double-click, run `bash start.sh` instead. A browser entry is available when the native desktop component is unavailable. You can also give your coding agent the [installation prompt](docs/agent-setup.md) (Chinese).
+The first launch downloads dependencies and places the transparent character on your desktop. Move the pointer near her to reveal chat, snack, activity and settings. It stays visible when you switch applications. If macOS blocks the double-click, run `bash start.sh` instead. A browser entry is available when the native desktop component is unavailable. You can also give your coding agent the [installation prompt](docs/agent-setup.md) (Chinese).
 
 ### 2. Give it a name and connect the services
 
-Choose “设置” (Settings) beside the character, then fill in QQ credentials, bot names, the reply model, and a daily call-count limit. **Opening the pet and saving settings do not call a model.** Keys stay on your computer; blank password fields preserve saved values.
+Choose “工作台” (Workspace) beside the character, then follow the overview to “QQ 与模型” (QQ and models). Fill in QQ credentials, bot names, the reply model, and a daily call-count limit. **Opening the pet and saving settings do not call a model.** Keys stay on your computer; blank password fields preserve saved values.
 
 ![Setup panel: connecting QQ and a reply model (Chinese interface)](docs/readme/setup.jpg)
 
@@ -89,6 +89,15 @@ This terminal demo uses no QQ connection or model calls. It demonstrates message
 
 ## Add more things to do
 
+The local panel's “能力与服务” (Capabilities and services) page has separate controls for vision, images/GIFs, incoming voice and speech output. Choose their models and credentials, set call limits, or disable them independently. Incoming voice can use only QQ-provided transcripts. See the [capability controls guide](docs/capabilities.md) (Chinese).
+
+<details>
+<summary>Shared services and four simple capability switches</summary>
+
+![Capabilities page in a demo instance with no API keys](docs/readme/capabilities.jpg)
+
+</details>
+
 Start with chat, then add the capabilities you want. **A key that supports chat does not necessarily grant image, voice or Decisions API access.**
 
 | Capability | What else it needs |
@@ -102,11 +111,15 @@ Text conversation, requested images and voice replies are implemented. **Choosin
 
 ## Meet at your desktop, too
 
-The desktop character is the default entry. Normally **only the transparent character** is visible. Move the pointer nearby to reveal the toolbar; drag it for a body-pose response. Chat, notifications, settings and checkups are a button away. Motion can be disabled.
+<p align="center"><img src="docs/readme/pet-demo.webp" width="720" alt="Desktop pet demo: she lands, wanders, has tea, checks her phone when mentioned, talks when she replies in the group, sketches when she sends a picture, dangles when picked up, answers local chat in a bubble and naps at night"></p>
+
+The desktop character is the default entry: **a chibi dragon who lives on the bottom edge of your screen** — she walks, sits down for tea or a book, naps when sleepy, dangles when you pick her up and falls back when you let go. More importantly, she acts out what the bot is really doing: she checks her phone when someone @-mentions her in the group, talks when she replies, sketches when she sends a picture, and dozes off when the bot stops. Hover to make her look at you and reveal chat, snack, activity and settings; pet her head and she blushes, poke too often and she pouts. Motion can be reduced.
 
 Use the source launcher, or run `regular --directory ~/.the-regular pet`; it prepares the local panel when needed. The panel's “聊两句” page provides the same text conversation in a browser. Microphone input and desktop voice chat are not implemented yet.
 
-Resize from the character's context menu; size, position and motion preference are remembered. Settings explicitly choose the chat API and primary model shared by local and QQ replies. The knowledge library provides entry previews and drafts before saving group agreements or recurring context.
+**She can also help manage her capabilities.** Say “stop drawing for now” and she can offer a confirmation card; only your click changes the switch. Ask what she did today for a summary based on local activity counts. Code changes lead to a handoff brief you can copy to your coding agent.
+
+Resize from the character's context menu; size, position and motion preference are remembered. A coding agent can cue her too, e.g. `regular pet-cue cheer --say "eval finished"`. Settings explicitly choose the chat API and primary model shared by local and QQ replies. The knowledge library provides entry previews and drafts before saving group agreements or recurring context.
 
 [Desktop companion and local chat guide (Chinese) →](docs/companion.md)
 
