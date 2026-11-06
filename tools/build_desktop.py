@@ -40,6 +40,7 @@ app = BUNDLE(coll, name={APP_NAME + '.app'!r}, icon={str(icon)!r},
     bundle_identifier={BUNDLE_ID!r},
     info_plist={{'CFBundleName': {APP_NAME!r}, 'CFBundleDisplayName': {APP_NAME!r},
                  'CFBundleShortVersionString': {source_version(root)!r},
+                 'NSMicrophoneUsageDescription': '按住说话时，让老群友听见你的声音并生成语音回复。',
                  'NSHighResolutionCapable': True}})
 '''
 

@@ -586,11 +586,12 @@ def _capabilities_page(cfg, request, csrf, runner=None):
     voice_source = "已配置" if hearing.get("key_configured") else "还没配置"
     voice_form = settings_form("voice", "语音服务",
                                field("voice", hearing, "voice_api_key", "OpenAI 语音 Key", secret=True),
-                               field("voice", hearing, "base_url", "接口地址"))
+                               field("voice", hearing, "base_url", "接口地址")
+                               + field("voice", hearing, "desktop_daily_limit", "桌宠每天最多聊几轮（0 停用）", number=True))
     shared = (
         f'<details class="ms-voice-connection" id="voice"{" open" if saved == "voice" or editing == "voice" else ""}>'
         f'<summary><span>语音服务</span><span class="ms-voice-state">{voice_source}</span><span class="cap-open">设置</span></summary>'
-        f'<div class="cap-body">{voice_form}</div></details>')
+        f'<div class="cap-body"><p class="cap-note">桌宠语音共用「发语音」的模型和音色；只在你按住说话时收音，QQ 的发语音开关不影响它。</p>{voice_form}</div></details>')
     body = (
         '<header class="cap-page-head"><h1>模型与能力</h1><p>选好她的本事，按你们的节奏来。</p></header>'
         f'<p class="cap-runtime" data-tone="{tone}" data-cap-runtime>{timing}</p>'
@@ -1382,6 +1383,9 @@ def create_app(cfg, *, token):
 
     csrf = secrets.token_urlsafe(24)
     app = web.Application(middlewares=[auth])
+    from regular.panel_voice import install_voice_routes
+    install_voice_routes(app, cfg, csrf, checked_form,
+                         token_check=lambda value: hmac.compare_digest(value.encode(), str(token).encode()))
     app.router.add_get("/assets/panel.js", panel_script)
     app.router.add_get("/assets/pet/{name}", pet_asset)
     app.router.add_get("/assets/{name}", mascot)

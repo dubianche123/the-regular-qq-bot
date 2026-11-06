@@ -46,6 +46,14 @@ class PanelClient:
         if response.is_redirect:
             raise CompanionError("本机请求发生跳转，已停止，没有继续发送凭据。")
         if response.status_code != 200:
+            if (path == "/companion/voice/start" and response.status_code in (409, 503)
+                    and response.headers.get(PANEL_ID_HEADER) == "1"):
+                try:
+                    message = response.json().get("error")
+                except (ValueError, AttributeError):
+                    message = None
+                if isinstance(message, str) and 0 < len(message) <= 300:
+                    raise CompanionError(message)
             if response.status_code in (401, 403):
                 raise CompanionError("本机会话已更新，请刷新连接后再发送；没有自动重试。")
             if response.status_code == 409:
@@ -83,6 +91,27 @@ class PanelClient:
         reply = Reply(body["text"])
         reply.action = proposal(body.get("action"))
         return reply
+
+    def voice_status(self):
+        return self._request("GET", "/companion/voice/status")
+
+    def voice_start(self, csrf):
+        if not isinstance(csrf, str) or not 16 <= len(csrf) <= 512:
+            raise CompanionError("请先刷新本机连接。")
+        body = self._request("POST", "/companion/voice/start", {"csrf": csrf})
+        ticket = body.get("ticket")
+        if (not isinstance(ticket, str) or not 24 <= len(ticket) <= 256
+                or not ticket.isascii() or not all(c.isalnum() or c in "_-" for c in ticket)
+                or body.get("stream") != "/companion/voice/stream"):
+            raise CompanionError("未收到有效语音连接，请重新开始。")
+        return body
+
+    def voice_endpoint(self, ticket):
+        if (not isinstance(ticket, str) or not 24 <= len(ticket) <= 256
+                or not ticket.isascii() or not all(c.isalnum() or c in "_-" for c in ticket)):
+            raise CompanionError("语音连接已失效，请重新开始。")
+        return (self.base.replace("http://", "ws://", 1) + "/companion/voice/stream",
+                {TOKEN_HEADER: self._token, "X-Voice-Ticket": ticket})
 
     def toggle(self, flag, enabled, csrf):
         """The same switch as on the capabilities page; only after the maintainer confirmed it."""

@@ -79,6 +79,18 @@ class CapabilitiesTest(TestCase):
         for value in ('off', 'false', '0', False):
             self.assertFalse(caps.set_enabled(self.cfg, 'image', value)['image']['enabled'])
 
+    def test_desktop_voice_limit_is_independent_of_qq_voice_switch(self):
+        self.file.write_text('VOICE_OUTPUT_ENABLED=false\n')
+        view = caps.save_settings(self.cfg, {'section': 'voice', 'desktop_daily_limit': '0'})
+        self.assertEqual(view['voice_output']['desktop_daily_limit'], 0)
+        self.assertFalse(view['voice_output']['enabled'])
+        self.assertEqual(dotenv_values(self.file)['DESKTOP_VOICE_DAILY_LIMIT'], '0')
+        before = self.file.read_bytes()
+        for value in ('-1', '101', 'invalid'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                caps.save_settings(self.cfg, {'section': 'voice', 'desktop_daily_limit': value})
+            self.assertEqual(self.file.read_bytes(), before)
+
     def test_immediate_switch_rejects_an_opposite_startup_override_without_writing(self):
         self.file.write_text('IMAGE_GENERATION_ENABLED=true\nKEEP=1\n')
         before = self.file.read_bytes()

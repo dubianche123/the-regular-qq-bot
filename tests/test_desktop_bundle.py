@@ -54,6 +54,7 @@ class DesktopBundleTest(unittest.TestCase):
         text = builder.spec_text(ROOT, ROOT / 'regular/assets/app-icon.png')
         self.assertIn("'CFBundleName': '老群友'", text)
         self.assertIn("'CFBundleDisplayName': '老群友'", text)
+        self.assertIn("'NSMicrophoneUsageDescription':", text)
         self.assertIn("bundle_identifier='io.github.the-regular.desktop'", text)
         self.assertIn("collect_data_files('regular')", text)
         self.assertNotIn("regular-bot/data", text)

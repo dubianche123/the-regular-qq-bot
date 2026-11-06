@@ -309,6 +309,8 @@ VOICE_OUTPUT_ENABLED = _env_bool("VOICE_OUTPUT_ENABLED", False)
 VOICE_OUTPUT_MODEL = _env_str("VOICE_OUTPUT_MODEL", "gpt-realtime-2.1-mini")
 VOICE_OUTPUT_VOICE = _env_str("VOICE_OUTPUT_VOICE", "marin")
 VOICE_OUTPUT_DAILY_LIMIT = min(100, max(0, _env_int("VOICE_OUTPUT_DAILY_LIMIT", 10)))
+# 桌宠实时语音独立计轮数；0 停用。不会随 QQ 发语音开关而开麦。
+DESKTOP_VOICE_DAILY_LIMIT = min(100, max(0, _env_int("DESKTOP_VOICE_DAILY_LIMIT", 30)))
 # Private instance-owned codec installation beside DATA_DIR; no NODE_PATH lookup.
 VOICE_CODEC_DIR = _env_str("VOICE_CODEC_DIR", str(Path(DATA_DIR).parent / ".voice-codecs"))
 VOICE_OUTPUT_NODE = _env_str("VOICE_OUTPUT_NODE", "/opt/homebrew/bin/node")

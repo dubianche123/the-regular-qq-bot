@@ -34,6 +34,7 @@ _LIMITS = {
               "user_daily_limit": ("IMAGE_USER_DAILY_CAP", 1000)},
     "voice_input": {},
     "voice_output": {"daily_limit": ("VOICE_OUTPUT_DAILY_LIMIT", 100)},
+    "voice": {"desktop_daily_limit": ("DESKTOP_VOICE_DAILY_LIMIT", 100)},
 }
 
 
@@ -188,7 +189,8 @@ def public_settings(cfg):
     audio_dedicated = bool(str(values.get("VOICE_API_KEY") or "").strip())
     audio_inherited = okey and official(obase) and official(audio_base)
     audio_source = "dedicated" if audio_dedicated else "openai" if audio_inherited else "none"
-    common = {"base_url": audio_base, "key_configured": audio_source != "none", "key_source": audio_source}
+    common = {"base_url": audio_base, "key_configured": audio_source != "none", "key_source": audio_source,
+              "desktop_daily_limit": _integer(_value(cfg, values, "DESKTOP_VOICE_DAILY_LIMIT", 30), 30)}
     voice_input = {**common, "enabled": enabled(cfg, "voice_input"),
                    "transcription_enabled": enabled(cfg, "transcription"),
                    "model": str(_value(cfg, values, "VOICE_TRANSCRIPTION_MODEL", "gpt-transcribe"))}

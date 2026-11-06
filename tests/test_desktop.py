@@ -307,6 +307,36 @@ class PanelClientTest(unittest.TestCase):
         self.assertEqual(str(request.url), "http://127.0.0.1:8877/companion/chat")
         self.assertEqual(parse_qs(request.content.decode()), {"text": ["合成请求"], "csrf": [self.CSRF]})
 
+    def test_voice_ticket_is_explicit_and_credentials_stay_in_headers(self):
+        ticket = "synthetic-single-use-voice-ticket-0123456"
+        self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: "1"},
+                                     json={"ticket": ticket, "stream": "/companion/voice/stream"}))
+        self.assertEqual(self.client.voice_start(self.CSRF)["ticket"], ticket)
+        request = self.calls[0]
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(parse_qs(request.content.decode()), {"csrf": [self.CSRF]})
+        url, headers = self.client.voice_endpoint(ticket)
+        self.assertEqual(url, "ws://127.0.0.1:8877/companion/voice/stream")
+        self.assertEqual(headers, {desktop.TOKEN_HEADER: self.TOKEN, "X-Voice-Ticket": ticket})
+        self.assertNotIn(ticket, url)
+        self.assertNotIn(self.TOKEN, url)
+
+    def test_voice_ticket_never_accepts_a_server_supplied_destination(self):
+        self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: "1"},
+                                     json={"ticket": "synthetic-ticket-0123456789", "stream": "https://outside.example"}))
+        with self.assertRaises(desktop.CompanionError):
+            self.client.voice_start(self.CSRF)
+        for ticket in ("", "short", "x" * 257, "x" * 25 + "\r\n", "语" * 25):
+            with self.subTest(ticket=ticket), self.assertRaises(desktop.CompanionError):
+                self.client.voice_endpoint(ticket)
+
+    def test_voice_unavailable_keeps_the_local_configuration_explanation(self):
+        self.transport(httpx.Response(503, headers={desktop.PANEL_ID_HEADER: "1"},
+                                     json={"error": "请先在语音服务中配置 API Key。"}))
+        with self.assertRaisesRegex(desktop.CompanionError, "配置 API Key"):
+            self.client.voice_start(self.CSRF)
+        self.assertEqual(len(self.calls), 1)
+
     def test_unknown_send_result_is_not_retried_or_dumped(self):
         self.transport(httpx.ReadTimeout("PRIVATE " + self.TOKEN))
         with self.assertRaises(desktop.CompanionError) as raised:
