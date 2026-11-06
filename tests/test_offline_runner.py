@@ -15,13 +15,20 @@ runner = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(runner)
 
 
+def test_platform_without_unix_sockets_still_checks_loopback(monkeypatch):
+    monkeypatch.delattr(socket, "AF_UNIX", raising=False)
+    sock = SimpleNamespace(family=socket.AF_INET)
+    runner._check_address(sock, ("127.0.0.1", 8000))
+    with pytest.raises(AssertionError, match="External network forbidden"):
+        runner._check_address(sock, ("203.0.113.1", 443))
+
+
 @pytest.mark.parametrize("method", ["connect", "connect_ex"])
 @pytest.mark.parametrize("family,address", [
     (socket.AF_INET, ("127.0.0.1", 8000)),
     (socket.AF_INET, ("127.1.2.3", 8000)),
     (socket.AF_INET6, ("::1", 8000, 0, 0)),
-    (socket.AF_UNIX, "/tmp/regular-test.sock"),
-])
+] + ([(socket.AF_UNIX, "/tmp/regular-test.sock")] if hasattr(socket, "AF_UNIX") else []))
 def test_local_connections_delegate_to_the_socket(method, family, address):
     original = Mock(return_value=0)
     sock = SimpleNamespace(family=family)

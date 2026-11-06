@@ -153,16 +153,40 @@ class GenericFailoverTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.budget.used, 3)
 
     async def test_total_timeout_bounds_even_a_stalled_transport(self):
+        entered, cancelled = asyncio.Event(), asyncio.Event()
+        stalled = asyncio.Event()
+        warming = True
+
         async def slow(request):
-            await asyncio.sleep(1)
-            return self.ok()
-        self.install("zhipu", slow)
+            if warming:
+                return self.ok()
+            entered.set()
+            try:
+                await stalled.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        primary = self.install("zhipu", slow)
         self.install("gemini", slow)
+        # Complete the SDK's lazy imports/platform-header setup before testing a
+        # 20 ms transport deadline. Otherwise a cold SDK can time out before HTTP.
+        await primary.chat.completions.create(model="p1", messages=[{"role": "user", "content": "warmup"}])
+        warming = False
+        self.calls.clear()
         with patch.object(providers.config, "AI_TOTAL_TIMEOUT", .02):
             started = time.monotonic()
-            self.assertIsNone(await self.run_call())
+            request = asyncio.create_task(self.run_call())
+            try:
+                await asyncio.wait_for(entered.wait(), .5)
+                self.assertIsNone(await asyncio.wait_for(request, .2))
+            finally:
+                if not request.done():
+                    request.cancel()
+                await asyncio.gather(request, return_exceptions=True)
             self.assertLess(time.monotonic()-started, .2)
-        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(self.calls, [("zhipu", "p1")])
         self.assertEqual(self.budget.used, 1)
 
     async def test_single_timeout_can_still_use_fallback_within_total_deadline(self):

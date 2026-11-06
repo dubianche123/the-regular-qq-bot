@@ -22,7 +22,8 @@ def _loopback(host):
 
 
 def _check_address(sock, address):
-    if sock.family == socket.AF_UNIX:
+    unix_family = getattr(socket, "AF_UNIX", None)
+    if unix_family is not None and sock.family == unix_family:
         return
     if (sock.family in (socket.AF_INET, socket.AF_INET6)
             and isinstance(address, tuple) and address and _loopback(address[0])):
