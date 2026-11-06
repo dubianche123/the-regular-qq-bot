@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from contextlib import suppress
+import logging
 import sys
 import threading
 import time
@@ -19,6 +20,8 @@ RATE = 24000
 SAMPLE_BYTES = 2
 MAX_INPUT_SECONDS = 20
 MAX_OUTPUT_BYTES = RATE * SAMPLE_BYTES * 30
+PLAYBACK_BUFFER_SECONDS = 0.12
+PLAYBACK_BUFFER_BYTES = int(RATE * SAMPLE_BYTES * PLAYBACK_BUFFER_SECONDS)
 
 
 class VoiceError(RuntimeError):
@@ -26,7 +29,7 @@ class VoiceError(RuntimeError):
 
 
 def request_microphone_permission(callback):
-    """Called only by the user's Start button; permission alone never starts recording."""
+    """Called when the user opens voice; permission alone never starts recording."""
     if sys.platform != "darwin":
         callback(True, "")
         return
@@ -54,8 +57,9 @@ _DENIED = "麦克风未获允许。请到系统设置 → 隐私与安全性 →
 
 class SoundDeviceAudio:
     """Small PCM adapter. Callbacks only move bounded memory; no Qt, HTTP or file I/O."""
-    def __init__(self, sounddevice=None):
+    def __init__(self, sounddevice=None, *, clock=time.monotonic):
         self._sd = sounddevice
+        self._clock = clock
         self._input = self._output = None
         self._lock = threading.Lock()
         self._capture_lock = threading.RLock()
@@ -63,7 +67,10 @@ class SoundDeviceAudio:
         self._offset = self._queued_bytes = 0
         self._segments = deque()
         self._played_frames = 0
+        self._heard_frames = self._underflows = self._underruns = 0
         self._ended = False
+        self._buffering = True
+        self._buffer_until = None
         self._output_error = None
 
     def _module(self):
@@ -107,11 +114,32 @@ class SoundDeviceAudio:
         sd = self._module()
         with self._lock:
             self._ended = False
+            self._buffering = True
+            self._buffer_until = None
             self._output_error = None
+            self._heard_frames = self._underflows = self._underruns = 0
 
         def playback(outdata, frames, timing, status):
             outdata[:] = b"\0" * len(outdata)
             with self._lock:
+                if status:
+                    self._output_error = "播放有些卡顿，可以按住说话重新接一句。"
+                if getattr(status, "output_underflow", False):
+                    self._underflows += 1
+                # Realtime audio arrives in bursts, not on the soundcard clock.
+                # Keep a small lead before starting (or resuming after a gap),
+                # rather than alternating tiny speech chunks and zero-filled blocks.
+                if not self._ended:
+                    if self._buffering:
+                        if (self._queued_bytes < max(PLAYBACK_BUFFER_BYTES, len(outdata))
+                                or self._buffer_until is None or self._clock() < self._buffer_until):
+                            return
+                    elif self._queued_bytes < len(outdata):
+                        self._underruns += 1
+                        self._buffering = True
+                        self._buffer_until = None
+                        return
+                self._buffering = False
                 used = 0
                 while self._chunks and used < len(outdata):
                     chunk = self._chunks[0]
@@ -126,12 +154,10 @@ class SoundDeviceAudio:
                 if used:
                     # DAC timestamps account for device buffering; queued samples are not heard yet.
                     self._segments.append((float(timing.outputBufferDacTime), used // SAMPLE_BYTES))
-                if status:
-                    self._output_error = "播放有些卡顿，可以按住说话重新接一句。"
 
         try:
             self._output = sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16",
-                                             blocksize=0, callback=playback, latency="low")
+                                             blocksize=0, callback=playback, latency=0.1)
             self._output.start()
         except Exception:
             self.abort_playback()
@@ -145,6 +171,8 @@ class SoundDeviceAudio:
                 raise VoiceError("语音回复过长，已停止播放。")
             self._chunks.append(data)
             self._queued_bytes += len(data)
+            if self._buffering and self._buffer_until is None:
+                self._buffer_until = self._clock() + PLAYBACK_BUFFER_SECONDS
 
     def end_playback(self):
         with self._lock:
@@ -160,7 +188,16 @@ class SoundDeviceAudio:
                 self._played_frames += self._segments.popleft()[1]
             partial = sum(min(frames, max(0, int((now - start) * RATE)))
                           for start, frames in self._segments)
-            return (self._played_frames + partial) * 1000 // RATE
+            self._heard_frames = max(self._heard_frames, self._played_frames + partial)
+            return self._heard_frames * 1000 // RATE
+
+    def playback_stats(self):
+        """Content-free counts for one reply, retained until the next begins."""
+        with suppress(Exception):
+            self.played_ms()
+        with self._lock:
+            return {"underflows": self._underflows, "underruns": self._underruns,
+                    "played_frames": self._heard_frames}
 
     def playback_done(self):
         self.played_ms()
@@ -183,6 +220,8 @@ class SoundDeviceAudio:
             self._segments.clear()
             self._offset = self._queued_bytes = self._played_frames = 0
             self._ended = False
+            self._buffering = True
+            self._buffer_until = None
         return played
 
     def close(self):
@@ -209,6 +248,7 @@ class NativeVoiceSession:
         self._audio = None
         self._playing = False
         self._last_played_ms = 0
+        self._playback_reported = True
 
     def _emit(self, kind, **values):
         if not self._closed.is_set() or kind == "closed":
@@ -275,10 +315,21 @@ class NativeVoiceSession:
 
     async def _interrupt_local(self):
         # The user should hear the stop now, even if a prior upload is backed up.
+        self._report_playback()
         played = max(self._last_played_ms, await asyncio.to_thread(self._audio.abort_playback))
         self._last_played_ms = played
         self._playing = False
         return played
+
+    def _report_playback(self):
+        if self._playback_reported:
+            return
+        self._playback_reported = True
+        stats = getattr(self._audio, "playback_stats", lambda: {})()
+        if stats.get("underflows", 0) or stats.get("underruns", 0):
+            logging.getLogger(__name__).warning(
+                "desktop voice playback: device_underflows=%d network_underruns=%d played_frames=%d",
+                stats.get("underflows", 0), stats.get("underruns", 0), stats.get("played_frames", 0))
 
     def _run_thread(self):
         try:
@@ -336,6 +387,7 @@ class NativeVoiceSession:
         finally:
             self._ready = False
             self._holding.clear()
+            self._report_playback()
             try:
                 await asyncio.to_thread(self._audio.close)
             finally:
@@ -399,6 +451,7 @@ class NativeVoiceSession:
                     if not self._holding.is_set():
                         await asyncio.to_thread(self._audio.begin_playback)
                         self._last_played_ms = 0
+                        self._playback_reported = False
                         self._playing = True
                         self._emit("state", state="speaking")
                 elif kind == "audio.end":
@@ -427,6 +480,7 @@ class NativeVoiceSession:
                 self.cancel_input()
                 self._emit("error", message="这一句超过 20 秒，已停止，不生成回复。请分短一点再说。")
             if self._playing and self._audio.playback_done():
+                self._report_playback()
                 self._last_played_ms = await asyncio.to_thread(self._audio.abort_playback)
                 self._playing = False
                 self._emit("state", state="idle")

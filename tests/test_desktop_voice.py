@@ -249,12 +249,12 @@ class AudioAdapterTest(unittest.TestCase):
         self.assertEqual(sd.RawOutputStream.call_args.kwargs["dtype"], "int16")
         callback = sd.RawOutputStream.call_args.kwargs["callback"]
         audio.feed_audio(b"\x01\x00" * 480)
+        audio.end_playback()  # A short completed reply drains without the jitter-buffer lead.
         buffer = bytearray(960)
         callback(buffer, 480, SimpleNamespace(outputBufferDacTime=10.0), False)
         self.assertEqual(audio.played_ms(), 0)
         output.time = 10.01
         self.assertIn(audio.played_ms(), (9, 10))
-        audio.end_playback()
         self.assertFalse(audio.playback_done())
         output.time = 10.1
         self.assertTrue(audio.playback_done())
