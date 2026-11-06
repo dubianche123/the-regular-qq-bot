@@ -26,9 +26,9 @@ def _readiness(cfg):
     return readiness(cfg)
 
 
-def _session(cfg):
+def _session(cfg, *, mode="ptt"):
     from regular.realtime_voice import RealtimeSession
-    return RealtimeSession(cfg)
+    return RealtimeSession(cfg, mode=mode)
 
 
 def _check_origin(request):
@@ -90,16 +90,19 @@ class VoiceRoutes:
 
     async def start(self, request):
         _check_origin(request)
-        await self.checked_form(request)
+        form = await self.checked_form(request)
+        mode = str(form.get("mode") or "ptt")
+        if mode not in ("ptt", "continuous"):
+            raise web.HTTPBadRequest(text="语音模式无效，请更新桌面应用。")
         state = self._status()
         if state["busy"]:
             return web.json_response({"error": "已有语音会话，请先结束它。"}, status=409)
         if not state["available"]:
             return web.json_response({"error": state["reason"] or "语音服务暂时不可用。"}, status=503)
         ticket = secrets.token_urlsafe(32)
-        self.pending = (ticket, self.clock() + self.ticket_ttl)
+        self.pending = (ticket, self.clock() + self.ticket_ttl, mode)
         self.expiry = asyncio.get_running_loop().call_later(self.ticket_ttl, self._clear_pending)
-        return web.json_response({"ticket": ticket, "stream": STREAM_PATH,
+        return web.json_response({"ticket": ticket, "stream": STREAM_PATH, "mode": mode,
                                   "format": dict(FORMAT), "limits": dict(LIMITS)})
 
     async def stream(self, request):
@@ -120,9 +123,11 @@ class VoiceRoutes:
         ws = web.WebSocketResponse(timeout=1, heartbeat=15, compress=False, max_msg_size=64 * 1024)
         if not ws.can_prepare(request).ok:
             raise web.HTTPBadRequest(text="请使用本机语音连接。")
+        mode = self.pending[2]
         self._clear_pending()  # Consume before any await or upstream action.
         try:
-            session = self.session_factory(self.cfg)
+            session = (self.session_factory(self.cfg, mode=mode) if mode == "continuous"
+                       else self.session_factory(self.cfg))
         except Exception:
             raise web.HTTPServiceUnavailable(text="语音服务暂时不可用，请检查设置。") from None
         ws.headers["X-Regular-Panel"] = "1"

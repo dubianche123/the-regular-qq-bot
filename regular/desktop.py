@@ -95,10 +95,15 @@ class PanelClient:
     def voice_status(self):
         return self._request("GET", "/companion/voice/status")
 
-    def voice_start(self, csrf):
+    def voice_start(self, csrf, *, mode="ptt"):
         if not isinstance(csrf, str) or not 16 <= len(csrf) <= 512:
             raise CompanionError("请先刷新本机连接。")
-        body = self._request("POST", "/companion/voice/start", {"csrf": csrf})
+        if mode not in ("ptt", "continuous"):
+            raise CompanionError("语音模式不正确。")
+        form = {"csrf": csrf}
+        if mode != "ptt":
+            form["mode"] = mode
+        body = self._request("POST", "/companion/voice/start", form)
         ticket = body.get("ticket")
         if (not isinstance(ticket, str) or not 24 <= len(ticket) <= 256
                 or not ticket.isascii() or not all(c.isalnum() or c in "_-" for c in ticket)

@@ -112,6 +112,16 @@ class SoundDeviceAudio:
     def begin_playback(self):
         self.abort_playback()
         sd = self._module()
+        self._reset_playback()
+        try:
+            self._output = sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16",
+                                             blocksize=0, callback=self._render, latency=0.1)
+            self._output.start()
+        except Exception:
+            self.abort_playback()
+            raise VoiceError("声音暂时播不出来，请检查当前输出设备。") from None
+
+    def _reset_playback(self):
         with self._lock:
             self._ended = False
             self._buffering = True
@@ -119,49 +129,42 @@ class SoundDeviceAudio:
             self._output_error = None
             self._heard_frames = self._underflows = self._underruns = 0
 
-        def playback(outdata, frames, timing, status):
-            outdata[:] = b"\0" * len(outdata)
-            with self._lock:
-                if status:
-                    self._output_error = "播放有些卡顿，可以按住说话重新接一句。"
-                if getattr(status, "output_underflow", False):
-                    self._underflows += 1
-                # Realtime audio arrives in bursts, not on the soundcard clock.
-                # Keep a small lead before starting (or resuming after a gap),
-                # rather than alternating tiny speech chunks and zero-filled blocks.
-                if not self._ended:
-                    if self._buffering:
-                        if (self._queued_bytes < max(PLAYBACK_BUFFER_BYTES, len(outdata))
-                                or self._buffer_until is None or self._clock() < self._buffer_until):
-                            return
-                    elif self._queued_bytes < len(outdata):
-                        self._underruns += 1
-                        self._buffering = True
-                        self._buffer_until = None
+    def _render(self, outdata, frames, timing, status):
+        """Fill the actual device buffer; duplex AEC uses precisely these samples."""
+        outdata[:] = b"\0" * len(outdata)
+        with self._lock:
+            if status:
+                self._output_error = "播放有些卡顿，可以重新接一句。"
+            if getattr(status, "output_underflow", False):
+                self._underflows += 1
+            # Realtime audio arrives in bursts, not on the soundcard clock.
+            # Keep a small lead before starting (or resuming after a gap),
+            # rather than alternating tiny speech chunks and zero-filled blocks.
+            if not self._ended:
+                if self._buffering:
+                    if (self._queued_bytes < max(PLAYBACK_BUFFER_BYTES, len(outdata))
+                            or self._buffer_until is None or self._clock() < self._buffer_until):
                         return
-                self._buffering = False
-                used = 0
-                while self._chunks and used < len(outdata):
-                    chunk = self._chunks[0]
-                    count = min(len(chunk) - self._offset, len(outdata) - used)
-                    outdata[used:used + count] = chunk[self._offset:self._offset + count]
-                    used += count
-                    self._offset += count
-                    self._queued_bytes -= count
-                    if self._offset == len(chunk):
-                        self._chunks.popleft()
-                        self._offset = 0
-                if used:
-                    # DAC timestamps account for device buffering; queued samples are not heard yet.
-                    self._segments.append((float(timing.outputBufferDacTime), used // SAMPLE_BYTES))
-
-        try:
-            self._output = sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16",
-                                             blocksize=0, callback=playback, latency=0.1)
-            self._output.start()
-        except Exception:
-            self.abort_playback()
-            raise VoiceError("声音暂时播不出来，请检查当前输出设备。") from None
+                elif self._queued_bytes < len(outdata):
+                    self._underruns += 1
+                    self._buffering = True
+                    self._buffer_until = None
+                    return
+            self._buffering = False
+            used = 0
+            while self._chunks and used < len(outdata):
+                chunk = self._chunks[0]
+                count = min(len(chunk) - self._offset, len(outdata) - used)
+                outdata[used:used + count] = chunk[self._offset:self._offset + count]
+                used += count
+                self._offset += count
+                self._queued_bytes -= count
+                if self._offset == len(chunk):
+                    self._chunks.popleft()
+                    self._offset = 0
+            if used:
+                # DAC timestamps account for device buffering; queued samples are not heard yet.
+                self._segments.append((float(timing.outputBufferDacTime), used // SAMPLE_BYTES))
 
     def feed_audio(self, data):
         if not isinstance(data, bytes) or len(data) % SAMPLE_BYTES:
@@ -231,12 +234,152 @@ class SoundDeviceAudio:
             self.abort_playback()
 
 
+class DuplexAudio(SoundDeviceAudio):
+    """One device clock for microphone, speaker reference and native WebRTC AEC3.
+
+    Muting stops the PCM outlet; the device stays open so echo adaptation can
+    continue. Only close() releases both device directions. The processor is
+    touched exclusively by the one PortAudio callback thread.
+    """
+    def __init__(self, sounddevice=None, *, processor_factory=None, clock=time.monotonic):
+        super().__init__(sounddevice, clock=clock)
+        self._processor_factory = processor_factory
+        self._duplex = None
+        self._muted = threading.Event()
+        self._conversation_closed = threading.Event()
+        self._conversation_closed.set()
+        self._conversation_generation = 0
+        self._terminal = threading.Event()
+        self._conversation_started = False
+
+    def start_conversation(self, on_pcm, on_error):
+        # Native session cancellation cannot cancel the underlying device-open
+        # thread. Serialize installation with close, and never reopen this object.
+        with self._capture_lock:
+            if self._terminal.is_set() or self._conversation_started:
+                raise VoiceError("这次语音已结束，请重新连接。")
+            self._conversation_started = True
+            self._start_conversation(on_pcm, on_error)
+
+    def _start_conversation(self, on_pcm, on_error):
+        try:
+            import numpy as np
+            if self._processor_factory is None:
+                from pywebrtc_audio import AudioProcessor
+                factory = AudioProcessor
+            else:
+                factory = self._processor_factory
+            processor = factory(sample_rate=RATE, echo_cancellation=True,
+                                noise_suppression=True, auto_gain_control=False,
+                                ns_level=1, stream_delay_ms=0)
+        except (ImportError, OSError, RuntimeError, ValueError):
+            raise VoiceError("回声消除组件还没装好，请更新桌面应用后再试。") from None
+
+        if self._terminal.is_set():
+            raise VoiceError("这次语音已结束，请重新连接。")
+        self._conversation_generation += 1
+        generation = self._conversation_generation
+        self._conversation_closed.clear()
+        self._muted.clear()
+        failed = False
+        last_delay = None
+
+        def duplex(indata, outdata, frames, timing, status):
+            nonlocal failed, last_delay
+            if (self._terminal.is_set() or self._conversation_closed.is_set()
+                    or generation != self._conversation_generation or failed):
+                outdata[:] = b"\0" * len(outdata)
+                return
+            try:
+                self._render(outdata, frames, timing, status)
+                if getattr(status, "input_overflow", False):
+                    raise VoiceError("麦克风收音中断了，请重新连接语音。")
+                # This is the audio actually scheduled for the speaker, including
+                # silence while buffering. Never use unplayed network chunks.
+                near = np.frombuffer(indata, dtype=np.int16)
+                far = np.frombuffer(outdata, dtype=np.int16)
+                if len(near) != frames or len(far) != frames:
+                    raise VoiceError("声卡返回的语音格式不正确，请重新连接。")
+                delay = max(0, min(500, round((timing.outputBufferDacTime - timing.inputBufferAdcTime) * 1000)))
+                if delay != last_delay:
+                    processor.stream_delay_ms = delay
+                    last_delay = delay
+                clean = processor.process(near, far)
+                if (not self._muted.is_set() and not self._terminal.is_set()
+                        and not self._conversation_closed.is_set()
+                        and generation == self._conversation_generation):
+                    on_pcm(clean.tobytes())
+            except Exception:
+                # Never fall back to forwarding unprocessed microphone data.
+                failed = True
+                on_error("语音收音或回声处理已中断，请重新连接。")
+
+        try:
+            stream = self._module().RawStream(
+                samplerate=RATE, channels=1, dtype="int16", blocksize=RATE // 100,
+                callback=duplex, latency=0.1)
+            if self._terminal.is_set():
+                with suppress(Exception):
+                    stream.close()
+                raise VoiceError("这次语音已结束，请重新连接。")
+            self._duplex = self._output = stream
+            stream.start()
+            if self._terminal.is_set():
+                self.close()
+                raise VoiceError("这次语音已结束，请重新连接。")
+        except Exception:
+            self.close()
+            raise VoiceError("语音设备暂时打不开，请检查麦克风权限和输入输出设备。") from None
+
+    def set_muted(self, muted):
+        if muted:
+            self._muted.set()
+        else:
+            self._muted.clear()
+
+    def begin_playback(self):
+        self.abort_playback()
+        self._reset_playback()
+
+    def abort_playback(self):
+        # A full-duplex stream must keep capturing while an interrupted reply
+        # is removed. Retain AEC's past render reference for the acoustic tail.
+        try:
+            played = self.played_ms()
+        except Exception:
+            played = 0
+        with self._lock:
+            self._chunks.clear()
+            self._segments.clear()
+            self._offset = self._queued_bytes = self._played_frames = 0
+            self._ended = False
+            self._buffering = True
+            self._buffer_until = None
+        return played
+
+    def close(self):
+        self._terminal.set()
+        self._conversation_closed.set()
+        self._conversation_generation += 1
+        with self._capture_lock:
+            stream, self._duplex = self._duplex, None
+            self._output = None
+            if stream is not None:
+                with suppress(Exception):
+                    stream.abort()
+                with suppress(Exception):
+                    stream.close()
+            self.abort_playback()
+
+
 class NativeVoiceSession:
-    """One user-started session, one worker loop, no reconnect or automatic recording."""
-    def __init__(self, client, csrf, on_event, *, audio_factory=SoundDeviceAudio,
+    """One user-started session; continuous calls use a duplex echo-cancelling device."""
+    def __init__(self, client, csrf, on_event, *, continuous=False, audio_factory=None,
                  session_factory=aiohttp.ClientSession, clock=time.monotonic):
         self.client, self.csrf, self.on_event = client, csrf, on_event
-        self.audio_factory, self.session_factory, self.clock = audio_factory, session_factory, clock
+        self.continuous = continuous
+        self.audio_factory = audio_factory or (DuplexAudio if continuous else SoundDeviceAudio)
+        self.session_factory, self.clock = session_factory, clock
         self._loop = self._task = self._thread = self._queue = None
         self._closed = threading.Event()
         self._holding = threading.Event()
@@ -249,6 +392,8 @@ class NativeVoiceSession:
         self._playing = False
         self._last_played_ms = 0
         self._playback_reported = True
+        self._muted = False
+        self._continuous_open = False
 
     def _emit(self, kind, **values):
         if not self._closed.is_set() or kind == "closed":
@@ -261,7 +406,7 @@ class NativeVoiceSession:
         self._thread.start()
 
     def press(self):
-        if not self._ready or self._closed.is_set() or self._holding.is_set():
+        if self.continuous or not self._ready or self._closed.is_set() or self._holding.is_set():
             return False
         self._holding.set()
         self._post("input.start")
@@ -279,12 +424,21 @@ class NativeVoiceSession:
             self._stop_microphone()
             self._post("input.cancel")
 
+    def set_muted(self, muted):
+        if not self.continuous or not self._ready or self._closed.is_set() or type(muted) is not bool:
+            return False
+        self._muted = muted
+        self._capture_generation += 1
+        self._post("listen.pause" if muted else "listen.resume")
+        return True
+
     def _stop_microphone(self):
         # Do not wait for a backed-up WebSocket sender before closing the device.
         if self._loop is not None and self._audio is not None:
             with suppress(RuntimeError):
                 self._loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(asyncio.to_thread(self._audio.stop_capture)))
+                    lambda: asyncio.create_task(asyncio.to_thread(
+                        self._audio.close if self.continuous else self._audio.stop_capture)))
 
     def close(self):
         self._holding.clear()
@@ -348,7 +502,8 @@ class NativeVoiceSession:
             status = await asyncio.to_thread(self.client.voice_status)
             if not status.get("available"):
                 raise VoiceError(str(status.get("reason") or "语音还没配置好，请到模型与能力里看看。"))
-            ticket = await asyncio.to_thread(self.client.voice_start, self.csrf)
+            ticket = await asyncio.to_thread(self.client.voice_start, self.csrf,
+                                            **({"mode": "continuous"} if self.continuous else {}))
             url, headers = self.client.voice_endpoint(ticket["ticket"])
             parsed = urlsplit(url)
             if (parsed.scheme != "ws" or parsed.hostname != "127.0.0.1" or parsed.query
@@ -398,7 +553,22 @@ class NativeVoiceSession:
         recording = False
         while True:
             kind, data = await self._queue.get()
-            if kind == "input.start":
+            if kind in ("listen.resume", "listen.pause") and self.continuous:
+                await ws.send_json({"type": kind})
+                if not self._continuous_open:
+                    self._continuous_open = True
+                    def pcm(chunk):
+                        if self._ready and not self._muted and not self._closed.is_set():
+                            self._post("pcm", (self._capture_generation, chunk))
+                    await asyncio.to_thread(self._audio.start_conversation, pcm,
+                                            lambda message: self._post("capture.error", message))
+                await asyncio.to_thread(self._audio.set_muted, self._muted)
+                self._emit("state", state="muted" if self._muted else "listening")
+            elif kind == "interrupt" and self.continuous:
+                await ws.send_json({"type": "interrupt", **data})
+            elif kind == "capture.error" and self.continuous:
+                raise VoiceError(data or "收音中断了，请重新连接。")
+            elif kind == "input.start":
                 played = await data
                 await ws.send_json({"type": "interrupt", "played_ms": played})
                 await ws.send_json({"type": kind})
@@ -429,7 +599,8 @@ class NativeVoiceSession:
                     self._emit("error", message=data)
             elif kind == "pcm":
                 generation, chunk = data
-                if recording and generation == self._capture_generation:
+                active = self._continuous_open and not self._muted if self.continuous else recording
+                if active and generation == self._capture_generation:
                     for offset in range(0, len(chunk), 32 * 1024):
                         await ws.send_bytes(chunk[offset:offset + 32 * 1024])
 
@@ -444,9 +615,18 @@ class NativeVoiceSession:
                 if kind == "ready":
                     if event.get("rate") != RATE or event.get("channels") != 1:
                         raise VoiceError("语音格式不匹配，请更新桌面应用。")
+                    if self.continuous and event.get("mode") != "continuous":
+                        raise VoiceError("本机面板尚不支持持续对话，请更新桌面应用。")
                     self._max_input = min(MAX_INPUT_SECONDS, max(1, int(event.get("max_input_seconds", 20))))
                     self._ready = True
                     self._emit("ready")
+                    if self.continuous:
+                        self._post("listen.resume")
+                elif kind == "speech.started" and self.continuous:
+                    played = await self._interrupt_local()
+                    self._post("interrupt", {"played_ms": played, "speech_id": event.get("speech_id")})
+                    if not self._muted:
+                        self._emit("state", state="listening")
                 elif kind == "audio.start":
                     if not self._holding.is_set():
                         await asyncio.to_thread(self._audio.begin_playback)
@@ -457,9 +637,12 @@ class NativeVoiceSession:
                 elif kind == "audio.end":
                     self._audio.end_playback()
                 elif kind == "state":
-                    if (event.get("state") != "listening" and not self._holding.is_set()
-                            and not (self._playing and event.get("state") == "idle")):
-                        self._emit("state", state=event.get("state"))
+                    if ((self.continuous or event.get("state") != "listening") and not self._holding.is_set()
+                            and not (self._playing and event.get("state") in ("idle", "listening"))):
+                        state = event.get("state")
+                        if self.continuous and state in ("idle", "listening", "paused"):
+                            state = "muted" if self._muted or state == "paused" else "listening"
+                        self._emit("state", state=state)
                 elif kind in ("transcript", "proposal", "error"):
                     self._emit(kind, **{k: v for k, v in event.items() if k != "type"})
                 elif kind == "closed":
@@ -483,5 +666,6 @@ class NativeVoiceSession:
                 self._report_playback()
                 self._last_played_ms = await asyncio.to_thread(self._audio.abort_playback)
                 self._playing = False
-                self._emit("state", state="idle")
+                self._emit("state", state=("muted" if self._muted else "listening")
+                           if self.continuous else "idle")
         self._emit("error", message="这次语音已满 3 分钟，休息一下再开始吧。")

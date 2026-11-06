@@ -329,13 +329,14 @@ class NativeVoiceCardTest(unittest.TestCase):
         self.pet.close()
         self.app.processEvents()
 
-    def test_opening_connects_automatically_but_waits_for_a_hold_to_capture(self):
+    def test_opening_starts_a_continuous_call_with_one_mute_control(self):
         pet = self.pet
         pet.available = False  # voice uses its own service, not QQ's text-chat bridge
         pet.show_voice()
         self.assertEqual(pet.voice_card.grab().toImage().pixelColor(0, 0).alpha(), 0)
         self.permission.assert_called_once()
         self.session.start.assert_called_once()
+        self.assertTrue(self.factory.call_args.kwargs['continuous'])
         self.session.press.assert_not_called()
         self.assertFalse(hasattr(pet.voice_card, "start_button"))
         self.assertFalse(pet.voice_card.talk.isEnabled())
@@ -343,25 +344,25 @@ class NativeVoiceCardTest(unittest.TestCase):
         self.assertEqual(len(pet.voice_card.findChildren(QPushButton)), 2)
         generation = pet._voice_generation
         pet._voice_event(generation, {"type": "ready"})
-        self.assertEqual(pet.voice_card.talk.text(), "按住说话")
+        self.assertEqual(pet.voice_card.talk.text(), "静音麦克风")
         self.assertTrue(pet.voice_card.talk.isEnabled())
         # The actual rendered control has transparent corners, not a native bezel.
         card = pet.voice_card.grab().toImage()
         button = pet.voice_card.talk
         self.assertEqual(card.pixelColor(button.x(), button.y()).name(), "#fffdf7")
         self.assertEqual(card.pixelColor(button.x() + 8, button.y() + button.height() // 2).name(), "#173b32")
-        pet.press_voice()
-        self.session.press.assert_called_once()
+        pet.voice_card.talk.click()
+        self.session.set_muted.assert_called_once_with(True)
+        self.assertEqual(pet.voice_state, "muted")
+        self.assertEqual(pet.voice_card.talk.text(), "取消静音")
+        pet.voice_card.talk.click()
+        self.assertEqual(self.session.set_muted.call_args.args, (False,))
         self.assertEqual(pet.voice_state, "listening")
-        pet.cancel_voice_input()
-        self.session.cancel_input.assert_called_once()
-        pet.release_voice()
+        self.session.press.assert_not_called()
         self.session.release.assert_not_called()
-        self.assertIn("取消", pet.voice_message)
-        pet.press_voice()
         from PySide6.QtCore import QEvent
         self.app.sendEvent(pet.voice_card.talk, QEvent(QEvent.Type.Leave))
-        self.assertEqual(self.session.cancel_input.call_count, 2)
+        self.session.cancel_input.assert_not_called()
 
     def test_error_retries_with_the_same_button_and_close_ends_the_session(self):
         pet = self.pet
@@ -379,19 +380,64 @@ class NativeVoiceCardTest(unittest.TestCase):
         self.session.close.assert_called_once()
         self.assertFalse(pet.voice_card.isVisible())
 
-    def test_deactivation_cancels_capture_close_ends_and_errors_survive_closed(self):
-        from PySide6.QtCore import QEvent, Qt
+    def test_voice_subtitles_extend_one_bubble_without_restarting_the_text_or_pose(self):
+        pet = self.pet
+        tick = [pet.now()]
+        pet.clock = lambda: tick[0]
+        pet.brain.motion = True
+        generation = pet._voice_generation
+        with patch.object(pet.brain, 'chat_reply', wraps=pet.brain.chat_reply) as reply:
+            pet._voice_event(generation, {'type': 'transcript', 'role': 'assistant', 'text': '你', 'final': False})
+            line = pet.brain.bubble
+            pet.bubble.show_bubble(line, tick[0])
+            started = pet.bubble.started
+            for text, final in (('你好，', False), ('你好，今天怎么样？', False), ('你好，今天怎么样？', True)):
+                tick[0] += .03
+                pet._voice_event(generation, {'type': 'transcript', 'role': 'assistant', 'text': text, 'final': final})
+                self.assertIs(pet.brain.bubble, line)
+                pet.bubble.show_bubble(pet.brain.bubble, tick[0])
+                self.assertEqual(pet.bubble.visible_text(tick[0]), text)
+                self.assertEqual(pet.bubble.started, started)
+            self.assertEqual(reply.call_count, 1)
+        self.assertEqual(pet.brain.bubble.text, '你好，今天怎么样？')
+        self.assertFalse(pet.brain.chat_pending)
+        self.assertTrue(any('你好，今天怎么样？' in text for _, text in pet.activity))
+
+    def test_dismissed_voice_subtitle_stays_dismissed_until_the_next_turn(self):
+        pet = self.pet
+        generation = pet._voice_generation
+        pet._voice_event(generation, {'type': 'transcript', 'role': 'assistant', 'text': '你好', 'final': False})
+        previous_serial = pet.brain.bubble.serial
+        pet.bubble.mousePressEvent(Mock())
+        pet._voice_event(generation, {'type': 'transcript', 'role': 'assistant', 'text': '你好呀。', 'final': True})
+        self.assertIsNone(pet.brain.bubble)
+        pet._voice_event(generation, {'type': 'state', 'state': 'thinking'})
+        pet._voice_event(generation, {'type': 'transcript', 'role': 'assistant', 'text': '你好，又见面了。', 'final': False})
+        self.assertGreater(pet.brain.bubble.serial, previous_serial)
+        self.assertEqual(pet.brain.bubble.text, '你好，又见面了。')
+
+    def test_normal_text_chat_keeps_its_typewriter_after_voice_subtitles(self):
+        pet = self.pet
+        pet.brain.motion = True
+        now = pet.now()
+        pet._voice_event(pet._voice_generation, {'type': 'transcript', 'role': 'assistant', 'text': '语音字幕', 'final': True})
+        pet.bubble.show_bubble(pet.brain.bubble, now)
+        self.assertEqual(pet.bubble.visible_text(now), '语音字幕')
+        pet.brain.chat_reply(now + 1, '这是一条普通文字回复。')
+        pet.bubble.show_bubble(pet.brain.bubble, now + 1)
+        self.assertEqual(pet.bubble.visible_text(now + 1), '这')
+
+    def test_deactivation_keeps_the_call_open_close_ends_and_errors_survive_closed(self):
+        from PySide6.QtCore import QEvent
         pet = self.pet
         pet.show_voice()
         pet.start_voice()
         generation = pet._voice_generation
         pet._voice_event(generation, {"type": "ready"})
-        pet.press_voice()
         self.app.sendEvent(pet.voice_card, QEvent(QEvent.Type.WindowDeactivate))
-        self.session.cancel_input.assert_called_once()
-        pet.press_voice()
-        pet._application_state_changed(Qt.ApplicationState.ApplicationInactive)
-        self.assertEqual(self.session.cancel_input.call_count, 2)
+        self.session.cancel_input.assert_not_called()
+        self.session.set_muted.assert_not_called()
+        self.session.close.assert_not_called()
         pet._voice_event(generation, {"type": "error", "message": "Key 不可用；没有重试。"})
         pet._voice_event(generation, {"type": "closed"})
         self.assertIn("Key 不可用", pet.voice_message)
@@ -416,8 +462,7 @@ class NativeVoiceCardTest(unittest.TestCase):
         for event in ({"type": "state", "state": "idle"}, {"type": "proposal", "action": {
                 "kind": "toggle", "flag": "image", "label": "画图", "enabled": False}}):
             with self.subTest(event=event["type"]):
-                pet.press_voice()
-                pet.release_voice()
+                pet._voice_event(generation, {"type": "state", "state": "thinking"})
                 self.assertTrue(pet.brain.chat_pending)
                 self.assertEqual(pet.brain.bubble.kind, "think")
                 pet._voice_event(generation, event)

@@ -330,6 +330,22 @@ class PanelClientTest(unittest.TestCase):
             with self.subTest(ticket=ticket), self.assertRaises(desktop.CompanionError):
                 self.client.voice_endpoint(ticket)
 
+    def test_continuous_voice_mode_is_explicit_in_the_ticket_request(self):
+        self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: "1"},
+                                     json={"ticket": "synthetic-ticket-0123456789", "stream": "/companion/voice/stream"}))
+        self.client.voice_start(self.CSRF, mode="continuous")
+        self.assertEqual(len(self.calls), 1)
+        request = self.calls[0]
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(str(request.url), "http://127.0.0.1:8877/companion/voice/start")
+        self.assertEqual(parse_qs(request.content.decode()), {"csrf": [self.CSRF], "mode": ["continuous"]})
+
+    def test_invalid_voice_mode_is_rejected_before_io(self):
+        with patch.object(desktop.httpx, "Client") as client:
+            with self.assertRaises(desktop.CompanionError):
+                self.client.voice_start(self.CSRF, mode="automatic")
+        client.assert_not_called()
+
     def test_voice_unavailable_keeps_the_local_configuration_explanation(self):
         self.transport(httpx.Response(503, headers={desktop.PANEL_ID_HEADER: "1"},
                                      json={"error": "请先在语音服务中配置 API Key。"}))

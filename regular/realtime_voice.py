@@ -1,4 +1,4 @@
-"""Bounded desktop push-to-talk transport. No microphone, QQ, or configuration writes.
+"""Bounded desktop voice transport. No microphone, QQ, or configuration writes.
 
 The panel owns local authentication and the single active session. Only the small
 native protocol below is accepted; provider events and credentials stay here.
@@ -33,10 +33,10 @@ _BYTES_PER_SECOND = RATE * 2
 
 _LOCAL_NOTE = """
 【当前是桌面语音，不是 QQ 群】
-正在和本机维护者按住说话。保持原来短、口语、好玩的性格，用自然中文说话，别念动作或协议。
+正在和本机维护者语音交谈。保持原来短、口语、好玩的性格，用自然中文说话，别念动作或协议。
 你是 AI 合成语音。只知道本次通话和系统提供的数字概况，不知道群里原话；不能编聊天话题、共同经历或身份。
 数字为本机记录，没记录不等于群里没人说话。管理参数是配置事实，不证明服务权限正常。
-用户明确要开关一项群聊能力时，可以调用 propose_toggle 提出一张确认卡；问用法或引用的话不算授权。
+用户明确要开关一项群聊能力时，调用对应能力的开关工具提出一张确认卡；问用法或引用的话不算授权。
 代码或部署改动只可用 propose_handoff 提议交给编码 Agent。每轮最多一张卡，只有用户点击卡片才会执行。
 你不执行配置修改，不发 QQ，不画图，不设提醒，不运行命令；不要宣称已完成。提议后等本机确认。
 """
@@ -125,11 +125,15 @@ def _context(cfg):
 
 
 def _tools():
-    return [
-        {"type": "function", "name": "propose_toggle", "description": "仅提出一项群聊能力开关确认卡，不执行。",
-         "parameters": {"type": "object", "properties": {
-             "flag": {"type": "string", "enum": list(local_chat.MANAGED.values())},
-             "enabled": {"type": "boolean"}}, "required": ["flag", "enabled"], "additionalProperties": False}},
+    # Bind the capability in the declared tool name. Realtime tools do not expose
+    # strict JSON schema mode; asking for a second semantic flag can drift to an
+    # undeclared synonym even when its parameter advertises an enum.
+    tools = [{"type": "function", "name": "propose_" + flag,
+              "description": f"仅提出『{label}』开关确认卡。enabled=true 表示开启，false 表示关闭；不执行修改。",
+              "parameters": {"type": "object", "properties": {"enabled": {"type": "boolean"}},
+                             "required": ["enabled"], "additionalProperties": False}}
+             for label, flag in local_chat.MANAGED.items()]
+    return tools + [
         {"type": "function", "name": "propose_handoff", "description": "仅提出交给编码 Agent 的确认卡。",
          "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
     ]
@@ -140,10 +144,13 @@ class _ProtocolError(Exception):
 
 
 class RealtimeSession:
-    """One isolated, bounded realtime conversation, driven by native PTT events."""
+    """One isolated conversation, using explicit PTT or code-controlled server VAD."""
 
-    def __init__(self, cfg, *, connector=official_connector, budget=None):
+    def __init__(self, cfg, *, connector=official_connector, budget=None, mode="ptt"):
+        if mode not in ("ptt", "continuous"):
+            raise ValueError("invalid voice mode")
         self.cfg = cfg
+        self.mode = mode
         self._settings = _settings(cfg)
         self._connector = connector
         self._budget = budget if budget is not None else Budget(
@@ -163,6 +170,7 @@ class RealtimeSession:
         self._response_finished.set()
         self._response_at = None
         self._discard = False
+        self._cancel_sent = False
         self._last_item = None
         self._last_content_index = 0
         self._audio_bytes = 0
@@ -171,6 +179,15 @@ class RealtimeSession:
         self._transcript = ""
         self._proposal_sent = False
         self._started_at = None
+        self._total_input_bytes = 0
+        self._paused = False
+        self._speech = None
+        self._speech_id = 0
+        self._utterances = asyncio.Queue(maxsize=1)
+        self._interrupt_ack = asyncio.Event()
+        self._interrupt_ack.set()
+        self._ack_pending = False
+        self._control_lock = asyncio.Lock()
 
     async def run(self, native_ws):
         self._native = native_ws
@@ -197,14 +214,19 @@ class RealtimeSession:
     async def _conversation(self, url):
         async with self._connector(url, self._settings.key) as upstream:
             self._upstream = upstream
+            detection = ({"type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300,
+                          "silence_duration_ms": 500, "create_response": False, "interrupt_response": False}
+                         if self.mode == "continuous" else None)
             await upstream.send_json({"type": "session.update", "session": {
                 "type": "realtime", "instructions": _instructions(self.cfg),
                 "output_modalities": ["audio"], "max_output_tokens": MAX_OUTPUT_TOKENS,
-                "audio": {"input": {"format": {"type": "audio/pcm", "rate": RATE}, "turn_detection": None},
+                "audio": {"input": {"format": {"type": "audio/pcm", "rate": RATE}, "turn_detection": detection},
                           "output": {"format": {"type": "audio/pcm", "rate": RATE}, "voice": self._settings.voice}},
                 "tools": _tools(), "tool_choice": "auto"}})
             self._tasks = [asyncio.create_task(self._client()), asyncio.create_task(self._provider()),
                            asyncio.create_task(self._watchdog())]
+            if self.mode == "continuous":
+                self._tasks.append(asyncio.create_task(self._continuous_responses()))
             done, _ = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 task.result()
@@ -231,9 +253,7 @@ class RealtimeSession:
                 await self._native.send_json({"type": kind, **fields})
 
     async def _interrupt(self, played_ms=0):
-        if not self._response_finished.is_set() and not self._discard:
-            await self._upstream.send_json({"type": "response.cancel"})
-            self._discard = True
+        await self._cancel_response()
         if self._last_item and not self._truncated:
             duration = self._audio_bytes * 1000 // _BYTES_PER_SECOND
             await self._upstream.send_json({"type": "conversation.item.truncate", "item_id": self._last_item,
@@ -244,11 +264,25 @@ class RealtimeSession:
             self._audio_open = False
             await self._emit("audio.end", turn_id=self._response_turn)
 
+    async def _cancel_response(self):
+        if not self._response_finished.is_set() and not self._cancel_sent:
+            self._discard = self._cancel_sent = True
+            await self._upstream.send_json({"type": "response.cancel"})
+
     async def _client(self):
         while True:
             msg = await self._native.receive()
             if msg.type == aiohttp.WSMsgType.BINARY:
                 data = msg.data
+                if self.mode == "continuous":
+                    if not self._ready or not data or len(data) % 2 or len(data) > MAX_CHUNK_BYTES:
+                        raise _ProtocolError("收到无效的录音片段。")
+                    self._total_input_bytes += len(data)
+                    if self._total_input_bytes > _BYTES_PER_SECOND * MAX_SESSION_SECONDS:
+                        raise _ProtocolError("这次语音已到音频上限，请重新开启。")
+                    if not self._paused:
+                        await self._upstream.send_json({"type": "input_audio_buffer.append", "audio": base64.b64encode(data).decode("ascii")})
+                    continue
                 if not self._capture or not data or len(data) % 2 or len(data) > MAX_CHUNK_BYTES:
                     raise _ProtocolError("收到无效的录音片段。")
                 self._input_bytes += len(data)
@@ -274,6 +308,9 @@ class RealtimeSession:
                 return
             if not self._ready:
                 raise _ProtocolError("语音还没有连接完成。")
+            if self.mode == "continuous":
+                await self._continuous_control(event)
+                continue
             if kind == "interrupt":
                 played = event.get("played_ms", 0)
                 if type(played) is not int or not 0 <= played <= MAX_OUTPUT_SECONDS * 1000:
@@ -308,20 +345,122 @@ class RealtimeSession:
                 except asyncio.TimeoutError:
                     raise _ProtocolError("上一句还没能结束，请重新开启语音。") from None
                 await self._upstream.send_json({"type": "input_audio_buffer.commit"})
-                self._response_finished.clear()
-                self._response_turn = self._turn
-                self._response_id = None
-                self._response_at = time.monotonic()
-                self._discard = self._proposal_sent = False
-                self._last_item = None
-                self._audio_bytes = 0
-                self._transcript = ""
-                self._truncated = False
-                await self._upstream.send_json({"type": "response.create", "response": {
-                    "output_modalities": ["audio"], "max_output_tokens": MAX_OUTPUT_TOKENS}})
-                await self._emit("state", state="thinking")
+                await self._create_response()
             else:
                 raise _ProtocolError("不支持这条语音控制消息。")
+
+    async def _create_response(self):
+        self._response_finished.clear()
+        self._response_turn = self._turn
+        self._response_id = None
+        self._response_at = time.monotonic()
+        self._discard = self._cancel_sent = self._proposal_sent = False
+        self._last_item = None
+        self._audio_bytes = 0
+        self._transcript = ""
+        self._truncated = False
+        await self._upstream.send_json({"type": "response.create", "response": {
+            "output_modalities": ["audio"], "max_output_tokens": MAX_OUTPUT_TOKENS}})
+        await self._emit("state", state="thinking")
+
+    async def _continuous_control(self, event):
+        kind = event.get("type")
+        if kind == "interrupt":
+            played, speech_id = event.get("played_ms"), event.get("speech_id")
+            if type(played) is not int or not 0 <= played <= MAX_OUTPUT_SECONDS * 1000:
+                raise _ProtocolError("播放进度无效。")
+            if type(speech_id) is not int:
+                raise _ProtocolError("语音轮次无效。")
+            if speech_id != self._speech_id or not self._ack_pending:
+                return  # An acknowledgement for a superseded utterance must not trim a new reply.
+            async with self._control_lock:
+                await self._interrupt(played)
+                self._ack_pending = False
+                self._interrupt_ack.set()
+        elif kind in ("listen.pause", "listen.resume"):
+            self._paused = kind == "listen.pause"
+            if self._speech is not None and not self._speech.stopped:
+                self._speech_id += 1
+                self._speech = None
+                self._ack_pending = False
+                self._interrupt_ack.set()
+            async with self._control_lock:
+                await self._upstream.send_json({"type": "input_audio_buffer.clear"})
+            await self._emit("state", state="paused" if self._paused else "listening")
+        else:
+            raise _ProtocolError("不支持这条连续语音控制消息。")
+
+    async def _continuous_vad(self, event):
+        kind = event["type"]
+        if self._paused and kind != "input_audio_buffer.committed":
+            return
+        if kind == "input_audio_buffer.speech_started":
+            item, start = event.get("item_id"), event.get("audio_start_ms")
+            if not isinstance(item, str) or not 0 < len(item) <= 200 or type(start) is not int or start < 0:
+                raise _ProtocolError("语音服务返回了无效轮次。")
+            if self._turn >= MAX_TURNS:
+                raise _ProtocolError("这次语音已到 12 轮，请重新开启。")
+            self._speech_id += 1
+            self._speech = SimpleNamespace(serial=self._speech_id, item_id=item, start_ms=start,
+                                           started_at=time.monotonic(), stopped=False, committed=False)
+            if self._last_item is not None and not self._truncated or not self._response_finished.is_set():
+                self._ack_pending = True
+                self._interrupt_ack.clear()
+            else:
+                self._ack_pending = False
+                self._interrupt_ack.set()
+            # Prevent old chunks from being forwarded while the native audio device stops.
+            if not self._response_finished.is_set():
+                self._discard = True
+            await self._emit("speech.started", speech_id=self._speech_id)
+            async with self._control_lock:
+                await self._cancel_response()
+            await self._emit("state", state="listening")
+        elif kind == "input_audio_buffer.speech_stopped":
+            speech = self._speech
+            if speech is None or event.get("item_id") != speech.item_id or speech.committed:
+                return
+            end = event.get("audio_end_ms")
+            if type(end) is not int or not speech.start_ms < end <= speech.start_ms + MAX_INPUT_SECONDS * 1000:
+                raise _ProtocolError("一次最多说 20 秒，请分开说。")
+            speech.stopped = True
+        elif kind == "input_audio_buffer.committed":
+            speech = self._speech
+            if (speech is None or not speech.stopped or speech.committed
+                    or event.get("item_id") != speech.item_id):
+                return
+            speech.committed = True
+            if self._utterances.full():
+                self._utterances.get_nowait()
+            self._utterances.put_nowait(speech)
+
+    async def _continuous_responses(self):
+        while True:
+            speech = await self._utterances.get()
+            try:
+                await asyncio.wait_for(self._response_finished.wait(), 3)
+                if speech.serial != self._speech_id:
+                    continue
+                await asyncio.wait_for(self._interrupt_ack.wait(), 2)
+            except asyncio.TimeoutError:
+                raise _ProtocolError("上一句还没能结束，请重新开启语音。") from None
+            async with self._control_lock:
+                if speech.serial != self._speech_id:
+                    continue
+                if self._turn >= MAX_TURNS:
+                    raise _ProtocolError("这次语音已到 12 轮，请重新开启。")
+                await self._upstream.send_json({"type": "conversation.item.create", "item": {
+                    "type": "message", "role": "system", "content": [{"type": "input_text", "text": _context(self.cfg)}]}})
+                if speech.serial != self._speech_id:
+                    continue
+                ticket = self._budget.reserve(MAX_INPUT_SECONDS, MAX_OUTPUT_TOKENS)
+                if ticket is None:
+                    raise _ProtocolError("今天的桌面语音轮数用完了。")
+                # No transcription request is configured. In VAD mode input is charged when
+                # a response is created; silent listening and cancelled speech stay uncharged.
+                ticket.commit()
+                self._turn += 1
+                await self._create_response()
 
     async def _cancel_capture(self):
         self._capture = False
@@ -335,6 +474,8 @@ class RealtimeSession:
             now = time.monotonic()
             if (not self._ready and now - self._started_at > 15
                     or self._capture and now - self._capture_at > MAX_INPUT_SECONDS
+                    or (self.mode == "continuous" and self._speech is not None
+                        and not self._speech.stopped and now - self._speech.started_at > MAX_INPUT_SECONDS)
                     or not self._response_finished.is_set() and now - self._response_at > MAX_OUTPUT_SECONDS):
                 raise _ProtocolError("录音或回复等待超时，请重新开启语音。")
             await asyncio.sleep(0.1)
@@ -349,8 +490,10 @@ class RealtimeSession:
             kind = event.get("type")
             if kind == "session.updated" and not self._ready:
                 self._ready = True
-                await self._emit("ready", rate=RATE, channels=1, max_input_seconds=MAX_INPUT_SECONDS,
+                await self._emit("ready", mode=self.mode, rate=RATE, channels=1, max_input_seconds=MAX_INPUT_SECONDS,
                                  max_session_seconds=MAX_SESSION_SECONDS, max_turns=MAX_TURNS)
+            elif self.mode == "continuous" and isinstance(kind, str) and kind.startswith("input_audio_buffer."):
+                await self._continuous_vad(event)
             elif kind == "error":
                 error = event.get("error") or {}
                 # The provider message may contain request data. Only fixed schema codes leave.
@@ -373,12 +516,16 @@ class RealtimeSession:
                 if not self._discard and response.get("status") == "completed":
                     await self._proposals(response.get("output", []))
                 elif not self._discard and response.get("status") not in ("cancelled", "completed"):
-                    await self._emit("error", message="这句语音没有完成，请重新按住说话。", code="response_incomplete")
+                    await self._emit("error", message="这句语音没有完成，请重新说一句。", code="response_incomplete")
                 self._response_finished.set()
                 if self._audio_open:
                     self._audio_open = False
                     await self._emit("audio.end", turn_id=self._response_turn)
-                if not self._capture:
+                if self.mode == "continuous":
+                    state = ("paused" if self._paused else "listening" if self._speech is not None
+                             and not self._speech.stopped else "idle")
+                    await self._emit("state", state=state)
+                elif not self._capture:
                     await self._emit("state", state="idle")
             elif not self._discard and not self._response_finished.is_set():
                 if event.get("response_id") and self._response_id and event["response_id"] != self._response_id:
@@ -426,9 +573,14 @@ class RealtimeSession:
             try:
                 raw = item.get("arguments", "")
                 args = json.loads(raw) if isinstance(raw, str) and len(raw) <= 2048 else None
-                if item.get("name") == "propose_toggle" and isinstance(args, dict) and set(args) == {"flag", "enabled"}:
+                name = item.get("name")
+                flag = name.removeprefix("propose_") if isinstance(name, str) and name.startswith("propose_") else None
+                if flag in local_chat.MANAGED.values() and isinstance(args, dict) and set(args) == {"enabled"}:
+                    action = local_chat.proposal({"kind": "toggle", "flag": flag, "enabled": args["enabled"]})
+                elif name == "propose_toggle" and isinstance(args, dict) and set(args) == {"flag", "enabled"}:
+                    # Old saved replays remain readable; new sessions never advertise this tool.
                     action = local_chat.proposal({"kind": "toggle", **args})
-                elif item.get("name") == "propose_handoff" and args == {}:
+                elif name == "propose_handoff" and args == {}:
                     action = local_chat.proposal({"kind": "handoff"})
             except (ValueError, TypeError):
                 pass

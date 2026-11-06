@@ -15,13 +15,14 @@ from test_instance_settings import configuration
 
 
 class FakeSession:
-    def __init__(self):
+    def __init__(self, mode="ptt"):
+        self.mode = mode
         self.close_count = 0
         self.received = []
         self.fail = False
 
     async def run(self, ws):
-        await ws.send_json({"type": "ready", "rate": 24000, "channels": 1})
+        await ws.send_json({"type": "ready", "mode": self.mode, "rate": 24000, "channels": 1})
         if self.fail:
             raise RuntimeError("PRIVATE_PROVIDER_KEY")
         async for message in ws:
@@ -69,9 +70,9 @@ class PanelVoiceTest(unittest.IsolatedAsyncioTestCase):
     def auth(self, **extra):
         return {panel.TOKEN_HEADER: self.TOKEN, **extra}
 
-    def make_session(self, cfg):
+    def make_session(self, cfg, *, mode="ptt"):
         self.assertIs(cfg, self.cfg)
-        session = FakeSession()
+        session = FakeSession(mode)
         self.sessions.append(session)
         return session
 
@@ -114,6 +115,27 @@ class PanelVoiceTest(unittest.IsolatedAsyncioTestCase):
         self.factory.assert_not_called()
         self.runner.start.assert_not_called()
         self.runner.stop.assert_not_called()
+
+    async def test_continuous_mode_is_explicit_validated_and_bound_to_the_ticket(self):
+        for mode in ("unknown", "session.update", "CONTINUOUS"):
+            response = await self.client.post("/companion/voice/start", headers=self.auth(),
+                                              data={"csrf": self.csrf, "mode": mode})
+            self.assertEqual(response.status, 400)
+            self.assertIsNone(self.manager.pending)
+        response = await self.client.post("/companion/voice/start", headers=self.auth(),
+                                          data={"csrf": self.csrf, "mode": "continuous"})
+        body = await response.json()
+        self.assertEqual(body["mode"], "continuous")
+        self.factory.assert_not_called()
+        # A WebSocket query cannot change the mode authorized by the POST.
+        ws = await self.client.ws_connect(panel_voice.STREAM_PATH + "?mode=ptt",
+            headers=self.auth(**{panel_voice.TICKET_HEADER: body["ticket"]}))
+        active = self.manager.active
+        self.assertEqual((await ws.receive_json())["mode"], "continuous")
+        self.factory.assert_called_once_with(self.cfg, mode="continuous")
+        await ws.send_json({"type": "stop"})
+        await ws.receive()
+        await asyncio.wait_for(active.finished.wait(), 1)
 
     async def test_auth_csrf_post_and_exact_origin_are_required(self):
         for route in ("/companion/voice/status", panel_voice.STREAM_PATH):

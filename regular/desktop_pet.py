@@ -266,15 +266,19 @@ class SpeechBubble(QWidget):
         self.setWindowTitle("老群友 · 说话")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.text, self.kind, self.serial, self.started = "", "say", 0, 0.0
+        self.streaming_serial = None
         self.painted = ""       # what the last paint actually showed (the typewriter is ahead of it)
         self.font_ = QFont()
         self.font_.setPixelSize(14)
 
     def show_bubble(self, bubble, now):
-        if bubble.serial == self.serial:
+        same_line = bubble.serial == self.serial
+        if same_line and bubble.text == self.text and bubble.kind == self.kind:
             return
-        self.serial, self.text, self.kind, self.started = bubble.serial, bubble.text, bubble.kind, now
-        self.painted = ""
+        self.serial, self.text, self.kind = bubble.serial, bubble.text, bubble.kind
+        if not same_line:
+            self.started = now
+            self.painted = ""
         self.setAccessibleName("老群友说：" + self.text)
         metrics = QFontMetricsF(self._font())
         if self.kind == "think":
@@ -295,7 +299,7 @@ class SpeechBubble(QWidget):
         return font
 
     def visible_text(self, now):
-        if self.kind != "say" or not self.pet.brain.motion:
+        if self.serial == self.streaming_serial or self.kind != "say" or not self.pet.brain.motion:
             return self.text
         return self.text[:max(1, int((now - self.started) * 38))]
 
@@ -522,21 +526,14 @@ class ChatBar(_Card):
 
 class _TalkButton(QPushButton):
     def __init__(self, pet, parent):
-        super().__init__("按住说话", parent)
+        super().__init__("静音麦克风", parent)
         self.pet = pet
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAccessibleName("按住说话")
+        self.setAccessibleName("静音麦克风")
         self.setFlat(True)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background:transparent; border:0;")
-        self.pressed.connect(self._press)
-        self.released.connect(pet.release_voice)
-
-    def _press(self):
-        if self.pet._voice_started:
-            self.pet.press_voice()
-        else:
-            self.pet.start_voice()
+        self.clicked.connect(pet.toggle_voice_mute)
 
     def paintEvent(self, event):
         # Paint the pill ourselves: a native macOS push-button can ignore a
@@ -561,18 +558,8 @@ class _TalkButton(QPushButton):
             painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), (rect.height() - 6) / 2, (rect.height() - 6) / 2)
         painter.end()
 
-    def leaveEvent(self, event):
-        self.pet.cancel_voice_input()
-        super().leaveEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if not self.rect().contains(event.position().toPoint()):
-            self.pet.cancel_voice_input()
-        super().mouseMoveEvent(event)
-
-
 class VoiceCard(_Card):
-    """Open to connect, hold to speak; closing ends the voice session."""
+    """Open to talk continuously, mute if needed, close to end the call."""
     def __init__(self, pet):
         super().__init__(pet, "和老群友语音聊聊")
         self.setStyleSheet(self.styleSheet() + """
@@ -598,7 +585,7 @@ class VoiceCard(_Card):
         self.status = QLabel("正在连接…", self)
         self.status.setWordWrap(True)
         self.status.setAccessibleName("语音状态")
-        self.caption = QLabel("松开发送 · 移开取消", self)
+        self.caption = QLabel("说完自动回应，也可以直接插话", self)
         self.caption.setWordWrap(True)
         self.caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.caption.setStyleSheet("color:#7b8a80; font-size:11px;")
@@ -614,23 +601,13 @@ class VoiceCard(_Card):
     def update_status(self):
         pet = self.pet
         self.status.setText(pet.voice_message)
-        ready = pet.voice_state in ("idle", "listening", "thinking", "speaking")
+        ready = pet.voice_state in ("idle", "listening", "thinking", "speaking", "muted")
         retry = not pet._voice_started
         self.talk.setEnabled(retry or ready)
-        words = ("重新连接" if retry else "松开发送" if pet.voice_state == "listening" else
-                 "按住打断" if pet.voice_state in ("thinking", "speaking") else
-                 "按住说话" if ready else "正在连接…")
+        words = ("重新连接" if retry else "取消静音" if pet._voice_muted else
+                 "静音麦克风" if ready else "正在连接…")
         self.talk.setText(words)
         self.talk.setAccessibleName(words)
-
-    def event(self, event):
-        if event.type() == QEvent.Type.WindowDeactivate:
-            self.pet.cancel_voice_input()
-        return super().event(event)
-
-    def leaveEvent(self, event):
-        self.pet.cancel_voice_input()
-        super().leaveEvent(event)
 
     def closeEvent(self, event):
         self.pet.end_voice()
@@ -791,12 +768,13 @@ class PetWidget(QWidget):
         self.voice_session = None
         self.voice_state, self.voice_message = "closed", "正在连接…"
         self._voice_started = False
+        self._voice_muted = False
         self._voice_generation = 0
         self._voice_problem = ""
+        self._voice_transcript_serial = None
         self.voice_signals = _VoiceSignals(self)
         self.voice_signals.event.connect(self._voice_event)
         self.voice_signals.permission.connect(self._voice_permission)
-        QApplication.instance().applicationStateChanged.connect(self._application_state_changed)
         self._pending_toggle = None
         self.fx = FxLayer(self)
         self.bubble = SpeechBubble(self)
@@ -1174,7 +1152,7 @@ class PetWidget(QWidget):
 
     def _voice_status(self, state, message):
         self.voice_state, self.voice_message = state, message
-        if state in ("idle", "closed") and not self.chat_busy:
+        if state in ("idle", "closed", "listening", "muted") and not self.chat_busy:
             self.brain.chat_pending = False
             if self.brain.bubble is not None and self.brain.bubble.kind == "think":
                 self.brain.bubble = None
@@ -1193,10 +1171,11 @@ class PetWidget(QWidget):
             self._voice_status("closed", "等这一句聊完，再开始语音吧。")
             return
         self._voice_started = True
+        self._voice_muted = False
         self._voice_problem = ""
         self._voice_generation += 1
         generation = self._voice_generation
-        self._voice_status("permission", "请允许麦克风；按住时才会收音。")
+        self._voice_status("permission", "请允许麦克风，连好后就能直接说话。")
         self.permission_request(lambda granted, message:
                                 self.voice_signals.permission.emit(generation, granted, message))
 
@@ -1210,7 +1189,7 @@ class PetWidget(QWidget):
             return
         self._voice_status("connecting", "正在连接语音…")
         self.voice_session = self.voice_factory(
-            self.client, self.csrf, lambda event: self.voice_signals.event.emit(generation, event))
+            self.client, self.csrf, lambda event: self.voice_signals.event.emit(generation, event), continuous=True)
         self.voice_session.start()
 
     def end_voice(self):
@@ -1219,32 +1198,16 @@ class PetWidget(QWidget):
         if self.voice_session is not None:
             self.voice_session.close()
             self.voice_session = None
-        if self.voice_state == "listening":
-            self.brain.say("这句已取消。", now=self.now(), seconds=3)
         self._voice_status("closed", "语音已结束，麦克风已关闭。")
 
-    def press_voice(self):
-        if self.voice_session is not None and self.voice_session.press():
-            self._voice_problem = ""
-            self._voice_status("listening", "我在听…")
-            self.brain.set_attention(True, self.now())
-            self.brain.say("我在听…", now=self.now(), seconds=20)
-
-    def release_voice(self):
-        if self.voice_session is not None and self.voice_state == "listening":
-            self.voice_session.release()
-            self._voice_status("thinking", "正在想怎么接…")
-            self.brain.chat_sent(self.now())
-
-    def cancel_voice_input(self):
-        if self.voice_session is not None and self.voice_state == "listening":
-            self.voice_session.cancel_input()
-            self._voice_status("idle", "这句已取消。")
-            self.brain.say("这句取消了。", now=self.now(), seconds=3)
-
-    def _application_state_changed(self, state):
-        if state != Qt.ApplicationState.ApplicationActive and not self._closing:
-            self.cancel_voice_input()
+    def toggle_voice_mute(self):
+        if not self._voice_started:
+            self.start_voice()
+            return
+        muted = not self._voice_muted
+        if self.voice_session is not None and self.voice_session.set_muted(muted):
+            self._voice_muted = muted
+            self._voice_status("muted" if muted else "listening", "麦克风已静音。" if muted else "我在听，直接说就好。")
 
     @Slot(int, object)
     def _voice_event(self, generation, event):
@@ -1253,21 +1216,23 @@ class PetWidget(QWidget):
         kind = event.get("type")
         if kind == "ready":
             self._voice_problem = ""
-            self._voice_status("idle", "随时可以开口。")
+            self._voice_transcript_serial = None
+            self._voice_status("listening", "我在听，直接说就好。")
         elif kind == "state":
             state = event.get("state")
+            if state in ("listening", "thinking"):
+                self._voice_transcript_serial = None
             words = {"connecting": "正在连接语音…", "listening": "我在听…",
                      "thinking": "正在想怎么接…", "speaking": "她在说话…",
-                     "idle": "随时可以开口。"}
+                     "idle": "我在听，直接说就好。", "muted": "麦克风已静音。"}
             if state in words:
+                if state == "thinking" and not self.brain.chat_pending:
+                    self.brain.chat_sent(self.now())
                 self._voice_status(state, words[state])
         elif kind == "transcript" and event.get("text"):
             text = str(event["text"])
             if event.get("role") == "assistant":
-                if event.get("final"):
-                    self.brain.chat_reply(self.now(), text)
-                else:
-                    self.brain.say(text, now=self.now(), seconds=20)
+                self._show_voice_transcript(text, final=bool(event.get("final")))
             if event.get("final"):
                 self._record(("你：" if event.get("role") == "user" else "她：") + text[:80], unread=False)
         elif kind == "proposal":
@@ -1286,6 +1251,21 @@ class PetWidget(QWidget):
             self._voice_started = False
             self.voice_session = None
             self._voice_status("closed", self._voice_problem or "语音已结束，麦克风已关闭。")
+
+    def _show_voice_transcript(self, text, *, final):
+        """One reply owns one bubble; cumulative audio text is already streamed."""
+        now = self.now()
+        bubble = self.brain.bubble
+        if (self._voice_transcript_serial is None
+                or (bubble is not None and bubble.serial != self._voice_transcript_serial)):
+            self.brain.chat_reply(now, text)
+            bubble = self.brain.bubble
+            self._voice_transcript_serial = bubble.serial
+        elif bubble is None:
+            return  # Clicking the bubble dismisses this reply, including later chunks.
+        bubble.text = text
+        bubble.until = now + (max(6.0, min(30.0, 4 + len(text) * .16)) if final else 20)
+        self.bubble.streaming_serial = bubble.serial
 
     def show_activity(self):
         if self.activity_card is None:
