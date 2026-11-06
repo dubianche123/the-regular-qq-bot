@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.4 — 2026-11-06
+
+- Open desktop voice as a continuous conversation: automatic turn detection,
+  spoken interruptions, one mute control and close to end. Keep listening when
+  switching apps, and retain the existing session and daily reply limits.
+- Add WebRTC AEC3 to the native full-duplex audio stream, using actual speaker
+  output as its reference. Keep the playback buffer and actual DAC progress.
+- Update one subtitle bubble as text arrives, without restarting the typewriter
+  or replaying the final sentence. Ordinary text chat keeps its typing effect.
+- Add macOS and Windows CI coverage for the audio wheel and native interface.
+
 ## 0.4.3 — 2026-11-06
 
 - Add native desktop push-to-talk using the configured OpenAI realtime speech
