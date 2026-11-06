@@ -105,6 +105,30 @@
   "laptop": {
    "file": "laptop.webp",
    "frames": 4
+  },
+  "reply": {
+   "file": "reply.webp",
+   "frames": 4
+  },
+  "listen": {
+   "file": "listen.webp",
+   "frames": 4
+  },
+  "inspect": {
+   "file": "inspect.webp",
+   "frames": 4
+  },
+  "checkup": {
+   "file": "checkup.webp",
+   "frames": 4
+  },
+  "handoff": {
+   "file": "handoff.webp",
+   "frames": 4
+  },
+  "stuck": {
+   "file": "stuck.webp",
+   "frames": 4
   }
  }
 }

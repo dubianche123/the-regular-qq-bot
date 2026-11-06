@@ -119,7 +119,7 @@ Use the source launcher, or run `regular --directory ~/.the-regular pet`; it pre
 
 **She can also help manage her capabilities.** Say “stop drawing for now” and she can offer a confirmation card; only your click changes the switch. Ask what she did today for a summary based on local activity counts. Code changes lead to a handoff brief you can copy to your coding agent.
 
-Resize from the character's context menu; size, position and motion preference are remembered. A coding agent can cue her too, e.g. `regular pet-cue cheer --say "eval finished"`. Local and QQ replies share the chat model selected under Models and capabilities. Group knowledge is an entry list: choose its group, add or edit one entry, preview, then save. Deleting an entry asks for confirmation.
+Cycle her size from the "More" panel; size, position and motion preference are remembered. A coding agent can cue her too, e.g. `regular pet-cue cheer --say "eval finished"`. Local and QQ replies share the chat model selected under Models and capabilities. Group knowledge is an entry list: choose its group, add or edit one entry, preview, then save. Deleting an entry asks for confirmation.
 
 [Desktop companion and local chat guide (Chinese) →](docs/companion.md)
 

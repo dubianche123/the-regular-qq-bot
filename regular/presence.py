@@ -19,6 +19,7 @@ from regular.panel_runtime import _pid_alive
 
 EVENT_WINDOW = 600.0      # 只看最近 10 分钟发生的事
 CHATTER_WINDOW = 300.0    # 群里热闹程度：最近 5 分钟收到的消息数
+STATE_WINDOW = 25.0       # 「此刻在干嘛」只看最近这么久，状态停了她就自己回到日常
 STATUS_MAX_AGE = 120.0
 TAIL_BYTES = 128 * 1024
 STATE_MAX_BYTES = 8 * 1024 * 1024
@@ -118,6 +119,25 @@ def _activity(cfg, now, since):
     return events[-40:], chatter
 
 
+# 桌宠状态层：把「刚才发生过什么」压成「此刻在做什么」。
+# 键是 _event() 产出的信号，值是 regular/pet_brain.py 的 STATE_CLIPS 状态名。
+_STATE_SIGNALS = {"replying": "reply", "voice": "listen", "singing": "listen", "searching": "inspect"}
+_STATE_ENDS = frozenset({"said", "chimed", "proactive", "drew", "media_end"})
+
+
+def _recent_state(cfg, now):
+    """最近一段活动里，最后一个还在持续的状态；回完话/画完图就当作结束。"""
+    recent, _ = _activity(cfg, now, now - STATE_WINDOW)
+    state = None
+    for event in recent:
+        kind = event.get("kind")
+        if kind in _STATE_ENDS:
+            state = None
+        elif kind in _STATE_SIGNALS:
+            state = _STATE_SIGNALS[kind]
+    return state
+
+
 def day_summary(cfg, *, now=None):
     """Today in numbers only: how often she was called, what she did. No text, no ids (only a group count)."""
     now = time.time() if now is None else now
@@ -176,5 +196,8 @@ def snapshot(cfg, *, since=None, now=None, cues=()):
     _, circadian = activation.circadian(datetime.fromtimestamp(now).hour)
     events, chatter = _activity(cfg, now, since) if bot == "ready" else ([], 0)
     events += [dict(cue) for cue in cues if cue.get("ts", 0) > since]
+    # state 是每次心跳都带的「现在」，不受 since 去重影响；状态一停就自然消失。
+    state = _recent_state(cfg, now) if bot == "ready" else None
     return {"bot": bot, "gateway_connected": gateway, "mood": round(mood, 3),
-            "circadian": circadian, "chatter": chatter, "events": events, "now": round(now, 3)}
+            "circadian": circadian, "chatter": chatter, "state": state,
+            "events": events, "now": round(now, 3)}

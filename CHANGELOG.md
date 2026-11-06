@@ -2,6 +2,18 @@
 
 ## Unreleased — 2026-11-06
 
+- Replace the native Qt context menu and the vertical five-button toolbar with
+  one compact self-drawn ring (chat / voice / a timeline for activity / more;
+  "more" opens beside the ring) and a rounded
+  "More" panel. The five "open workbench" submenu shortcuts are removed; size,
+  quiet, motion, feed, refresh and quit now live in "More". The continuous
+  desktop voice conversation from 0.4.4 is untouched and still uses one button.
+- Add an event-driven state layer to the pet, with six new sprite strips:
+  reply, listen, inspect, checkup, handoff and stuck. Presence heartbeats keep
+  the current state alive, one-shot cues trigger handoff / checkup / stuck, and
+  a live voice session holds listen until it actually ends. Seated states use
+  the existing posture bridges. A state ends when its heartbeat stops, not on
+  a long fake "still busy" timeout.
 - Bind the whole app to one OpenAI key. The console now asks for an API key in
   exactly one place (the chat settings); the judgment credential picker, the
   image-generation key field and the voice key field are gone. Judgment is no

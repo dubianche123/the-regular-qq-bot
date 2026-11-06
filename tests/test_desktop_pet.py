@@ -19,6 +19,7 @@ if HAS_QT:
     from PySide6.QtGui import QMouseEvent
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QPushButton
     from regular import desktop_pet
     from regular.desktop_pet import PetWidget, SpriteBank
 
@@ -187,13 +188,22 @@ class DesktopPetTest(unittest.TestCase):
     def test_toolbar_actions_are_explicit(self):
         self.settle()
         pet = self.pet
-        pet.toolbar.feed.click()
-        self.assertEqual(pet.brain.clip, "eat")
         pet.toolbar.activity.click()
         self.assertTrue(pet.activity_card.isVisible())
+        pet.toolbar.show()
+        pet._place_toolbar()
+        pet.toolbar.more.click()                                     # 更多: beside the ring, not at the pointer
+        menu = pet._menu
+        self.assertTrue(menu.isVisible())
+        ring, panel = pet.toolbar.geometry(), menu.geometry()
+        self.assertFalse(ring.intersects(panel))
+        self.assertLess(abs(panel.center().y() - ring.center().y()), panel.height() // 2 + 1)
+        feed = next(b for b in menu.findChildren(QPushButton) if b.text() == "投喂一块小饼干")
+        feed.click()
+        self.assertEqual(pet.brain.clip, "eat")
         with patch.object(desktop_pet.webbrowser, "open") as browser:
             self.client.management_url.return_value = "http://127.0.0.1:8765/?token=x"
-            pet.toolbar.settings.click()
+            next(b for b in menu.findChildren(QPushButton) if b.text() == "打开工作台").click()
         browser.assert_called_once_with("http://127.0.0.1:8765/?token=x")
         self.client.management_url.assert_called_once_with("/")   # the overview leads to setup while it is unfinished
         pet.toolbar.chat.click()

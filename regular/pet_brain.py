@@ -54,6 +54,14 @@ CLIPS = {
     "lookaround": ("lookaround", [0, 1, 2, 3], 1.3, False, "stand"),
     "eat": ("eat", [0, 1, 2, 1, 2, 3], 2.6, False, "stand"),
     "laptop": ("laptop", [0, 1, 0, 1, 2, 3], 3.2, True, "sit"),
+    # 状态层：她此刻真的在做什么，由面板的实时状态驱动，不是随机挑的卖萌动作。
+    # 坐/蹲的 strip 一律标 "sit"，_queue() 会自动插 sit_down / stand_up 桥接，不跳帧。
+    "reply": ("reply", [0, 1, 2, 1, 0, 3], 2.0, True, "sit"),       # 坐着回消息，末帧抬头笑
+    "listen": ("listen", [0, 1, 2, 3], 2.0, True, "stand"),          # 侧身贴耳听语音
+    "inspect": ("inspect", [0, 1, 2, 3], 1.6, True, "stand"),        # 把图片举高端详
+    "checkup": ("checkup", [0, 1, 2, 3], 1.6, True, "sit"),          # 蹲下举放大镜做体检
+    "handoff": ("handoff", [0, 1, 2, 3], 2.0, True, "stand"),        # 迈步递便签给 Agent
+    "stuck": ("stuck", [0, 1, 2, 3], 1.6, True, "stand"),            # 挠头摊手：这项没配好
 }
 # Transition clips start from another posture than the one they end in.
 STARTS_FROM = {"sit_down": "stand", "stand_up": "sit", "doze": "sit", "lie_down": "sit", "wake": "lie",
@@ -64,7 +72,14 @@ BRIDGES = {("stand", "sit"): ["sit_down"], ("stand", "lie"): ["sit_down", "doze"
 ASLEEP = frozenset({"sleep", "doze", "lie_down"})
 # Clips a coding agent may request through the panel; physics/transition clips stay internal.
 CUE_ACTIONS = ("wave", "hop", "cheer", "talk", "think", "phone", "laptop", "draw", "sing", "read", "tea",
-               "stretch", "lookaround", "shy", "pout", "startle", "eat", "sleep")
+               "stretch", "lookaround", "shy", "pout", "startle", "eat", "sleep",
+               "reply", "listen", "inspect", "checkup", "handoff", "stuck")
+# 状态层：面板每次心跳带来的是「现在」的状态，不是一件事发生过。
+# STATE_HEARTBEAT 是心跳丢失后还能撑多久；状态一停她就会自己回到日常，不用长超时假装忙。
+STATE_CLIPS = {"reply": "reply", "listen": "listen", "inspect": "inspect",
+               "checkup": "checkup", "handoff": "handoff", "stuck": "stuck"}
+STATE_HEARTBEAT = 12.0
+STATE_ONCE = {"handoff": 6.0, "stuck": 6.0, "checkup": 8.0}   # 一次性动作不占着状态不放
 NIGHT = ("凌晨被吵醒", "熬到半夜")
 # 小王在 QQ 里查资料 / 画图 / 录语音时，桌宠最多陪着演多久（查询五分钟放弃；生图超时 150 秒，再加上传）。
 MEDIA_HOLD = {"searching": 300.0, "drawing": 200.0, "singing": 90.0}
@@ -101,6 +116,12 @@ LINES = {
     "full": ("吃不下啦。", "再吃就要变成球了。"),
     "greet": ("嗨～", "在忙吗？", "我在这儿哦。"),
     "late": ("好困……", "这么晚还不睡？"),
+    "reply": ("群里有人找我，我回一句～", "打字中……", "回好啦。"),
+    "listen": ("我听着呢，你说。", "嗯嗯，在听。"),
+    "inspect": ("这张图我看看。", "举高点瞧瞧……"),
+    "checkup": ("翻翻今天接的话，看看有没有接偏。", "体检一下～"),
+    "handoff": ("这段交给 Agent 看看吧。", "我记下来了，给你。"),
+    "stuck": ("这项好像还没配好……", "咦，没连上？"),
 }
 
 
@@ -109,7 +130,7 @@ class Step:
     clip: str
     duration: float | None = None      # None: one pass of a non-loop clip (loops default to 4s)
     target_x: float | None = None      # walking destination
-    hold: str | None = None            # "chat" / "agent": held until that condition clears
+    hold: str | None = None            # "chat" / "agent" / "state": held until that condition clears
 
 
 @dataclass
@@ -180,6 +201,10 @@ class PetBrain:
         self.agent_busy_until = 0.0
         self.last_agent_event = -1000.0
         self.media: str | None = None    # laptop / drawing / sing while 小王 searches, draws or records in QQ
+        # 状态层：面板心跳带来的「此刻在干嘛」，优先级高于事件层与随机 ambient。
+        self.state_clip: str | None = None
+        self.state_name: str | None = None
+        self.state_until = 0.0
         self.energy = 1.0
         self.last_interaction = now
         self.pokes: deque = deque(maxlen=6)
@@ -349,6 +374,8 @@ class PetBrain:
             return not self.chat_pending
         if step.hold == "agent":
             return now >= self.agent_busy_until
+        if step.hold == "state":
+            return now >= self.state_until
         if step.target_x is not None:
             return abs(self.x - step.target_x) < 1.5
         if step.duration is not None:
@@ -364,6 +391,11 @@ class PetBrain:
         engaged = not offline and now - self.last_agent_event < ENGAGED_SECONDS
         mood = p.mood if p.known else 0.0
         r = self.rng.uniform
+        # 状态层最优先：系统此刻在做的事，比「刚才发生过什么」和随机卖萌都准。
+        # 被打断（戳一下、拖一下、聊一句）之后还能回到这个动作，直到心跳停掉。
+        if self.state_clip and now < self.state_until:
+            return [Step(self.state_clip, hold="state"), Step("idle", 1)]
+        self.state_clip, self.state_name = None, None
         if self.media and now < self.agent_busy_until:
             # Back from a poke, a drag or a local chat: the drawing in QQ is still going.
             return [Step(self.media, hold="agent"), Step("idle", 1)]
@@ -736,7 +768,12 @@ class PetBrain:
             circadian=data.get("circadian") if isinstance(data.get("circadian"), str) else "",
             chatter=max(0, min(500, chatter)) if type(chatter) is int else 0, known=True)
         self.presence = new
+        # 面板每次心跳都会带上「此刻」的状态；不带就是状态结束了，让它自然回落。
+        state = data.get("state")
+        if isinstance(state, str) and state in STATE_CLIPS:
+            self.set_state(state, now)
         if old.known and old.bot == "ready" and new.bot == "offline":
+            self.state_clip, self.state_name, self.state_until = None, None, 0.0
             self._status_line("offline", now, gap=0)
             if self.mode == "ground" and not self.chat_pending and self.clip not in ASLEEP:
                 self._queue(Step("stretch"), Step("sleep", 900.0), Step("wake"), now=now, interrupt=True)
@@ -757,8 +794,36 @@ class PetBrain:
     def has_seen(self, event):
         return self._event_key(event) in self._seen_events
 
+    def set_state(self, name, now, *, seconds=None):
+        """面板说「她此刻在做这件事」。同名状态只续心跳，不重排队、不打断演出。"""
+        clip = STATE_CLIPS.get(name)
+        if clip is None:
+            return False
+        self.state_until = now + (STATE_HEARTBEAT if seconds is None else max(0.0, seconds))
+        if self.state_name == name and self.state_clip == clip:
+            return True
+        self.state_name, self.state_clip = name, clip
+        self.last_agent_event = now
+        if self.mode == "ground" and not self.chat_pending:
+            self._queue(Step(clip, hold="state"), Step("idle", 1.5), now=now, interrupt=True)
+            self._status_line(name, now, gap=0)
+        return True
+
+    def clear_state(self, now):
+        """状态结束：立刻回到日常，不要等一个假装还在忙的长超时。"""
+        was_active = self.step is not None and self.step.hold == "state"
+        self.state_clip, self.state_name, self.state_until = None, None, 0.0
+        if was_active and self.mode == "ground":
+            self._queue(Step("idle", 1), now=now, interrupt=True)
+
     def _agent_event(self, now, event):
         kind = event.get("kind")
+        if kind == "state":
+            # 一次性的状态动作（交给 Agent、体检、没配好）：演一下就自己收。
+            name = event.get("state")
+            if isinstance(name, str) and name in STATE_CLIPS and self.mode == "ground" and not self.chat_pending:
+                self.set_state(name, now, seconds=STATE_ONCE.get(name))
+            return
         # What 小王 is busy with in QQ is tracked even mid-drag or mid-chat, so she
         # picks the sketchbook back up afterwards (see _choose).
         finished = self.media
@@ -772,6 +837,10 @@ class PetBrain:
         if kind != "cue":
             self.last_agent_event = now
         if self.mode != "ground" or self.chat_pending:
+            return
+        # 状态层在演时，QQ 日志事件只记账（上面已经更新 media），不抢镜。
+        # cue 是用户/Agent 的显式指令，仍然优先。
+        if kind != "cue" and self.state_clip and now < self.state_until:
             return
         # Asleep is no excuse: whatever 小王 does in QQ wakes her (the queue walks lie -> sit -> stand).
         if kind == "cue":
@@ -816,5 +885,6 @@ class PetBrain:
 
     def snapshot(self):
         return {"clip": self.clip, "mode": self.mode, "x": round(self.x, 1), "y": round(self.y, 1),
-                "facing": self.facing, "plan": [s.clip for s in self.plan],
+                "facing": self.facing, "state": self.state_name,
+                "plan": [s.clip for s in self.plan],
                 "bubble": self.bubble.text if self.bubble else None}
