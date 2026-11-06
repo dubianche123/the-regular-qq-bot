@@ -89,16 +89,28 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page.status, 200)
 
     async def test_dashboard_shows_status_groups_and_knowledge(self):
+        state = json.loads(Path(self.cfg.STATE_FILE).read_text())
+        state["groups"]["g1"]["name"] = "老友茶馆"
+        Path(self.cfg.STATE_FILE).write_text(json.dumps(state))
         response = await self.client.get("/", headers=self.auth())
         text = await response.text()
-        self.assertIn("g1", text)
+        self.assertIn("老友茶馆", text)
+        self.assertNotIn('>g1<', text)
+        self.assertNotIn('>normal<', text)
         self.assertIn("3 / 100", text)
         self.assertIn("all.md", text)
+        state["groups"]["g1"].pop("name")
+        Path(self.cfg.STATE_FILE).write_text(json.dumps(state))
+        text = await (await self.client.get("/", headers=self.auth())).text()
+        self.assertIn('群 · ', text)
+        self.assertNotIn('>g1<', text)
 
     async def test_knowledge_edit_round_trip(self):
+        text = await (await self.client.get('/knowledge', headers=self.auth())).text()
+        csrf = re.search(r'name="csrf" value="([^"]+)"', text).group(1)
         response = await self.client.post(
             "/knowledge/save",
-            data={"file": "all.md", "content": "## 新事实\n关键词：测试\n这是新内容。\n"},
+            data={"csrf": csrf, "file": "all.md", "content": "## 新事实\n关键词：测试\n这是新内容。\n"},
             headers=self.auth(), allow_redirects=False)
         self.assertEqual(response.status, 302)
         path = self.knowledge_dir / "all.md"
@@ -106,30 +118,31 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
         page = await self.client.get("/knowledge?file=all.md", headers=self.auth())
         text = await page.text()
         self.assertIn("这是新内容", text)
-        self.assertIn("解析到 1 条", text)
+        self.assertIn("1 条知识", text)
 
     async def test_new_group_knowledge_file_can_be_created(self):
+        text = await (await self.client.get('/knowledge', headers=self.auth())).text()
+        csrf = re.search(r'name="csrf" value="([^"]+)"', text).group(1)
         response = await self.client.post(
             "/knowledge/save",
-            data={"file": "806abc.md", "content": "## 群规\n关键词：群规\n新群规则。\n"},
+            data={"csrf": csrf, "file": "806abc.md", "content": "## 群规\n关键词：群规\n新群规则。\n"},
             headers=self.auth(), allow_redirects=False)
         self.assertEqual(response.status, 302)
         self.assertTrue((self.knowledge_dir / "806abc.md").is_file())
 
     async def test_knowledge_library_previews_entries_and_keeps_templates_as_unsaved_drafts(self):
         original = (self.knowledge_dir / "all.md").read_bytes()
-        response = await self.client.get("/knowledge?file=all.md&template=names", headers=self.auth())
+        response = await self.client.get("/knowledge?file=all.md", headers=self.auth())
         text = await response.text()
-        self.assertIn('aria-label="知识文件"', text)
+        self.assertIn('id="kb-scope"', text)
         self.assertIn('aria-label="已保存知识条目"', text)
         self.assertIn("本群不发广告", text)
-        self.assertIn("data-knowledge-title", text)
-        self.assertIn("只由维护者在本机编辑", text)
-        self.assertNotIn("这是未保存的格式示例", text)
+        self.assertNotIn("data-kb-editor", text)
+        self.assertNotIn("示例草稿", text)
         self.assertEqual((self.knowledge_dir / "all.md").read_bytes(), original)
         response = await self.client.get("/knowledge?file=806abc.md&template=names", headers=self.auth())
         text = await response.text()
-        self.assertIn("这是未保存的格式示例", text)
+        self.assertIn("示例草稿", text)
         self.assertIn("一个称呼的来历", text)
         self.assertFalse((self.knowledge_dir / "806abc.md").exists())
 
@@ -143,9 +156,11 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('&lt;script&gt;bad()', text)
 
     async def test_path_traversal_is_rejected(self):
+        text = await (await self.client.get('/knowledge', headers=self.auth())).text()
+        csrf = re.search(r'name="csrf" value="([^"]+)"', text).group(1)
         response = await self.client.post(
             "/knowledge/save",
-            data={"file": "../evil.md", "content": "bad"},
+            data={"csrf": csrf, "file": "../evil.md", "content": "bad"},
             headers=self.auth(), allow_redirects=False)
         self.assertEqual(response.status, 400)
         self.assertFalse((Path(self.cfg.DATA_DIR).parent / "evil.md").exists())
@@ -175,14 +190,14 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_decision_page_shows_form_without_secret(self):
         text, _csrf = await self._decision_page()
-        self.assertIn("判断 API", text)
-        self.assertIn("Decisions", text)
+        self.assertIn("模型与能力", text)
+        self.assertIn('id="decision"', text)
         self.assertIn("/v1/decisions", text)
         self.assertIn("gpt-6-luna", text)
         self.assertIn('name="api_key"', text)
         # key 输入框永远空白，页面上没有任何已存值
         self.assertIn('name="api_key" value=""', text)
-        self.assertIn("尚未配置", text)
+        self.assertIn("还没连接", text)
 
     async def test_decision_save_requires_auth_and_csrf(self):
         post = {"csrf": "bogus", "endpoint": "https://api.openai.com/v1/decisions",
@@ -215,7 +230,8 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["api_key"], "sk-fake-secret-001")
         # GET 回显的只有「已配置」状态，key 一个字节都不上页面
         text, _ = await self._decision_page()
-        self.assertIn("已保存配置", text)
+        self.assertIn('id="decision"', text)
+        self.assertIn("gpt-6-luna", text)
         self.assertNotIn("sk-fake-secret-001", text)
         self.assertIn('name="api_key" value=""', text)
         # 不碰 .env、不建其他文件

@@ -151,7 +151,7 @@ class PanelCompanionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(original.status, 200)
         self.assertTrue((await original.read()).startswith(b'\x89PNG'))
 
-    async def test_context_illustrations_are_local_authenticated_and_used_by_purpose(self):
+    async def test_illustration_resources_remain_authenticated_but_settings_stay_compact(self):
         for state, route in (("welcome", "/setup"), ("knowledge", "/knowledge")):
             asset = "/assets/mascot-" + state + ".png"
             with self.subTest(state=state):
@@ -159,11 +159,13 @@ class PanelCompanionTest(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.get(asset, headers=self.auth())
                 self.assertEqual(response.status, 200)
                 self.assertEqual(response.content_type, "image/png")
-                self.assertIn('src="' + asset + '"', await (await self.client.get(route, headers=self.auth())).text())
+                page = await (await self.client.get(route, headers=self.auth())).text()
+                self.assertNotIn('src="' + asset + '"', page)
+                self.assertIn('src="/assets/app-icon.png"', page)
         # The checkup starts with candidates; its illustration stays available as a local asset.
         self.assertEqual((await self.client.get('/assets/mascot-checkup.png', headers=self.auth())).status, 200)
         checkup = await (await self.client.get('/checkup', headers=self.auth())).text()
-        self.assertIn('aria-label="体检候选"', checkup)
+        self.assertIn('aria-label="待看记录"', checkup)
         self.assertNotIn('src="/assets/mascot-checkup.png"', checkup)
 
 

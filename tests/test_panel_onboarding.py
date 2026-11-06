@@ -16,15 +16,30 @@ from test_instance_settings import configuration, complete_values
 
 
 class _Inputs(HTMLParser):
-    def __init__(self, page):
+    def __init__(self, page, *, action=None):
         super().__init__()
         self.fields = {}
+        self.action, self.active, self.select = action, action is None, None
         self.feed(page)
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
-        if tag == "input" and attrs.get("name"):
+        if tag == "form":
+            self.active = self.action is None or attrs.get("action") == self.action
+        elif self.active and tag in ("input", "select") and attrs.get("name"):
             self.fields[attrs["name"]] = attrs
+            if tag == "select":
+                self.select = attrs["name"]
+        elif self.active and tag == "option" and self.select:
+            field = self.fields[self.select]
+            if "value" not in field or "selected" in attrs:
+                field["value"] = attrs.get("value", "")
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self.active = self.action is None
+        elif tag == "select":
+            self.select = None
 
 
 class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
@@ -64,6 +79,12 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         text = await response.text()
         return text, _Inputs(text).fields
 
+    async def model_form(self, query=""):
+        response = await self.client.get("/capabilities" + query, headers=self.auth())
+        self.assertEqual(response.status, 200)
+        text = await response.text()
+        return text, _Inputs(text, action="/models/save").fields
+
     async def save(self, **changes):
         _, fields = await self.setup_form()
         values = complete_values(**changes)
@@ -82,13 +103,21 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         text = await response.text()
         self.assertIn("我的群友", text)
-        self.assertIn("连接 QQ 与模型", text)
+        self.assertIn('href="/setup">连接 QQ →', text)
         self.assertIn('aria-label="首次连接进度"', text)
         self.assertNotIn('action="/setup/save"', text)
         self.assertNotIn(str(self.root), text)
         self.assertFalse(self.file.exists())
         self.runner.start.assert_not_called()
         self.runner.stop.assert_not_awaited()
+
+    async def test_home_guides_to_chat_settings_after_qq_identity_is_saved(self):
+        panel.instance_settings.save_identity(self.cfg, {
+            "qq_app_id": "synthetic-app", "qq_app_secret": "qq-private-secret", "bot_names": "阿团"})
+        text = await (await self.client.get("/", headers=self.auth())).text()
+        self.assertIn('href="/capabilities#chat">选择聊天模型 →', text)
+        self.assertNotIn('action="/runtime/start"', text)
+        self.runner.start.assert_not_called()
 
     async def test_connected_owned_instance_hides_first_run_progress_and_collapses_logs(self):
         self.assertEqual((await self.save()).status, 302)
@@ -125,14 +154,16 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         response = await self.save()
         self.assertEqual(response.status, 302)
         self.assertEqual(response.headers["Location"], "/setup?saved=1")
-        text, fields = await self.setup_form("?saved=1")
-        self.assertIn("下次启动时读取新配置", text)
+        text, fields = await self.model_form("?saved=chat")
+        self.assertIn("重启后生效", text)
         self.assertNotIn("qq-private-secret", text)
         self.assertNotIn("private-model-key", text)
-        for name in ("api_key", "qq_app_secret"):
-            self.assertEqual(fields[name]["type"], "password")
-            self.assertEqual(fields[name]["value"], "")
-            self.assertIn("留空保留", fields[name]["placeholder"])
+        identity, identity_fields = await self.setup_form()
+        for name, source in (("api_key", fields), ("qq_app_secret", identity_fields)):
+            self.assertEqual(source[name]["type"], "password")
+            self.assertEqual(source[name]["value"], "")
+            self.assertIn("留空", source[name]["placeholder"])
+        self.assertNotIn("qq-private-secret", identity)
         response = await self.save(qq_app_secret="", api_key="")
         self.assertEqual(response.status, 302)
         saved = dotenv_values(self.file, interpolate=False)
@@ -142,25 +173,25 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_supplier_switch_reads_its_own_fields_and_does_not_borrow_a_key(self):
         self.assertEqual((await self.save()).status, 302)
-        _, fields = await self.setup_form("?provider=zhipu")
+        _, fields = await self.model_form("?provider=zhipu")
         self.assertEqual(fields["provider"]["value"], "zhipu")
         self.assertEqual(fields["base_url"]["value"], "https://zhipu.example/v1")
-        self.assertEqual(fields["models"]["value"], "z-model")
-        self.assertIn("填写这个服务", fields["api_key"]["placeholder"])
+        self.assertEqual(fields["model_choice"]["value"], "z-model")
+        self.assertIn("API Key", fields["api_key"]["placeholder"])
         self.assertEqual(dotenv_values(self.file)["AI_PROVIDER"], "openai")
         response = await self.save(provider="zhipu", base_url="https://zhipu.example/v1", models="z-model",
                                    api_key="", qq_app_secret="")
         self.assertEqual(response.status, 302)
-        text, fields = await self.setup_form()
+        text, fields = await self.model_form()
         self.assertEqual(fields["provider"]["value"], "zhipu")
-        self.assertIn("模型 API Key", text)
+        self.assertIn("API Key", text)
         self.assertNotIn("private-model-key", text)
         self.assertNotIn("ZHIPU_API_KEY", dotenv_values(self.file))
 
     async def test_provider_switch_preloads_only_public_presets_and_stays_on_the_form(self):
         self.assertEqual((await self.save()).status, 302)
         self.file.write_text(self.file.read_text() + "\nZHIPU_API_KEY='PRIVATE_ZHIPU_KEY'\nGEMINI_API_KEY='PRIVATE_GEMINI_KEY'\n")
-        text, fields = await self.setup_form()
+        text, fields = await self.model_form()
         self.assertEqual(fields["provider"]["value"], "openai")
         for name in ("openai", "zhipu", "gemini"):
             self.assertIn(f'data-provider-option="{name}"', text)
@@ -173,16 +204,81 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
     async def test_chat_model_choice_replaces_old_route_without_starting_or_restarting(self):
         self.assertEqual((await self.save()).status, 302)
         self.file.write_text(self.file.read_text() + "\nCHAT_PROVIDER=gemini\nGEMINI_MODELS='old-chat,old-backup'\n")
-        text, fields = await self.setup_form()
+        text, fields = await self.model_form()
         self.assertEqual(fields["provider"]["value"], "gemini")
-        self.assertEqual(fields["models"]["value"], "old-chat")
+        self.assertEqual(fields["model_choice"]["value"], "old-chat")
         self.assertEqual(fields["fallback_models"]["value"], "old-backup")
-        self.assertIn("聊天用这个模型", text)
+        self.assertIn('data-model-choice', text)
         response = await self.save(models="new-chat", fallback_models="backup-a,backup-b")
         self.assertEqual(response.status, 302)
         saved = dotenv_values(self.file)
         self.assertEqual(saved["CHAT_PROVIDER"], "openai")
         self.assertEqual(saved["OPENAI_MODELS"], "new-chat,backup-a,backup-b")
+        self.runner.start.assert_not_called()
+        self.runner.stop.assert_not_awaited()
+
+    async def test_identity_and_models_have_separate_collapsed_editors_and_save_boundaries(self):
+        self.assertEqual((await self.save()).status, 302)
+        page, fields = await self.setup_form()
+        self.assertIn('<details class="identity-editor">', page)
+        self.assertIn("QQ 连接与身份", page)
+        self.assertNotIn('name="models"', page)
+        self.assertNotIn('name="api_key"', page)
+        self.assertNotIn('href="/decision"', page)
+        self.assertNotIn('href="/search"', page)
+        before = dotenv_values(self.file)
+        response = await self.client.post('/setup/save', headers=self.auth(), allow_redirects=False,
+            data={'csrf': fields['csrf']['value'], 'section': 'identity', 'bot_names': '小团',
+                  'qq_app_id': before['QQ_APP_ID'], 'qq_app_secret': ''})
+        self.assertEqual(response.status, 302)
+        saved = dotenv_values(self.file)
+        self.assertEqual(saved['BOT_NAMES'], '小团')
+        for key in ('OPENAI_API_KEY', 'OPENAI_MODELS', 'CHAT_PROVIDER', 'QQ_APP_SECRET'):
+            self.assertEqual(saved[key], before[key])
+        _, model_fields = await self.model_form()
+        response = await self.client.post('/models/save', headers=self.auth(), allow_redirects=False,
+            data={'csrf': model_fields['csrf']['value'], 'provider': 'openai',
+                  'model_choice': '__custom__', 'models': 'my-new-model', 'api_key': '',
+                  'bot_names': 'MUST_NOT_CHANGE', 'qq_app_secret': 'MUST_NOT_CHANGE'})
+        self.assertEqual(response.status, 302)
+        self.assertEqual(response.headers['Location'], '/capabilities?saved=chat#chat')
+        saved = dotenv_values(self.file)
+        self.assertEqual(saved['OPENAI_MODELS'].split(',')[0], 'my-new-model')
+        self.assertEqual(saved['BOT_NAMES'], '小团')
+        self.assertEqual(saved['QQ_APP_SECRET'], before['QQ_APP_SECRET'])
+        self.runner.start.assert_not_called()
+        self.runner.stop.assert_not_awaited()
+
+    async def test_legacy_settings_bookmarks_go_to_unified_model_settings(self):
+        response = await self.client.get('/decision', headers=self.auth(), allow_redirects=False)
+        self.assertEqual(response.headers['Location'], '/capabilities#decision')
+        response = await self.client.get('/setup?provider=zhipu', headers=self.auth(), allow_redirects=False)
+        self.assertEqual(response.headers['Location'], '/capabilities?provider=zhipu#chat')
+
+    async def test_decision_credentials_can_be_reused_only_for_the_same_service(self):
+        self.assertEqual((await self.save()).status, 302)
+        _, fields = await self.model_form()
+        endpoint = 'https://model.example/v1/decisions'
+        form = {'csrf': fields['csrf']['value'], 'endpoint': endpoint,
+                'model': 'judgment-model', 'credential_source': 'chat'}
+        response = await self.client.post('/decision/save', headers=self.auth(), data=form,
+                                          allow_redirects=False)
+        self.assertEqual(response.status, 302)
+        path = Path(self.cfg.DATA_DIR) / 'decision_api.json'
+        saved = json.loads(path.read_text())
+        self.assertEqual(saved['api_key'], 'private-model-key')
+        self.assertEqual(saved['model'], 'judgment-model')
+        page, _ = await self.model_form()
+        self.assertNotIn('private-model-key', page)
+        before = path.read_bytes()
+        response = await self.client.post('/decision/save', headers=self.auth(),
+            data={**form, 'endpoint': 'https://other.example/v1/decisions'})
+        self.assertEqual(response.status, 400)
+        self.assertEqual(path.read_bytes(), before)
+        response = await self.client.post('/decision/save', headers=self.auth(), allow_redirects=False,
+            data={**form, 'credential_source': 'existing', 'model': 'next-model', 'api_key': ''})
+        self.assertEqual(response.status, 302)
+        self.assertEqual(json.loads(path.read_text())['api_key'], saved['api_key'])
         self.runner.start.assert_not_called()
         self.runner.stop.assert_not_awaited()
 
@@ -196,15 +292,16 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         self.managed.update(running=True, external=True, stale=False, pid=9876)
         response = await self.client.get("/companion", headers=self.auth())
         text = await response.text()
-        self.assertIn("运行中的聊天首选", text)
+        self.assertIn("当前聊天模型", text)
         self.assertIn("gemini · running-chat", text)
-        self.assertIn("已保存的新选择：openai · next-chat", text)
-        self.assertIn("由你重启机器人后生效", text)
+        self.assertIn('href="/capabilities#chat">更换', text)
+        self.assertNotIn("模型与操作说明", text)
         self.managed["stale"] = True
         text = await (await self.client.get("/companion", headers=self.auth())).text()
-        self.assertNotIn("运行中的聊天首选", text)
+        self.assertNotIn("当前聊天模型", text)
         self.assertNotIn("running-chat", text)
-        self.assertIn("还没有可核对的运行模型信息", text)
+        self.assertIn("已选聊天模型", text)
+        self.assertIn("openai · next-chat", text)
 
     async def test_local_assets_are_authenticated_and_do_not_open_arbitrary_files(self):
         for route, content_type in (("/assets/panel.js", "application/javascript"),
@@ -235,7 +332,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         self.managed.update(external=True, running=True, pid=1234)
         response = await self.client.get("/", headers=self.auth())
         text = await response.text()
-        self.assertIn("其他终端或常驻服务管理", text)
+        self.assertIn("由常驻服务运行", text)
         self.assertNotIn('action="/runtime/stop"', text)
         self.assertNotIn('action="/runtime/start"', text)
         _, fields = await self.setup_form()
@@ -253,7 +350,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         text = await response.text()
         self.assertNotIn("已连上 QQ", text)
         self.assertNotIn("QQ 在线", text)
-        self.assertIn("超过两分钟未更新", text)
+        self.assertIn("暂时收不到运行状态", text)
 
     async def test_new_child_does_not_inherit_previous_pids_fresh_ready_claim(self):
         self.assertEqual((await self.save()).status, 302)
@@ -263,7 +360,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         text = await response.text()
         self.assertNotIn("已连上 QQ", text)
         self.assertNotIn("QQ 在线", text)
-        self.assertIn("等待 QQ 连接确认", text)
+        self.assertIn("正在连接 QQ", text)
 
     async def test_browser_save_start_wait_and_confirm_flow_uses_explicit_actions(self):
         self.assertEqual((await self.save()).status, 302)
@@ -283,7 +380,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         self.runner.start.assert_called_once()
         response = await self.client.get("/", headers=self.auth())
         text = await response.text()
-        self.assertIn("等待 QQ 连接确认", text)
+        self.assertIn("正在连接 QQ", text)
         self.assertIn('action="/runtime/stop"', text)
         self.assertIn('http-equiv="refresh"', text)
         self.health()
@@ -291,7 +388,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/", headers=self.auth())
         text = await response.text()
         self.assertIn("已连上 QQ", text)
-        self.assertIn("先给机器人发一条私聊", text)
+        self.assertIn("先由你发第一条 QQ 私聊", text)
         self.assertIn("synthetic-release", text)
         self.assertIn("&lt;code &amp; root&gt;", text)
         self.runner.stop.assert_not_awaited()

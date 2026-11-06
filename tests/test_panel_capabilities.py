@@ -66,7 +66,12 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(text.count('name="voice_api_key"'), 1)
             self.assertEqual(sorted(f['fields']['flag']['value'] for f in switches),
                              sorted(capabilities.FLAGS))
-            self.assertIn('不会自动重启', text)
+            self.assertIn('保存后下次启动时使用', text)
+            self.assertIn('<h1>模型与能力</h1>', text)
+            self.assertIn('action="/models/save"', text)
+            self.assertIn('action="/decision/save"', text)
+            self.assertIn('<select id="chat-model-choice" name="model_choice" data-model-choice>', text)
+            self.assertNotIn('<datalist', text)
             self.assertIn('src="/assets/app-icon.png"', text)
             self.assertIn('rel="icon"', text)
             self.assertNotIn('brand-mascot', text)
@@ -83,6 +88,48 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         for csrf in ('', 'wrong'):
             self.assertEqual((await self.client.post('/capabilities/save', headers=self.auth(), data={'section': 'image', 'csrf': csrf})).status, 400)
         self.assertFalse(self.file.exists())
+
+    async def test_configured_models_are_summary_rows_with_a_real_choice(self):
+        self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://model.example/v1\n'
+                             'OPENAI_MODELS=first,second\nOPENAI_API_KEY=private-chat-secret\n')
+        response = await self.client.get('/capabilities', headers=self.auth())
+        text = await response.text()
+        self.assertIn('<option value="first" selected>first</option>', text)
+        self.assertIn('<option value="second">second</option>', text)
+        self.assertIn('<option value="__custom__">填写其他模型…</option>', text)
+        self.assertIn('data-custom-model-field hidden', text)
+        self.assertIn('id="chat" data-tone="ok"><details class="cap-more">', text)
+        self.assertNotIn('private-chat-secret', text)
+        self.assertNotIn('SDK', text)
+        self.assertNotIn('/chat/completions', text)
+
+    async def test_unconfigured_chat_opens_only_its_required_connection(self):
+        text, _ = await self.form('image')
+        self.assertIn('id="chat" data-tone="todo"><details class="cap-more" open>', text)
+        self.assertIn('id="decision" data-tone="todo"><details class="cap-more">', text)
+        self.assertNotIn('data-custom-model-field hidden', text)
+
+    async def test_judgment_offers_chat_key_without_rendering_it_and_then_defaults_to_saved(self):
+        self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://api.openai.com/v1\n'
+                             'OPENAI_MODELS=first\nOPENAI_API_KEY=private-chat-secret\n')
+        text, _ = await self.form('image')
+        self.assertIn('value="chat" data-decision-option="chat" selected', text)
+        self.assertNotIn('value="existing" data-decision-option', text)
+        self.assertIn('data-decision-key-field hidden', text)
+        self.assertNotIn('private-chat-secret', text)
+        panel.decision_settings.save_settings(self.cfg.DATA_DIR, endpoint='https://api.openai.com/v1/decisions',
+                                              model='judge', api_key='private-saved-secret')
+        text, _ = await self.form('image')
+        self.assertIn('value="existing" data-decision-option="existing" selected', text)
+        self.assertNotIn('private-saved-secret', text)
+
+    async def test_other_services_key_is_not_selectable_for_judgment(self):
+        self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://other.example/v1\n'
+                             'OPENAI_MODELS=first\nOPENAI_API_KEY=private-chat-secret\n')
+        text, _ = await self.form('image')
+        self.assertIn('value="chat" data-decision-option="chat" disabled', text)
+        self.assertIn('value="new" selected', text)
+        self.assertNotIn('data-decision-key-field hidden', text)
 
     async def toggle(self, flag, enabled, *, json_reply=True):
         _, fields = await self.form('image')
@@ -147,13 +194,13 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         self.managed.update(running=True, stale=False, pid=4321)
         status.write_text(json.dumps({'pid': 4321, 'schema_version': 1}))
         text, _ = await self.form('image')
-        self.assertIn('正在运行的机器人还不认这里的开关', text)
-        self.assertNotIn('机器人正在用', text)
+        self.assertIn('机器人需要更新后才能使用这些开关', text)
+        self.assertNotIn('当前使用', text)
         status.write_text(json.dumps({'pid': 4321, 'schema_version': 1,
             'capabilities': {'live_flags': 1, 'enabled': {'image': False}, 'models': {'image': 'running-image-model'}}}))
         text, _ = await self.form('image')
-        self.assertIn('开关点了就对新消息生效', text)
-        self.assertIn('机器人正在用：关闭 · 模型 running-image-model', text)
+        self.assertIn('开关对新消息生效', text)
+        self.assertIn('当前使用 running-image-model，重启后使用新设置', text)
         self.managed['stale'] = True
         text, _ = await self.form('image')
-        self.assertNotIn('机器人正在用', text)
+        self.assertNotIn('当前使用 running-image-model', text)

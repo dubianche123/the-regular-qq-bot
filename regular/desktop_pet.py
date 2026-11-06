@@ -524,7 +524,7 @@ class ProposalCard(_Card):
             words = f"{'打开' if action['enabled'] else '关掉'}「{action['label']}」？"
             yes_text = "打开" if action["enabled"] else "关掉"
         else:
-            words, yes_text = "交给编码 Agent：生成一份交接说明？", "去生成"
+            words, yes_text = "这件事需要 Agent 帮忙，打开交接页？", "打开交接页"
         # Parent every child explicitly: a button first added to a loose layout stays Python-owned,
         # and Qt deleting it again with the card crashed the process at exit.
         self.label = QLabel(words, self)
@@ -561,7 +561,7 @@ class ActivityCard(_Card):
         close.move(self.width() - 46, 20)
         self.close_button = close
 
-    EMPTY = ("", "还没有新动态。她在 QQ 里接话、画图、被@时，这里会记一笔。")
+    EMPTY = ("", "还没有新动态。她最近的消息和动态会留在这里。")
 
     def entries(self):
         return list(self.pet.activity)[-9:][::-1] or [self.EMPTY]
@@ -639,7 +639,7 @@ class PetWidget(QWidget):
         self.setAccessibleName("老群友：靠近显示聊天和设置，拖起来会晃，戳一下有反应")
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.csrf, self.available, self.qq_connected = "", False, False
-        self.reason = "正在检查本机连接…"
+        self.reason = "正在连接…"
         self.chat_busy = False
         self.activity = deque(maxlen=40)
         self._unread = 0
@@ -893,10 +893,10 @@ class PetWidget(QWidget):
         motion.setChecked(self.brain.motion)
         motion.toggled.connect(self.set_motion)
         menu.addSeparator()
-        menu.addAction("刷新连接状态", self.refresh_connection)
+        menu.addAction("刷新状态", self.refresh_connection)
         manage = menu.addMenu("打开工作台")
-        for label, path in (("概览", "/"), ("能力与服务", "/capabilities"), ("每日体检", "/checkup"),
-                            ("让 Agent 帮忙", "/iterate"), ("QQ 与模型", "/setup")):
+        for label, path in (("首页", "/"), ("模型与能力", "/capabilities"), ("每日体检", "/checkup"),
+                            ("让 Agent 帮忙", "/iterate"), ("QQ 连接", "/setup")):
             manage.addAction(label, lambda checked=False, target=path: self.open_panel(target))
         menu.addSeparator()
         menu.addAction("退出桌宠", self.close)
@@ -1060,7 +1060,7 @@ class PetWidget(QWidget):
             self.open_panel("/iterate")
             return
         if not self.csrf:
-            self.brain.say("本机连接还没就绪，开关没动。", now=self.now(), seconds=4)
+            self.brain.say("还没连上，开关没动。", now=self.now(), seconds=4)
             return
         csrf, self._pending_toggle = self.csrf, action
         self._submit("toggle", lambda: self.client.toggle(action["flag"], action["enabled"], csrf))
@@ -1072,14 +1072,14 @@ class PetWidget(QWidget):
     def connection_text(self):
         if not self.available:
             return self.reason
-        return "本机对话已就绪 · " + ("QQ 已连接" if self.qq_connected else "QQ 待确认")
+        return "可以聊天 · " + ("QQ 已连接" if self.qq_connected else "QQ 暂未连接")
 
     def status_summary(self):
         p = self.brain.presence
         if not p.known:
             return self.connection_text()
         mood = "心情不错" if p.mood >= 0.3 else "有点烦" if p.mood <= -0.3 else "心情平稳"
-        parts = ["在线" if p.bot == "ready" else "机器人未运行", mood]
+        parts = ["在线" if p.bot == "ready" else "还没启动", mood]
         if p.circadian:
             parts.append(p.circadian)
         if p.chatter:
@@ -1139,7 +1139,7 @@ class PetWidget(QWidget):
             self.csrf = state.get("csrf", "") if result["ok"] else ""
             self.available = bool(result["ok"] and state.get("available"))
             self.qq_connected = bool(result["ok"] and state.get("qq_connected"))
-            self.reason = str(state.get("reason") or "本机对话尚未就绪。") if result["ok"] else result["message"]
+            self.reason = "还没连上，去首页看看。" if result["ok"] else result["message"]
             current = (self.available, self.qq_connected)
             if self._last_connection is not None and current != self._last_connection:
                 self._record(self.connection_text())

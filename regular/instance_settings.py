@@ -139,6 +139,7 @@ def _endpoint(value):
 
 def save_settings(cfg, values):
     """Validate all fields before one replacement; empty passwords keep old ones."""
+    values = _chat_selection(cfg, values)
     saved, _ = _values(cfg)
     provider = _provider(cfg, saved, values.get("provider"))
     prefix = provider.upper()
@@ -176,6 +177,69 @@ def save_settings(cfg, values):
         changes["DAILY_BUDGET"] = str(budget)
     write_values(cfg, changes)
     return public_settings(cfg, provider)
+
+
+def _chat_selection(cfg, values):
+    """Resolve the explicit picker without changing legacy form submissions."""
+    if "model_choice" not in values:
+        return values
+    values = dict(values)
+    current = public_settings(cfg, values.get("provider"))
+    choice = _text(values["model_choice"], "聊天模型")
+    if choice == "__custom__":
+        primary = _text(values.get("models"), "聊天模型")
+    elif choice in current["model_options"]:
+        primary = choice
+    else:
+        raise ValueError("请选择已配置模型，或填写其他模型。")
+    if not primary or "," in primary:
+        raise ValueError("请填写一个聊天模型。")
+    values["models"] = primary
+    original = current["model_options"]
+    fallbacks = _text(values.get("fallback_models", current["fallback_models"]), "备用模型")
+    submitted = list(dict.fromkeys(item.strip() for item in fallbacks.split(",") if item.strip()))
+    # Picking a saved backup promotes it and keeps the old primary as a backup.
+    # An explicitly edited backup list wins over that convenience.
+    if (choice != "__custom__" and original and primary != original[0]
+            and submitted == original[1:]):
+        submitted = [model for model in original if model != primary]
+    values["fallback_models"] = ",".join(submitted)
+    return values
+
+
+def save_identity(cfg, values):
+    """Save QQ identity alone; changing a name cannot change the chat service."""
+    changes = {}
+    for field, key, label in (("qq_app_id", "QQ_APP_ID", "QQ AppID"),
+                              ("bot_names", "BOT_NAMES", "机器人称呼")):
+        if field in values:
+            changes[key] = _text(values[field], label)
+    if "qq_app_secret" in values:
+        secret = _text(values["qq_app_secret"], "密钥", 4096)
+        if secret:
+            changes["QQ_APP_SECRET"] = secret
+    if changes:
+        write_values(cfg, changes)
+    return public_settings(cfg)
+
+
+def decision_key_from_chat(cfg, endpoint):
+    """Copy a trusted credential only to the same configured service, never to UI data."""
+    endpoint = _endpoint(_text(endpoint, "判断接口地址")).rstrip("/")
+    if not endpoint.endswith("/decisions"):
+        raise ValueError("请填写同一服务的判断地址，或使用新的 Key。")
+    _, effective = _values(cfg)
+    provider = _provider(cfg, effective)
+    prefix = provider.upper()
+    preset = getattr(cfg, "PROVIDER_PRESETS", {}).get(provider, {})
+    base = _endpoint(_text(effective.get(f"{prefix}_BASE_URL", preset.get("base_url", "")), "聊天接口地址"))
+    if not base or endpoint[:-len("/decisions")] != base.rstrip("/"):
+        raise ValueError("聊天服务的 Key 不能用于这个判断地址。")
+    default_key = _text(effective.get(f"{prefix}_API_KEY", ""), "密钥", 4096)
+    keys = read_api_keys(instance_dir(cfg) / f"api_keys_{provider}.txt", default_key)
+    if not keys:
+        raise ValueError("请先连接聊天服务，或填写新的 Key。")
+    return keys[0]
 
 
 def write_values(cfg, changes):

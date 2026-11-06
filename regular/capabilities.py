@@ -230,6 +230,8 @@ def state_line(name, row):
         return "ok", "只用 QQ 自带的转写"
     missing = row.get("missing") or []
     if missing:
+        if name == "voice_output" and missing[0] in ("本机 Node", "SILK 编码器"):
+            return "todo", "需要安装语音组件"
         return "todo", "还差" + missing[0] + (f" 等 {len(missing)} 项" if len(missing) > 1 else "")
     model = row.get("effective_model") if name == "vision" else row.get("model")
     return "ok", "已配置" + (f" · {model}" if model else "")

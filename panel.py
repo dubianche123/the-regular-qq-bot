@@ -14,6 +14,7 @@ storage.atomic_write_text，文件名校验后再落盘，避免路径穿越。
 from __future__ import annotations
 
 from collections import deque
+from hashlib import sha256
 import html
 import hmac
 from importlib.resources import files
@@ -208,7 +209,7 @@ def _empty_state(title, detail, *, state="sleeping"):
 
 def _companion_dock(active):
     messages = {
-        "setup": "这里接 QQ、选回复模型，一般配一次就好。保存以后，你来决定什么时候启动。",
+        "setup": "连上 QQ，给她起个名字，再去群里打声招呼。",
         "home": "在这里确认我有没有连上 QQ。想单独聊两句，可以打开本机小窗。",
         "checkup": "接偏的那一句，也能成为下一次进步的起点。把现场交给你的 Agent 就好。",
         "iterate": "你说哪里不对，Agent 帮忙找原因；改得好不好，最后还是你来定。",
@@ -228,12 +229,11 @@ def _page(title, body, active="", refresh=0, *, pet=False):
     # （没配完时首页那条进度会把人带过去）。
     nav = (
         ("", (("/", "我的群友", "home"), ("/companion", "聊两句", "companion"),
-              ("/capabilities", "能力与服务", "capabilities"))),
+              ("/capabilities", "模型与能力", "capabilities"))),
         ("群里的事", (("/checkup", "每日体检", "checkup"), ("/knowledge", "群知识", "knowledge"),
                    ("/memory", "群记忆", "memory"))),
         ("交给 Agent", (("/iterate", "让 Agent 帮忙", "iterate"),)),
-        ("设置", (("/setup", "QQ 与模型", "setup"), ("/decision", "判断 API", "decision"),
-                ("/search", "搜索检查", "search"))),
+        ("设置", (("/setup", "QQ 连接与身份", "setup"),)),
     )
     links = "".join(('<span class="nav-label">' + label + '</span>' if label else '') + "".join(
         f'<a class="nav-item {"active" if key == active else ""}" href="{href}"'
@@ -268,18 +268,21 @@ def _dashboard(cfg, *, csrf="", runner=None):
     rows = []
     for gid in sorted(groups):
         info = groups[gid]
-        last = (info.get("slot") or {}).get("last_seen")
+        slot = info.get("slot") or {}
+        name = str(slot.get("group_name") or slot.get("name") or slot.get("title") or "").strip()
+        if not name:
+            name = "群 · " + sha256(f"{gid}.md".encode("utf-8")).hexdigest()[:6].upper()
+        last = slot.get("last_seen")
         last_text = time.strftime("%m-%d %H:%M", time.localtime(last)) if last else "—"
         kfile = f"{gid}.md"
         klink = (f'<a href="/knowledge?file={_esc(kfile)}">群知识</a>'
                  if kfile in _knowledge_files(cfg) else '<span class="muted">暂无群知识</span>')
         rows.append(
-            f'<tr><td><span class="mono">{_esc(gid)}</span>'
-            f'<small>{_esc(info.get("mode") or "—")}</small></td>'
+            f'<tr><td>{_esc(name)}</td>'
             f'<td>认识 {info.get("relations", 0)} 人<small>{info.get("promises", 0)} 项承诺</small></td>'
             f'<td>{_esc(last_text)}<small>{klink}</small></td></tr>')
     if not rows:
-        group_table = '<p class="wx-empty">还没有群数据。QQ 连上后，先私聊认主，再邀请她进群。</p>'
+        group_table = '<p class="wx-empty">还没有群消息。连上 QQ 后，先由你发一条私聊，再邀请她进群。</p>'
     else:
         group_table = ('<table class="wx-groups"><thead><tr><th>群</th><th>熟悉程度</th>'
                        '<th>最近活动</th></tr></thead>'
@@ -300,9 +303,9 @@ def _dashboard(cfg, *, csrf="", runner=None):
     budget = snapshot.get("budget") or {}
     provider = ((snapshot.get("providers") or {}).get("providers") or [{}])[0]
     model = (provider.get("models") or ["尚无运行记录"])[0]
-    model_label = "最近报告的聊天模型"
+    model_label = "最近使用的聊天模型"
     if managed.get("running") and not managed.get("stale") and snapshot.get("pid") == managed.get("pid"):
-        model_label = "运行中的聊天模型"
+        model_label = "正在用的聊天模型"
     code = snapshot.get("code") or {}
     boot_log = managed.get("log_file")
     startup = (f'<h3>本面板启动日志</h3><pre>{_esc(_tail(boot_log) or "暂无本面板启动日志")}</pre>'
@@ -312,72 +315,41 @@ def _dashboard(cfg, *, csrf="", runner=None):
 {_runtime_controls(cfg, csrf, runner) if runner is not None else ''}
 <dl class="wx-metrics" aria-label="运行概况"><div><dt>今日模型调用</dt><dd>{_esc(budget.get('used', '—'))} / {_esc(budget.get('limit', '—'))}</dd></div><div><dt>{model_label}</dt><dd>{_esc(model)}</dd></div><div><dt>已经加入</dt><dd>{len(groups)} 个群</dd></div></dl>
 <section class="wx-section"><div class="wx-section-head"><h2>群里的近况</h2><a href="/checkup">看每日体检 →</a></div>{group_table}</section>
-<details class="wx-disclosure"><summary>运行日志与版本</summary><p>运行代码：<code>{_esc(code.get('release') or '尚无运行记录')}</code></p><p>代码位置：<code>{_esc(code.get('source_root') or '—')}</code></p><h3>最近日志</h3><pre>{_esc(log or '暂无日志')}</pre>{startup}</details>
+<details class="wx-disclosure"><summary>运行日志与版本</summary><p>当前版本：<code>{_esc(code.get('release') or '尚无运行记录')}</code></p><p>安装位置：<code>{_esc(code.get('source_root') or '—')}</code></p><h3>最近日志</h3><pre>{_esc(log or '暂无日志')}</pre>{startup}</details>
 <details class="wx-disclosure"><summary>知识文件 · {len(files)} 份</summary>{knowledge_table}<a href="/knowledge">整理群知识 →</a></details>
 """
     return _page("概览", body, "home", refresh=5 if managed.get("owned") and managed.get("running")
                  and not managed.get("gateway_connected") else 0)
 
 
-def _setup_page(cfg, request, csrf):
-    try:
-        settings = instance_settings.public_settings(cfg, request.query.get("provider"))
-    except ValueError:
-        raise web.HTTPBadRequest(text="请选择页面提供的模型供应商") from None
-    provider = settings["provider"]
-    choices = []
-    for key, label in (("openai", "OpenAI 兼容"), ("zhipu", "智谱"), ("gemini", "Gemini")):
-        option = instance_settings.public_settings(cfg, key)
-        placeholder = "已配置，留空保留" if option["key_configured"] else "填写这个服务的 Key"
-        choices.append(f'<button type="button" class="provider-option {"selected" if key == provider else ""}" '
-                       f'data-provider-option="{key}" data-base-url="{_esc(option["base_url"])}" '
-                       f'data-models="{_esc(option["primary_model"])}" data-fallback-models="{_esc(option["fallback_models"])}" '
-                       f'data-key-placeholder="{placeholder}" '
-                       f'aria-pressed="{"true" if key == provider else "false"}">{label}</button>')
-    notice = ('<div class="notice good">配置已保存。运行中的机器人在下次启动时读取新配置。'
-              '<a href="/">去启动和检查连接 →</a></div>') if request.query.get("saved") else ""
-    if settings.get("overridden"):
-        notice += '<div class="notice">这些项目由启动环境设置，环境变量优先生效：' + _esc(
-            "、".join(settings["overridden"])) + '。请在启动面板的环境中调整。</div>'
-    missing = "、".join(settings.get("missing") or ())
-    readiness = f"还需填写：{_esc(missing)}" if missing else "必填配置齐了，可以到“我的群友”启动。"
+def _setup_page(cfg, request, csrf, runner=None):
+    settings = instance_settings.public_settings(cfg)
     qq_ready = bool(settings.get("qq_app_id") and settings.get("qq_secret_configured"))
-    model_ready = bool(settings.get("base_url") and settings.get("primary_model") and settings.get("key_configured"))
-    body = f'''<div class="setup-hero"><div class="page-heading"><span class="eyebrow">HELLO, NEW FRIEND</span>
-<h1>先让它走进你的 QQ 群</h1><p>会接梗，也知道什么时候安静。<br>先接上 QQ 和回复模型，剩下的慢慢一起玩。</p></div>{_mascot('celebrate' if request.query.get('saved') else 'welcome')}</div>
-<div class="setup-progress" aria-label="上手步骤">
-<div class="progress-item is-current" aria-current="step"><span class="progress-index">1</span><span>配置服务</span></div>
-<div class="progress-item"><span class="progress-index">2</span><span>启动确认</span></div>
-<div class="progress-item"><span class="progress-index">3</span><span>适应你的群</span></div></div>
-{notice}<div class="setup-layout"><form method="post" action="/setup/save" class="setup" data-setup-form>
-<input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="provider" value="{_esc(provider)}">
-<section class="form-section"><div class="section-heading"><div><h2 class="section-title">它在 QQ 的身份</h2>
-<p class="section-description">在 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台 ↗</a>创建机器人，取得这两项。</p></div></div>
-<div class="field-grid"><label class="field"><span class="field-label">AppID</span><input type="text" name="qq_app_id" value="{_esc(settings.get('qq_app_id'))}" autocomplete="off" placeholder="QQ 机器人的 AppID"></label>
-<label class="field"><span class="field-label">AppSecret</span><input type="password" name="qq_app_secret" value="" autocomplete="new-password" placeholder="{'已配置，留空保留' if settings.get('qq_secret_configured') else '填写 QQ AppSecret'}"></label>
-<label class="field field-wide"><span class="field-label">大家怎么叫它？<small>可选</small></span><input type="text" name="bot_names" value="{_esc(settings.get('bot_names'))}" placeholder="小王,老群友"><span class="field-hint">多个名字用逗号分隔。群友叫它的名字时，它也能认出来。</span></label></div>
-<p class="form-footer-note">QQ 控制台还需启用私聊与所需群消息事件，并配置测试或使用范围。</p></section>
-<section class="form-section" id="chat-model"><div class="section-heading"><div><h2 class="section-title">聊天时，用谁来回答？</h2>
-<p class="section-description">先选聊天 API，再指定一个首选模型。QQ 回复和本机聊天共用这一选择。</p></div></div>
-<div class="provider-choices" role="group" aria-label="聊天模型服务">{''.join(choices)}</div>
-<p class="field-hint" data-provider-status aria-live="polite">切换服务会保留本页输入；只有点保存才会生效。</p>
-<div class="field-grid"><label class="field field-wide"><span class="field-label">接口地址</span><input type="text" name="base_url" value="{_esc(settings.get('base_url'))}" placeholder="供应商提供的完整 API 基础地址" autocomplete="off"></label>
-<label class="field"><span class="field-label">聊天用这个模型</span><input type="text" name="models" list="chat-model-options" value="{_esc(settings.get('primary_model'))}" placeholder="选择或填写一个聊天模型 ID" autocomplete="off"><datalist id="chat-model-options">{''.join(f'<option value="{_esc(model)}"></option>' for model in settings.get('model_options', []))}</datalist><span class="field-hint">从已配置的模型中选一个，或填写服务提供的模型 ID。</span></label>
-<label class="field"><span class="field-label">API Key</span><input type="password" name="api_key" value="" autocomplete="new-password" placeholder="{'已配置，留空保留' if settings.get('key_configured') else '填写这个服务的 Key'}"></label>
-<label class="field field-wide"><span class="field-label">同一 API 的备用模型<small>可选</small></span><input type="text" name="fallback_models" value="{_esc(settings.get('fallback_models'))}" placeholder="例如 model-b, model-c"><span class="field-hint">首选失败后才按顺序尝试，仍受整轮次数和超时限制；不是随机挑选。{'另有跨 API 备用：' + _esc(settings['fallback_provider']) + '（沿用已有配置）。' if settings.get('fallback_provider') else '没有配置跨 API 备用。'}</span></label>
-<div class="chat-choice-summary field-wide" data-chat-choice-summary aria-live="polite">QQ 和桌边聊天的首选：<strong>{_esc(provider)} · {_esc(settings.get('primary_model') or '还没选模型')}</strong><span>保存后由你重启机器人生效，判断 API 在对应页面单独配置。</span></div>
-<label class="field field-wide"><span class="field-label">每日 AI 调用次数上限</span><input type="number" name="daily_budget" min="0" value="{_esc(settings.get('daily_budget', 3000))}"><span class="field-hint">按调用次数计，不是金额。可以先保守一点，之后随时调整。</span></label></div></section>
-<div class="setup-actions"><button type="submit">保存配置 <span aria-hidden="true">→</span></button><span class="form-footer-note">保存不调用模型，不消耗额度。</span></div></form>
-<aside class="setup-aside"><div class="welcome-note"><span class="aside-kicker">YOUR NEW REGULAR</span><h2 class="aside-title">先认识，再熟悉。</h2><p>从一句招呼开始。群里的梗、大家的称呼，还有它偶尔接偏的话，都可以成为下一次改进的起点。</p></div>
-<div class="setup-checklist"><h3>准备清单</h3>
-<div class="checklist-item {'complete' if qq_ready else 'pending'}"><span>QQ 身份 <small>{'已填写' if qq_ready else '待填写'}</small></span></div>
-<div class="checklist-item {'complete' if model_ready else 'pending'}"><span>回复模型 <small>{'已填写' if model_ready else '待填写'}</small></span></div>
-<div class="checklist-item pending"><span>启动后确认 QQ 连接</span></div><p class="field-hint">{readiness}</p></div>
-<div class="welcome-note"><span class="tag lilac">之后还可以</span><h3>画图、语音、到点提醒</h3><p>先聊起来，再添喜欢的能力。判断 API 也负责提醒审核，未配置时不会保存新提醒。</p><a class="text-link" href="/capabilities">选择能力与服务 →</a><a class="text-link" href="/decision">配置判断 API →</a></div></aside></div>
-<details class="advanced"><summary>配置和数据保存在哪里？</summary><p>实例：<code>{_esc(settings.get('instance_dir'))}</code></p>
-<p>配置：<code>{_esc(settings.get('config_file'))}</code></p><p>聊天与私有数据：<code>{_esc(settings.get('data_dir'))}</code></p>
-<p>源码可以升级，实例目录请保留。不要把配置、群聊记录或密钥推送到公开仓库。</p></details>'''
-    return _page("QQ 与模型", body, "setup")
+    managed = runner.snapshot() if runner is not None else {}
+    connected = bool(managed.get("gateway_connected") and not managed.get("stale"))
+    name = str(settings.get("bot_names") or "老群友").split(",")[0].strip() or "老群友"
+    state = "已连接 QQ" if connected else "身份已保存" if qq_ready else "等待连接"
+    notice = ('<p class="identity-notice" role="status">已保存，重新启动机器人后生效。</p>'
+              if request.query.get("saved") else "")
+    overrides = set(settings.get("overridden") or ()) & {"QQ_APP_ID", "QQ_APP_SECRET", "BOT_NAMES"}
+    override_note = ('<p class="identity-notice">部分设置由后台服务管理，请让你的 Agent 帮忙修改。</p>'
+                     if overrides else "")
+    need_chat = not (settings.get("base_url") and settings.get("primary_model") and settings.get("key_configured"))
+    next_step = ('<a class="button" href="/capabilities#chat">选择聊天模型 →</a>' if need_chat else
+                 '<a class="text-link" href="/capabilities">管理模型与能力 →</a>')
+    body = f'''<header class="wx-heading"><div><h1>QQ 连接与身份</h1><p>让她以你的机器人身份加入群聊。</p></div></header>
+{notice}{override_note}
+<section class="identity-panel" aria-label="机器人身份"><div class="identity-summary"><img src="/assets/app-icon.png" alt=""><div><h2>{_esc(name)}</h2><span class="identity-state{' connected' if connected else ''}">{state}</span></div></div>
+<details class="identity-editor"{' open' if not qq_ready else ''}><summary><span>{'连接 QQ' if not qq_ready else '连接与名字'}</span><span>{'填写' if not qq_ready else '修改'} <span aria-hidden="true">⌄</span></span></summary>
+<form method="post" action="/setup/save" class="identity-form">
+<input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="section" value="identity">
+<label class="identity-name"><span>大家怎么叫她</span><input type="text" name="bot_names" value="{_esc(settings.get('bot_names'))}" placeholder="例如：小王" autocomplete="off"></label>
+<div class="identity-fields"><label><span>QQ AppID</span><input type="text" name="qq_app_id" value="{_esc(settings.get('qq_app_id'))}" required autocomplete="off"></label>
+<label><span>AppSecret</span><input type="password" name="qq_app_secret" value="" autocomplete="new-password" placeholder="{'已保存，留空保留' if settings.get('qq_secret_configured') else '粘贴机器人密钥'}"{' required' if not settings.get('qq_secret_configured') else ''}></label></div>
+<button type="submit">保存身份</button></form></details></section>
+<div class="identity-next">{next_step}<a href="/">返回我的群友 →</a></div>
+<details class="identity-help"><summary>从哪里获取 QQ 凭据？</summary><ol><li>在 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台 ↗</a> 创建机器人，复制 AppID 与 AppSecret。</li><li>在 QQ 开放平台启用私聊、群消息和使用范围。</li><li>连接成功后，先给她发一条 QQ 私聊，再邀请进群。</li></ol></details>'''
+    return _page("QQ 连接与身份", body, "setup")
 
 
 # 能力与服务：给人看的那一页。一项能力一行（名字、一句话状态、开关），细节点开才看。
@@ -413,24 +385,28 @@ def _cap_runtime(cfg, runner):
     reported = snapshot.get("capabilities") or {}
     matching = bool(managed.get("running") and not managed.get("stale") and snapshot.get("pid") == managed.get("pid"))
     if matching and reported.get("live_flags") == 1:
-        return "ok", "机器人在运行：开关点了就对新消息生效；模型、地址、上限下次启动机器人时生效。", reported
+        return "ok", "开关对新消息生效；更换模型后需重启。", reported
     if managed.get("running"):
-        return "todo", "正在运行的机器人还不认这里的开关：更新并重启后才生效。保存不会改动旧进程。", {}
-    return "off", "机器人没在运行：这里的设置会在下次启动时用上。", {}
+        return "todo", "机器人需要更新后才能使用这些开关。", {}
+    return "off", "机器人尚未启动，保存后下次启动时使用。", {}
 
 
 def _capabilities_page(cfg, request, csrf, runner=None):
     from regular import capabilities
     sections = capabilities.public_settings(cfg)
-    chat = instance_settings.public_settings(cfg)
+    try:
+        chat = instance_settings.public_settings(cfg, request.query.get("provider"))
+    except ValueError:
+        raise web.HTTPBadRequest(text="请选择支持的模型服务。") from None
     judgment = decision_settings.public_settings(cfg.DATA_DIR)
     tone, timing, reported = _cap_runtime(cfg, runner)
     saved = str(request.query.get("saved") or "")
+    editing = str(request.query.get("edit") or "")
     overridden = {key for row in sections.values() for key in row.get("overridden") or ()}
 
     def switch(flag, on, label, *, parent_on=True):
         locked = capabilities.FLAGS[flag][0] in overridden
-        title = ' title="由启动环境决定，这里改不了"' if locked else ""
+        title = ' title="由安装配置管理"' if locked else ""
         return (f'<form method="post" action="/capabilities/toggle" class="cap-toggle" data-cap-toggle>'
                 f'<input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="flag" value="{flag}">'
                 f'<button type="submit" class="cap-switch" name="enabled" value="{"false" if on else "true"}" role="switch"'
@@ -447,7 +423,7 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         else:
             kind = "password" if secret else "number" if number else "text"
             if secret:
-                placeholder = "已配置，留空就不改" if row.get("key_configured") else (placeholder or "粘贴 API Key")
+                placeholder = "已保存，留空不改" if row.get("key_configured") else (placeholder or "粘贴 API Key")
             attrs = (' min="0" step="1"' if number else '') + (' autocomplete="new-password"' if secret else '')
             control = (f'<input id="{field_id}" type="{kind}" name="{name}" value="{_esc("" if secret else value)}"'
                        f'{attrs} placeholder="{_esc(placeholder)}">')
@@ -455,7 +431,7 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         return f'<label class="cap-field" for="{field_id}"><span>{label}</span>{control}{note}</label>'
 
     def settings_form(section, title, main, advanced="", extra=""):
-        fold = (f'<details class="cap-advanced"><summary>高级</summary><div class="cap-fields">{advanced}</div></details>'
+        fold = (f'<details class="cap-advanced"><summary>更多设置</summary><div class="cap-fields">{advanced}</div></details>'
                 if advanced else '')
         return (f'<form method="post" action="/capabilities/save" class="cap-form" data-cap-form>'
                 f'<input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="section" value="{section}">'
@@ -467,93 +443,165 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         return (f'<div class="cap-sub" data-cap-sub="{flag}">{switch(flag, on, label, parent_on=parent_on)}'
                 f'<div><strong>{label}</strong><small>{_esc(hint)}</small></div></div>')
 
+    def model_row(name, title, description, state, form, *, configured=True, first=False):
+        opened = saved == name or editing == name or (first and not configured)
+        return (f'<article class="cap-item ms-model-item" id="{name}" data-tone="{"ok" if configured else "todo"}">'
+                f'<details class="cap-more"{" open" if opened else ""}><summary class="cap-head">'
+                f'<span class="cap-icon" aria-hidden="true">{_icon("companion" if name == "chat" else "decision")}</span>'
+                f'<span class="cap-title"><strong>{title}</strong><small>{description}</small></span>'
+                f'<span class="cap-state">{_esc(state)}</span><span class="cap-open">更换</span></summary>'
+                f'<div class="cap-body">{form}</div></details></article>')
+
+    provider_buttons = []
+    for provider, label in (("openai", "OpenAI / 兼容服务"), ("zhipu", "智谱"), ("gemini", "Gemini")):
+        option = instance_settings.public_settings(cfg, provider)
+        provider_buttons.append(
+            f'<button type="button" class="provider-option{" selected" if provider == chat["provider"] else ""}"'
+            f' data-provider-option="{provider}" data-base-url="{_esc(option["base_url"])}"'
+            f' data-models="{_esc(option["primary_model"])}" data-model-options="{_esc(json.dumps(option["model_options"]))}"'
+            f' data-fallback-models="{_esc(option["fallback_models"])}"'
+            f' data-key-placeholder="{"已保存，留空不改" if option["key_configured"] else "粘贴 API Key"}"'
+            f' aria-pressed="{"true" if provider == chat["provider"] else "false"}">{label}</button>')
+    model_options = chat["model_options"]
+    model_choice = chat["primary_model"] if model_options else "__custom__"
+    picker = (f'<label class="cap-field" for="chat-model-choice"><span>聊天模型</span>'
+              f'<select id="chat-model-choice" name="model_choice" data-model-choice>'
+              + ''.join(f'<option value="{_esc(model)}"{" selected" if model == model_choice else ""}>{_esc(model)}</option>'
+                        for model in model_options)
+              + f'<option value="__custom__"{" selected" if model_choice == "__custom__" else ""}>填写其他模型…</option></select></label>'
+              + f'<label class="cap-field" for="chat-custom-model" data-custom-model-field{" hidden" if model_options else ""}>'
+                f'<span>模型 ID</span><input id="chat-custom-model" type="text" name="models"'
+                f' value="{_esc(chat["primary_model"])}" placeholder="服务提供的模型 ID" autocomplete="off"'
+                f'{" required" if not model_options else ""}></label>')
+    chat_form = (
+        '<form method="post" action="/models/save" class="cap-form" data-setup-form data-cap-form>'
+        f'<input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="provider" value="{_esc(chat["provider"])}">'
+        f'<div class="provider-choices" role="group" aria-label="聊天服务">{"".join(provider_buttons)}</div>'
+        '<span class="ms-feedback" data-provider-status aria-live="polite"></span>'
+        f'<div class="cap-fields">{picker}{field("chat", chat, "api_key", "API Key", secret=True)}</div>'
+        '<details class="cap-advanced"><summary>接口地址、备用模型与用量</summary><div class="cap-fields">'
+        + field("chat", chat, "base_url", "接口地址")
+        + field("chat", chat, "fallback_models", "备用模型", placeholder="多个模型用逗号分隔")
+        + field("chat", chat, "daily_budget", "每天最多调用几次", number=True)
+        + '</div></details>'
+        f'<footer><button type="submit">保存聊天设置</button><span data-cap-form-status aria-live="polite">'
+        f'{"已保存，重启后生效。" if saved == "chat" else ""}</span></footer></form>')
+    active_chat = instance_settings.public_settings(cfg)
+    try:
+        chat_key_available = bool(instance_settings.decision_key_from_chat(cfg, judgment["endpoint"]))
+    except (ValueError, OSError):
+        chat_key_available = False
+    credential_source = "existing" if judgment["key_configured"] else "chat" if chat_key_available else "new"
+    credential_options = (
+        ('<option value="existing" data-decision-option="existing" selected>已保存的 Key</option>'
+         if judgment["key_configured"] else '')
+        + (f'<option value="chat" data-decision-option="chat"'
+           f'{" selected" if credential_source == "chat" else ""}'
+           f'{" disabled" if not chat_key_available else ""}>使用聊天服务的 Key</option>'
+           if active_chat["key_configured"] else '')
+        + f'<option value="new"{" selected" if credential_source == "new" else ""}>填写新的 Key</option>')
+    credential_picker = (
+        '<label class="cap-field" for="decision-credential-source"><span>连接凭据</span>'
+        f'<select id="decision-credential-source" name="credential_source" data-decision-credential>{credential_options}</select></label>'
+        f'<label class="cap-field" for="decision-new-key" data-decision-key-field{" hidden" if credential_source != "new" else ""}>'
+        '<span>新的 API Key</span><input id="decision-new-key" name="api_key" type="password" value=""'
+        f' autocomplete="new-password" placeholder="粘贴 API Key"{" required" if credential_source == "new" else " disabled"}></label>')
+    judgment_form = (
+        '<form method="post" action="/decision/save" class="cap-form" data-cap-form data-decision-form'
+        f' data-chat-base="{_esc(active_chat["base_url"])}" data-chat-key-available="{"true" if active_chat["key_configured"] else "false"}"'
+        f' data-saved-endpoint="{_esc(judgment["endpoint"] if judgment["key_configured"] else "")}">'
+        f'<input type="hidden" name="csrf" value="{_esc(csrf)}">'
+        f'<div class="cap-fields">{field("decision", judgment, "model", "判断模型")}'
+        f'{credential_picker}</div>'
+        '<details class="cap-advanced"><summary>接口地址</summary><div class="cap-fields">'
+        + field("decision", judgment, "endpoint", "判断接口地址") + '</div></details>'
+        f'<footer><button type="submit">保存判断设置</button><span data-cap-form-status aria-live="polite">'
+        f'{"已保存。" if saved == "decision" else ""}</span></footer></form>')
+    chat_ready = bool(chat["key_configured"] and chat["base_url"] and chat["primary_model"])
+    model_rows = [model_row("chat", "聊天", "和群友、和你聊天", chat["primary_model"] if chat_ready else "还没连接",
+                            chat_form, configured=chat_ready, first=True),
+                  model_row("decision", "判断", "拿捏接话分寸，审核提醒", judgment["model"] if judgment["key_configured"] else "还没连接",
+                            judgment_form, configured=judgment["key_configured"])]
+
     vision, drawing, hearing, speech = (sections[name] for name in ("vision", "image", "voice_input", "voice_output"))
     providers = [("", "沿用聊天服务"), ("openai", "OpenAI 兼容"), ("zhipu", "智谱"), ("gemini", "Gemini")]
     deps = speech.get("dependencies") or {}
     bodies = {
         "vision": settings_form(
             "vision", "读图",
-            field("vision", vision, "provider", "用哪个服务", choices=providers)
-            + field("vision", vision, "model", "模型", placeholder=vision.get("effective_model") or "沿用该服务的首选模型",
-                    hint="留空就沿用所选服务的首选模型；要选支持图片的模型。")
-            + field("vision", vision, "daily_limit", "每天最多看几张", number=True),
-            field("vision", vision, "input_mode", "图片怎么交给模型",
+            field("vision", vision, "provider", "服务", choices=providers)
+            + field("vision", vision, "model", "模型", placeholder=vision.get("effective_model") or "跟随聊天模型"),
+            field("vision", vision, "daily_limit", "每天最多看几张", number=True)
+            + field("vision", vision, "input_mode", "图片传送方式",
                   choices=[("download", "先下载到本机再发"), ("url", "直接发图片链接")])),
         "image": sub_switch("gif", drawing.get("gif_enabled", False), drawing.get("enabled", False),
-                            "也画动图", "短循环动图，和静图共用额度。")
+                            "也画动图", "")
         + settings_form(
             "image", "画图",
             field("image", drawing, "model", "模型")
-            + field("image", drawing, "api_key", "API Key", secret=True, placeholder="沿用 OpenAI 的 Key；要用别的就填这里")
+            + field("image", drawing, "api_key", "API Key", secret=True),
+            field("image", drawing, "base_url", "接口地址")
             + field("image", drawing, "daily_limit", "每天最多画几张", number=True)
-            + field("image", drawing, "user_daily_limit", "每人每天最多几张", number=True),
-            field("image", drawing, "base_url", "接口地址", hint="换地址时要一起填那个服务的 Key。")
+            + field("image", drawing, "user_daily_limit", "每人每天最多几张", number=True)
             + field("image", drawing, "quality", "画质") + field("image", drawing, "size", "静图尺寸")
-            + field("image", drawing, "gif_size", "动图尺寸"))
-        + ('' if judgment.get("key_configured") else
-           '<p class="cap-note">画之前会请判断帮手看一眼题材；它还没配置，现在照常画。<a href="/decision">配置判断帮手</a></p>'),
+            + field("image", drawing, "gif_size", "动图尺寸")),
         "voice_input": sub_switch("transcription", hearing.get("transcription_enabled", True), hearing.get("enabled", False),
-                                  "QQ 没带文字时用模型转写", "关掉后只用 QQ 随消息带的转写，不额外花钱。")
-        + settings_form("voice_input", "听语音", field("voice_input", hearing, "model", "转写模型")),
+                                  "QQ 没带文字时，交给模型转写", "")
+        + settings_form("voice_input", "听语音", field("voice_input", hearing, "model", "转写模型"))
+        + '<a class="ms-inline-link" href="/capabilities?edit=voice#voice">设置语音服务 →</a>',
         "voice_output": settings_form(
             "voice_output", "发语音",
-            field("voice_output", speech, "model", "模型") + field("voice_output", speech, "voice", "音色")
-            + field("voice_output", speech, "daily_limit", "每天最多发几条", number=True),
-            field("voice_output", speech, "node", "Node 路径") + field("voice_output", speech, "silk_entry", "SILK 编码器路径"),
-            extra='<p class="cap-deps">' + "".join(
-                f'<span class="{"ok" if ok else "todo"}">{label}：{"找到了" if ok else "没找到"}</span>'
-                for label, ok in (("本机 Node", deps.get("node")), ("SILK 编码器", deps.get("silk")))) + '</p>'),
+            field("voice_output", speech, "model", "模型") + field("voice_output", speech, "voice", "音色"),
+            field("voice_output", speech, "daily_limit", "每天最多发几条", number=True)
+            + field("voice_output", speech, "node", "Node 路径") + field("voice_output", speech, "silk_entry", "音频编码器路径"))
+        + ('' if all(deps.values()) else '<p class="cap-note">还需要安装音频组件。</p>')
+        + '<a class="ms-inline-link" href="/capabilities?edit=voice#voice">设置语音服务 →</a>',
     }
 
-    rows = []
+    rows = model_rows
     for name, title, summary in _CAPABILITIES:
         row = sections[name]
         state_tone, state = _cap_state(name, row)
         running = ""
         if reported:
-            on = (reported.get("enabled") or {}).get(name)
             model = (reported.get("models") or {}).get(name)
-            running = (f'<p class="cap-running">机器人正在用：{"开启" if on else "关闭"}'
-                       f'{" · 模型 " + _esc(model) if isinstance(model, str) and model else ""}</p>')
-        env = ('<p class="cap-note">启动环境覆盖了 ' + "、".join(_esc(k) for k in row.get("overridden") or ())
-               + '，要在启动服务的地方改。</p>') if row.get("overridden") else ''
+            if isinstance(model, str) and model and model != row.get("model"):
+                running = f'<p class="cap-running">当前使用 {_esc(model)}，重启后使用新设置。</p>'
+        env = '<p class="cap-note">这项连接由安装配置管理。</p>' if row.get("overridden") else ''
         missing = row.get("missing") or []
+        if name == "voice_output":
+            missing = [item for item in missing if item not in ("本机 Node", "SILK 编码器")]
         need = (f'<p class="cap-note cap-need">还需要：{"、".join(_esc(m) for m in missing)}</p>'
                 if row.get("enabled") and missing and state_tone == "todo" else '')
         # The whole row opens the settings; the switch sits beside it, outside <summary>.
         rows.append(
             f'<article class="cap-item" id="{name}" data-cap="{name}" data-tone="{state_tone}">'
-            f'<details class="cap-more"{" open" if saved == name else ""}><summary class="cap-head">'
+            f'<details class="cap-more"{" open" if saved == name or editing == name else ""}><summary class="cap-head">'
             f'<span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24">{_CAP_ICONS[name]}</svg></span>'
             f'<span class="cap-title"><strong>{title}</strong><small>{summary}</small></span>'
             f'<span class="cap-state" data-cap-state>{_esc(state)}</span><span class="cap-open">设置</span></summary>'
             f'<div class="cap-body">{need}{running}{env}{bodies[name]}</div></details>'
             f'{switch(name, row.get("enabled", False), "允许" + title)}</article>')
 
-    voice_source = {"dedicated": "已配置专用 Key", "openai": "沿用 OpenAI 的 Key"}.get(hearing.get("key_source"), "还没有 Key")
+    voice_source = "已配置" if hearing.get("key_configured") else "还没配置"
     voice_form = settings_form("voice", "语音服务",
                                field("voice", hearing, "voice_api_key", "OpenAI 语音 Key", secret=True),
-                               field("voice", hearing, "base_url", "接口地址", hint="只支持官方 OpenAI 接口。"))
-    judged = judgment.get("key_configured")
+                               field("voice", hearing, "base_url", "接口地址"))
     shared = (
-        '<div class="cap-shared">'
-        f'<a class="cap-chip" href="/setup#chat-model"><span>聊天模型</span><strong>{_esc(chat.get("primary_model") or "还没选")}</strong>'
-        f'<small>{_esc(chat.get("active_provider") or "")} · 更换</small></a>'
-        f'<a class="cap-chip{"" if judged else " todo"}" href="/decision"><span>判断帮手</span>'
-        f'<strong>{_esc(judgment.get("model")) if judged else "还没配置"}</strong><small>接话判断、提醒审核、画前检查</small></a>'
-        f'<details class="cap-chip cap-chip-voice{"" if hearing.get("key_configured") else " todo"}" id="voice"{" open" if saved == "voice" else ""}>'
-        f'<summary><span>语音服务</span><strong>{voice_source}</strong><small>听语音、发语音共用 · 设置</small></summary>'
-        f'<div class="cap-body">{voice_form}</div></details></div>')
+        f'<details class="ms-voice-connection" id="voice"{" open" if saved == "voice" or editing == "voice" else ""}>'
+        f'<summary><span>语音服务</span><span class="ms-voice-state">{voice_source}</span><span class="cap-open">设置</span></summary>'
+        f'<div class="cap-body">{voice_form}</div></details>')
     body = (
-        '<header class="cap-page-head"><h1>能力与服务</h1><p>聊天之外，她还能看图、画图、听语音、发语音。开关点了就保存。</p></header>'
+        '<header class="cap-page-head"><h1>模型与能力</h1><p>选好她的本事，按你们的节奏来。</p></header>'
         f'<p class="cap-runtime" data-tone="{tone}" data-cap-runtime>{timing}</p>'
-        f'<section class="cap-page" aria-label="能力">{shared}<div class="cap-list">{"".join(rows)}</div>'
-        '<p class="cap-foot">保存不会自动重启机器人。桌宠的动作和特效在人物的右键菜单里。</p></section>')
-    return _page("能力与服务", body, "capabilities")
+        f'<section class="cap-page" aria-label="模型与能力"><div class="cap-list">{"".join(rows)}</div>{shared}'
+        '<details class="ms-diagnostics"><summary>连接检查</summary><a href="/search">检查联网搜索 →</a></details></section>')
+    return _page("模型与能力", body, "capabilities")
 
 
 def _runtime_controls(cfg, csrf, runner):
     settings = instance_settings.public_settings(cfg)
+    qq_ready = bool(settings.get("qq_app_id") and settings.get("qq_secret_configured"))
     managed = runner.snapshot()
     snapshot, state = _status(cfg)
     age = time.time() - float(snapshot.get("updated_at") or 0) if snapshot else None
@@ -561,30 +609,35 @@ def _runtime_controls(cfg, csrf, runner):
     if managed.get("owned") and managed.get("running"):
         controls = f'<form method="post" action="/runtime/stop"><input type="hidden" name="csrf" value="{_esc(csrf)}"><button class="secondary">停止机器人</button></form>'
     elif managed.get("external"):
-        controls = '<a class="button secondary" href="/capabilities">调整能力 →</a>'
+        controls = '<a class="button secondary" href="/capabilities">模型与能力 →</a>'
     elif settings.get("ready"):
         controls = f'<form method="post" action="/runtime/start"><input type="hidden" name="csrf" value="{_esc(csrf)}"><button>启动机器人</button></form>'
+    elif qq_ready:
+        controls = '<a class="button" href="/capabilities#chat">选择聊天模型 →</a>'
     else:
-        controls = '<a class="button" href="/setup">连接 QQ 与模型 →</a>'
+        controls = '<a class="button" href="/setup">连接 QQ →</a>'
     owner_path = getattr(cfg, "OWNER_FILE", str(Path(cfg.DATA_DIR) / "owner.txt"))
     owner = bool(_read_text(owner_path).strip())
     if online:
         headline = '已连上 QQ'
         detail = ('在群里叫她的名字，就能聊起来。' if owner
-                  else '先给机器人发一条私聊，绑定你为维护者；再邀请她进群。')
+                  else '先由你发第一条 QQ 私聊，再邀请她进群。')
     elif managed.get("running"):
-        headline, detail = '等待 QQ 连接确认', '进程已启动。若迟迟没有连上，请检查 QQ 配置与运行日志。'
+        headline, detail = '正在连接 QQ', '稍等一下；如果一直连不上，看看 QQ 配置和下方日志。'
     else:
-        headline, detail = '还没开始运行', '配置已保存，启动后就能在群里和她聊天。' if settings.get('ready') else '先填 QQ 和聊天模型，其余能力可以以后再开。'
+        headline = '还没开始运行'
+        detail = ('配置已保存，启动后就能在群里和她聊天。' if settings.get('ready')
+                  else '再选一个聊天模型，就可以启动了。' if qq_ready
+                  else '先完成 QQ 连接，再选一个聊天模型。')
     if age is not None and age > 120:
-        detail = '运行状态已超过两分钟未更新，不能据此判断在线。请检查原进程或下方启动日志。'
+        detail = '暂时收不到运行状态，请查看下方日志。'
     progress = ""
     if not (settings.get("ready") and online and owner):
-        milestones = (("QQ 与模型", settings.get("ready")), ("QQ 连接", online), ("私聊认主", owner))
+        milestones = (("基础设置", settings.get("ready")), ("连上 QQ", online), ("发第一条私聊", owner))
         progress = '<ol class="wx-progress" aria-label="首次连接进度">' + ''.join(
             f'<li class="{"wx-done" if done else ""}"><span>{"✓" if done else index}</span>{name}</li>'
             for index, (name, done) in enumerate(milestones, 1)) + '</ol>'
-    external = ('<small class="wx-managed">由其他终端或常驻服务管理，需在原启动方式中启停。</small>'
+    external = ('<small class="wx-managed">由常驻服务运行，请在原来的启动入口启停。</small>'
                 if managed.get("external") else "")
     return f'''<section class="wx-status" aria-label="QQ 连接状态"><div><span class="wx-live-dot {'wx-online' if online else ''}" aria-hidden="true"></span><h2>{headline}</h2><p>{detail}</p>{external}</div><div class="wx-status-action">{controls}</div>{progress}</section>'''
 
@@ -617,14 +670,12 @@ def _iterate_page(cfg):
     source_ready = (code_root / "AGENTS.md").is_file() and (code_root / ".agents/skills/regular-iterate/SKILL.md").is_file()
     source_note = ('源码工作区已带上 AGENTS.md 与自迭代 skill。让你的编码 Agent 打开这个目录。'
                    if source_ready else '当前是运行安装包。要修改机器人，请先下载源码工作区；源码包自带 AGENTS.md 和自迭代 skill。实例数据继续用原目录。')
-    body = f'''<header class="wx-heading"><div><h1>让 Agent 帮忙</h1><p>把接偏的那句话交给编码 Agent，找原因、改一版，再比较效果。</p></div></header>
-<section class="wx-handoff"><div class="wx-handoff-main"><span class="wx-note">从你的一句反馈开始</span><h2>复制说明，带上截图或原话</h2><p>发给你常用的编码 Agent。说明里已写好实例位置和自迭代流程。</p><button type="button" data-copy-brief>复制给 Agent <span aria-hidden="true">↗</span></button><p data-copy-status aria-live="polite"></p></div>
+    body = f'''<header class="wx-heading"><div><h1>让 Agent 帮忙</h1><p>哪句话没接好？让你的 Agent 帮她改进。</p></div></header>
+<section class="wx-handoff"><div class="wx-handoff-main"><span class="wx-note">从你的一句反馈开始</span><h2>复制说明，带上截图或原话</h2><p>发给你常用的 Agent，一起看看怎么改。</p><button type="button" data-copy-brief>复制给 Agent <span aria-hidden="true">↗</span></button><p data-copy-status aria-live="polite"></p></div>
 <ol class="wx-handoff-steps"><li><strong>你说哪里不对</strong><span>一句描述或一张截图就够了</span></li><li><strong>Agent 找现场、做对比</strong><span>保留正常场景，检查有没有改坏</span></li><li><strong>你看结果，再决定上线</strong><span>付费评测和重启都等你确认</span></li></ol></section>
-<p class="wx-source-note">{source_note}</p>
-<details class="wx-disclosure"><summary>完整交接说明</summary><textarea class="wx-brief" readonly aria-label="交给 Agent 的任务说明" data-agent-brief>{_esc(_agent_brief(cfg))}</textarea></details>
-<div class="wx-links"><a href="/iterate/brief">下载说明 .md ↓</a><a href="https://github.com/dubianche123/the-regular-qq-bot/releases/latest" target="_blank" rel="noreferrer">获取源码包 ↗</a><a href="/checkup">先看每日体检 →</a></div>
-<p class="wx-footnote">面板不会自动上传聊天。交接说明只含本机路径与操作流程，不含群聊或密钥。</p>'''
-    return _page("让 Agent 改进", body, "iterate")
+<details class="wx-disclosure"><summary>完整交接说明</summary><p class="wx-source-note">{source_note}</p><textarea class="wx-brief" readonly aria-label="交给 Agent 的任务说明" data-agent-brief>{_esc(_agent_brief(cfg))}</textarea><p class="wx-footnote">面板不会自动上传聊天。交接说明只含本机路径与操作流程，不含群聊或密钥。</p><a href="https://github.com/dubianche123/the-regular-qq-bot/releases/latest" target="_blank" rel="noreferrer">获取源码包 ↗</a></details>
+<div class="wx-links"><a href="/iterate/brief">下载交接说明 ↓</a><a href="/checkup">先看每日体检 →</a></div>'''
+    return _page("让 Agent 帮忙", body, "iterate")
 
 
 def _chat_route_card(cfg, runner=None):
@@ -639,105 +690,246 @@ def _chat_route_card(cfg, runner=None):
         first = rows[0]
         models = first.get("models") or []
         active = f"{first.get('name') or first.get('label') or '已配置服务'} · {models[0] if models else '未报告模型'}"
-        changed = first.get("name") != settings["active_provider"] or models != settings["model_options"]
-        detail = (f"已保存的新选择：{configured}。由你重启机器人后生效。" if changed
-                  else "QQ 回复和这里共用此首选；失败时才尝试已配置的备用。")
-        label = "运行中的聊天首选"
+        label = "当前聊天模型"
     else:
-        label, active = "已保存的聊天首选", configured
-        detail = "还没有可核对的运行模型信息；启动后以进程报告为准。"
+        label, active = "已选聊天模型", configured
     return (f'<div class="chat-route-card"><span class="route-label">{label}</span><strong>{_esc(active)}</strong>'
-            f'<a href="/setup#chat-model">更换 ↗</a><details><summary>模型与操作说明</summary><p>{_esc(detail)} '
-            '发送消息才会调用模型。能力调整需点确认卡；修改代码可生成 Agent 交接说明。</p></details></div>')
+            '<a href="/capabilities#chat">更换 ↗</a></div>')
 
 
 def _companion_page(cfg, request, csrf, runner=None):
     pet = request.query.get("mode") == "pet"
     suggestions = ("今天你忙了些什么？", "先别画图了", "你现在心情怎么样？")
-    body = f'''<section class="companion-room" data-chat-room><header class="room-heading"><div><h1>聊两句</h1><p>聊聊天、看看今日概况，或让她帮你开关能力。</p></div><a class="room-home-link" href="/">工作台 ↗</a></header>
+    body = f'''<section class="companion-room" data-chat-room><header class="room-heading"><div><h1>聊两句</h1><p>聊聊天、看看今日概况，或让她帮你开关能力。</p></div><a class="room-home-link" href="/">首页 ↗</a></header>
 <div class="room-layout"><aside class="room-card" aria-label="她现在的样子">
 <div class="room-scene" data-room-scene><span class="scene-window" aria-hidden="true"></span><span class="scene-glow" aria-hidden="true"></span><p class="scene-bubble" data-scene-bubble aria-live="polite" hidden></p>{_pet_sprite('idle', size='stage')}<span class="scene-floor" aria-hidden="true"></span></div>
-<div class="room-status"><ul class="status-chips" data-presence-chips><li class="chip"><span class="dot"></span>正在看看她在不在…</li></ul>
+<div class="room-status"><ul class="status-chips" data-presence-chips><li class="chip"><span class="dot"></span>正在连接…</li></ul>
 <div class="mood-meter" data-mood-meter><span>心情</span><span class="meter" aria-hidden="true"><i></i></span><b data-mood-word>平稳</b></div></div>
-<div class="room-recent"><h2>刚才</h2><ol data-presence-feed><li class="empty">她在群里被@、接话、画图时，这里会记一笔。只记类型，不显示群聊原文。</li></ol></div>
+<div class="room-recent"><h2>刚才</h2><ol data-presence-feed><li class="empty">她最近在群里的动态会留在这里。</li></ol></div>
 <div class="room-actions"><button type="button" data-room-action="shy">摸摸头</button><button type="button" data-room-action="eat">投喂饼干</button><button type="button" data-room-action="wave">打个招呼</button></div></aside>
-<div class="chat-panel"><div class="chat-head"><span class="chat-avatar" aria-hidden="true"></span><div><strong>老群友</strong><p data-chat-status aria-live="polite">正在检查本机连接…</p></div><button type="button" class="icon-button" data-chat-refresh title="刷新连接状态" aria-label="刷新连接状态">↻</button></div>
-<div class="chat-history" role="log" aria-live="polite" aria-label="本机对话" data-chat-history><div class="chat-message system"><span class="chat-speaker">本机小窗</span><p>机器人运行后，就能在这里和她聊聊。打开页面不会发消息，也不会请求模型。</p></div></div>
+<div class="chat-panel"><div class="chat-head"><span class="chat-avatar" aria-hidden="true"></span><div><strong>老群友</strong><p data-chat-status aria-live="polite">正在连接…</p></div><button type="button" class="icon-button" data-chat-refresh title="刷新状态" aria-label="刷新状态">↻</button></div>
+<div class="chat-history" role="log" aria-live="polite" aria-label="对话" data-chat-history><div class="chat-message system"><span class="chat-speaker">老群友</span><p>从这里打个招呼吧。</p></div></div>
 <div class="chat-suggestions" data-chat-suggestions>{"".join(f'<button type="button" data-suggestion>{_esc(text)}</button>' for text in suggestions)}</div>
 <form class="chat-compose" action="/companion/chat" method="post" data-chat-form><input type="hidden" name="csrf" value="{_esc(csrf)}"><label class="sr-only" for="companion-message">想和老群友说的话</label><textarea id="companion-message" name="text" rows="2" maxlength="2000" placeholder="今天有什么想聊的？Enter 发送，Shift+Enter 换行" required data-chat-input></textarea><div class="chat-compose-footer"><span data-chat-count>0 / 2000</span><button type="submit" disabled data-chat-submit>发送 <span aria-hidden="true">↑</span></button></div></form>
 {_chat_route_card(cfg, runner)}</div></div>
-<nav class="room-shortcuts" aria-label="工作台快捷入口"><a href="/setup">设置</a><a href="/checkup">体检</a><a href="/">运行状态</a><a href="/iterate">让 Agent 帮忙</a><button type="button" class="text-button" data-actions-toggle aria-pressed="true" title="关闭后角色只保留静止姿势">角色动作：开</button></nav></section>'''
+<nav class="room-shortcuts" aria-label="快捷入口"><a href="/capabilities">模型与能力</a><a href="/checkup">每日体检</a><a href="/">首页</a><a href="/iterate">让 Agent 帮忙</a><button type="button" class="text-button" data-actions-toggle aria-pressed="true" title="关闭后角色只保留静止姿势">角色动作：开</button></nav></section>'''
     return _page("和老群友聊聊", body, "companion", pet=pet)
 
 
-def _knowledge(cfg, request):
-    names = _knowledge_files(cfg)
-    name = request.query.get("file") or (names[0] if names else "all.md")
+def _knowledge_revision(path):
+    try:
+        stat = Path(path).stat()
+        return f"{stat.st_mtime_ns}:{stat.st_size}"
+    except FileNotFoundError:
+        return "new"
+
+
+def _knowledge_document(cfg, name):
     path = _knowledge_path(cfg, name)
-    content = _read_text(path, limit=MAX_EDIT_BYTES)
-    library = knowledge_mod.KnowledgeBase(cfg.KNOWLEDGE_DIR)
-    parsed = library.parse_file(path)
+    try:
+        with open(path, encoding="utf-8") as stream:
+            stat = os.fstat(stream.fileno())
+            if stat.st_size > MAX_EDIT_BYTES:
+                raise web.HTTPBadRequest(text="这份内容过大，请先精简后再编辑。")
+            content = stream.read()
+            revision = f"{stat.st_mtime_ns}:{stat.st_size}"
+    except FileNotFoundError:
+        content, revision = "", "new"
+    except (OSError, UnicodeError):
+        raise web.HTTPBadRequest(text="暂时无法读取这份知识。") from None
+    return path, content, revision
+
+
+def _knowledge_sections(content):
+    # Keep exact offsets in the original document, including every unparsed byte.
+    comments = list(knowledge_mod.COMMENT_RE.finditer(content))
+    matches = [match for match in knowledge_mod.SECTION_RE.finditer(content)
+               if not any(comment.start() <= match.start() < comment.end() for comment in comments)]
+    rows = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        body = content[match.end():end]
+        words, lines = "", []
+        for line in body.splitlines():
+            keyword = knowledge_mod.KEYWORDS_RE.match(line)
+            if keyword and not words:
+                words = keyword.group(1)
+            else:
+                lines.append(line)
+        rows.append({"index": index, "start": match.start(), "end": end,
+                     "title": match.group(1).strip(), "keywords": words,
+                     "body": "\n".join(lines).strip()})
+    return rows
+
+
+def _knowledge_scopes(cfg, selected):
+    import hashlib
+    state = _read_json(cfg.STATE_FILE) or {}
+    groups = _groups(state)
+    names = set(_knowledge_files(cfg)) | {selected, "all.md"}
+    names.update(f"{gid}.md" for gid in groups if _safe_name(f"{gid}.md"))
+    choices = []
+    for name in ["all.md", *sorted(names - {"all.md"})]:
+        group = groups.get(name[:-3]) or {}
+        slot = group.get("slot") or {}
+        label = str(slot.get("group_name") or slot.get("name") or slot.get("title") or "").strip()
+        if name == "all.md":
+            label = "所有群"
+        elif not label:
+            label = "群 · " + hashlib.sha256(name.encode("utf-8")).hexdigest()[:6].upper()
+            if slot.get("last_seen"):
+                label += " · " + time.strftime("%m-%d %H:%M", time.localtime(slot["last_seen"]))
+            elif group.get("relations"):
+                label += f" · 认识 {group['relations']} 人"
+        choices.append((name, label))
+    return choices
+
+
+def _knowledge_hidden(values):
+    return "".join(f'<input type="hidden" name="{_esc(key)}" value="{_esc(value)}">'
+                   for key, value in values.items())
+
+
+def _knowledge_editor(cfg, name, values, csrf, *, example=False):
+    label = dict(_knowledge_scopes(cfg, name))[name]
+    editing = values.get("action") == "edit"
+    draft = '<p class="kb-draft">示例草稿 · 修改后再保存</p>' if example else ''
+    return f'''<header class="kb-heading"><div><a class="kb-back" href="/knowledge?file={quote(name, safe='')}">← 群知识</a><h1>{'编辑知识' if editing else '新增知识'}</h1><p>{_esc(label)}</p></div></header>
+<form class="kb-editor" action="/knowledge/entry/preview" method="post" data-kb-editor>
+{_knowledge_hidden({'csrf': csrf, 'file': name, 'revision': values['revision'], 'action': values['action'], 'index': values.get('index', '')})}{draft}
+<label for="kb-title">标题</label><input id="kb-title" name="title" value="{_esc(values.get('title', ''))}" maxlength="80" placeholder="例如：周五的奶茶局" required>
+<label for="kb-body">要记住的事</label><textarea id="kb-body" name="body" rows="5" maxlength="3000" placeholder="写已经确认的事实、约定或梗的来历。" required>{_esc(values.get('body', ''))}</textarea>
+<details class="kb-optional"{' open' if values.get('keywords') else ''}><summary>关联词</summary><label class="sr-only" for="kb-keywords">聊到哪些词时参考</label><input id="kb-keywords" name="keywords" value="{_esc(values.get('keywords', ''))}" maxlength="200" placeholder="例如：奶茶、报名；留空使用标题"></details>
+<footer><button type="submit">预览并保存</button><a href="/knowledge?file={quote(name, safe='')}">取消</a></footer></form>'''
+
+
+def _knowledge(cfg, request, csrf=""):
+    name = str(request.query.get("file") or "all.md")
+    path, content, revision = _knowledge_document(cfg, name)
+    sections = _knowledge_sections(content)
+    choices = _knowledge_scopes(cfg, name)
+    label = dict(choices)[name]
+    base = "/knowledge?file=" + quote(name, safe="")
+    editing = request.query.get("edit")
+    deleting = request.query.get("delete")
     examples = {
-        "agreement": "## 群里的小约定\n关键词：群规、约定\n请替换成你们已经确认的群约定。\n",
-        "names": "## 一个称呼的来历\n关键词：称呼、昵称\n请填写群里常用的称呼及适用范围，不要填写私人身份编号。\n",
-        "routine": "## 固定活动\n关键词：活动、时间\n请填写已经确定的时间和参与方式。这里提供聊天参考，不会创建定时提醒。\n",
+        "agreement": ("群里的小约定", "群规、约定", "把已经确认的约定写在这里。"),
+        "names": ("一个称呼的来历", "称呼、昵称", "写下这个称呼的由来，以及适合怎么使用。"),
+        "routine": ("固定活动", "活动、时间", "写下活动的时间与参加方式。"),
     }
     template = request.query.get("template")
-    drafted = not content.strip() and template in examples
-    if drafted:
-        content = examples[template]
-    entries = "".join(
-        f'<article class="knowledge-entry"><h3>{_esc(entry["title"])}</h3>'
-        f'<div class="knowledge-keywords">{"".join(f"<span>{_esc(word)}</span>" for word in entry["keywords"])}</div>'
-        f'<p>{_esc(entry["content"])}</p></article>' for entry in parsed)
-    preview = entries or '<div class="knowledge-blank"><h3>还没有保存的条目</h3><p>先从下面的示例开始，改成你们真实的约定后再保存。</p></div>'
-    saved = ('<div class="notice good">已保存；下一条相关消息会使用新内容。</div>'
-             if request.query.get("saved") else "")
-    cards = []
-    for item in names:
+    if request.query.get("new") or editing is not None or template in examples:
+        values = {"action": "add", "revision": revision}
+        if editing is not None:
+            try:
+                index = int(editing)
+                if index < 0: raise ValueError
+                values.update(sections[index], action="edit")
+            except (ValueError, IndexError):
+                raise web.HTTPBadRequest(text="没有找到这条知识。") from None
+        elif template in examples:
+            title, keywords, body = examples[template]
+            values.update(title=title, keywords=keywords, body=body)
+        return _page("群知识", _knowledge_editor(cfg, name, values, csrf, example=template in examples), "knowledge")
+    if deleting is not None:
         try:
-            item_path = _knowledge_path(cfg, item)
-        except web.HTTPBadRequest:
-            continue
-        item_entries = library.parse_file(item_path)
-        scope = "所有群共享" if item == "all.md" else "指定群使用"
-        summary = " · ".join(entry["title"] for entry in item_entries[:2]) or "还没有可用条目"
-        cards.append(f'<a class="knowledge-file {"selected" if item == name else ""}" href="/knowledge?file={quote(item, safe="")}" '
-                     f'{"aria-current=page" if item == name else ""}><span>{scope}<small>{len(item_entries)} 条</small></span>'
-                     f'<strong>{_esc(item)}</strong><p>{_esc(summary)}</p></a>')
-    scope = "所有群都能参考" if name == "all.md" else "只在文件名对应的群里使用"
-    draft_notice = '<div class="notice">这是未保存的格式示例。请改成真实内容；尚未写入知识库。</div>' if drafted else ""
-    template_links = " · ".join(f'<a href="/knowledge?file={quote(name, safe="")}&amp;template={key}#knowledge-editor">{label} ↗</a>'
-                               for key, label in (("agreement", "群约定"), ("names", "称呼来历"), ("routine", "固定活动")))
-    body = f'''
-<header class="knowledge-hero"><div><span class="eyebrow">THINGS YOUR GROUP KNOWS</span><h1>有些事，不用每次都解释。</h1><p>把群里的约定、称呼和梗的来历放在这里。<br>聊到相关关键词时，老群友才取少量内容来参考。</p></div>{_mascot('knowledge')}</header>
-{saved}{draft_notice}
-<div class="knowledge-workspace"><aside class="knowledge-library"><div class="section-heading"><h2>知识文件</h2><span class="tag">{len(names)} 份</span></div>
-<nav aria-label="知识文件">{''.join(cards) or '<p class="field-hint">还没有文件。可以先写一份所有群共享的知识。</p>'}</nav>
-<a class="knowledge-shared" href="/knowledge?file=all.md">所有群共享：all.md →</a>
-<details class="knowledge-new"><summary>给某个群单独写一份</summary><form method="get" action="/knowledge"><label class="field"><span class="field-label">知识文件名</span><input type="text" name="file" placeholder="群号.md" required><span class="field-hint">使用对应群号作文件名；同名条目优先使用群内版本。</span></label><button type="submit">打开空白草稿</button></form></details>
-<p class="knowledge-permission">只由维护者在本机编辑。群聊不能写入这里，也不会自动把聊天当成事实。</p></aside>
-<section class="knowledge-main"><div class="knowledge-file-heading"><div><span class="eyebrow">{scope}</span><h2>{_esc(name)}</h2></div><span class="tag lilac">解析到 {len(parsed)} 条</span></div>
-<div class="knowledge-preview" aria-label="已保存知识条目">{preview}</div>
-<form method="post" action="/knowledge/save" class="knowledge-editor" id="knowledge-editor" data-knowledge-form>
-<input type="hidden" name="file" value="{_esc(name)}">
-<div class="section-heading"><div><h2>写下要记住的事</h2><p class="field-hint">一条一个标题，关键词写大家实际会说的词。保存后，下一轮相关聊天即可参考。</p></div></div>
-<div class="knowledge-composer"><label class="field"><span class="field-label">条目标题</span><input type="text" maxlength="80" placeholder="例如：奶茶局怎么报名" data-knowledge-title></label><label class="field"><span class="field-label">聊到哪些词时用？</span><input type="text" maxlength="160" placeholder="例如：奶茶、报名" data-knowledge-keywords></label><label class="field field-wide"><span class="field-label">具体内容</span><textarea rows="3" maxlength="3000" placeholder="写已经确认的事实或约定，尽量简短。" data-knowledge-body></textarea></label><div class="field-wide row"><button type="button" class="secondary" data-knowledge-add>加入下方草稿</button><span class="field-hint" data-knowledge-status aria-live="polite">加入草稿后，仍需点击保存才生效。</span></div></div>
-<label class="field knowledge-source"><span class="field-label">完整草稿<small>可直接修改已有条目</small></span><textarea name="content" spellcheck="false" rows="9" data-knowledge-source>{_esc(content)}</textarea></label>
-<div class="knowledge-save-row"><button type="submit">保存这份知识 <span aria-hidden="true">→</span></button><span class="field-hint">保存不调用模型，也不需要重启。</span></div>
-</form>
-<details class="knowledge-help"><summary>不知道写什么？看格式和使用说明</summary><p>从一个示例开始：{template_links}。仅空白文件会载入示例，不覆盖已有内容，也不会自动保存。</p><pre>## 奶茶局怎么报名\n关键词：奶茶、报名\n请在活动当天的群公告下回复。\n</pre><p>每个 <code>## 标题</code> 是一条；没有关键词行时使用标题作关键词。命中后只取少量内容，不会每轮全部发给模型。敏感词条目会在解析时跳过，保存后可在上方核对有效条目。</p><p>适合写：共同约定、固定活动、已经确认的称呼。不适合写：密码、私人身份编号、未确认的传闻。这里的活动时间只是聊天参考，需要到点提醒时仍应在 QQ 明确设置提醒。</p></details></section></div>
-'''
-    return _page("知识库", body, "knowledge")
+            index = int(deleting)
+            if index < 0: raise ValueError
+            row = sections[index]
+        except (ValueError, IndexError):
+            raise web.HTTPBadRequest(text="没有找到这条知识。") from None
+        body = f'''<header class="kb-heading"><div><h1>删除这条知识？</h1><p>{_esc(label)}</p></div></header><section class="kb-confirm"><h2>{_esc(row['title'])}</h2><p>{_esc(row['body'])}</p><form method="post" action="/knowledge/entry/save">{_knowledge_hidden({'csrf': csrf, 'file': name, 'revision': revision, 'action': 'delete', 'index': index})}<footer><button type="submit" class="kb-danger">删除</button><a href="{base}">保留</a></footer></form></section>'''
+        return _page("群知识", body, "knowledge")
+    parsed = knowledge_mod.KnowledgeBase(cfg.KNOWLEDGE_DIR).parse_file(path)
+    available = {entry["title"] for entry in parsed}
+    seen = set()
+    cards = []
+    for row in sections:
+        clean_title = knowledge_mod.COMMENT_RE.sub("", row["title"]).strip()[:40]
+        usable = clean_title in available and clean_title not in seen
+        seen.add(clean_title)
+        status = '' if usable else '<span class="kb-pending">待整理</span>'
+        cards.append(f'''<article class="kb-entry"><div class="kb-entry-copy"><h2><a href="{base}&amp;edit={row['index']}">{_esc(row['title'])}</a>{status}</h2><p>{_esc(row['body'])}</p></div><div class="kb-entry-actions"><a href="{base}&amp;edit={row['index']}">编辑</a><a href="{base}&amp;delete={row['index']}" aria-label="删除{_esc(row['title'])}">删除</a></div></article>''')
+    empty = f'''<div class="kb-empty"><span class="kb-empty-icon" aria-hidden="true">{_icon('knowledge')}</span><h2>把你们知道的事，也告诉她</h2><p>群里的约定、称呼和梗的来历，都可以从一条开始。</p><a class="button" href="{base}&amp;new=1">写下第一条</a><div class="kb-examples"><span>也可以从这里开始</span><a href="{base}&amp;template=agreement">群里的约定</a><a href="{base}&amp;template=names">称呼的来历</a><a href="{base}&amp;template=routine">固定活动</a></div></div>'''
+    intro = content[:sections[0]["start"]] if sections else content
+    unorganized = (f'<details class="kb-unorganized"><summary>还有一段未整理的内容</summary><pre>{_esc(intro)}</pre><a href="{base}&amp;source=1">整理原文</a></details>'
+                   if intro.strip() else '')
+    saved = '<p class="kb-saved" role="status">已保存</p>' if request.query.get("saved") else ''
+    options = ''.join(f'<option value="{_esc(value)}"{" selected" if value == name else ""}>{_esc(text)}</option>' for value, text in choices)
+    advanced_open = ' open' if request.query.get('source') else ''
+    body = f'''<header class="kb-heading"><div><h1>群知识</h1><p>让她记住你们已经确认的事。</p></div>{f'<a class="button" href="{base}&amp;new=1">新增知识</a>' if sections else ''}</header>{saved}
+<div class="kb-toolbar"><form method="get" action="/knowledge" data-kb-scope><label for="kb-scope">适用范围</label><select id="kb-scope" name="file">{options}</select><button type="submit" class="secondary">切换</button></form><span>{len(sections)} 条知识</span></div>
+<section class="kb-list" aria-label="已保存知识条目">{''.join(cards) or empty}</section>{unorganized}
+<details class="kb-source"{advanced_open}><summary>编辑完整原文</summary><form method="post" action="/knowledge/save">{_knowledge_hidden({'csrf': csrf, 'file': name, 'revision': revision})}<label class="sr-only" for="kb-source">完整原文</label><textarea id="kb-source" name="content" rows="12" spellcheck="false">{_esc(content)}</textarea><footer><button type="submit">保存原文</button></footer></form></details>'''
+    return _page("群知识", body, "knowledge")
 
 
-async def _knowledge_save(cfg, request):
-    form = await request.post()
+def _knowledge_entry_plan(cfg, form):
+    name = str(form.get("file") or "")
+    path, original, revision = _knowledge_document(cfg, name)
+    if str(form.get("revision") or "") != revision:
+        raise web.HTTPConflict(text="内容已有更新，请重新预览。")
+    action = str(form.get("action") or "")
+    if action not in ("add", "edit", "delete"):
+        raise web.HTTPBadRequest(text="请选择要修改的知识。")
+    rows = _knowledge_sections(original)
+    index, current = "", None
+    if action != "add":
+        try:
+            index = int(form.get("index"))
+            if index < 0: raise ValueError
+            current = rows[index]
+        except (ValueError, TypeError, IndexError):
+            raise web.HTTPBadRequest(text="没有找到这条知识。") from None
+    values = {"file": name, "revision": revision, "action": action, "index": index}
+    if action == "delete":
+        values.update(title=current["title"], keywords=current["keywords"], body=current["body"])
+        return path, original[:current["start"]] + original[current["end"]:], values
+    title, keywords, body = (str(form.get(key) or "").strip() for key in ("title", "keywords", "body"))
+    if (not title or not body or len(title) > 80 or len(keywords) > 200 or len(body) > 3000
+            or any(char in title + keywords for char in ("\r", "\n", "\x00"))
+            or "\x00" in body or knowledge_mod.SECTION_RE.search(body)):
+        raise web.HTTPBadRequest(text="请为这一条填写简短的标题和内容。")
+    if not knowledge_mod._keywords(keywords or title) or knowledge_mod.wordfilter.has_hit(title + " " + keywords + " " + body):
+        raise web.HTTPBadRequest(text="这条内容暂时不能使用，请调整后再预览。")
+    if any(knowledge_mod.COMMENT_RE.sub("", row["title"]).strip()[:40] == title[:40]
+           and row["index"] != index for row in rows):
+        raise web.HTTPBadRequest(text="已经有同名知识，请编辑原来的那条。")
+    values.update(title=title, keywords=keywords, body=body)
+    section = f"## {title}\n" + (f"关键词：{keywords}\n" if keywords else "") + body + "\n"
+    if action == "add":
+        updated = original + ("\n\n" if original and not original.endswith("\n\n") else "") + section
+    else:
+        updated = original[:current["start"]] + section + original[current["end"]:]
+    if len(updated.encode("utf-8")) > MAX_EDIT_BYTES:
+        raise web.HTTPBadRequest(text="内容过多，请精简后再保存。")
+    return path, updated, values
+
+
+def _knowledge_entry_preview(cfg, form, csrf=""):
+    _path, _updated, values = _knowledge_entry_plan(cfg, form)
+    if form.get("intent") == "edit":
+        return _page("群知识", _knowledge_editor(cfg, values["file"], values, csrf), "knowledge")
+    label = dict(_knowledge_scopes(cfg, values['file']))[values['file']]
+    body = f'''<header class="kb-heading"><div><h1>看看这样写对不对</h1><p>{_esc(label)} · 尚未保存</p></div></header><section class="kb-confirm"><h2>{_esc(values['title'])}</h2><p class="kb-preview-body">{_esc(values['body'])}</p>{f'<p class="kb-preview-words">关联词：{_esc(values["keywords"])}</p>' if values['keywords'] else ''}<form method="post" action="/knowledge/entry/save">{_knowledge_hidden({'csrf': csrf, **values})}<footer><button type="submit">保存知识</button><button type="submit" name="intent" value="edit" formaction="/knowledge/entry/preview" class="secondary">返回修改</button><a href="/knowledge?file={quote(values['file'], safe='')}">取消</a></footer></form></section>'''
+    return _page("群知识", body, "knowledge")
+
+
+async def _knowledge_entry_save(cfg, form):
+    path, updated, values = _knowledge_entry_plan(cfg, form)
+    storage.atomic_write_text(path, updated)
+    raise web.HTTPFound(f"/knowledge?file={quote(values['file'], safe='')}&saved=1")
+
+
+async def _knowledge_save(cfg, request, form=None):
+    form = await request.post() if form is None else form
     name = str(form.get("file") or "")
     content = str(form.get("content") or "")
     if len(content.encode("utf-8")) > MAX_EDIT_BYTES:
-        raise web.HTTPBadRequest(text="文件过大")
+        raise web.HTTPBadRequest(text="内容过多，请精简后再保存。")
     path = _knowledge_path(cfg, name)
+    if "revision" in form and str(form["revision"]) != _knowledge_revision(path):
+        raise web.HTTPConflict(text="内容已有更新，请重新预览。")
     storage.atomic_write_text(path, content)
     raise web.HTTPFound(f"/knowledge?file={quote(name, safe='')}&saved=1")
 
@@ -756,14 +948,14 @@ def _memory(cfg, request):
     picker = (f'<form method="get" action="/memory" class="row"><select name="file">'
               f'{options}</select><button type="submit">打开</button></form>') if files else ""
     memory_content = f"<pre>{_esc(content)}</pre>" if content else _empty_state(
-        "群记忆还在慢慢攒", "聊过、整理过的片段会留在这里。现在还没有可显示的每日记忆。", state="sleeping")
+        "群记忆还在慢慢攒", "有了新的相处片段，她会慢慢整理。", state="sleeping")
     body = f"""
-<h1>记忆</h1>
-<p class="muted">这里只读。摘要由每日压缩生成；要纠正具体事实，请改知识库。</p>
+<h1>每日记忆</h1>
+<p class="muted">她整理的每日记忆都在这里。想补充或纠正一件事，可以去群知识。</p>
 {picker}
 {memory_content}
 """
-    return _page("记忆", body, "memory")
+    return _page("每日记忆", body, "memory")
 
 
 async def _search(cfg, request):
@@ -772,11 +964,11 @@ async def _search(cfg, request):
     notice = ""
     if query:
         if not cfg.SEARCH_ENABLED:
-            notice = '<div class="notice bad">搜索已关闭（SEARCH_ENABLED=false）。</div>'
+            notice = '<div class="notice bad">联网搜索还没开启。</div>'
         else:
             results = await search_mod.search_web(query)
             if results is None:
-                notice = '<div class="notice bad">搜索失败：网络或 DuckDuckGo 不可用。</div>'
+                notice = '<div class="notice bad">暂时连不上搜索服务，请稍后再试。</div>'
             elif not results:
                 notice = '<div class="notice bad">没有找到结果。</div>'
             else:
@@ -786,52 +978,20 @@ async def _search(cfg, request):
                     f'<span class="muted">{_esc(row["snippet"])}</span></td></tr>'
                     for row in results) + "</tbody></table>"
     body = f"""
-<h1>搜索调试</h1>
-<p class="muted">这里只验证 DuckDuckGo 是否可用；群里的正式入口是 <span class=mono>搜索 关键词</span>。</p>
+<h1>联网检查</h1>
+<p class="muted">输入关键词，看看能否找到网页。群里也可以说“搜索 关键词”。</p>
 <form method="get" action="/search" class="row">
 <input type="text" name="q" value="{_esc(query)}" placeholder="关键词">
 <button type="submit">搜索</button>
 </form>
 {notice}{rows}
 """
-    return _page("搜索", body, "search")
+    return _page("联网检查", body, "search")
 
 
 def _decision(cfg, request, csrf):
-    """判断 API 配置页：只显示 endpoint/model 与「是否已配 key」，永不回显 key。"""
-    settings = decision_settings.public_settings(cfg.DATA_DIR)
-    saved_path = os.path.join(str(cfg.DATA_DIR), decision_settings.FILENAME)
-    notice = ""
-    if request.query.get("saved"):
-        notice = '<div class="notice good">已保存。后续判断会读取这份配置；保存本身没有调用模型。</div>'
-    elif not settings["key_configured"] and os.path.isfile(saved_path):
-        # 文件在但读不出合法配置：只给通用提示，不回显文件内容
-        notice = '<div class="notice bad">已保存的配置暂时无法读取，请重新填写并保存。</div>'
-    state = ("已保存配置（下次保存仍需重新输入 Key）" if settings["key_configured"]
-             else "尚未配置")
-    body = f"""
-<h1>判断 API</h1>
-<p class="muted">给老群友接一个判断帮手：理解反馈、挑选记忆、拿捏介入。
-这里只保存独立配置，不改当前聊天模型，也不重启机器人。需要验证时，
-可在「让 Agent 改进」页取得交接说明，请自己的编码 Agent 先预览调用范围，再经你同意测试。</p>
-{notice}
-<div class="card">
-<p><span class="label">接口形态</span>：OpenAI 原生 GPT Decisions
-（POST /v1/decisions），<strong>不是</strong> /chat/completions。</p>
-<form method="post" action="/decision/save" class="decision">
-<input type="hidden" name="csrf" value="{_esc(csrf)}">
-<p><label>Endpoint URL<br>
-<input type="text" name="endpoint" value="{_esc(settings['endpoint'])}" required></label></p>
-<p><label>模型<br>
-<input type="text" name="model" value="{_esc(settings['model'])}" required></label></p>
-<p><label>API Key（每次保存都重新输入，页面永不回显）<br>
-<input type="password" name="api_key" value="" autocomplete="off" required></label></p>
-<button type="submit">保存配置（暂不调用）</button>
-</form>
-<p class="muted">当前状态：{state}</p>
-</div>
-"""
-    return _page("判断 API", body, "decision")
+    # Keep old bookmarks pointing at the unified model settings.
+    raise web.HTTPFound("/capabilities#decision")
 
 
 async def _decision_save(cfg, request, csrf):
@@ -839,15 +999,26 @@ async def _decision_save(cfg, request, csrf):
     form = await request.post()
     if not hmac.compare_digest(str(form.get("csrf") or ""), str(csrf)):
         raise web.HTTPBadRequest(text="请求无效")
+    endpoint = str(form.get("endpoint") or "").strip()
+    key = str(form.get("api_key") or "").strip()
     try:
+        source = str(form.get("credential_source") or "existing")
+        if source == "chat":
+            key = instance_settings.decision_key_from_chat(cfg, endpoint)
+        elif source not in ("existing", "new") or (source == "new" and not key):
+            raise ValueError("invalid credentials")
+        elif not key:
+            previous = decision_settings.load_settings(cfg.DATA_DIR)
+            if previous is not None and endpoint == previous["endpoint"]:
+                key = previous["api_key"]
         decision_settings.save_settings(
             cfg.DATA_DIR,
-            endpoint=str(form.get("endpoint") or ""),
+            endpoint=endpoint,
             model=str(form.get("model") or ""),
-            api_key=str(form.get("api_key") or ""))
+            api_key=key)
     except (ValueError, OSError):
         raise web.HTTPBadRequest(text="保存失败：字段不合法或无法写入") from None
-    raise web.HTTPFound("/decision?saved=1")
+    raise web.HTTPFound("/capabilities?saved=decision#decision")
 
 
 def _checkup_dirs(cfg):
@@ -904,8 +1075,9 @@ def _checkup(cfg, request, csrf):
             checkup_mod.write(out, dirs["checkup_dir"])
         except OSError:
             pass
-    warning = ('<p class="bad">体检策略文件无效，本页使用默认策略，已有报告保持不变。'
-               '请修复策略文件，或由维护者执行 <code>regular policy reset checkup</code>。</p>'
+    warning = ('<p class="bad">体检设置暂时无法读取，本次使用默认设置。</p>'
+               '<details class="wx-disclosure"><summary>查看处理方法</summary><p>修复体检策略文件，或由维护者执行 '
+               '<code>regular policy reset checkup</code>。已有报告保持不变。</p></details>'
                if policy_error else "")
     options = "".join(
         f'<option value="{_esc(d)}"{" selected" if d == day else ""}>{_esc(d)}</option>'
@@ -943,15 +1115,15 @@ def _checkup(cfg, request, csrf):
   </form>
 {cmds}</div>
 </details>""")
-    findings_html = "".join(cards) if cards else '<div class="wx-checkup-empty"><h2>这一天没有发现可疑的地方</h2><p>有哪句让你觉得不对，也可以直接把截图交给 Agent。</p><a href="/iterate">交给 Agent →</a></div>'
+    findings_html = "".join(cards) if cards else '<div class="wx-checkup-empty"><h2>这一天没有发现明显问题</h2><p>有哪句让你觉得不对，也可以直接把截图交给 Agent。</p><a href="/iterate">交给 Agent →</a></div>'
     i = out["inputs"]
     pending = sum(f.get("verdict") not in ("yes", "no") for f in out["findings"])
     body = f"""
 <header class="wx-heading"><div><h1>每日体检</h1><p>看看哪些话可能接偏了，点开一条再看现场。</p></div><form method="get" action="/checkup" class="wx-date"><label class="sr-only" for="checkup-day">体检日期</label><select id="checkup-day" name="day">{options}</select><button class="secondary" type="submit">查看</button></form></header>
 {warning}
-<div class="wx-checkup-summary"><p><strong>{pending} 条待看</strong><span>共 {len(out['findings'])} 条候选 · 收到 {i['incoming']} 条消息 · 送达 {i['delivered']} 条回复</span></p><a href="/iterate">让 Agent 帮忙 →</a></div>
-<section class="wx-findings" aria-label="体检候选">{findings_html}</section>
-<details class="wx-disclosure"><summary>分类统计与扫描范围</summary><p class="muted">只读本机记录，不联网、不调模型。扫描每轮输入 {i['turns']} 轮、分诊 {i['triage']} 次，参考前 {i['baseline_days']} 天。</p><table><thead><tr><th>信号</th><th>条数</th><th>候选标注确认率</th></tr></thead><tbody>{"".join(sig_rows)}</tbody></table></details>
+<div class="wx-checkup-summary"><p><strong>{pending} 条待看</strong><span>共 {len(out['findings'])} 条记录 · 收到 {i['incoming']} 条消息 · 回复 {i['delivered']} 条</span></p><a href="/iterate">让 Agent 帮忙 →</a></div>
+<section class="wx-findings" aria-label="待看记录">{findings_html}</section>
+<details class="wx-disclosure"><summary>分类统计与查看范围</summary><p class="muted">查看 {i['turns']} 轮对话、{i['triage']} 次接话判断，参考前 {i['baseline_days']} 天的记录。</p><table><thead><tr><th>问题类型</th><th>数量</th><th>确认比例</th></tr></thead><tbody>{"".join(sig_rows)}</tbody></table></details>
 """
     return _page("每日体检", body, "checkup")
 
@@ -1005,7 +1177,9 @@ def create_app(cfg, *, token):
         return _html(_dashboard(cfg, csrf=csrf, runner=runner))
 
     async def setup_page(request):
-        return _html(_setup_page(cfg, request, csrf))
+        if request.query.get("provider"):
+            raise web.HTTPFound("/capabilities?provider=" + quote(str(request.query["provider"]), safe="") + "#chat")
+        return _html(_setup_page(cfg, request, csrf, runner))
 
     async def capabilities_page(request):
         return _html(_capabilities_page(cfg, request, csrf, runner))
@@ -1019,10 +1193,25 @@ def create_app(cfg, *, token):
     async def setup_save(request):
         form = await checked_form(request)
         try:
-            instance_settings.save_settings(cfg, form)
+            if form.get("section") == "identity" or not any(name in form for name in
+                    ("provider", "models", "model_choice", "base_url", "api_key", "fallback_models")):
+                instance_settings.save_identity(cfg, form)
+            else:
+                # Existing local clients can still submit the previous combined setup form.
+                instance_settings.save_settings(cfg, form)
         except (ValueError, OSError):
-            raise web.HTTPBadRequest(text="保存失败：请检查接口地址、模型、每日上限与文件权限。") from None
+            raise web.HTTPBadRequest(text="没能保存，请检查填写内容后重试。") from None
         raise web.HTTPFound("/setup?saved=1")
+
+    async def models_save(request):
+        form = await checked_form(request)
+        try:
+            values = {name: form[name] for name in ("provider", "models", "model_choice", "api_key",
+                      "base_url", "fallback_models", "daily_budget") if name in form}
+            instance_settings.save_settings(cfg, values)
+        except (ValueError, OSError):
+            raise web.HTTPBadRequest(text="没能保存，请检查模型和服务连接。") from None
+        raise web.HTTPFound("/capabilities?saved=chat#chat")
 
     async def capabilities_save(request):
         form = await checked_form(request)
@@ -1159,10 +1348,19 @@ def create_app(cfg, *, token):
         await runner.close()
 
     async def knowledge(request):
-        return _html(_knowledge(cfg, request))
+        return _html(_knowledge(cfg, request, csrf=csrf))
 
     async def knowledge_save(request):
-        return await _knowledge_save(cfg, request)
+        form = await checked_form(request)
+        return await _knowledge_save(cfg, request, form=form)
+
+    async def knowledge_entry_preview(request):
+        form = await checked_form(request)
+        return _html(_knowledge_entry_preview(cfg, form, csrf=csrf))
+
+    async def knowledge_entry_save(request):
+        form = await checked_form(request)
+        return await _knowledge_entry_save(cfg, form)
 
     async def memory(request):
         return _html(_memory(cfg, request))
@@ -1196,6 +1394,7 @@ def create_app(cfg, *, token):
     app.router.add_get("/", home)
     app.router.add_get("/setup", setup_page)
     app.router.add_post("/setup/save", setup_save)
+    app.router.add_post("/models/save", models_save)
     app.router.add_get("/capabilities", capabilities_page)
     app.router.add_post("/capabilities/save", capabilities_save)
     app.router.add_post("/capabilities/toggle", capabilities_toggle)
@@ -1207,6 +1406,8 @@ def create_app(cfg, *, token):
     app.router.add_post("/checkup/label", checkup_label)
     app.router.add_get("/knowledge", knowledge)
     app.router.add_post("/knowledge/save", knowledge_save)
+    app.router.add_post("/knowledge/entry/preview", knowledge_entry_preview)
+    app.router.add_post("/knowledge/entry/save", knowledge_entry_save)
     app.router.add_get("/memory", memory)
     app.router.add_get("/search", search)
     app.router.add_get("/decision", decision)

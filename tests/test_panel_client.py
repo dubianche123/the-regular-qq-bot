@@ -162,7 +162,7 @@ const tick = ms => { now += ms; const pending = frames.splice(0); pending.forEac
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_provider_drafts_and_knowledge_composer_make_no_requests(self):
+    def test_model_picker_preserves_provider_drafts_and_changes_locally(self):
         script = r'''
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -175,42 +175,109 @@ class Element {
   focus() { this.focused=true; }
 }
 const provider = new Element('openai');
-const fields = {provider, base_url:new Element('https://openai.example/v1'), models:new Element('openai-edited'), fallback_models:new Element('backup-edited'), api_key:new Element('UNSAVED_PRIVATE_KEY')};
+const fields = {provider, base_url:new Element('https://openai.example/v1'), models:new Element('openai-primary'), fallback_models:new Element('openai-backup'), api_key:new Element('UNSAVED_PRIVATE_KEY')};
 const options = ['openai','zhipu'].map(name => {
   const item=new Element();
-  item.dataset={providerOption:name,baseUrl:`https://${name}.example/v1`,models:`${name}-primary`,fallbackModels:`${name}-backup`,keyPlaceholder:'local only'};
+  item.dataset={providerOption:name,baseUrl:`https://${name}.example/v1`,models:`${name}-primary`,modelOptions:JSON.stringify([`${name}-primary`,`${name}-backup`]),fallbackModels:`${name}-backup`,keyPlaceholder:'saved locally'};
   return item;
 });
-const summary = new Element(); const summaryStrong = new Element(); summary.querySelector=()=>summaryStrong;
-const modelOptions = new Element(); const providerStatus = new Element();
+const choice = new Element('openai-primary');
+const custom = new Element();
+const providerStatus = new Element();
 const setup = new Element(); setup.elements={namedItem:name=>fields[name]};
 setup.querySelectorAll=()=>options;
-setup.querySelector=key=>({'[data-chat-choice-summary]':summary,'#chat-model-options':modelOptions,'[data-provider-status]':providerStatus})[key];
-const title=new Element('奶茶局'), keywords=new Element('奶茶、报名'), body=new Element('周五回复群公告。'), source=new Element('## 原有条目\n关键词：原有\n原有内容。\n'), add=new Element(), status=new Element();
-const knowledge=new Element();
-knowledge.querySelector=key=>({'[data-knowledge-title]':title,'[data-knowledge-keywords]':keywords,'[data-knowledge-body]':body,'[data-knowledge-source]':source,'[data-knowledge-add]':add,'[data-knowledge-status]':status})[key];
-const document={body:{dataset:{}},querySelector:key=>({'[data-setup-form]':setup,'[data-knowledge-form]':knowledge})[key]||null,querySelectorAll:()=>[],createElement:()=>new Element()};
+setup.querySelector=key=>({'[data-model-choice]':choice,'[data-custom-model-field]':custom,'[data-provider-status]':providerStatus})[key];
+const document={body:{dataset:{}},querySelector:key=>key==='[data-setup-form]'?setup:null,querySelectorAll:()=>[],createElement:()=>new Element()};
 const reduced=new Element(); reduced.matches=false;
-const context={document,window:{matchMedia:()=>reduced},localStorage:{getItem:()=>null},setTimeout(){},clearTimeout(){},fetch(){throw new Error('Selection/composition must stay local');}};
+const context={document,window:{matchMedia:()=>reduced},localStorage:{getItem:()=>null},setTimeout(){},clearTimeout(){},fetch(){throw new Error('Choosing models must stay local');}};
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),context);
+assert.equal(custom.hidden,true);
+choice.value='openai-backup'; choice.events.change();
+assert.equal(fields.models.value,'openai-backup');
+assert.equal(fields.fallback_models.value,'openai-primary');
+assert.equal(custom.hidden,true);
+choice.value='__custom__'; choice.events.change();
+assert.equal(custom.hidden,false);
+assert.equal(fields.models.required,true);
+assert.equal(fields.models.value,'');
+fields.models.value='own-custom'; fields.models.events.input();
+fields.fallback_models.value='own-backup'; fields.fallback_models.events.input();
 options[1].events.click();
+assert.equal(choice.value,'zhipu-primary');
 assert.equal(fields.models.value,'zhipu-primary');
 assert.equal(fields.fallback_models.value,'zhipu-backup');
 assert.equal(fields.api_key.value,'');
-fields.models.value='zhipu-edited'; fields.fallback_models.value='zhipu-b2';
+assert.equal(custom.hidden,true);
+assert.deepEqual(choice.children.map(item=>item.value),['zhipu-primary','zhipu-backup','__custom__']);
+choice.value='__custom__'; choice.events.change();
+fields.models.value='zhipu-edited'; fields.models.events.input();
 options[0].events.click();
-assert.equal(fields.models.value,'openai-edited');
-assert.equal(fields.fallback_models.value,'backup-edited');
+assert.equal(choice.value,'__custom__');
+assert.equal(fields.models.value,'own-custom');
+assert.equal(fields.fallback_models.value,'own-backup');
 assert.equal(fields.api_key.value,'UNSAVED_PRIVATE_KEY');
-assert.equal(summaryStrong.textContent,'openai · openai-edited');
-options[1].events.click(); assert.equal(fields.models.value,'zhipu-edited');
-add.events.click();
-assert.equal(source.value,'## 原有条目\n关键词：原有\n原有内容。\n\n## 奶茶局\n关键词：奶茶、报名\n周五回复群公告。\n');
-assert.match(status.textContent,/尚未保存/);
-assert.equal(title.value,'');
-title.value='第二条'; body.value='内容\n## 不应偷偷增加新条目';
-const before=source.value; add.events.click(); assert.equal(source.value,before);
-console.log('provider draft isolation, explicit chat choice, local knowledge composition: passed');
+assert.equal(custom.hidden,false);
+choice.value='openai-primary'; choice.events.change();
+assert.equal(fields.fallback_models.value,'own-backup');
+options[1].events.click();
+assert.equal(choice.value,'__custom__');
+assert.equal(fields.models.value,'zhipu-edited');
+console.log('real model picker, custom input and provider draft isolation: passed');
+'''
+        source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
+        result = subprocess.run([shutil.which('node'), '-e', script, str(source)], capture_output=True,
+                                text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+@unittest.skipUnless(shutil.which('node'), 'Node is optional; browser script smoke requires it')
+class DecisionCredentialTest(unittest.TestCase):
+    def test_reuse_is_explicit_and_changing_service_requires_a_new_key(self):
+        script = r'''
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+class Element {
+  constructor(value='') { this.value=value; this.dataset={}; this.events={}; }
+  addEventListener(key, callback) { this.events[key]=callback; }
+}
+const endpoint = new Element('https://model.example/v1/decisions');
+const key = new Element('unsaved-private-key');
+const source = new Element('existing');
+const chat = new Element(), existing = new Element(), field = new Element();
+source.querySelector = selector => selector.includes('"chat"') ? chat : existing;
+const form = new Element();
+form.dataset = {chatBase:'https://model.example/v1',chatKeyAvailable:'true',savedEndpoint:endpoint.value};
+form.elements = {namedItem:name=>({api_key:key,endpoint})[name]};
+form.querySelector = selector => ({'[data-decision-credential]':source,'[data-decision-key-field]':field})[selector];
+const reduced = new Element(); reduced.matches=false;
+const document = {body:{dataset:{}},querySelector:selector=>selector==='[data-decision-form]'?form:null,querySelectorAll:()=>[]};
+const context = {document,window:{matchMedia:()=>reduced},localStorage:{getItem:()=>null},setTimeout(){},clearTimeout(){},fetch(){throw new Error('Choosing a credential must not contact a service');}};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),context);
+assert.equal(field.hidden,true);
+assert.equal(key.disabled,true);
+assert.equal(chat.disabled,false);
+assert.equal(existing.disabled,false);
+source.value='chat'; source.events.change();
+assert.equal(field.hidden,true);
+assert.equal(key.required,false);
+endpoint.value='https://other.example/v1/decisions'; endpoint.events.input();
+assert.equal(chat.disabled,true);
+assert.equal(existing.disabled,true);
+assert.equal(source.value,'new');
+assert.equal(field.hidden,false);
+assert.equal(key.required,true);
+assert.equal(key.disabled,false);
+endpoint.value='https://model.example/v1/decisions'; endpoint.events.input();
+assert.equal(chat.disabled,false);
+assert.equal(existing.disabled,false);
+assert.equal(source.value,'new');
+source.value='existing'; source.events.change();
+assert.equal(key.disabled,true);
+assert.equal(field.hidden,true);
+endpoint.value='https://model.example/v2/decisions'; endpoint.events.input();
+assert.equal(chat.disabled,true);
+assert.equal(source.value,'new');
+console.log('explicit credential choice and same-service boundary: passed');
 '''
         source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
         result = subprocess.run([shutil.which('node'), '-e', script, str(source)], capture_output=True,
@@ -267,7 +334,7 @@ const find = (node, test) => test(node) ? node : node.children.map(child => find
   assert.equal(saved[0].options.body.get('flag'), 'image');
   assert.equal(saved[0].options.body.get('enabled'), 'false');
   assert.equal(saved[0].options.body.get('csrf'), 'synthetic-csrf');
-  assert.match(card.children[0].textContent, /已关掉「画图」/);
+  assert.match(card.children[0].textContent, /已保存「画图」关闭/);
   console.log('proposal card, explicit confirm: passed');
 })().catch(error => { process.stderr.write(String(error.stack)); process.exitCode = 1; });
 '''

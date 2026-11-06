@@ -4,45 +4,104 @@
 const setup = document.querySelector("[data-setup-form]");
 if (setup) {
   const options = [...setup.querySelectorAll("[data-provider-option]")];
-  const drafts = new Map();
   const provider = setup.elements.namedItem("provider");
+  const choice = setup.querySelector("[data-model-choice]");
+  const custom = setup.querySelector("[data-custom-model-field]");
+  const input = setup.elements.namedItem("models");
+  const fallback = setup.elements.namedItem("fallback_models");
   const fields = ["base_url", "models", "fallback_models", "api_key"];
-  const summary = setup.querySelector("[data-chat-choice-summary]");
-  const modelOptions = setup.querySelector("#chat-model-options");
-  function describeChoice() {
-    const model = setup.elements.namedItem("models").value.trim();
-    summary.querySelector("strong").textContent = `${provider.value} · ${model || "还没选模型"}`;
-  }
+  const drafts = new Map();
+  let fallbackEdited = false;
+  let customValue = choice.value === "__custom__" ? input.value : "";
   for (const option of options) {
+    const models = JSON.parse(option.dataset.modelOptions || "[]");
     drafts.set(option.dataset.providerOption, {
       base_url: option.dataset.baseUrl,
       models: option.dataset.models,
       fallback_models: option.dataset.fallbackModels || "",
-      api_key: "",
+      api_key: "", options: models,
+      choice: models.includes(option.dataset.models) ? option.dataset.models : "__custom__",
+      customValue: "", fallbackEdited: false,
     });
+  }
+  function revealCustom() {
+    const shown = choice.value === "__custom__";
+    custom.hidden = !shown;
+    input.required = shown;
+  }
+  choice.addEventListener("change", () => {
+    const draft = drafts.get(provider.value);
+    if (choice.value === "__custom__") {
+      input.value = customValue;
+      revealCustom();
+      input.focus();
+    } else {
+      input.value = choice.value;
+      if (!fallbackEdited) fallback.value = draft.options.filter(model => model !== choice.value).join(", ");
+      revealCustom();
+    }
+  });
+  input.addEventListener("input", () => { customValue = input.value; });
+  fallback.addEventListener("input", () => { fallbackEdited = true; });
+  for (const option of options) {
     option.addEventListener("click", () => {
       const selected = option.dataset.providerOption;
       if (provider.value === selected) return;
-      drafts.set(provider.value, Object.fromEntries(fields.map(name => [name, setup.elements.namedItem(name).value])));
+      const current = drafts.get(provider.value);
+      drafts.set(provider.value, {
+        ...current, ...Object.fromEntries(fields.map(name => [name, setup.elements.namedItem(name).value])),
+        choice: choice.value, customValue, fallbackEdited,
+      });
       const draft = drafts.get(selected);
       for (const name of fields) setup.elements.namedItem(name).value = draft[name];
       setup.elements.namedItem("api_key").placeholder = option.dataset.keyPlaceholder;
+      choice.replaceChildren(...[...draft.options, "__custom__"].map(value => {
+        const item = document.createElement("option");
+        item.value = value;
+        item.textContent = value === "__custom__" ? "填写其他模型…" : value;
+        return item;
+      }));
+      choice.value = draft.choice;
+      customValue = draft.customValue;
+      fallbackEdited = draft.fallbackEdited;
       provider.value = selected;
+      revealCustom();
       for (const item of options) {
         const active = item === option;
         item.classList.toggle("selected", active);
         item.setAttribute("aria-pressed", String(active));
       }
-      setup.querySelector("[data-provider-status]").textContent = "已切换服务，其他输入已保留；尚未保存。";
-      modelOptions.replaceChildren(...[draft.models, ...draft.fallback_models.split(",")].filter(Boolean).map(value => {
-        const choice = document.createElement("option");
-        choice.value = value.trim();
-        return choice;
-      }));
-      describeChoice();
+      setup.querySelector("[data-provider-status]").textContent = "已切换，保存后生效。";
     });
   }
-  setup.elements.namedItem("models").addEventListener("input", describeChoice);
+  revealCustom();
+}
+
+const decisionForm = document.querySelector("[data-decision-form]");
+if (decisionForm) {
+  const source = decisionForm.querySelector("[data-decision-credential]");
+  const keyField = decisionForm.querySelector("[data-decision-key-field]");
+  const key = decisionForm.elements.namedItem("api_key");
+  const endpoint = decisionForm.elements.namedItem("endpoint");
+  const chat = source.querySelector('[data-decision-option="chat"]');
+  const existing = source.querySelector('[data-decision-option="existing"]');
+  const trimSlash = text => text.trim().replace(/\/+$/, "");
+  function syncCredential() {
+    const target = trimSlash(endpoint.value);
+    const sameChat = decisionForm.dataset.chatKeyAvailable === "true" && target.endsWith("/decisions")
+      && target.slice(0, -"/decisions".length) === trimSlash(decisionForm.dataset.chatBase);
+    const sameSaved = endpoint.value.trim() === decisionForm.dataset.savedEndpoint;
+    if (chat) chat.disabled = !sameChat;
+    if (existing) existing.disabled = !sameSaved;
+    if ((source.value === "chat" && !sameChat) || (source.value === "existing" && !sameSaved)) source.value = "new";
+    const entering = source.value === "new";
+    keyField.hidden = !entering;
+    key.required = entering;
+    key.disabled = !entering;
+  }
+  source.addEventListener("change", syncCredential);
+  endpoint.addEventListener("input", syncCredential);
+  syncCredential();
 }
 
 // Capabilities: a switch is saved the moment it flips; settings forms wait for their own Save.
@@ -94,28 +153,12 @@ for (const form of document.querySelectorAll("[data-cap-form]")) {
   });
 }
 
-// Compose a Markdown entry locally; it remains a draft until explicit Save.
-const knowledgeForm = document.querySelector("[data-knowledge-form]");
-if (knowledgeForm) {
-  const title = knowledgeForm.querySelector("[data-knowledge-title]");
-  const keywords = knowledgeForm.querySelector("[data-knowledge-keywords]");
-  const body = knowledgeForm.querySelector("[data-knowledge-body]");
-  const source = knowledgeForm.querySelector("[data-knowledge-source]");
-  const status = knowledgeForm.querySelector("[data-knowledge-status]");
-  knowledgeForm.querySelector("[data-knowledge-add]").addEventListener("click", () => {
-    const heading = title.value.trim();
-    const words = keywords.value.trim();
-    const content = body.value.trim();
-    if (!heading || !content || /[\r\n]/.test(heading + words) || /(^|\n)##\s/.test(content)) {
-      status.textContent = "请写好单行标题和具体内容；多条内容请分别加入。";
-      return;
-    }
-    const entry = `## ${heading}\n${words ? `关键词：${words}\n` : ""}${content}\n`;
-    source.value = `${source.value.trimEnd()}${source.value.trim() ? "\n\n" : ""}${entry}`;
-    title.value = keywords.value = body.value = "";
-    status.textContent = "已加入草稿，尚未保存。请核对后点击「保存这份知识」。";
-    source.focus();
-  });
+// A scope switch navigates; editing and previewing remain explicit form actions.
+for (const scope of document.querySelectorAll("[data-kb-scope]")) {
+  const select = scope.querySelector("select");
+  const button = scope.querySelector("button");
+  select.addEventListener("change", () => scope.requestSubmit());
+  button.hidden = true;
 }
 
 const copyButton = document.querySelector("[data-copy-brief]");
@@ -335,7 +378,7 @@ if (chatForm) {
   }
   function renderPresence(state) {
     if (chips) {
-      const items = [chip(state.bot === "ready" ? "在线" : "机器人未运行", state.bot === "ready" ? "good" : "warn")];
+      const items = [chip(state.bot === "ready" ? "在线" : "还没启动", state.bot === "ready" ? "good" : "warn")];
       if (state.bot === "ready") items.push(chip(state.gateway_connected ? "QQ 已连接" : "QQ 未连接", state.gateway_connected ? "good" : "warn"));
       if (state.circadian) items.push(chip(state.circadian, "lilac"));
       if (state.chatter > 0) items.push(chip(`群里 5 分钟 ${state.chatter} 条`));
@@ -419,16 +462,16 @@ if (chatForm) {
     refresh.disabled = true;
     try {
       const response = await fetch("/companion/status", { credentials: "same-origin", signal: AbortSignal.timeout(5000) });
-      if (!response.ok) throw new Error("无法读取本机连接，请刷新页面。");
+      if (!response.ok) throw new Error("暂时连不上，请刷新页面。");
       const result = await response.json();
       available = result.available === true;
-      status.textContent = available ? `本机聊天已就绪${result.qq_connected ? " · QQ 已连接" : " · QQ 暂未连接"}` : `${result.reason || "机器人尚未提供本机聊天。"} 请由你更新并启动，页面不会自动操作。`;
+      status.textContent = available ? `可以聊天${result.qq_connected ? " · QQ 已连接" : " · QQ 暂未连接"}` : "还没连上，先去首页看看。";
       if (stage) pollPresence();             // the bot's own state decides her resting pose
       else if (!available) setState("sleeping");
       else if (!sending) setState("idle");
     } catch {
       available = false;
-      status.textContent = "本机连接暂不可用。请检查机器人运行状态，再手动刷新。";
+      status.textContent = "暂时连不上，去首页看看运行状态。";
       if (!stage) setState("sleeping");
     } finally {
       refresh.disabled = false;
@@ -456,8 +499,8 @@ if (chatForm) {
       words.textContent = `${action.enabled ? "打开" : "关掉"}「${action.label}」？`;
       yes.textContent = action.enabled ? "打开" : "关掉";
     } else {
-      words.textContent = "交给编码 Agent：生成一份交接说明？";
-      yes.textContent = "去生成";
+      words.textContent = "这件事需要 Agent 帮忙，打开交接页？";
+      yes.textContent = "打开交接页";
     }
     const done = text => { card.replaceChildren(Object.assign(document.createElement("p"), { textContent: text })); card.classList.add("settled"); };
     no.addEventListener("click", () => done("好，先不动。"));
@@ -472,9 +515,9 @@ if (chatForm) {
         const response = await fetch("/capabilities/toggle", { method: "POST", body, credentials: "same-origin", headers: { Accept: "application/json" } });
         if (!response.ok) throw new Error();
         const data = await response.json();
-        done(`已${action.enabled ? "打开" : "关掉"}「${action.label}」。${data.timing || ""}`);
+        done(`已保存「${action.label}」${action.enabled ? "开启" : "关闭"}。${data.timing || ""}`);
       } catch {
-        done("没保存上，可以去「能力与服务」里再试。");
+        done("没保存上，可以去「模型与能力」里再试。");
       }
     });
     const row = document.createElement("div");
@@ -514,8 +557,8 @@ if (chatForm) {
       settleTimer = setTimeout(() => setState("idle"), 2600);
     } catch (error) {
       const message = error.name === "TimeoutError" || error.name === "AbortError" ? "等待回复超时，结果尚未确认；本页没有自动重试。" : (error.message || "连接中断，结果尚未确认；本页没有自动重试。");
-      appendMessage("error", "本机小窗", message);
-      status.textContent = "这一句暂时没接上，可以先看看运行状态。";
+      appendMessage("error", "提示", message);
+      status.textContent = "这句没接上，去首页看看。";
       setState("idle");
     } finally {
       sending = false;
