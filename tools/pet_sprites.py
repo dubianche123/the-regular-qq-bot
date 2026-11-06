@@ -112,7 +112,12 @@ SHEETS = {
     "lookaround": "LOOKING AROUND curiously, standing. Frame 1: shading her eyes with one hand, looking toward the viewer's left. Frame 2: same gesture, looking toward the viewer's right. Frame 3: head tilted with a question-mark-like confused face, one hand scratching her head. Frame 4: shrugging with both palms up, playful smile.",
     "eat": "EATING a snack, standing, front three-quarter view. Frame 1: holding a round cookie in both hands, eyes sparkling with excitement. Frame 2: taking a big bite of the cookie, eyes closed, cheeks puffed. Frame 3: chewing happily with closed crescent eyes and stuffed cheeks, a few crumbs. Frame 4: licking her lips with a satisfied smile, hands patting her tummy.",
     "laptop": "WORKING on a small sage-green laptop while sitting on the floor with crossed legs, the laptop resting on her lap with its screen facing her (the viewer sees the back of the lid). Frame 1: typing quickly with focused eyes. Frame 2: typing, tongue slightly out in concentration. Frame 3: leaning back slightly, one hand on chin, reading the screen. Frame 4: typing again with a confident smile.",
+    # Waking up is played frame by frame between "sleep" and standing, so these two continue the sleep sheet.
+    "wake": "WAKING UP from a nap on the floor, slow and groggy, continuing from the lying pose of Image 2 (its bottom-left frame). Frame 1: still lying curled up on her side exactly like that sleeping pose, but one eye cracking open, eyebrows knitted sleepily, one hand starting to press against the floor. Frame 2: propping her upper body up on one straight arm from the lying pose, head drooping, eyes half closed, hair messy, legs still on the floor. Frame 3: sitting up on the floor with legs stretched forward (the same sitting pose as the top-left frame of Image 2), rubbing one eye with her fist, other hand on the floor, drowsy. Frame 4: same sitting pose, hands resting in her lap, looking at the viewer with heavy half-closed eyes and a tiny sleepy pout.",
+    "getup": "GETTING UP from the floor after a nap, still sleepy. Frame 1: sitting on the floor with knees pulled in, both hands pressed on the floor beside her hips, about to push herself up, half-closed eyes. Frame 2: rising on one knee, one hand on the raised knee, the other hand still touching the floor, drowsy face. Frame 3: standing up, shoulders slightly slouched, scratching the side of her messy hair with one hand, eyes half closed. Frame 4: standing, a small yawn with one hand covering her mouth and eyes squeezed shut.",
 }
+# Image 2 (the scale/style anchor) for sheets that continue another sheet; everything else uses the walk sheet.
+STYLE_REF = {"wake": "sleep"}
 
 FACE_EDIT = """Image 1 is a sprite sheet of an original chibi dragon-woman desktop pet. Edit ONLY the transparent masked area, which covers the two eyes of the TOP-LEFT figure.
 Keep every pixel outside the mask exactly unchanged: same canvas, same four figures, same positions, colors, lineart and transparent background.
@@ -148,6 +153,8 @@ STRIPS = {
     "lookaround": ("lookaround", [0, 1, 2, 3], 1.0),
     "eat": ("eat", [0, 1, 2, 3], 1.0),
     "laptop": ("laptop", [0, 1, 2, 3], SEATED),
+    "wake": ("wake", [0, 1, 2, 3], SEATED),
+    "getup": ("getup", [0, 1, 2, 3], 1.0),
 }
 
 
@@ -167,8 +174,9 @@ def _jobs(stage, out, model):
                  "prompt": ANCHOR_HEAD.format(layout=layout) + "\nAction: " + action}
                 for name, (size, layout, action) in ANCHOR_SHEETS.items()]
     if stage == "sheets":
-        return [{"name": name, "refs": [out / "base.png", out / "walk.png"], "size": "1024x1024",
-                 "model": model, "prompt": SHEET_HEAD + "\nAction: " + action} for name, action in SHEETS.items()]
+        return [{"name": name, "refs": [out / "base.png", out / f"{STYLE_REF.get(name, 'walk')}.png"],
+                 "size": "1024x1024", "model": model, "prompt": SHEET_HEAD + "\nAction: " + action}
+                for name, action in SHEETS.items()]
     if stage == "faces":
         return [{"name": name, "refs": [out / "idle.png"], "mask": out / "eyes-mask.png", "size": "1024x1024",
                  "model": model, "prompt": FACE_EDIT + "\n" + change} for name, change in FACES.items()]
@@ -282,10 +290,15 @@ def build(args):
     eyes = Image.new("L", (CELL, CELL), 0)
     ImageDraw.Draw(eyes).ellipse(EYES, fill=255)
     eyes = eyes.filter(ImageFilter.GaussianBlur(5))
-    manifest = {"schema": 2, "frame": list(CANVAS), "anchor": list(ANCHOR),
-                "figure_height": FIGURE_HEIGHT, "actions": {}}
+    # Strips made elsewhere (hand-picked candidates) stay listed; this build only replaces its own.
+    previous = out / "sprites.json"
+    kept = json.loads(previous.read_text(encoding="utf-8")).get("actions", {}) if previous.is_file() else {}
+    manifest = {"schema": 2, "frame": list(CANVAS), "anchor": list(ANCHOR), "figure_height": FIGURE_HEIGHT,
+                "actions": {name: action for name, action in kept.items() if name not in STRIPS or args.only}}
     warnings = []
     for name, (sheet_name, cells, multiplier) in STRIPS.items():
+        if args.only and name not in args.only:
+            continue
         frames = [clean(_cell(sheet(sheet_name), index)) for index in cells]
         if name == "idle":
             frames += [clean(Image.composite(_cell(sheet(face), 0), frames[0], eyes)) for face in FACES]
@@ -320,6 +333,7 @@ def main():
     bld = sub.add_parser("build", help="offline: slice reviewed sheets into runtime strips")
     bld.add_argument("--source", required=True)
     bld.add_argument("--out", default=str(ROOT / "regular/assets/pet"))
+    bld.add_argument("--only", nargs="+", help="rebuild only these strips; the others stay as they are")
     args = parser.parse_args()
     if args.command == "build":
         return build(args)

@@ -82,7 +82,7 @@ class AmbientLifeTest(unittest.TestCase):
         self.assertEqual([b.clip] + [s.clip for s in b.plan], ["doze", "lie_down", "sleep"])
         b._set_clip("sleep", 3.0)
         b._queue(Step("pout"), now=3.0, interrupt=True)
-        self.assertEqual([b.clip] + [s.clip for s in b.plan], ["wake", "stand_up", "pout"])
+        self.assertEqual([b.clip] + [s.clip for s in b.plan], ["wake", "get_up", "pout"])
 
     def test_quiet_mode_stays_put_and_reduced_motion_has_no_effects(self):
         quiet = brain(quiet=True)
@@ -193,8 +193,58 @@ class InteractionTest(unittest.TestCase):
         self.assertEqual(b.clip, "sleep")
         b.poke(13.0)
         self.assertEqual(b.clip, "wake")
-        self.assertEqual([s.clip for s in b.plan][:2], ["stand_up", "pout"])
+        self.assertEqual([s.clip for s in b.plan][:3], ["grumble", "get_up", "idle"])
         self.assertIn(b.bubble.text, LINES["woken"])
+        self.assertLess(b.transform(13.1)["dy"], 0)          # a twitch, not a stomp
+
+    def test_poking_her_while_she_gets_up_does_not_send_her_back_to_the_floor(self):
+        b = brain()
+        b._queue(Step("sleep", 100), now=0.0, interrupt=True)
+        t, _ = run(b, 0.0, 9)
+        self.assertEqual(b.clip, "sleep")
+        b.poke(t)
+        t, clips = run(b, t, 1.5)
+        b.poke(t)
+        self.assertIn(b.clip, ("wake", "grumble"))
+        t, clips = run(b, t, 8)
+        self.assertNotIn("sleep", clips)
+        self.assertIn("get_up", clips)
+        self.assertEqual(b.posture(), "stand")
+
+    def test_poking_her_while_she_nods_off_seated_skips_the_lying_frames(self):
+        b = brain()
+        b._queue(Step("sleep", 100), now=0.0, interrupt=True)
+        t, _ = run(b, 0.0, 2)
+        self.assertEqual(b.clip, "doze")
+        b.poke(t)
+        self.assertEqual([b.clip] + [s.clip for s in b.plan][:2], ["grumble", "get_up", "idle"])
+
+    def test_waking_frames_dissolve_but_blinks_and_flinches_stay_crisp(self):
+        b = brain()
+        b._queue(Step("sleep", 100), now=0.0, interrupt=True)
+        t, _ = run(b, 0.0, 3)
+        b.poke(t)
+        fades = 0
+        for _ in range(30 * 6):
+            t += 1 / 30
+            b.tick(t)
+            fades += b.pose(t)[3]["fade"] is not None
+        self.assertGreater(fades, 10)
+        idle = brain()
+        idle._queue(Step("idle", 30), now=0.0, interrupt=True)
+        t = 0.0
+        for _ in range(30 * 20):
+            t += 1 / 30
+            idle.tick(t)
+            self.assertIsNone(idle.pose(t)[3]["fade"])
+        still = brain(motion=False)
+        still._queue(Step("sleep", 100), now=0.0, interrupt=True)
+        t, _ = run(still, 0.0, 3)
+        still.poke(t)
+        for _ in range(30 * 6):
+            t += 1 / 30
+            still.tick(t)
+            self.assertIsNone(still.pose(t)[3]["fade"])
 
     def test_rubbing_her_head_makes_her_shy(self):
         b = brain()
@@ -364,14 +414,14 @@ class AgentPresenceTest(unittest.TestCase):
         t, _ = run(b, 1.0, 12)
         self.assertEqual(b.clip, "sleep")
         b.observe(t, ready(events=[{"kind": "replying", "ts": 10.0}]))     # not @-ed: feedback repair
-        t, clips = run(b, t, 4)
-        self.assertEqual(clips[:3], ["wake", "stand_up", "phone"])
+        t, clips = run(b, t, 6)
+        self.assertEqual(clips[:3], ["wake", "get_up", "phone"])
         b._queue(Step("sleep", 900.0), now=t, interrupt=True)
         t, _ = run(b, t, 12)
         self.assertIn(b.clip, ASLEEP)
         b.observe(t, ready(events=[{"kind": "drew", "ts": 11.0}]))
         self.assertIn(b.bubble.text, LINES["drew"])
-        _, clips = run(b, t, 4)
+        _, clips = run(b, t, 6)
         self.assertIn("draw", clips)
 
     def test_events_wait_while_she_is_held_or_waiting_for_a_local_reply(self):

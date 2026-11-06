@@ -129,6 +129,14 @@
   "stuck": {
    "file": "stuck.webp",
    "frames": 4
+  },
+  "wake": {
+   "file": "wake.webp",
+   "frames": 4
+  },
+  "getup": {
+   "file": "getup.webp",
+   "frames": 4
   }
  }
 }

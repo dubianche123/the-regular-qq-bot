@@ -24,6 +24,15 @@
   a live voice session holds listen until it actually ends. Seated states use
   the existing posture bridges. A state ends when its heartbeat stops, not on
   a long fake "still busy" timeout.
+- Make waking up an acted sequence instead of a pose jump. Two new strips
+  (wake, getup): she stirs with one eye open, sits up rubbing an eye, gives a
+  heavy-lidded look when poked awake, pulls her knees in, rises on one knee,
+  scratches her hair and yawns. Poking her while she nods off seated skips the
+  lying frames; poking again while she gets up no longer restarts the sequence.
+  Slow and posture-changing frames now dissolve into each other (blinks, walks,
+  hops and flinches stay crisp; reduced motion turns it off).
+  `tools/pet_sprites.py build --only` rebuilds single strips and keeps strips it
+  does not own in `sprites.json`.
 - Add `tests/test_design_state_layer.py` covering the state layer, shipped
   strips, navigation folding, and removal of the native menu.
 - Bind the whole app to one OpenAI key. The console now asks for an API key in

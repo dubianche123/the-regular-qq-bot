@@ -30,9 +30,12 @@ CLIPS = {
     "sit_swing": ("sit", [1, 2], 1.6, True, "sit"),
     "stand_up": ("sit", [1, 0], 5, False, "stand"),
     "doze": ("sleep", [0, 1, 0, 1], 0.8, False, "sit"),
-    "lie_down": ("sleep", [1, 2], 2, False, "lie"),
+    "lie_down": ("wake", [1, 0], 1.6, False, "lie"),               # slumps, then the eyes fall shut
     "sleep": ("sleep", [2, 3], 0.45, True, "lie"),
-    "wake": ("sleep", [2, 1, 0], 2.5, False, "sit"),
+    # Waking is acted out: stir, prop up, sit rubbing an eye; then kneel, stand, scratch, yawn.
+    "wake": ("wake", [0, 0, 1, 2, 2, 2], 2.4, False, "sit"),
+    "grumble": ("wake", [3], 1, False, "sit"),                     # poked awake: a heavy-lidded look first
+    "get_up": ("getup", [0, 1, 2, 2, 3, 3], 3, False, "stand"),
     "dangle": ("dangle", [0], 1, True, "air"),
     "fall": ("fall", [0, 1], 7, True, "air"),
     "land": ("fall", [2, 2, 3], 6, False, "stand"),
@@ -65,11 +68,17 @@ CLIPS = {
 }
 # Transition clips start from another posture than the one they end in.
 STARTS_FROM = {"sit_down": "stand", "stand_up": "sit", "doze": "sit", "lie_down": "sit", "wake": "lie",
-               "land": "air", "fall": "air", "dangle": "air"}
+               "get_up": "sit", "land": "air", "fall": "air", "dangle": "air"}
 BRIDGES = {("stand", "sit"): ["sit_down"], ("stand", "lie"): ["sit_down", "doze", "lie_down"],
            ("sit", "stand"): ["stand_up"], ("sit", "lie"): ["doze", "lie_down"],
-           ("lie", "sit"): ["wake"], ("lie", "stand"): ["wake", "stand_up"]}
+           ("lie", "sit"): ["wake"], ("lie", "stand"): ["wake", "get_up"]}
 ASLEEP = frozenset({"sleep", "doze", "lie_down"})
+WAKING = frozenset({"wake", "grumble", "get_up"})
+# Seconds a new frame dissolves in from the previous one. Only slow and posture-changing clips blend:
+# blinks, walking, hops and a startled flinch stay crisp. Between two clips the longer blend wins.
+BLEND = {"wake": 0.22, "grumble": 0.2, "get_up": 0.16, "lie_down": 0.25, "doze": 0.3, "sleep": 0.5,
+         "sit_down": 0.1, "stand_up": 0.1, "sit_swing": 0.25, "read": 0.2, "tea": 0.25, "laptop": 0.12,
+         "stretch": 0.12, "reply": 0.15, "checkup": 0.15}
 # Clips a coding agent may request through the panel; physics/transition clips stay internal.
 CUE_ACTIONS = ("wave", "hop", "cheer", "talk", "think", "phone", "laptop", "draw", "sing", "read", "tea",
                "stretch", "lookaround", "shy", "pout", "startle", "eat", "sleep",
@@ -108,6 +117,7 @@ LINES = {
     "poke_again": ("干嘛呀。", "又戳！", "你是不是很闲？"),
     "poked_more": ("别戳啦！", "再戳要生气了哦。", "哼。"),
     "woken": ("唔……谁呀。", "刚睡着……", "（起床气）"),
+    "waking": ("醒了醒了……", "在起了在起了。"),
     "petted": ("嘿嘿。", "再摸一下也行。", "舒服——"),
     "lifted": ("哇哇——", "放我下来！", "要去哪儿？"),
     "thrown": ("晕……", "轻点嘛！"),
@@ -208,6 +218,8 @@ class PetBrain:
         self.energy = 1.0
         self.last_interaction = now
         self.pokes: deque = deque(maxlen=6)
+        self._shown = (None, None, None, None)   # strip, frame, mirrored, clip on screen
+        self._fade = None                        # (strip, frame, mirrored, started, seconds) dissolving out
         self.feeds: deque = deque(maxlen=6)
         self.pointer = _Pointer()
         self.attention = False
@@ -268,8 +280,14 @@ class PetBrain:
         return not loop and (now - self.clip_started) * fps >= len(seq)
 
     def pose(self, now=None):
-        """(strip, frame, mirrored, transform) for the renderer."""
+        """(strip, frame, mirrored, transform) for the renderer; transform["fade"] is the frame dissolving out."""
         now = self._now if now is None else now
+        strip, frame, mirrored = self._frame(now)
+        transform = self.transform(now)
+        transform["fade"] = self._fading(now)
+        return strip, frame, mirrored, transform
+
+    def _frame(self, now):
         strip, seq, fps, loop, _ = CLIPS[self.clip]
         index = int(max(0.0, now - self.clip_started) * fps)
         frame = seq[index % len(seq) if loop else min(index, len(seq) - 1)]
@@ -286,7 +304,33 @@ class PetBrain:
             mirrored = False
         elif self.clip in ("look_left", "look_right"):
             mirrored = False
-        return strip, frame, mirrored, self.transform(now)
+        return strip, frame, mirrored
+
+    def _track_frame(self, now):
+        """Start a dissolve when the drawn frame changes inside or between slow clips."""
+        shown = self._frame(now) + (self.clip,)
+        old = self._shown
+        if shown[:3] == old[:3]:
+            return
+        self._shown = shown
+        seconds = 0.0
+        if self.motion and self.mode == "ground" and old[0] is not None:
+            seconds = BLEND.get(self.clip, 0.0) if old[3] == self.clip else max(
+                BLEND.get(old[3], 0.0), BLEND.get(self.clip, 0.0))
+        self._fade = (old[0], old[1], old[2], now, seconds) if seconds else None
+
+    def _fading(self, now):
+        """(strip, frame, mirrored, opacity) of the outgoing frame while it dissolves, else None."""
+        if self._fade is None:
+            return None
+        strip, frame, mirrored, started, seconds = self._fade
+        k = (now - started) / seconds
+        if not 0 <= k < 1:
+            return None
+        return strip, frame, mirrored, 1 - k * k * (3 - 2 * k)
+
+    def fading(self, now=None):
+        return self._fading(self._now if now is None else now) is not None
 
     def transform(self, now):
         sx = sy = 1.0
@@ -434,7 +478,7 @@ class PetBrain:
         if choice == "sit":
             return [Step("sit_swing", r(8, 16)), Step("idle", 1)]
         if choice == "nap":
-            return [Step("sleep", 900.0 if offline else r(40, 120)), Step("wake"), Step("stretch")]
+            return [Step("sleep", 900.0 if offline else r(40, 120)), Step("wake"), Step("get_up")]
         if choice == "phone":
             return [Step("phone", r(5, 12)), Step("idle", 1.5)]
         if choice == "pout":
@@ -466,6 +510,7 @@ class PetBrain:
             self.blink_started = now
             self.blink_at = now + (0.3 if self.rng.random() < 0.15 else self.rng.uniform(2.4, 6.0))
         self._particles(now, dt)
+        self._track_frame(now)
         if self.bubble is not None and now >= self.bubble.until:
             self.bubble = None
 
@@ -677,9 +722,18 @@ class PetBrain:
         self.last_interaction = now
         if self.chat_pending or self.mode != "ground":
             return
-        if self.clip in ASLEEP or self.clip == "wake":
-            self._queue(Step("pout"), Step("idle", 2), now=now, interrupt=True)
-            self.say(self.rng.choice(LINES["woken"]), now=now, seconds=3)
+        if self.clip in ASLEEP:
+            # A twitch, then she wakes the slow way: stir, sit up rubbing an eye, a heavy-lidded look, get up.
+            # Nodding off while still seated skips the lying frames instead of lying down first.
+            self.jolt_started = now
+            lying = [Step("wake")] if self.posture() == "lie" else []
+            self._queue(*lying, Step("grumble", 1.2), Step("get_up"), Step("idle", 2), now=now, interrupt=True)
+            self.say(self.rng.choice(LINES["woken"]), now=now, seconds=3.2)
+            return
+        if self.clip in WAKING:
+            # Already getting up: restarting the sequence would make her jump back to lying down.
+            if self.bubble is None:
+                self.say(self.rng.choice(LINES["waking"]), now=now, seconds=2)
             return
         recent = sum(1 for t in self.pokes if now - t < 6)
         self.jolt_started = now
@@ -780,7 +834,7 @@ class PetBrain:
         elif old.known and old.bot == "offline" and new.bot == "ready":
             self._status_line("online", now, gap=0)
             if self.mode == "ground" and self.clip in ASLEEP:
-                self._queue(Step("wake"), Step("stretch"), now=now, interrupt=True)
+                self._queue(Step("wake"), Step("get_up"), now=now, interrupt=True)
         for event in data.get("events") or ():
             if not isinstance(event, dict) or self.has_seen(event):
                 continue

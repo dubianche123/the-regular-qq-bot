@@ -948,7 +948,7 @@ class PetWidget(QWidget):
         brain.set_attention(self._attention(), now)
         brain.tick(now)
         # Smooth 60 fps only while she moves; idle poses and breathing are fine at 30 fps.
-        moving = brain.mode != "ground" or brain.clip in ("walk", "hop", "land")
+        moving = brain.mode != "ground" or brain.clip in ("walk", "hop", "land") or brain.fading(now)
         self.animation.setInterval(16 if moving else 33)
         self._sync_windows()
         self._update_toolbar(cursor, now)
@@ -990,8 +990,10 @@ class PetWidget(QWidget):
             if self.voice_card is not None and self.voice_card.isVisible():
                 self._place_voice()
         strip, frame, mirrored, transform = brain.pose()
+        fade = transform["fade"]
         key = (strip, frame, mirrored, round(transform["sx"], 3), round(transform["sy"], 3),
-               round(transform["rot"], 1), round(transform["dy"], 1), brain.mode)
+               round(transform["rot"], 1), round(transform["dy"], 1), brain.mode,
+               fade and (fade[0], fade[1], fade[2], round(fade[3], 2)))
         if force or key != self._paint_key:
             self._paint_key = key
             self._update_mask(strip, frame, mirrored, transform)
@@ -1004,7 +1006,8 @@ class PetWidget(QWidget):
 
     def _update_mask(self, strip, frame, mirrored, transform):
         brain = self.brain
-        if brain.mode != "ground" or transform["rot"] or transform["dy"]:
+        # While moving or dissolving between two frames the silhouette changes every paint.
+        if brain.mode != "ground" or transform["rot"] or transform["dy"] or transform["fade"]:
             if self._mask_key is not None:
                 self.clearMask()
                 self._mask_key = None
@@ -1042,6 +1045,16 @@ class PetWidget(QWidget):
             painter.rotate(transform["rot"])
             painter.translate(0, -pivot)
         painter.scale(transform["sx"], transform["sy"])
+        fade = transform["fade"]
+        if fade is not None:
+            # The outgoing frame fades while the new one comes up a little faster, so the
+            # figure never turns see-through halfway.
+            old_strip, old_frame, old_mirrored, opacity = fade
+            painter.setOpacity(opacity)
+            painter.drawPixmap(QPointF(-self.anchor_pt[0], -self.anchor_pt[1]),
+                               self.sprites.pixmap(old_strip, old_frame, old_mirrored, brain.scale,
+                                                   self.devicePixelRatioF()))
+            painter.setOpacity(1 - opacity * opacity)
         painter.drawPixmap(QPointF(-self.anchor_pt[0], -self.anchor_pt[1]), pixmap)
         painter.end()
 
