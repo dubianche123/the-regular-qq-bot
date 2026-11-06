@@ -28,7 +28,7 @@
 | --- | --- | --- |
 | `IMAGE_GENERATION_ENABLED` | `true` | 关闭设为 `false` |
 | `IMAGE_GENERATION_BASE_URL` | `OPENAI_BASE_URL`，未设置时为 `https://api.openai.com/v1` | 支持 Images API 的地址 |
-| `IMAGE_GENERATION_API_KEY` | 空 | 优先使用；否则使用 `OPENAI_API_KEY` 或 `api_keys_openai.txt`；双方地址均为官方 OpenAI 时还可复用面板的判断 API 密钥 |
+| `IMAGE_GENERATION_API_KEY` | 空 | **通常不用填**：生图地址与聊天 `OPENAI_BASE_URL` 相同时，共用 `OPENAI_API_KEY` / `api_keys_openai.txt`。仅当生图指向另一家服务才在这里配专用 Key |
 | `IMAGE_GENERATION_MODEL` | `gpt-image-2.6-flare` | 图像模型；动图需要支持 GIF 输出的模型和服务 |
 | `IMAGE_GENERATION_QUALITY` | `medium` | 输出质量 |
 | `IMAGE_GENERATION_COMPLEXITY` | `medium` | 渲染前规划量：`low` / `medium` / `high`；显式设空可不传，兼容旧模型或网关 |

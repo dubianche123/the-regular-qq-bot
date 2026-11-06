@@ -104,6 +104,36 @@ def audio_key(cfg, fallback=""):
     return fallback if official(endpoint) and official(source) else ""
 
 
+def openai_key(cfg):
+    """The single OpenAI key saved in the chat setup. One key, every job.
+
+    Reads the live .env (including real environment overrides) and the optional
+    api_keys_openai.txt rotation file. Never surfaced through public_settings.
+    """
+    values = _values(cfg)
+    preset = getattr(cfg, "PROVIDER_PRESETS", {}).get("openai", {}) or {}
+    default = str(values.get("OPENAI_API_KEY") or preset.get("api_key", "") or "").strip()
+    keys = read_api_keys(instance_settings.instance_dir(cfg) / "api_keys_openai.txt", default)
+    return keys[0] if keys else ""
+
+
+def key_for_endpoint(cfg, endpoint, *, suffix=""):
+    """Hand the shared key only to the exact service that key was saved for.
+
+    A different base URL is a different service: sending the OpenAI key there
+    would leak it, so callers must configure a dedicated key instead.
+    """
+    values = _values(cfg)
+    preset = getattr(cfg, "PROVIDER_PRESETS", {}).get("openai", {}) or {}
+    base = str(values.get("OPENAI_BASE_URL") or preset.get("base_url", "") or "").strip()
+    target = str(endpoint or "").strip().rstrip("/")
+    if suffix and target.endswith(suffix):
+        target = target[:-len(suffix)].rstrip("/")
+    if not base or not same_endpoint(target, base):
+        return ""
+    return openai_key(cfg)
+
+
 def dependencies(node, silk):
     return {"node": bool(node and Path(node).is_absolute() and Path(node).is_file()
                          and os.access(node, os.X_OK)),
@@ -184,7 +214,7 @@ def public_settings(cfg):
         "user_daily_limit": _integer(_value(cfg, values, "IMAGE_USER_DAILY_CAP", 5), 5),
         "key_configured": image_source != "none", "key_source": image_source,
     }
-    image["missing"] = [label for ok, label in ((image_base, "生图服务地址"), (image["model"], "生图模型"), (image["key_configured"], "生图 Key")) if not ok]
+    image["missing"] = [label for ok, label in ((image_base, "生图服务地址"), (image["model"], "生图模型"), (image["key_configured"], "聊天服务的 OpenAI Key")) if not ok]
     audio_base = _endpoint(_value(cfg, values, "VOICE_BASE_URL", "https://api.openai.com/v1"))
     audio_dedicated = bool(str(values.get("VOICE_API_KEY") or "").strip())
     audio_inherited = okey and official(obase) and official(audio_base)
@@ -195,7 +225,7 @@ def public_settings(cfg):
                    "transcription_enabled": enabled(cfg, "transcription"),
                    "model": str(_value(cfg, values, "VOICE_TRANSCRIPTION_MODEL", "gpt-transcribe"))}
     tls = _bool(_value(cfg, values, "SSL_VERIFY", True))
-    voice_input["missing"] = [label for ok, label in ((official(audio_base), "官方 OpenAI 语音地址"), (common["key_configured"], "语音 Key"), (voice_input["model"], "转写模型")) if not ok]
+    voice_input["missing"] = [label for ok, label in ((official(audio_base), "官方 OpenAI 语音地址"), (common["key_configured"], "聊天服务的 OpenAI Key"), (voice_input["model"], "转写模型")) if not ok]
     voice_input["transcription_missing"] = list(voice_input["missing"])
     if not voice_input["transcription_enabled"]:
         voice_input["missing"] = []  # QQ-provided text needs no model or service credential.
@@ -207,7 +237,7 @@ def public_settings(cfg):
                     "voice": str(_value(cfg, values, "VOICE_OUTPUT_VOICE", "marin")),
                     "daily_limit": _integer(_value(cfg, values, "VOICE_OUTPUT_DAILY_LIMIT", 10), 10),
                     "node": node, "silk_entry": silk, "dependencies": deps}
-    voice_output["missing"] = [label for ok, label in ((official(audio_base), "官方 OpenAI 语音地址"), (common["key_configured"], "语音 Key"), (voice_output["model"], "语音模型"), (deps["node"], "本机 Node"), (deps["silk"], "SILK 编码器"), (tls, "TLS 证书验证")) if not ok]
+    voice_output["missing"] = [label for ok, label in ((official(audio_base), "官方 OpenAI 语音地址"), (common["key_configured"], "聊天服务的 OpenAI Key"), (voice_output["model"], "语音模型"), (deps["node"], "本机 Node"), (deps["silk"], "SILK 编码器"), (tls, "TLS 证书验证")) if not ok]
     sections = {"vision": vision, "image": image, "voice_input": voice_input, "voice_output": voice_output}
     for name, section in sections.items():
         section["configured"] = not section["missing"]

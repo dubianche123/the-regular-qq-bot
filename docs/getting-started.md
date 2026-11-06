@@ -106,13 +106,13 @@ AppSecret 和 Key 留空会保留旧值，保存配置不会调用模型。QQ �
 
 ### 语音单独开启
 
-在「模型与能力」中可以关闭全部听语音，或只关闭模型转写、保留 QQ 已提供的文字。听语音和发语音共用「语音服务」里的官方 OpenAI Key；聊天使用其他服务时也能单独配置。发语音默认关闭，选好模型和音色后，还需要音频组件。
+在「模型与能力」中可以关闭全部听语音，或只关闭模型转写、保留 QQ 已提供的文字。听语音和发语音共用聊天设置里那把官方 OpenAI Key，不用再填第二次；聊天改用别家服务时，语音服务需要另配专用凭据。发语音默认关闭，选好模型和音色后，还需要音频组件。
 
 启用出站语音前，在运行机器上准备可信的 Node.js 和 `silk-wasm`，在页面填写实际路径。也可在实例 `.env` 中配置：
 
 ```dotenv
 VOICE_OUTPUT_ENABLED=true
-VOICE_API_KEY=your-official-openai-key
+# 不用再填语音 Key：共用上面的 OPENAI_API_KEY（仅限官方 OpenAI 语音地址）
 VOICE_BASE_URL=https://api.openai.com/v1
 VOICE_OUTPUT_MODEL=gpt-realtime-2.1-mini
 VOICE_OUTPUT_VOICE=marin

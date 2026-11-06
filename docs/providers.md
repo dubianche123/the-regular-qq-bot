@@ -79,7 +79,7 @@ VISION_MODEL=your-image-capable-model
 
 ## 原生判断帮手
 
-运行 `regular --directory . panel`，打开启动时打印的本机地址，在「判断 API」填写 Endpoint、模型和 API Key。它独立于聊天模型配置，不修改 `.env`；保存只写本机私有配置，不发网络请求、不重启 bot。密钥不会回显到页面或写入日志、仓库。
+运行 `regular --directory . panel`，打开启动时打印的本机地址，在「模型与能力」的判断行填写 Endpoint 和模型即可；**不用再填 Key**，它动态共用聊天设置里的 `OPENAI_API_KEY`。判断协议与聊天模型仍是两条独立调用链，但凭据只有一份；换 Key 只改聊天设置，下一个判断请求就跟着变。判断地址必须与聊天 `OPENAI_BASE_URL` 同一家服务，否则不会交出这把 Key。`decision_api.json` 只写本机私有配置、不发网络请求、不重启 bot；密钥不回显到页面，也不写入日志或仓库。
 
 默认 Endpoint 为 `https://api.openai.com/v1/decisions`，模型为 `gpt-6-luna`。模型名属于 Luna 家族，但请求走专用的 `input + questions → answers` 协议，不是让普通聊天生成 JSON。判断请求不参加上面的聊天模型候选轮换，不回退到 `/responses` 或 `/chat/completions`。
 

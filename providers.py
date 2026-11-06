@@ -394,6 +394,17 @@ async def call_decision(input, questions):
     settings = decision_settings.load_settings(config.DATA_DIR)
     if settings is None:
         return None
+    # One key for the whole app: shared mode resolves it at call time, so
+    # changing the chat key never leaves a stale copy behind. A dedicated key
+    # is still honoured for a judgment service on a different endpoint.
+    if settings.get("credential") == "shared":
+        from regular import capabilities
+        api_key = capabilities.key_for_endpoint(
+            config, settings["endpoint"], suffix="/decisions")
+        if not api_key:
+            return None
+    else:
+        api_key = settings["api_key"]
     initialize()
     try:
         _reserve_attempt(_bound_decision_budget())
@@ -405,7 +416,7 @@ async def call_decision(input, questions):
         response = await asyncio.wait_for(
             _llm_http.post(settings["endpoint"], json=body,
                            headers={"Authorization":
-                                    f"Bearer {settings['api_key']}"}),
+                                    f"Bearer {api_key}"}),
             timeout=config.DECISION_TIMEOUT_SECONDS)
     except asyncio.CancelledError:
         raise

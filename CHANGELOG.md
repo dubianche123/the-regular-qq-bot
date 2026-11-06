@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — 2026-11-06
+
+- Bind the whole app to one OpenAI key. The console now asks for an API key in
+  exactly one place (the chat settings); the judgment credential picker, the
+  image-generation key field and the voice key field are gone. Judgment is no
+  longer a copied credential: `decision_api.json` stores only endpoint/model
+  plus `credential: "shared"`, and `capabilities.key_for_endpoint()` resolves
+  the live key per request, so changing the chat key takes effect immediately.
+  Vision, images, voice and the desktop companion share the same key. The key
+  is handed out only when the target endpoint matches `OPENAI_BASE_URL`;
+  third-party endpoints keep their dedicated-key escape hatch. Old
+  `decision_api.json` files with their own key still load as dedicated.
+- Add `tests/test_shared_openai_key.py` for dynamic binding, endpoint scoping
+  and legacy-file compatibility.
+
 ## 0.4.4 — 2026-11-06
 
 - Open desktop voice as a continuous conversation: automatic turn detection,

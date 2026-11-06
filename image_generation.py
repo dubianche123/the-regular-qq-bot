@@ -41,15 +41,22 @@ def _log_generation_error(exc):
 
 
 def _key():
-    keys = config.load_api_keys("openai")
+    # A dedicated key remains the escape hatch for a third-party image service.
     if config.IMAGE_GENERATION_API_KEY:
         return config.IMAGE_GENERATION_API_KEY
+    # One key: the same service as the chat setup shares its credential.
+    shared = capabilities.key_for_endpoint(config, config.IMAGE_GENERATION_BASE_URL)
+    if shared:
+        return shared
+    keys = config.load_api_keys("openai")
     source = config.PROVIDER_PRESETS["openai"].get("base_url", "")
     if keys and capabilities.same_endpoint(config.IMAGE_GENERATION_BASE_URL, source):
         return keys[0]
-    # 密钥只能在原本发给官方 OpenAI 且生图目标也是官方时复用。
+    # Old installs copied the judgment key into its own file; honour it only
+    # when both ends are the official OpenAI endpoint.
     settings = decision_settings.load_settings(config.DATA_DIR)
-    if settings and _official(config.IMAGE_GENERATION_BASE_URL) and _official(settings["endpoint"]):
+    if (settings and settings.get("api_key")
+            and _official(config.IMAGE_GENERATION_BASE_URL) and _official(settings["endpoint"])):
         return settings["api_key"]
     return ""
 
