@@ -329,18 +329,27 @@ class NativeVoiceCardTest(unittest.TestCase):
         self.pet.close()
         self.app.processEvents()
 
-    def test_opening_is_silent_and_qq_offline_can_start_with_an_explicit_press(self):
+    def test_opening_connects_automatically_but_waits_for_a_hold_to_capture(self):
         pet = self.pet
         pet.available = False  # voice uses its own service, not QQ's text-chat bridge
         pet.show_voice()
         self.assertEqual(pet.voice_card.grab().toImage().pixelColor(0, 0).alpha(), 0)
-        self.permission.assert_not_called()
-        self.factory.assert_not_called()
-        pet.voice_card.start_button.click()
         self.permission.assert_called_once()
         self.session.start.assert_called_once()
+        self.session.press.assert_not_called()
+        self.assertFalse(hasattr(pet.voice_card, "start_button"))
+        self.assertFalse(pet.voice_card.talk.isEnabled())
+        from PySide6.QtWidgets import QPushButton
+        self.assertEqual(len(pet.voice_card.findChildren(QPushButton)), 2)
         generation = pet._voice_generation
         pet._voice_event(generation, {"type": "ready"})
+        self.assertEqual(pet.voice_card.talk.text(), "按住说话")
+        self.assertTrue(pet.voice_card.talk.isEnabled())
+        # The actual rendered control has transparent corners, not a native bezel.
+        card = pet.voice_card.grab().toImage()
+        button = pet.voice_card.talk
+        self.assertEqual(card.pixelColor(button.x(), button.y()).name(), "#fffdf7")
+        self.assertEqual(card.pixelColor(button.x() + 8, button.y() + button.height() // 2).name(), "#173b32")
         pet.press_voice()
         self.session.press.assert_called_once()
         self.assertEqual(pet.voice_state, "listening")
@@ -353,6 +362,22 @@ class NativeVoiceCardTest(unittest.TestCase):
         from PySide6.QtCore import QEvent
         self.app.sendEvent(pet.voice_card.talk, QEvent(QEvent.Type.Leave))
         self.assertEqual(self.session.cancel_input.call_count, 2)
+
+    def test_error_retries_with_the_same_button_and_close_ends_the_session(self):
+        pet = self.pet
+        pet.show_voice()
+        generation = pet._voice_generation
+        pet._voice_event(generation, {"type": "error", "message": "连接中断了，请重试。"})
+        pet._voice_event(generation, {"type": "closed"})
+        self.assertEqual(pet.voice_card.talk.text(), "重新连接")
+        self.assertTrue(pet.voice_card.talk.isEnabled())
+        pet.voice_card.talk.click()
+        self.assertEqual(self.permission.call_count, 2)
+        self.assertEqual(self.session.start.call_count, 2)
+        self.session.press.assert_not_called()
+        pet.voice_card.close_button.click()
+        self.session.close.assert_called_once()
+        self.assertFalse(pet.voice_card.isVisible())
 
     def test_deactivation_cancels_capture_close_ends_and_errors_survive_closed(self):
         from PySide6.QtCore import QEvent, Qt
