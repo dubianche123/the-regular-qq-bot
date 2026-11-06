@@ -104,7 +104,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         text = await response.text()
         self.assertIn("我的群友", text)
         self.assertIn('href="/setup">连接 QQ →', text)
-        self.assertIn('aria-label="首次连接进度"', text)
+        self.assertIn('aria-label="第一次使用的进度"', text)
         self.assertNotIn('action="/setup/save"', text)
         self.assertNotIn(str(self.root), text)
         self.assertFalse(self.file.exists())
@@ -115,7 +115,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         panel.instance_settings.save_identity(self.cfg, {
             "qq_app_id": "synthetic-app", "qq_app_secret": "qq-private-secret", "bot_names": "阿团"})
         text = await (await self.client.get("/", headers=self.auth())).text()
-        self.assertIn('href="/capabilities#chat">选择聊天模型 →', text)
+        self.assertIn('href="/capabilities#chat">选聊天模型 →', text)
         self.assertNotIn('action="/runtime/start"', text)
         self.runner.start.assert_not_called()
 
@@ -128,9 +128,9 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
                             gateway_connected=True, stale=False, lifecycle="ready")
         response = await self.client.get("/", headers=self.auth())
         text = await response.text()
-        self.assertIn("已连上 QQ", text)
-        self.assertNotIn('aria-label="首次连接进度"', text)
-        self.assertIn('<details class="wx-disclosure"><summary>运行日志与版本</summary>', text)
+        self.assertIn("她在群里，正听着呢", text)
+        self.assertNotIn('aria-label="第一次使用的进度"', text)
+        self.assertIn('<summary>维护者才需要看的：日志、文件与版本</summary>', text)
         self.assertIn("synthetic-log-line", text)
         self.runner.start.assert_not_called()
         self.runner.stop.assert_not_awaited()
@@ -348,8 +348,8 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         self.managed.update(external=True, running=True, pid=9876)
         response = await self.client.get("/", headers=self.auth())
         text = await response.text()
-        self.assertNotIn("已连上 QQ", text)
-        self.assertNotIn("QQ 在线", text)
+        self.assertNotIn("她在群里", text)
+        self.assertNotIn("QQ 已连接", text)
         self.assertIn("暂时收不到运行状态", text)
 
     async def test_new_child_does_not_inherit_previous_pids_fresh_ready_claim(self):
@@ -358,8 +358,8 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         self.managed.update(owned=True, running=True, pid=9876, gateway_connected=False, stale=True)
         response = await self.client.get("/", headers=self.auth())
         text = await response.text()
-        self.assertNotIn("已连上 QQ", text)
-        self.assertNotIn("QQ 在线", text)
+        self.assertNotIn("她在群里", text)
+        self.assertNotIn("QQ 已连接", text)
         self.assertIn("正在连接 QQ", text)
 
     async def test_browser_save_start_wait_and_confirm_flow_uses_explicit_actions(self):
@@ -387,7 +387,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         self.managed.update(gateway_connected=True, stale=False, lifecycle="ready")
         response = await self.client.get("/", headers=self.auth())
         text = await response.text()
-        self.assertIn("已连上 QQ", text)
+        self.assertIn("她在群里，正听着呢", text)
         self.assertIn("先由你发第一条 QQ 私聊", text)
         self.assertIn("synthetic-release", text)
         self.assertIn("&lt;code &amp; root&gt;", text)
@@ -400,6 +400,8 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/iterate", headers=self.auth())
         self.assertEqual(response.status, 200)
         text = await response.text()
+        self.assertIn('id="handoff"', text)                     # 「让 Agent 帮忙」并进了「让她更好」
+        self.assertIn("<h1>让她更好</h1>", text)
         self.assertIn("自迭代 skill", text)
         self.assertIn("不会自动上传聊天", text)
         self.assertIn("--plan", text)

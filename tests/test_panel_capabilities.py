@@ -60,10 +60,14 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
             forms = Forms(text).forms
             settings = [f for f in forms if f['action'] == '/capabilities/save']
             switches = [f for f in forms if f['action'] == '/capabilities/toggle']
-            # four capability forms + the voice service shared by hearing and speaking (one Key field, once)
+            # four capability forms + the voice service shared by hearing and speaking
             self.assertEqual(sorted(f['fields']['section']['value'] for f in settings),
                              ['image', 'vision', 'voice', 'voice_input', 'voice_output'])
-            self.assertEqual(text.count('name="voice_api_key"'), 1)
+            # One OpenAI key for the whole app: only the chat form ever asks for it.
+            self.assertEqual(text.count('name="api_key"'), 1)
+            self.assertNotIn('name="voice_api_key"', text)
+            self.assertNotIn('data-decision-credential', text)
+            self.assertIn('cap-key-card', text)
             self.assertEqual(sorted(f['fields']['flag']['value'] for f in switches),
                              sorted(capabilities.FLAGS))
             self.assertIn('保存后下次启动时使用', text)
@@ -109,27 +113,34 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="decision" data-tone="todo"><details class="cap-more">', text)
         self.assertNotIn('data-custom-model-field hidden', text)
 
-    async def test_judgment_offers_chat_key_without_rendering_it_and_then_defaults_to_saved(self):
+    async def test_judgment_is_bound_to_the_one_chat_key_without_a_second_input(self):
         self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://api.openai.com/v1\n'
                              'OPENAI_MODELS=first\nOPENAI_API_KEY=private-chat-secret\n')
         text, _ = await self.form('image')
-        self.assertIn('value="chat" data-decision-option="chat" selected', text)
-        self.assertNotIn('value="existing" data-decision-option', text)
-        self.assertIn('data-decision-key-field hidden', text)
+        self.assertIn('一把 OpenAI Key 已就位', text)
+        self.assertIn('共用聊天设置里那把 OpenAI Key', text)
+        self.assertEqual(text.count('name="api_key"'), 1)
+        self.assertIn('name="credential_source" value="shared"', text)
         self.assertNotIn('private-chat-secret', text)
-        panel.decision_settings.save_settings(self.cfg.DATA_DIR, endpoint='https://api.openai.com/v1/decisions',
-                                              model='judge', api_key='private-saved-secret')
+        panel.decision_settings.save_settings(
+            self.cfg.DATA_DIR, endpoint='https://api.openai.com/v1/decisions',
+            model='judge', credential='shared')
+        saved = json.loads((Path(self.cfg.DATA_DIR) / 'decision_api.json').read_text(encoding='utf-8'))
+        self.assertEqual(saved, {'endpoint': 'https://api.openai.com/v1/decisions',
+                                 'model': 'judge', 'credential': 'shared'})
         text, _ = await self.form('image')
-        self.assertIn('value="existing" data-decision-option="existing" selected', text)
-        self.assertNotIn('private-saved-secret', text)
+        self.assertIn('judge', text)
+        self.assertNotIn('private-chat-secret', text)
 
-    async def test_other_services_key_is_not_selectable_for_judgment(self):
+    async def test_other_services_endpoint_cannot_reuse_the_openai_key(self):
         self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://other.example/v1\n'
                              'OPENAI_MODELS=first\nOPENAI_API_KEY=private-chat-secret\n')
         text, _ = await self.form('image')
-        self.assertIn('value="chat" data-decision-option="chat" disabled', text)
-        self.assertIn('value="new" selected', text)
-        self.assertNotIn('data-decision-key-field hidden', text)
+        self.assertIn('不能共用 Key', text)
+        self.assertNotIn('private-chat-secret', text)
+        # The credential resolver refuses to hand the key to a different host.
+        self.assertEqual(capabilities.key_for_endpoint(
+            self.cfg, 'https://api.openai.com/v1/decisions', suffix='/decisions'), '')
 
     async def toggle(self, flag, enabled, *, json_reply=True):
         _, fields = await self.form('image')
@@ -166,7 +177,8 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         response = await self.save('image', api_key='')
         self.assertEqual(response.status, 302)
         text, fields = await self.form('image')
-        self.assertEqual(fields['api_key']['value'], '')
+        self.assertNotIn('api_key', fields)
+        self.assertNotIn('name="voice_api_key"', text)
         self.assertNotIn('private-image-secret', text)
         self.assertNotIn('private-voice-secret', text)
         self.assertEqual(dotenv_values(self.file)['IMAGE_GENERATION_API_KEY'], 'private-image-secret')

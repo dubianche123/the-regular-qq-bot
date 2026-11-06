@@ -230,62 +230,6 @@ console.log('real model picker, custom input and provider draft isolation: passe
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 @unittest.skipUnless(shutil.which('node'), 'Node is optional; browser script smoke requires it')
-class DecisionCredentialTest(unittest.TestCase):
-    def test_reuse_is_explicit_and_changing_service_requires_a_new_key(self):
-        script = r'''
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-class Element {
-  constructor(value='') { this.value=value; this.dataset={}; this.events={}; }
-  addEventListener(key, callback) { this.events[key]=callback; }
-}
-const endpoint = new Element('https://model.example/v1/decisions');
-const key = new Element('unsaved-private-key');
-const source = new Element('existing');
-const chat = new Element(), existing = new Element(), field = new Element();
-source.querySelector = selector => selector.includes('"chat"') ? chat : existing;
-const form = new Element();
-form.dataset = {chatBase:'https://model.example/v1',chatKeyAvailable:'true',savedEndpoint:endpoint.value};
-form.elements = {namedItem:name=>({api_key:key,endpoint})[name]};
-form.querySelector = selector => ({'[data-decision-credential]':source,'[data-decision-key-field]':field})[selector];
-const reduced = new Element(); reduced.matches=false;
-const document = {body:{dataset:{}},querySelector:selector=>selector==='[data-decision-form]'?form:null,querySelectorAll:()=>[]};
-const context = {document,window:{matchMedia:()=>reduced},localStorage:{getItem:()=>null},setTimeout(){},clearTimeout(){},fetch(){throw new Error('Choosing a credential must not contact a service');}};
-vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),context);
-assert.equal(field.hidden,true);
-assert.equal(key.disabled,true);
-assert.equal(chat.disabled,false);
-assert.equal(existing.disabled,false);
-source.value='chat'; source.events.change();
-assert.equal(field.hidden,true);
-assert.equal(key.required,false);
-endpoint.value='https://other.example/v1/decisions'; endpoint.events.input();
-assert.equal(chat.disabled,true);
-assert.equal(existing.disabled,true);
-assert.equal(source.value,'new');
-assert.equal(field.hidden,false);
-assert.equal(key.required,true);
-assert.equal(key.disabled,false);
-endpoint.value='https://model.example/v1/decisions'; endpoint.events.input();
-assert.equal(chat.disabled,false);
-assert.equal(existing.disabled,false);
-assert.equal(source.value,'new');
-source.value='existing'; source.events.change();
-assert.equal(key.disabled,true);
-assert.equal(field.hidden,true);
-endpoint.value='https://model.example/v2/decisions'; endpoint.events.input();
-assert.equal(chat.disabled,true);
-assert.equal(source.value,'new');
-console.log('explicit credential choice and same-service boundary: passed');
-'''
-        source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
-        result = subprocess.run([shutil.which('node'), '-e', script, str(source)], capture_output=True,
-                                text=True, timeout=10)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-
-@unittest.skipUnless(shutil.which('node'), 'Node is optional; browser script smoke requires it')
 class ManagerProposalTest(unittest.TestCase):
     def test_a_proposal_is_a_card_and_only_a_click_saves_the_switch(self):
         script = r'''

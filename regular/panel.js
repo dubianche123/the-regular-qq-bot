@@ -77,32 +77,24 @@ if (setup) {
   revealCustom();
 }
 
-const decisionForm = document.querySelector("[data-decision-form]");
-if (decisionForm) {
-  const source = decisionForm.querySelector("[data-decision-credential]");
-  const keyField = decisionForm.querySelector("[data-decision-key-field]");
-  const key = decisionForm.elements.namedItem("api_key");
-  const endpoint = decisionForm.elements.namedItem("endpoint");
-  const chat = source.querySelector('[data-decision-option="chat"]');
-  const existing = source.querySelector('[data-decision-option="existing"]');
-  const trimSlash = text => text.trim().replace(/\/+$/, "");
-  function syncCredential() {
-    const target = trimSlash(endpoint.value);
-    const sameChat = decisionForm.dataset.chatKeyAvailable === "true" && target.endsWith("/decisions")
-      && target.slice(0, -"/decisions".length) === trimSlash(decisionForm.dataset.chatBase);
-    const sameSaved = endpoint.value.trim() === decisionForm.dataset.savedEndpoint;
-    if (chat) chat.disabled = !sameChat;
-    if (existing) existing.disabled = !sameSaved;
-    if ((source.value === "chat" && !sameChat) || (source.value === "existing" && !sameSaved)) source.value = "new";
-    const entering = source.value === "new";
-    keyField.hidden = !entering;
-    key.required = entering;
-    key.disabled = !entering;
-  }
-  source.addEventListener("change", syncCredential);
-  endpoint.addEventListener("input", syncCredential);
-  syncCredential();
+// The judgment form no longer has a credential picker: it is bound at runtime
+// to the single OpenAI key saved in the chat settings.
+
+// Tell the desktop pet what is happening right now. A failed signal must never
+// break the action the user actually asked for, so this stays best-effort.
+async function signalState(action) {
+  try {
+    const token = await fetch("/companion/status", { credentials: "same-origin" })
+      .then(response => response.ok ? response.json() : null);
+    if (!token?.csrf) return;
+    const body = new FormData();
+    body.set("csrf", token.csrf);
+    body.set("action", action);
+    await fetch("/companion/cue", { method: "POST", body, credentials: "same-origin",
+      headers: { Accept: "application/json" } });
+  } catch { /* the pet is decorative here */ }
 }
+if (globalThis.location?.pathname === "/checkup") void signalState("checkup");
 
 // Capabilities: a switch is saved the moment it flips; settings forms wait for their own Save.
 const capChildren = { image: "gif", voice_input: "transcription" };
@@ -142,6 +134,7 @@ for (const form of document.querySelectorAll("[data-cap-toggle]")) {
       const item = form.closest("[data-cap]");
       const state = item?.querySelector("[data-cap-state]");
       if (state) state.textContent = "没保存上，刷新后再试";
+      void signalState("stuck");
     } finally {
       button.removeAttribute("aria-busy");
     }
@@ -169,6 +162,7 @@ if (copyButton) {
     try {
       await navigator.clipboard.writeText(brief.value);
       status.textContent = "已复制。带上你的反馈，一起发给 Agent。";
+      void signalState("handoff");
     } catch {
       brief.closest("details").open = true;
       brief.focus();

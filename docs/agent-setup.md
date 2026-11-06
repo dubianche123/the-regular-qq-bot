@@ -22,9 +22,9 @@ tools/start_regular.py / start.command / start.bat / start.sh，默认从桌宠�
 不要替我登录 QQ 平台；告诉我需要亲自完成的事件订阅和使用范围设置。
 保存配置不调用模型，也不要自动启动机器人。
 
-聊天和判断都在「模型与能力」。同一服务支持判断接口时，可明确选择使用聊天服务的 Key；否则单独连接。
+聊天和判断都在「模型与能力」。只在「聊天」里填一次 OpenAI API Key，判断、读图、画图、语音都共用它，不要再向我要第二把 Key；判断接口得和聊天服务是同一家。
 逐项说明读图、画图/动图、听语音、发语音的状态；只启用我需要的能力。
-语音 Key 在共用服务中填写一次；不要把聊天 API 权限当成语音或生图权限。
+不要把聊天 API 权限当成语音或生图权限；这些能力各自的开关和额度仍然独立。
 需要本地读状态或开关时用 regular --directory <实例目录> manage，不执行自主工具循环。
 
 我完成配置并明确要求启动后，再检查实际 QQ 连接状态；由我先发第一条
@@ -35,4 +35,4 @@ tools/start_regular.py / start.command / start.bat / start.sh，默认从桌宠�
 不要让我先填写知识文件名或理解 Markdown；完整原文留在高级入口。
 ```
 
-安装以后，遇到接话不合拍的问题，可以在本机工作台「让 Agent 帮忙」复制交接说明，再附上你的反馈。安装引导负责把它跑起来；群聊回放与自迭代另走仓库自带的 [regular-iterate skill](../.agents/skills/regular-iterate/SKILL.md)。
+安装以后，遇到接话不合拍的问题，可以在本机工作台「让她更好」复制交接说明，再附上你的反馈。安装引导负责把它跑起来；群聊回放与自迭代另走仓库自带的 [regular-iterate skill](../.agents/skills/regular-iterate/SKILL.md)。

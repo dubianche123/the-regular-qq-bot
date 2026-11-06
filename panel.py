@@ -224,22 +224,53 @@ def _companion_dock(active):
 <div class="companion-bubble"><p>{_esc(messages.get(active, '想聊两句，或看看下一步做什么，我都在这里。'))}</p><a class="button" href="/companion">打开聊天小窗 →</a><div class="dock-links"><a href="/setup">设置</a><a href="/checkup">体检</a><a href="/iterate">让 Agent 帮忙</a></div></div></details>'''
 
 
-def _page(title, body, active="", refresh=0, *, pet=False):
-    # 按用的频率排：天天用的在最上面；接 QQ、选模型这种配一次就好的事放进底部「设置」
-    # （没配完时首页那条进度会把人带过去）。
-    nav = (
-        ("", (("/", "我的群友", "home"), ("/companion", "聊两句", "companion"),
-              ("/capabilities", "模型与能力", "capabilities"))),
-        ("群里的事", (("/checkup", "每日体检", "checkup"), ("/knowledge", "群知识", "knowledge"),
-                   ("/memory", "群记忆", "memory"))),
-        ("交给 Agent", (("/iterate", "让 Agent 帮忙", "iterate"),)),
-        ("设置", (("/setup", "QQ 连接与身份", "setup"),)),
-    )
-    links = "".join(('<span class="nav-label">' + label + '</span>' if label else '') + "".join(
-        f'<a class="nav-item {"active" if key == active else ""}" href="{href}"'
-        f'{" aria-current=page" if key == active else ""}><span class="nav-icon">{_icon(key)}</span>'
-        f'<span class="nav-text">{text}</span></a>' for href, text, key in entries)
-        for label, entries in nav)
+# 侧栏按「你来这里做什么」分两组：天天用的四件事，加上配一次就好的设置。
+# 判断、搜索检查在「模型与能力 → 高级」里；交给 Agent 和体检是同一件事（让她更好）；记忆是群知识的一页。
+_NAV = (
+    ("", (("/", "我的群友", "home"), ("/companion", "聊两句", "companion"),
+          ("/checkup", "让她更好", "checkup"), ("/knowledge", "群知识", "knowledge"))),
+    ("设置", (("/capabilities", "模型与能力", "capabilities"), ("/setup", "QQ 连接与身份", "setup"))),
+)
+_NAV_HOME = {"iterate": "checkup", "memory": "knowledge", "decision": "capabilities", "search": "capabilities"}
+
+
+def _pending_findings(cfg):
+    """体检里还没看的条数：只读最近一份已存的报告和标注，不在每次打开页面时重算体检。"""
+    if cfg is None:
+        return 0
+    base = Path(_checkup_dirs(cfg)["checkup_dir"])
+    try:
+        latest = max(base.glob("*.json"), key=lambda path: path.name)
+        findings = json.loads(latest.read_text(encoding="utf-8")).get("findings") or []
+    except (ValueError, OSError, AttributeError):
+        return 0
+    labeled = set()
+    try:
+        for line in (base / "labels.jsonl").read_text(encoding="utf-8").splitlines():
+            try:
+                labeled.add(json.loads(line).get("id"))
+            except (ValueError, AttributeError):
+                continue
+    except OSError:
+        pass
+    return sum(1 for f in findings if isinstance(f, dict) and f.get("id") not in labeled
+               and f.get("verdict") not in ("yes", "no"))
+
+
+def _page(title, body, active="", refresh=0, *, pet=False, cfg=None):
+    current = _NAV_HOME.get(active, active)
+    pending = _pending_findings(cfg)
+    badges = {"checkup": pending} if pending else {}
+
+    def link(href, text, key):
+        badge = (f'<span class="nav-badge" aria-label="{badges[key]} 条待看">{badges[key]}</span>'
+                 if key in badges else '')
+        return (f'<a class="nav-item {"active" if key == current else ""}" href="{href}"'
+                f'{" aria-current=page" if key == current else ""}><span class="nav-icon">{_icon(key)}</span>'
+                f'<span class="nav-text">{text}</span>{badge}</a>')
+
+    links = "".join(('<span class="nav-label">' + label + '</span>' if label else '')
+                    + "".join(link(*entry) for entry in entries) for label, entries in _NAV)
     css = files("regular").joinpath("panel.css").read_text(encoding="utf-8")
     brand_icon = ('<img src="/assets/app-icon.png" alt="老群友">'
                   if files("regular").joinpath("assets", "app-icon.png").is_file() else _icon("brand"))
@@ -257,6 +288,96 @@ def _page(title, body, active="", refresh=0, *, pet=False):
 <div class="main-shell"><header class="topbar"><div class="breadcrumb">你的老群友 <span aria-hidden="true">/</span> <strong>{_esc(title)}</strong></div><div class="topbar-tools"><button type="button" class="actions-toggle" data-actions-toggle aria-pressed="true" title="关闭后角色只保留静止姿势">角色动作：开</button><span class="workspace-pill">本机工作台</span></div></header>
 <main><div class="wrap">{body}</div></main></div></div>{'' if active == 'companion' else _companion_dock(active)}
 </body></html>'''
+
+
+def _attention(cfg, settings, running):
+    """首页只列需要你动手的例外：没配完的、缺东西的能力、体检里待看的。没有就什么都不列。"""
+    items = []
+    qq_ready = bool(settings.get("qq_app_id") and settings.get("qq_secret_configured"))
+    if not qq_ready:
+        items.append(("QQ 还没连接", "/setup"))
+    elif not settings.get("ready"):
+        items.append(("还没选聊天模型", "/capabilities#chat"))
+    try:
+        from regular import capabilities
+        sections = capabilities.public_settings(cfg)
+        for name, label in capabilities.NAMES:
+            tone, words = capabilities.state_line(name, sections[name])
+            if tone == "todo":
+                items.append((f"{label}{words}", f"/capabilities#{name}"))
+    except Exception:
+        pass
+    pending = _pending_findings(cfg)
+    if pending:
+        items.append((f"体检里有 {pending} 句可能接偏了", "/checkup"))
+    return items
+
+
+def _today(cfg):
+    """今天的数字（只有计数，没有群聊原文）。"""
+    from types import SimpleNamespace
+    from regular import presence
+    try:
+        day = presence.day_summary(SimpleNamespace(INTERACTION_LOG_DIR=_checkup_dirs(cfg)["interaction_dir"]))
+    except Exception:
+        return {}
+    return {"收到消息": day.get("messages", 0),
+            "被叫到": sum(day.get(k, 0) for k in ("mention", "named", "quoted", "called")),
+            "回了": day.get("said", 0) + day.get("chimed", 0) + day.get("proactive", 0),
+            "画了": day.get("drew", 0), "发语音": day.get("voice", 0)}
+
+
+def _home_status(cfg, csrf, runner, groups, budget):
+    """她现在怎么样、你能做的那一个动作、首次使用时的进度，以及需要你看一眼的例外 —— 一张卡说完。"""
+    settings = instance_settings.public_settings(cfg)
+    managed = runner.snapshot() if runner is not None else {}
+    snapshot, _ = _status(cfg)
+    age = time.time() - float(snapshot.get("updated_at") or 0) if snapshot else None
+    qq_ready = bool(settings.get("qq_app_id") and settings.get("qq_secret_configured"))
+    online = bool(managed.get("gateway_connected") and not managed.get("stale"))
+    running = bool(managed.get("running"))      # a fresh child may not have reported yet: still "connecting"
+    owner = bool(_read_text(getattr(cfg, "OWNER_FILE", str(Path(cfg.DATA_DIR) / "owner.txt"))).strip())
+    if online:
+        tone, headline = "ok", "她在群里，正听着呢。"
+        detail = "在群里叫她的名字就能聊起来。" if owner else "先由你发第一条 QQ 私聊认主，再邀请她进群。"
+    elif running:
+        tone, headline, detail = "todo", "正在连接 QQ…", "稍等一下；一直连不上的话，看看 QQ 连接和下方日志。"
+    elif settings.get("ready"):
+        tone, headline, detail = "idle", "都配好了，启动后就能进群。", "她不在运行时，群里的消息不会有人接。"
+    elif qq_ready:
+        tone, headline, detail = "todo", "还差一个聊天模型。", "选好模型，就可以启动了。"
+    else:
+        tone, headline, detail = "todo", "先让她连上 QQ。", "填好 QQ 机器人的 ID 和密钥，再选一个聊天模型。"
+    if age is not None and age > 120 and running:
+        detail = "暂时收不到运行状态，请看下方日志。"
+    if managed.get("owned") and managed.get("running"):
+        action = (f'<form method="post" action="/runtime/stop"><input type="hidden" name="csrf" value="{_esc(csrf)}">'
+                  f'<button class="secondary">停止</button></form>')
+    elif managed.get("external"):
+        action = '<span class="wx-hero-note">由常驻服务运行，在原来的入口启停</span>'
+    elif settings.get("ready") and runner is not None:
+        action = (f'<form method="post" action="/runtime/start"><input type="hidden" name="csrf" value="{_esc(csrf)}">'
+                  f'<button>启动她</button></form>')
+    elif qq_ready:
+        action = '<a class="button" href="/capabilities#chat">选聊天模型 →</a>'
+    else:
+        action = '<a class="button" href="/setup">连接 QQ →</a>'
+    facts = ["QQ 已连接" if online else "QQ 未连接", f"认识 {groups} 个群"]
+    if budget.get("limit"):
+        facts.append(f"今天用了 {budget.get('used', 0)} / {budget.get('limit')} 次")
+    progress = ""
+    if not (settings.get("ready") and online and owner):
+        steps = (("连上 QQ", qq_ready), ("选聊天模型", settings.get("ready")), ("启动并在线", online), ("你发第一条私聊", owner))
+        progress = '<ol class="wx-progress" aria-label="第一次使用的进度">' + "".join(
+            f'<li class="{"wx-done" if done else ""}"><span>{"✓" if done else i}</span>{name}</li>'
+            for i, (name, done) in enumerate(steps, 1)) + '</ol>'
+    items = _attention(cfg, settings, running)
+    attention = ('<div class="wx-attention"><span>需要你看一眼</span><ul>' + "".join(
+        f'<li><a href="{href}">{_esc(label)}</a></li>' for label, href in items) + '</ul></div>') if items else ''
+    return (f'<section class="wx-hero" data-tone="{tone}" aria-label="她现在怎么样">'
+            f'<div class="wx-hero-main"><span class="wx-hero-dot" aria-hidden="true"></span>'
+            f'<div><h2>{headline}</h2><p>{_esc(detail)}</p><p class="wx-hero-facts">{" · ".join(_esc(f) for f in facts)}</p></div>'
+            f'<div class="wx-hero-action">{action}</div></div>{progress}{attention}</section>')
 
 
 def _dashboard(cfg, *, csrf="", runner=None):
@@ -301,24 +422,22 @@ def _dashboard(cfg, *, csrf="", runner=None):
                        + "".join(files) + "</tbody></table>") if files else '<p class="muted">知识库还没有文件。</p>'
     log = _tail(cfg.LOG_FILE)
     budget = snapshot.get("budget") or {}
-    provider = ((snapshot.get("providers") or {}).get("providers") or [{}])[0]
-    model = (provider.get("models") or ["尚无运行记录"])[0]
-    model_label = "最近使用的聊天模型"
-    if managed.get("running") and not managed.get("stale") and snapshot.get("pid") == managed.get("pid"):
-        model_label = "正在用的聊天模型"
     code = snapshot.get("code") or {}
     boot_log = managed.get("log_file")
     startup = (f'<h3>本面板启动日志</h3><pre>{_esc(_tail(boot_log) or "暂无本面板启动日志")}</pre>'
                if boot_log and boot_log != cfg.LOG_FILE else "")
+    numbers = _today(cfg)
+    today = ('<section class="wx-today" aria-label="今天"><h2>今天</h2><dl>' + "".join(
+        f'<div><dt>{_esc(label)}</dt><dd>{value}</dd></div>' for label, value in numbers.items())
+        + '</dl></section>') if numbers else ''
     body = f"""
-<header class="wx-heading"><div><h1>我的群友</h1><p>今天也在，慢慢熟悉你们。</p></div><a class="button secondary" href="/companion">聊两句 →</a></header>
-{_runtime_controls(cfg, csrf, runner) if runner is not None else ''}
-<dl class="wx-metrics" aria-label="运行概况"><div><dt>今日模型调用</dt><dd>{_esc(budget.get('used', '—'))} / {_esc(budget.get('limit', '—'))}</dd></div><div><dt>{model_label}</dt><dd>{_esc(model)}</dd></div><div><dt>已经加入</dt><dd>{len(groups)} 个群</dd></div></dl>
-<section class="wx-section"><div class="wx-section-head"><h2>群里的近况</h2><a href="/checkup">看每日体检 →</a></div>{group_table}</section>
-<details class="wx-disclosure"><summary>运行日志与版本</summary><p>当前版本：<code>{_esc(code.get('release') or '尚无运行记录')}</code></p><p>安装位置：<code>{_esc(code.get('source_root') or '—')}</code></p><h3>最近日志</h3><pre>{_esc(log or '暂无日志')}</pre>{startup}</details>
-<details class="wx-disclosure"><summary>知识文件 · {len(files)} 份</summary>{knowledge_table}<a href="/knowledge">整理群知识 →</a></details>
+<header class="wx-heading"><div><h1>我的群友</h1><p>她现在怎么样，有没有需要你处理的事。</p></div><a class="button secondary" href="/companion">聊两句 →</a></header>
+{_home_status(cfg, csrf, runner, len(groups), budget)}
+{today}
+<section class="wx-section"><div class="wx-section-head"><h2>群里</h2><a href="/knowledge">群知识 →</a></div>{group_table}</section>
+<details class="wx-disclosure wx-details-group"><summary>维护者才需要看的：日志、文件与版本</summary><h3>运行日志与版本</h3><p>当前版本：<code>{_esc(code.get('release') or '尚无运行记录')}</code></p><p>安装位置：<code>{_esc(code.get('source_root') or '—')}</code></p><h3>最近日志</h3><pre>{_esc(log or '暂无日志')}</pre>{startup}<h3>知识文件 · {len(files)} 份</h3>{knowledge_table}<a href="/knowledge">整理群知识 →</a></details>
 """
-    return _page("概览", body, "home", refresh=5 if managed.get("owned") and managed.get("running")
+    return _page("概览", body, "home", cfg=cfg, refresh=5 if managed.get("owned") and managed.get("running")
                  and not managed.get("gateway_connected") else 0)
 
 
@@ -349,7 +468,7 @@ def _setup_page(cfg, request, csrf, runner=None):
 <button type="submit">保存身份</button></form></details></section>
 <div class="identity-next">{next_step}<a href="/">返回我的群友 →</a></div>
 <details class="identity-help"><summary>从哪里获取 QQ 凭据？</summary><ol><li>在 <a href="https://q.qq.com/" target="_blank" rel="noreferrer">QQ 开放平台 ↗</a> 创建机器人，复制 AppID 与 AppSecret。</li><li>在 QQ 开放平台启用私聊、群消息和使用范围。</li><li>连接成功后，先给她发一条 QQ 私聊，再邀请进群。</li></ol></details>'''
-    return _page("QQ 连接与身份", body, "setup")
+    return _page("QQ 连接与身份", body, "setup", cfg=cfg)
 
 
 # 能力与服务：给人看的那一页。一项能力一行（名字、一句话状态、开关），细节点开才看。
@@ -398,7 +517,8 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         chat = instance_settings.public_settings(cfg, request.query.get("provider"))
     except ValueError:
         raise web.HTTPBadRequest(text="请选择支持的模型服务。") from None
-    judgment = decision_settings.public_settings(cfg.DATA_DIR)
+    judgment = decision_settings.public_settings(
+        cfg.DATA_DIR, shared_ready=bool(chat["key_configured"]))
     tone, timing, reported = _cap_runtime(cfg, runner)
     saved = str(request.query.get("saved") or "")
     editing = str(request.query.get("edit") or "")
@@ -433,9 +553,10 @@ def _capabilities_page(cfg, request, csrf, runner=None):
     def settings_form(section, title, main, advanced="", extra=""):
         fold = (f'<details class="cap-advanced"><summary>更多设置</summary><div class="cap-fields">{advanced}</div></details>'
                 if advanced else '')
+        main_fields = f'<div class="cap-fields">{main}</div>' if main else ''
         return (f'<form method="post" action="/capabilities/save" class="cap-form" data-cap-form>'
                 f'<input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="section" value="{section}">'
-                f'{extra}<div class="cap-fields">{main}</div>{fold}'
+                f'{extra}{main_fields}{fold}'
                 f'<footer><button type="submit">保存{title}设置</button><span data-cap-form-status aria-live="polite">'
                 f'{"已保存。" if saved == section else ""}</span></footer></form>')
 
@@ -487,32 +608,28 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         f'<footer><button type="submit">保存聊天设置</button><span data-cap-form-status aria-live="polite">'
         f'{"已保存，重启后生效。" if saved == "chat" else ""}</span></footer></form>')
     active_chat = instance_settings.public_settings(cfg)
-    try:
-        chat_key_available = bool(instance_settings.decision_key_from_chat(cfg, judgment["endpoint"]))
-    except (ValueError, OSError):
-        chat_key_available = False
-    credential_source = "existing" if judgment["key_configured"] else "chat" if chat_key_available else "new"
-    credential_options = (
-        ('<option value="existing" data-decision-option="existing" selected>已保存的 Key</option>'
-         if judgment["key_configured"] else '')
-        + (f'<option value="chat" data-decision-option="chat"'
-           f'{" selected" if credential_source == "chat" else ""}'
-           f'{" disabled" if not chat_key_available else ""}>使用聊天服务的 Key</option>'
-           if active_chat["key_configured"] else '')
-        + f'<option value="new"{" selected" if credential_source == "new" else ""}>填写新的 Key</option>')
-    credential_picker = (
-        '<label class="cap-field" for="decision-credential-source"><span>连接凭据</span>'
-        f'<select id="decision-credential-source" name="credential_source" data-decision-credential>{credential_options}</select></label>'
-        f'<label class="cap-field" for="decision-new-key" data-decision-key-field{" hidden" if credential_source != "new" else ""}>'
-        '<span>新的 API Key</span><input id="decision-new-key" name="api_key" type="password" value=""'
-        f' autocomplete="new-password" placeholder="粘贴 API Key"{" required" if credential_source == "new" else " disabled"}></label>')
+    same_service = False
+    if active_chat["key_configured"]:
+        try:
+            instance_settings.decision_key_from_chat(cfg, judgment["endpoint"])
+            same_service = True
+        except (ValueError, OSError):
+            same_service = False
+    if not active_chat["key_configured"]:
+        shared_note = ('<p class="cap-note cap-need">先在「聊天」里填一次 OpenAI API Key，'
+                       '判断、画图、语音都会用它。</p>')
+    elif same_service:
+        shared_note = ('<p class="cap-note cap-shared-note">连接凭据：共用聊天设置里那把 '
+                       'OpenAI Key。换 Key 只改一处，这里会跟着变。</p>')
+    else:
+        shared_note = ('<p class="cap-note cap-need">这个判断接口和聊天服务不是同一家，'
+                       '不能共用 Key；请改回同一接口，或在 .env 里单独配置。</p>')
     judgment_form = (
-        '<form method="post" action="/decision/save" class="cap-form" data-cap-form data-decision-form'
-        f' data-chat-base="{_esc(active_chat["base_url"])}" data-chat-key-available="{"true" if active_chat["key_configured"] else "false"}"'
-        f' data-saved-endpoint="{_esc(judgment["endpoint"] if judgment["key_configured"] else "")}">'
+        '<form method="post" action="/decision/save" class="cap-form" data-cap-form>'
         f'<input type="hidden" name="csrf" value="{_esc(csrf)}">'
+        '<input type="hidden" name="credential_source" value="shared">'
         f'<div class="cap-fields">{field("decision", judgment, "model", "判断模型")}'
-        f'{credential_picker}</div>'
+        f'{shared_note}</div>'
         '<details class="cap-advanced"><summary>接口地址</summary><div class="cap-fields">'
         + field("decision", judgment, "endpoint", "判断接口地址") + '</div></details>'
         f'<footer><button type="submit">保存判断设置</button><span data-cap-form-status aria-live="polite">'
@@ -538,13 +655,13 @@ def _capabilities_page(cfg, request, csrf, runner=None):
                             "也画动图", "")
         + settings_form(
             "image", "画图",
-            field("image", drawing, "model", "模型")
-            + field("image", drawing, "api_key", "API Key", secret=True),
+            field("image", drawing, "model", "模型"),
             field("image", drawing, "base_url", "接口地址")
             + field("image", drawing, "daily_limit", "每天最多画几张", number=True)
             + field("image", drawing, "user_daily_limit", "每人每天最多几张", number=True)
             + field("image", drawing, "quality", "画质") + field("image", drawing, "size", "静图尺寸")
-            + field("image", drawing, "gif_size", "动图尺寸")),
+            + field("image", drawing, "gif_size", "动图尺寸"),
+            extra='<p class="cap-note cap-shared-note">连接凭据：共用聊天设置里的 OpenAI Key，不用再填一次。</p>'),
         "voice_input": sub_switch("transcription", hearing.get("transcription_enabled", True), hearing.get("enabled", False),
                                   "QQ 没带文字时，交给模型转写", "")
         + settings_form("voice_input", "听语音", field("voice_input", hearing, "model", "转写模型"))
@@ -558,7 +675,9 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         + '<a class="ms-inline-link" href="/capabilities?edit=voice#voice">设置语音服务 →</a>',
     }
 
-    rows = model_rows
+    # 判断模型在实现上必须独立（另一条调用链），但平时不该在界面上占一行。
+    # 概念保留，位置降级：只留聊天模型常驻，判断/搜索一起收进底部的高级区。
+    rows = [model_rows[0]]
     for name, title, summary in _CAPABILITIES:
         row = sections[name]
         state_tone, state = _cap_state(name, row)
@@ -583,64 +702,33 @@ def _capabilities_page(cfg, request, csrf, runner=None):
             f'<div class="cap-body">{need}{running}{env}{bodies[name]}</div></details>'
             f'{switch(name, row.get("enabled", False), "允许" + title)}</article>')
 
-    voice_source = "已配置" if hearing.get("key_configured") else "还没配置"
-    voice_form = settings_form("voice", "语音服务",
-                               field("voice", hearing, "voice_api_key", "OpenAI 语音 Key", secret=True),
+    rounds = hearing.get("desktop_daily_limit")
+    voice_source = ((f"每天最多 {rounds} 轮" if rounds else "已停用") if hearing.get("key_configured")
+                    else "还没连接 OpenAI")
+    voice_form = settings_form("voice", "语音服务", "",
                                field("voice", hearing, "base_url", "接口地址")
-                               + field("voice", hearing, "desktop_daily_limit", "桌宠每天最多聊几轮（0 停用）", number=True))
+                               + field("voice", hearing, "desktop_daily_limit", "桌宠每天最多聊几轮（0 停用）", number=True),
+                               extra='<p class="cap-note cap-shared-note">连接凭据：共用聊天设置里的 OpenAI Key，不用再填一次。</p>')
     shared = (
         f'<details class="ms-voice-connection" id="voice"{" open" if saved == "voice" or editing == "voice" else ""}>'
-        f'<summary><span>语音服务</span><span class="ms-voice-state">{voice_source}</span><span class="cap-open">设置</span></summary>'
-        f'<div class="cap-body"><p class="cap-note">桌宠语音共用「发语音」的模型和音色；只在你按住说话时收音，QQ 的发语音开关不影响它。</p>{voice_form}</div></details>')
+        f'<summary><span>桌宠语音</span><span class="ms-voice-state">{voice_source}</span><span class="cap-open">设置</span></summary>'
+        f'<div class="cap-body"><p class="cap-note">桌宠语音共用「发语音」的模型和音色；点一下开始连续对话，再点结束。QQ 里的发语音开关不影响它。</p>{voice_form}</div></details>')
+    advanced_open = " open" if saved == "decision" or editing == "decision" or saved == "voice" else ""
+    advanced = (
+        f'<details class="ms-diagnostics ms-advanced"{advanced_open}><summary>高级：判断、搜索与连接检查</summary>'
+        f'{model_rows[1]}<a href="/decision">判断帮手 →</a><a href="/search">检查联网搜索 →</a></details>')
+    key_ready = bool(chat["key_configured"])
+    key_card = (
+        f'<section class="cap-key-card" data-tone="{"ok" if key_ready else "todo"}">'
+        f'<div><strong>{"一把 OpenAI Key 已就位" if key_ready else "还没填 OpenAI API Key"}</strong>'
+        f'<p>{"聊天、判断、读图、画图、语音都用它；换 Key 只改这一处。" if key_ready else "在下面「聊天」里填一次，其他能力自动共用，不用再填第二遍。"}</p></div>'
+        '<a href="#chat">去设置 →</a></section>')
     body = (
-        '<header class="cap-page-head"><h1>模型与能力</h1><p>选好她的本事，按你们的节奏来。</p></header>'
+        '<header class="cap-page-head"><h1>模型与能力</h1><p>她会什么、用哪个模型。开关点了就保存。</p></header>'
+        f'<section class="cap-page" aria-label="模型与能力">{key_card}'
         f'<p class="cap-runtime" data-tone="{tone}" data-cap-runtime>{timing}</p>'
-        f'<section class="cap-page" aria-label="模型与能力"><div class="cap-list">{"".join(rows)}</div>{shared}'
-        '<details class="ms-diagnostics"><summary>连接检查</summary><a href="/search">检查联网搜索 →</a></details></section>')
-    return _page("模型与能力", body, "capabilities")
-
-
-def _runtime_controls(cfg, csrf, runner):
-    settings = instance_settings.public_settings(cfg)
-    qq_ready = bool(settings.get("qq_app_id") and settings.get("qq_secret_configured"))
-    managed = runner.snapshot()
-    snapshot, state = _status(cfg)
-    age = time.time() - float(snapshot.get("updated_at") or 0) if snapshot else None
-    online = bool(managed.get("gateway_connected"))
-    if managed.get("owned") and managed.get("running"):
-        controls = f'<form method="post" action="/runtime/stop"><input type="hidden" name="csrf" value="{_esc(csrf)}"><button class="secondary">停止机器人</button></form>'
-    elif managed.get("external"):
-        controls = '<a class="button secondary" href="/capabilities">模型与能力 →</a>'
-    elif settings.get("ready"):
-        controls = f'<form method="post" action="/runtime/start"><input type="hidden" name="csrf" value="{_esc(csrf)}"><button>启动机器人</button></form>'
-    elif qq_ready:
-        controls = '<a class="button" href="/capabilities#chat">选择聊天模型 →</a>'
-    else:
-        controls = '<a class="button" href="/setup">连接 QQ →</a>'
-    owner_path = getattr(cfg, "OWNER_FILE", str(Path(cfg.DATA_DIR) / "owner.txt"))
-    owner = bool(_read_text(owner_path).strip())
-    if online:
-        headline = '已连上 QQ'
-        detail = ('在群里叫她的名字，就能聊起来。' if owner
-                  else '先由你发第一条 QQ 私聊，再邀请她进群。')
-    elif managed.get("running"):
-        headline, detail = '正在连接 QQ', '稍等一下；如果一直连不上，看看 QQ 配置和下方日志。'
-    else:
-        headline = '还没开始运行'
-        detail = ('配置已保存，启动后就能在群里和她聊天。' if settings.get('ready')
-                  else '再选一个聊天模型，就可以启动了。' if qq_ready
-                  else '先完成 QQ 连接，再选一个聊天模型。')
-    if age is not None and age > 120:
-        detail = '暂时收不到运行状态，请查看下方日志。'
-    progress = ""
-    if not (settings.get("ready") and online and owner):
-        milestones = (("基础设置", settings.get("ready")), ("连上 QQ", online), ("发第一条私聊", owner))
-        progress = '<ol class="wx-progress" aria-label="首次连接进度">' + ''.join(
-            f'<li class="{"wx-done" if done else ""}"><span>{"✓" if done else index}</span>{name}</li>'
-            for index, (name, done) in enumerate(milestones, 1)) + '</ol>'
-    external = ('<small class="wx-managed">由常驻服务运行，请在原来的启动入口启停。</small>'
-                if managed.get("external") else "")
-    return f'''<section class="wx-status" aria-label="QQ 连接状态"><div><span class="wx-live-dot {'wx-online' if online else ''}" aria-hidden="true"></span><h2>{headline}</h2><p>{detail}</p>{external}</div><div class="wx-status-action">{controls}</div>{progress}</section>'''
+        f'<div class="cap-list">{"".join(rows)}</div>{shared}{advanced}</section>')
+    return _page("模型与能力", body, "capabilities", cfg=cfg)
 
 
 def _agent_brief(cfg):
@@ -666,17 +754,21 @@ def _agent_brief(cfg):
 '''
 
 
-def _iterate_page(cfg):
+def _handoff_section(cfg):
+    """交给编码 Agent：复制或下载一份交接说明。说明里只有本机路径和流程，不含群聊或密钥。"""
     code_root = Path(__file__).resolve().parent
     source_ready = (code_root / "AGENTS.md").is_file() and (code_root / ".agents/skills/regular-iterate/SKILL.md").is_file()
     source_note = ('源码工作区已带上 AGENTS.md 与自迭代 skill。让你的编码 Agent 打开这个目录。'
                    if source_ready else '当前是运行安装包。要修改机器人，请先下载源码工作区；源码包自带 AGENTS.md 和自迭代 skill。实例数据继续用原目录。')
-    body = f'''<header class="wx-heading"><div><h1>让 Agent 帮忙</h1><p>哪句话没接好？让你的 Agent 帮她改进。</p></div></header>
-<section class="wx-handoff"><div class="wx-handoff-main"><span class="wx-note">从你的一句反馈开始</span><h2>复制说明，带上截图或原话</h2><p>发给你常用的 Agent，一起看看怎么改。</p><button type="button" data-copy-brief>复制给 Agent <span aria-hidden="true">↗</span></button><p data-copy-status aria-live="polite"></p></div>
-<ol class="wx-handoff-steps"><li><strong>你说哪里不对</strong><span>一句描述或一张截图就够了</span></li><li><strong>Agent 找现场、做对比</strong><span>保留正常场景，检查有没有改坏</span></li><li><strong>你看结果，再决定上线</strong><span>付费评测和重启都等你确认</span></li></ol></section>
-<details class="wx-disclosure"><summary>完整交接说明</summary><p class="wx-source-note">{source_note}</p><textarea class="wx-brief" readonly aria-label="交给 Agent 的任务说明" data-agent-brief>{_esc(_agent_brief(cfg))}</textarea><p class="wx-footnote">面板不会自动上传聊天。交接说明只含本机路径与操作流程，不含群聊或密钥。</p><a href="https://github.com/dubianche123/the-regular-qq-bot/releases/latest" target="_blank" rel="noreferrer">获取源码包 ↗</a></details>
-<div class="wx-links"><a href="/iterate/brief">下载交接说明 ↓</a><a href="/checkup">先看每日体检 →</a></div>'''
-    return _page("让 Agent 帮忙", body, "iterate")
+    return (f'<section class="wx-handoff-bar" id="handoff" aria-label="交给编码 Agent">'
+            f'<div class="wx-handoff-copy"><strong>交给编码 Agent</strong><span>哪句不对，复制交接说明，连同截图或原话发给 CodeX、Claude Code 这类 Agent。'
+            f'它会找到当轮现场、对比新旧版本；上线和付费评测都等你点头。</span></div>'
+            f'<div class="wx-handoff-actions"><button type="button" data-copy-brief>复制交接说明</button>'
+            f'<a href="/iterate/brief">下载</a></div><p class="wx-handoff-status" data-copy-status aria-live="polite"></p>'
+            f'<details class="wx-disclosure"><summary>看完整说明</summary><p class="wx-source-note">{source_note}</p>'
+            f'<textarea class="wx-brief" readonly aria-label="交给 Agent 的任务说明" data-agent-brief>{_esc(_agent_brief(cfg))}</textarea>'
+            f'<p class="wx-footnote">面板不会自动上传聊天。交接说明只含本机路径与操作流程，不含群聊或密钥。</p>'
+            f'<a href="https://github.com/dubianche123/the-regular-qq-bot/releases/latest" target="_blank" rel="noreferrer">获取源码包 ↗</a></details></section>')
 
 
 def _chat_route_card(cfg, runner=None):
@@ -714,7 +806,7 @@ def _companion_page(cfg, request, csrf, runner=None):
 <form class="chat-compose" action="/companion/chat" method="post" data-chat-form><input type="hidden" name="csrf" value="{_esc(csrf)}"><label class="sr-only" for="companion-message">想和老群友说的话</label><textarea id="companion-message" name="text" rows="2" maxlength="2000" placeholder="今天有什么想聊的？Enter 发送，Shift+Enter 换行" required data-chat-input></textarea><div class="chat-compose-footer"><span data-chat-count>0 / 2000</span><button type="submit" disabled data-chat-submit>发送 <span aria-hidden="true">↑</span></button></div></form>
 {_chat_route_card(cfg, runner)}</div></div>
 <nav class="room-shortcuts" aria-label="快捷入口"><a href="/capabilities">模型与能力</a><a href="/checkup">每日体检</a><a href="/">首页</a><a href="/iterate">让 Agent 帮忙</a><button type="button" class="text-button" data-actions-toggle aria-pressed="true" title="关闭后角色只保留静止姿势">角色动作：开</button></nav></section>'''
-    return _page("和老群友聊聊", body, "companion", pet=pet)
+    return _page("和老群友聊聊", body, "companion", pet=pet, cfg=cfg)
 
 
 def _knowledge_revision(path):
@@ -831,7 +923,7 @@ def _knowledge(cfg, request, csrf=""):
         elif template in examples:
             title, keywords, body = examples[template]
             values.update(title=title, keywords=keywords, body=body)
-        return _page("群知识", _knowledge_editor(cfg, name, values, csrf, example=template in examples), "knowledge")
+        return _page("群知识", _knowledge_editor(cfg, name, values, csrf, example=template in examples), "knowledge", cfg=cfg)
     if deleting is not None:
         try:
             index = int(deleting)
@@ -840,7 +932,7 @@ def _knowledge(cfg, request, csrf=""):
         except (ValueError, IndexError):
             raise web.HTTPBadRequest(text="没有找到这条知识。") from None
         body = f'''<header class="kb-heading"><div><h1>删除这条知识？</h1><p>{_esc(label)}</p></div></header><section class="kb-confirm"><h2>{_esc(row['title'])}</h2><p>{_esc(row['body'])}</p><form method="post" action="/knowledge/entry/save">{_knowledge_hidden({'csrf': csrf, 'file': name, 'revision': revision, 'action': 'delete', 'index': index})}<footer><button type="submit" class="kb-danger">删除</button><a href="{base}">保留</a></footer></form></section>'''
-        return _page("群知识", body, "knowledge")
+        return _page("群知识", body, "knowledge", cfg=cfg)
     parsed = knowledge_mod.KnowledgeBase(cfg.KNOWLEDGE_DIR).parse_file(path)
     available = {entry["title"] for entry in parsed}
     seen = set()
@@ -858,11 +950,11 @@ def _knowledge(cfg, request, csrf=""):
     saved = '<p class="kb-saved" role="status">已保存</p>' if request.query.get("saved") else ''
     options = ''.join(f'<option value="{_esc(value)}"{" selected" if value == name else ""}>{_esc(text)}</option>' for value, text in choices)
     advanced_open = ' open' if request.query.get('source') else ''
-    body = f'''<header class="kb-heading"><div><h1>群知识</h1><p>让她记住你们已经确认的事。</p></div>{f'<a class="button" href="{base}&amp;new=1">新增知识</a>' if sections else ''}</header>{saved}
+    body = f'''<header class="kb-heading"><div><h1>群知识</h1><p>让她记住你们已经确认的事。</p></div>{f'<a class="button" href="{base}&amp;new=1">新增知识</a>' if sections else ''}</header>{_knowledge_tabs("knowledge")}{saved}
 <div class="kb-toolbar"><form method="get" action="/knowledge" data-kb-scope><label for="kb-scope">适用范围</label><select id="kb-scope" name="file">{options}</select><button type="submit" class="secondary">切换</button></form><span>{len(sections)} 条知识</span></div>
 <section class="kb-list" aria-label="已保存知识条目">{''.join(cards) or empty}</section>{unorganized}
 <details class="kb-source"{advanced_open}><summary>编辑完整原文</summary><form method="post" action="/knowledge/save">{_knowledge_hidden({'csrf': csrf, 'file': name, 'revision': revision})}<label class="sr-only" for="kb-source">完整原文</label><textarea id="kb-source" name="content" rows="12" spellcheck="false">{_esc(content)}</textarea><footer><button type="submit">保存原文</button></footer></form></details>'''
-    return _page("群知识", body, "knowledge")
+    return _page("群知识", body, "knowledge", cfg=cfg)
 
 
 def _knowledge_entry_plan(cfg, form):
@@ -910,10 +1002,10 @@ def _knowledge_entry_plan(cfg, form):
 def _knowledge_entry_preview(cfg, form, csrf=""):
     _path, _updated, values = _knowledge_entry_plan(cfg, form)
     if form.get("intent") == "edit":
-        return _page("群知识", _knowledge_editor(cfg, values["file"], values, csrf), "knowledge")
+        return _page("群知识", _knowledge_editor(cfg, values["file"], values, csrf), "knowledge", cfg=cfg)
     label = dict(_knowledge_scopes(cfg, values['file']))[values['file']]
     body = f'''<header class="kb-heading"><div><h1>看看这样写对不对</h1><p>{_esc(label)} · 尚未保存</p></div></header><section class="kb-confirm"><h2>{_esc(values['title'])}</h2><p class="kb-preview-body">{_esc(values['body'])}</p>{f'<p class="kb-preview-words">关联词：{_esc(values["keywords"])}</p>' if values['keywords'] else ''}<form method="post" action="/knowledge/entry/save">{_knowledge_hidden({'csrf': csrf, **values})}<footer><button type="submit">保存知识</button><button type="submit" name="intent" value="edit" formaction="/knowledge/entry/preview" class="secondary">返回修改</button><a href="/knowledge?file={quote(values['file'], safe='')}">取消</a></footer></form></section>'''
-    return _page("群知识", body, "knowledge")
+    return _page("群知识", body, "knowledge", cfg=cfg)
 
 
 async def _knowledge_entry_save(cfg, form):
@@ -935,6 +1027,13 @@ async def _knowledge_save(cfg, request, form=None):
     raise web.HTTPFound(f"/knowledge?file={quote(name, safe='')}&saved=1")
 
 
+def _knowledge_tabs(active):
+    """群知识（你告诉她的）和群记忆（她自己攒的）是同一件事的两面，放在一个入口里切换。"""
+    tabs = (("/knowledge", "你告诉她的", "knowledge"), ("/memory", "她自己记下的", "memory"))
+    return '<nav class="wx-tabs" aria-label="群知识">' + "".join(
+        f'<a href="{href}"{" aria-current=page" if key == active else ""}>{text}</a>' for href, text, key in tabs) + '</nav>'
+
+
 def _memory(cfg, request):
     files = _memory_files(cfg)
     name = request.query.get("file") or (files[0] if files else "")
@@ -951,12 +1050,12 @@ def _memory(cfg, request):
     memory_content = f"<pre>{_esc(content)}</pre>" if content else _empty_state(
         "群记忆还在慢慢攒", "有了新的相处片段，她会慢慢整理。", state="sleeping")
     body = f"""
-<h1>每日记忆</h1>
-<p class="muted">她整理的每日记忆都在这里。想补充或纠正一件事，可以去群知识。</p>
+<header class="kb-heading"><div><h1>群知识</h1><p>她每天自己整理的群记忆。想补充或纠正，写进「你告诉她的」。</p></div></header>
+{_knowledge_tabs("memory")}
 {picker}
 {memory_content}
 """
-    return _page("每日记忆", body, "memory")
+    return _page("群记忆", body, "memory", cfg=cfg)
 
 
 async def _search(cfg, request):
@@ -987,7 +1086,7 @@ async def _search(cfg, request):
 </form>
 {notice}{rows}
 """
-    return _page("联网检查", body, "search")
+    return _page("联网检查", body, "search", cfg=cfg)
 
 
 def _decision(cfg, request, csrf):
@@ -1003,20 +1102,34 @@ async def _decision_save(cfg, request, csrf):
     endpoint = str(form.get("endpoint") or "").strip()
     key = str(form.get("api_key") or "").strip()
     try:
-        source = str(form.get("credential_source") or "existing")
-        if source == "chat":
-            key = instance_settings.decision_key_from_chat(cfg, endpoint)
-        elif source not in ("existing", "new") or (source == "new" and not key):
-            raise ValueError("invalid credentials")
-        elif not key:
+        # The new form posts "shared" explicitly. Old clients that omit the
+        # field keep their previous dedicated-key behaviour.
+        source = str(form.get("credential_source") or ("new" if key else "existing"))
+        model = str(form.get("model") or "")
+        if source == "shared":
+            # Dynamic binding: no second copy of the key is ever written.
+            # The endpoint must be the same service the shared key belongs to.
+            instance_settings.decision_key_from_chat(cfg, endpoint)
+            decision_settings.save_settings(cfg.DATA_DIR, endpoint=endpoint,
+                                            model=model, credential="shared")
+        elif source == "chat":
+            decision_settings.save_settings(
+                cfg.DATA_DIR, endpoint=endpoint, model=model,
+                api_key=instance_settings.decision_key_from_chat(cfg, endpoint))
+        elif source == "new":
+            if not key:
+                raise ValueError("invalid credentials")
+            decision_settings.save_settings(cfg.DATA_DIR, endpoint=endpoint,
+                                            model=model, api_key=key)
+        elif source == "existing":
             previous = decision_settings.load_settings(cfg.DATA_DIR)
-            if previous is not None and endpoint == previous["endpoint"]:
-                key = previous["api_key"]
-        decision_settings.save_settings(
-            cfg.DATA_DIR,
-            endpoint=endpoint,
-            model=str(form.get("model") or ""),
-            api_key=key)
+            if (previous is None or endpoint != previous["endpoint"]
+                    or not previous["api_key"]):
+                raise ValueError("invalid credentials")
+            decision_settings.save_settings(cfg.DATA_DIR, endpoint=endpoint,
+                                            model=model, api_key=previous["api_key"])
+        else:
+            raise ValueError("invalid credentials")
     except (ValueError, OSError):
         raise web.HTTPBadRequest(text="保存失败：字段不合法或无法写入") from None
     raise web.HTTPFound("/capabilities?saved=decision#decision")
@@ -1116,17 +1229,18 @@ def _checkup(cfg, request, csrf):
   </form>
 {cmds}</div>
 </details>""")
-    findings_html = "".join(cards) if cards else '<div class="wx-checkup-empty"><h2>这一天没有发现明显问题</h2><p>有哪句让你觉得不对，也可以直接把截图交给 Agent。</p><a href="/iterate">交给 Agent →</a></div>'
+    findings_html = "".join(cards) if cards else '<div class="wx-checkup-empty"><h2>这一天没挑出明显接偏的话</h2><p>你自己觉得哪句不对，就用上面的交接说明交给 Agent。</p></div>'
     i = out["inputs"]
     pending = sum(f.get("verdict") not in ("yes", "no") for f in out["findings"])
     body = f"""
-<header class="wx-heading"><div><h1>每日体检</h1><p>看看哪些话可能接偏了，点开一条再看现场。</p></div><form method="get" action="/checkup" class="wx-date"><label class="sr-only" for="checkup-day">体检日期</label><select id="checkup-day" name="day">{options}</select><button class="secondary" type="submit">查看</button></form></header>
+<header class="wx-heading"><div><h1>让她更好</h1><p>体检会挑出可能接偏的话；确认是问题，就交给编码 Agent 去改。</p></div></header>
 {warning}
-<div class="wx-checkup-summary"><p><strong>{pending} 条待看</strong><span>共 {len(out['findings'])} 条记录 · 收到 {i['incoming']} 条消息 · 回复 {i['delivered']} 条</span></p><a href="/iterate">让 Agent 帮忙 →</a></div>
+{_handoff_section(cfg)}
+<div class="wx-checkup-summary"><p><strong>每日体检 · {pending} 句待看</strong><span>{_esc(day)} · 共 {len(out['findings'])} 条记录 · 收到 {i['incoming']} 条消息 · 回复 {i['delivered']} 条</span></p><form method="get" action="/checkup" class="wx-date"><label class="sr-only" for="checkup-day">体检日期</label><select id="checkup-day" name="day">{options}</select><button class="secondary" type="submit">换一天</button></form></div>
 <section class="wx-findings" aria-label="待看记录">{findings_html}</section>
 <details class="wx-disclosure"><summary>分类统计与查看范围</summary><p class="muted">查看 {i['turns']} 轮对话、{i['triage']} 次接话判断，参考前 {i['baseline_days']} 天的记录。</p><table><thead><tr><th>问题类型</th><th>数量</th><th>确认比例</th></tr></thead><tbody>{"".join(sig_rows)}</tbody></table></details>
 """
-    return _page("每日体检", body, "checkup")
+    return _page("让她更好", body, "checkup", cfg=cfg)
 
 
 async def _checkup_label(cfg, request, csrf):
@@ -1256,7 +1370,8 @@ def create_app(cfg, *, token):
         raise web.HTTPFound("/")
 
     async def iterate_page(request):
-        return _html(_iterate_page(cfg))
+        # 「让 Agent 帮忙」并进了「让她更好」：旧链接、桌宠菜单照样能用，落在同一页的交接说明上。
+        return _html(_checkup(cfg, request, csrf))
 
     async def iterate_brief(request):
         return web.Response(text=_agent_brief(cfg), content_type="text/plain", charset="utf-8",
@@ -1295,7 +1410,7 @@ def create_app(cfg, *, token):
     async def companion_cue(request):
         """Coding agents may ask the pet to act or say one short line; nothing reaches QQ."""
         form = await checked_form(request)
-        from regular.pet_brain import CUE_ACTIONS
+        from regular.pet_brain import CUE_ACTIONS, STATE_CLIPS
         action = str(form.get("action") or "")
         text = " ".join(str(form.get("text") or "").split())
         if action and action not in CUE_ACTIONS:
@@ -1304,8 +1419,10 @@ def create_app(cfg, *, token):
             return web.json_response({"error": "请给出动作或一句话。"}, status=400)
         if len(text) > 120:
             return web.json_response({"error": "一句话最多 120 个字符。"}, status=400)
-        cue = {"kind": "cue", "id": secrets.token_hex(6), "ts": round(time.time(), 3),
-               "action": action, "text": text}
+        # 状态动作（交给 Agent / 体检 / 没配好）是一次性事件，不是「让她演个动作」的 cue。
+        cue = {"kind": "state" if action in STATE_CLIPS else "cue",
+               "id": secrets.token_hex(6), "ts": round(time.time(), 3),
+               "action": action, "state": action, "text": text}
         cues.append(cue)
         return web.json_response({"queued": cue["id"]})
 

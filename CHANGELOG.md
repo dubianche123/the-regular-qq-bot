@@ -2,6 +2,16 @@
 
 ## Unreleased — 2026-11-06
 
+- Reframe the console as a status panel instead of a list of backend modules.
+  The sidebar has two scenario groups and no catch-all drawer: 我的群友 / 聊两句
+  / 让她更好 / 群知识, then 设置 (模型与能力 / QQ 连接与身份). The daily checkup
+  and the coding-agent hand-off are one page (让她更好, with a pending badge in
+  the sidebar; /iterate lands on its hand-off block); group memory is a tab of
+  群知识. The homepage is one status card (state, the one action, first-run
+  progress, "需要你看一眼" exceptions) plus today's numbers-only activity.
+  Judgment and search stay independent underneath but move into one advanced
+  section; their visible module rows are gone. Settings forms and hot switches
+  are unchanged.
 - Replace the native Qt context menu and the vertical five-button toolbar with
   one compact self-drawn ring (chat / voice / a timeline for activity / more;
   "more" opens beside the ring) and a rounded
@@ -14,6 +24,8 @@
   a live voice session holds listen until it actually ends. Seated states use
   the existing posture bridges. A state ends when its heartbeat stops, not on
   a long fake "still busy" timeout.
+- Add `tests/test_design_state_layer.py` covering the state layer, shipped
+  strips, navigation folding, and removal of the native menu.
 - Bind the whole app to one OpenAI key. The console now asks for an API key in
   exactly one place (the chat settings); the judgment credential picker, the
   image-generation key field and the voice key field are gone. Judgment is no

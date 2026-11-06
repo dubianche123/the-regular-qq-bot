@@ -109,6 +109,7 @@ button, a, input, textarea, select, summary { -webkit-tap-highlight-color: trans
 .sidebar-footer::before { content: ""; display: block; width: 30px; height: 1px; margin-bottom: 17px; background: #4a6554; }
 .sidebar-footer strong { display: block; color: #dbe6d7; font-size: 12px; font-weight: 500; }
 .sidebar-footer p { margin: 5px 0 0; }
+/* Only three things are worth a permanent slot; everything else waits in one folded group. */
 @media (max-height: 850px) and (min-width: 821px) { .sidebar-footer { display: none; } }
 
 /* QQ identity is a saved profile; editing is an explicit, occasional action. */
@@ -135,6 +136,11 @@ button, a, input, textarea, select, summary { -webkit-tap-highlight-color: trans
 .ms-diagnostics { margin: 16px 0 0; color: var(--muted); font-size: 14px; }
 .ms-diagnostics > summary { width: fit-content; margin: 0; font-size: 14px; font-weight: 400; }
 .ms-diagnostics a { display: inline-block; margin: 10px 0; }
+.ms-advanced { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ms-advanced > summary { font-size: 14px; font-weight: 500; }
+.ms-advanced[open] > summary { margin-bottom: 14px; }
+.ms-advanced .cap-item { margin-bottom: 12px; }
+.ms-advanced a { margin-right: 18px; }
 @media (max-width: 620px) { .identity-fields { grid-template-columns: 1fr; } .identity-summary { padding: 20px; } .identity-form { padding: 8px 20px 20px; } .identity-editor > summary { padding: 16px 20px; } }
 .main-shell { min-width: 0; margin-left: var(--sidebar-width); }
 .topbar {
@@ -401,7 +407,7 @@ li { margin: 7px 0; }
   .brand-mark svg { width: 24px; height: 24px; }
   .brand-name { font-size: 18px; }
   .brand-sub { margin-top: 3px; font-size: 9px; }
-  .sidebar nav { display: flex; gap: 5px; margin-top: 18px; padding-bottom: 2px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #466149 transparent; }
+  .sidebar nav { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 18px; padding-bottom: 2px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #466149 transparent; }
   .nav-label, .sidebar-footer { display: none; }
   .nav-item { flex: 0 0 auto; min-height: 36px; margin: 0; padding: 8px 11px; gap: 7px; font-size: 11px; }
   .nav-icon, .nav-icon svg { width: 15px; height: 15px; flex-basis: 15px; }
@@ -761,6 +767,12 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .cap-page-head { margin: 4px 0 10px; }
 .cap-page-head h1 { margin: 0 0 6px; }
 .cap-page-head p { margin: 0; color: var(--muted); }
+.cap-key-card { display: flex; align-items: center; gap: 16px; margin: 0 0 14px; padding: 13px 18px; border: 1px solid var(--line); border-radius: 14px; background: #f3f8f0; }
+.cap-key-card[data-tone="todo"] { background: #fdf7ea; }
+.cap-key-card strong { font-size: 14px; }
+.cap-key-card p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.cap-key-card a { margin-left: auto; flex: none; font-size: 13px; white-space: nowrap; }
+.cap-shared-note { grid-column: 1 / -1; }
 .cap-runtime { display: flex; align-items: center; gap: 8px; margin: 0 0 18px; color: var(--muted); font-size: 13px; }
 .cap-runtime::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #b9c1b2; }
 .cap-runtime[data-tone="ok"]::before { background: var(--good); }
@@ -889,6 +901,19 @@ a.cap-chip:hover, .cap-chip > summary:hover strong { color: var(--accent-hover);
 .wx-progress li span { display:grid; place-items:center; width:20px; height:20px; border:1px solid #d0dbc6; border-radius:50%; font-size:10px; }
 .wx-progress .wx-done { color:#43653c; }
 .wx-progress .wx-done span { border-color:#d4e2c6; background:#dce8cf; }
+/* The homepage answers "is she okay?" first; configuration is the exception, not the page. */
+.wx-state-card { margin: 20px 0 4px; padding: 20px 24px; border: 1px solid var(--line); border-radius: 18px; background: var(--card); }
+.wx-state-card[data-tone="ok"] { border-color: #c6dcb0; background: #f4f8ec; }
+.wx-state-head { display: flex; align-items: center; gap: 15px; }
+.wx-state-dot { flex: 0 0 12px; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
+.wx-state-card[data-tone="ok"] .wx-state-dot { background: #7ea94a; box-shadow: 0 0 0 5px rgba(126,169,74,.16); }
+.wx-state-head h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.wx-state-head p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.wx-state-todo { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; }
+.wx-state-todo > span { color: var(--muted); }
+.wx-state-todo a { color: var(--accent); text-decoration: none; }
+.wx-state-todo a:hover { text-decoration: underline; }
+.wx-details-group > h3 { margin-top: 18px; }
 .wx-metrics { display:grid; grid-template-columns:1fr 1.6fr .8fr; gap:24px; margin:0; padding:22px 4px; border-bottom:1px solid var(--line); }
 .wx-metrics div { min-width:0; }
 .wx-metrics dt { color:var(--muted); font-size:11px; }
@@ -983,4 +1008,49 @@ a.cap-chip:hover, .cap-chip > summary:hover strong { color: var(--accent-hover);
   .wx-finding-body { padding:0 14px 14px; }
   .wx-groups { display:table; table-layout:fixed; }
   .wx-groups th, .wx-groups td { min-width:0; padding:10px; }
+}
+
+/* ── 控制台打磨：侧栏角标、首页一张状态卡、今天的数字、群知识两页、交给 Agent ── */
+.nav-badge { margin-left: auto; min-width: 20px; padding: 1px 7px; border-radius: 10px; background: var(--lime); color: var(--sidebar); font-size: 11px; font-weight: 700; text-align: center; }
+.wx-hero { margin: 0 0 18px; padding: 22px 24px; border: 1px solid var(--line); border-radius: 18px; background: var(--card); }
+.wx-hero[data-tone="ok"] { border-color: #c6dcb0; background: #f4f8ec; }
+.wx-hero-main { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; }
+.wx-hero-dot { width: 12px; height: 12px; border-radius: 50%; background: #c9a24f; box-shadow: 0 0 0 5px rgb(201 162 79 / 16%); }
+.wx-hero[data-tone="ok"] .wx-hero-dot { background: #7ea94a; box-shadow: 0 0 0 5px rgb(126 169 74 / 18%); }
+.wx-hero[data-tone="idle"] .wx-hero-dot { background: #a8b19b; box-shadow: 0 0 0 5px rgb(168 177 155 / 18%); }
+.wx-hero h2 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.wx-hero p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.wx-hero .wx-hero-facts { margin-top: 8px; color: #4f6656; font-size: 13px; }
+.wx-hero-action form { margin: 0; }
+.wx-hero-note { color: var(--muted); font-size: 12px; }
+.wx-hero .wx-progress { margin-top: 18px; }
+.wx-attention { margin-top: 16px; padding-top: 14px; border-top: 1px solid #dfe6d6; }
+.wx-attention > span { display: block; margin-bottom: 6px; color: #9a6c25; font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+.wx-attention ul { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.wx-attention a { display: inline-block; padding: 6px 12px; border: 1px solid #ead9b4; border-radius: 999px; background: #fbf4e4; color: #7a5a1e; font-size: 13px; text-decoration: none; }
+.wx-attention a:hover { border-color: #d9bd83; color: #5d4416; }
+.wx-today { margin: 0 0 22px; }
+.wx-today h2 { margin: 0 0 8px; font-size: 15px; }
+.wx-today dl { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.wx-today div { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+.wx-today dt { color: var(--muted); font-size: 12px; }
+.wx-today dd { margin: 2px 0 0; font-size: 22px; font-weight: 650; }
+.wx-tabs { display: flex; gap: 4px; margin: -8px 0 18px; border-bottom: 1px solid var(--line); }
+.wx-tabs a { padding: 8px 14px; border-bottom: 2px solid transparent; color: var(--muted); font-size: 14px; text-decoration: none; }
+.wx-tabs a[aria-current] { border-bottom-color: var(--accent); color: var(--ink); font-weight: 600; }
+.wx-handoff-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 20px; align-items: center; margin: 0 0 18px; padding: 18px 20px; border: 1px solid #d8d1e6; border-radius: 16px; background: #f6f3fa; }
+.wx-handoff-copy strong { display: block; font-size: 16px; }
+.wx-handoff-copy span { display: block; margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.wx-handoff-actions { display: flex; align-items: center; gap: 14px; }
+.wx-handoff-status { grid-column: 1 / -1; margin: 0; color: var(--good); font-size: 13px; }
+.wx-handoff-status:empty { display: none; }
+.wx-handoff-bar > details { grid-column: 1 / -1; margin: 4px 0 0; border: 0; }
+.wx-checkup-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.wx-checkup-summary .wx-date { margin: 0; }
+@media (max-width: 860px) {
+  .wx-hero-main { grid-template-columns: auto minmax(0, 1fr); }
+  .wx-hero-action { grid-column: 1 / -1; }
+  .wx-today dl { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .wx-handoff-bar { grid-template-columns: minmax(0, 1fr); }
+  .wx-checkup-summary { flex-wrap: wrap; }
 }
