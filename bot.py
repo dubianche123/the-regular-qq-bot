@@ -630,6 +630,10 @@ def _garbage_run(text):
 # 标签原样出现在群里；回复又进了会话历史，下一条照着学。记账协议本身也用尖括号，
 # 所以只在拆掉 <CMD> 之后对正文做。
 _MARKUP = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
+# 记账那一行连 CMD 都没写出来，只剩一个尖括号残片（2026-11-06 gpt-6-luna 画图那轮：
+# 「…这次算我破例加画一张\n<отов>」，原样进了群）。不认写法、只认位置：协议规定最后一行只放标签，
+# 没认到标签、最后一行又只剩一个 <…>，就是写坏的那一行。正文中间的尖括号不碰。
+_BROKEN_TAG_LINE = re.compile(r"\n[ \t]*<[^<>\s]{1,32}>\s*$")
 
 
 def split_cmd(raw):
@@ -651,9 +655,14 @@ def split_cmd(raw):
         # 并把原文记进日志——一次是模型抽风，两次以上就是新失败模式。
         logger.warning("🧯 模型输出含打坏的协议标签，已截断。原文: %s", raw[:160])
         body = body[:stub.start()]
-    body = _MARKUP.sub("", body).strip()
+    body = _MARKUP.sub("", body)
     if not match:
-        return body, None
+        broken = _BROKEN_TAG_LINE.search(body)
+        if broken:
+            logger.warning("🧯 记账那一行写坏了，已拿掉：%s", broken.group(0).strip()[:40])
+            body = body[:broken.start()]
+        return body.strip(), None
+    body = body.strip()
     try:
         payload = json.loads(match.group(1))
     except Exception:

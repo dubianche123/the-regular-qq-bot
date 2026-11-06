@@ -78,6 +78,19 @@ class SkewedCmdTagTest(unittest.TestCase):
     def test_unparseable_payload_is_still_cut(self):
         self.assertEqual(bot.split_cmd('行吧〔CMD>{“aff”:0}'), ("行吧", None))
 
+    def test_a_last_line_that_is_only_a_broken_tag_is_dropped(self):
+        """2026-11-06 gpt-6-luna 画图那轮：记账那一行只写出「<отов>」，原样进了群。"""
+        raw = "〔画〕写实风格的成年女性\n行，给她收得轻巧点，这次算我破例加画一张\n<отов>"
+        self.assertEqual(bot.split_cmd(raw),
+                         ("〔画〕写实风格的成年女性\n行，给她收得轻巧点，这次算我破例加画一张", None))
+        self.assertEqual(bot.split_cmd("好嘞\n  <DONE>  "), ("好嘞", None))
+
+    def test_angle_brackets_inside_a_sentence_or_with_a_real_tag_stay(self):
+        for text in ("我爱你 <3", "看看<红楼梦>那段", "第一行\n<这不是一个标签 有空格>", "就一行<отов>"):
+            with self.subTest(text=text):
+                self.assertEqual(bot.split_cmd(text), (text, None))
+        self.assertEqual(bot.split_cmd('收到\n<OK>\n<CMD>{"aff": 1}</CMD>'), ("收到", {"aff": 1}))
+
     def test_ordinary_brackets_untouched(self):
         for text in ("〈红楼梦〉里那段", "【公告】今晚八点", "打开CMD窗口输 ipconfig",
                      '{"aff":0} 这是一段 JSON', "[图片] 这张〔不是标记〕"):
