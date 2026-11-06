@@ -5,14 +5,14 @@ One official Images edit request per selected item, with no retries.
 Swift composites only the authorized edit regions back into the original PNG.
 No bot/runtime imports, QQ traffic, Python image editing or runtime dependencies.
 
+These are the web panel's static illustrations. The desktop pet's animated
+chibi sprites are produced by tools/pet_sprites.py instead.
 After visual selection, put the chosen 1024x1536 PNGs in a separate directory:
   python tools/generate_mascot_poses.py --output /tmp/selected-mascot \
-    --actions blink wave wave-mid welcome knowledge checkup \
+    --actions blink wave welcome knowledge checkup \
     --export-runtime regular/assets
-This offline macOS export uses Swift for two small lower-limb mesh poses and
-sips for identical 512x768 canvases, then writes the native action manifest.
-The original mascot.png is never overwritten. Review the action sequence at
-its actual display size before publishing; the API cannot guarantee a pose.
+This offline macOS export uses sips for identical 512x768 canvases.
+The original mascot.png is never overwritten.
 """
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ import os
 from pathlib import Path
 import struct
 import subprocess
-import tempfile
 
 from dotenv import dotenv_values
 import httpx
@@ -93,8 +92,11 @@ def swift_tool():
 
 
 def export_runtime(args):
-    """Export an explicitly curated candidate directory without any API call."""
-    helper = swift_tool()
+    """Export curated web illustrations at 512x768 without any API call.
+
+    The desktop pet no longer uses these keyframes; its chibi sprites come from
+    tools/pet_sprites.py (regular/assets/pet).
+    """
     target = args.export_runtime
     selected = []
     for action in args.actions:
@@ -103,31 +105,9 @@ def export_runtime(args):
             raise ValueError(f"Missing selected 1024x1536 candidate: {candidate.name}")
         selected.append((candidate, candidate.name))
     target.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="regular-mascot-export-") as temporary:
-        temporary = Path(temporary)
-        for name, amount in (("drag-mid", "0.5"), ("drag", "1")):
-            candidate = temporary / f"mascot-{name}.png"
-            subprocess.run([str(helper), "deform", str(args.reference), str(candidate), amount], check=True)
-            selected.append((candidate, candidate.name))
-        selected.append((args.reference, "mascot-idle.png"))
-        for candidate, name in selected:
-            subprocess.run(["sips", "-z", "768", "512", str(candidate), "--out", str(target / name)],
-                           check=True, stdout=subprocess.DEVNULL)
-    idle = "mascot-idle.png"
-    def clip(frames, fps):
-        return {"frames": frames, "fps": fps, "loop": False}
-    actions = {
-        "idle": clip([idle], 1),
-        "drag": clip(["mascot-drag-mid.png", "mascot-drag.png"], 8),
-        "land": clip(["mascot-drag.png", "mascot-drag-mid.png", idle], 8),
-    }
-    if "blink" in args.actions:
-        actions["blink"] = clip([idle, "mascot-blink.png", idle], 9)
-    if "wave" in args.actions:
-        mid = ["mascot-wave-mid.png"] if "wave-mid" in args.actions else []
-        actions["wave"] = clip([idle, *mid, "mascot-wave.png", *mid, idle], 7)
-    (target / "pet-actions.json").write_text(json.dumps(
-        {"schema": 1, "canvas": [512, 768], "actions": actions}, indent=2) + "\n", encoding="utf-8")
+    for candidate, name in selected:
+        subprocess.run(["sips", "-z", "768", "512", str(candidate), "--out", str(target / name)],
+                       check=True, stdout=subprocess.DEVNULL)
     print(json.dumps({"api_requests": 0, "directory": str(target),
                       "pngs": [{"name": name, "bytes": (target / name).stat().st_size}
                                for _, name in selected]}, ensure_ascii=False))

@@ -15,10 +15,18 @@ import voice_output_runtime as runtime
 
 
 def test_runtime_uses_existing_packaged_encoder(tmp_path):
+    # Runtime readiness now checks the configured dependencies before billing.
+    # The synth is mocked below, so use existing synthetic files, not machine-
+    # specific Homebrew or deliberately nonexistent paths.
+    node = tmp_path / 'node'
+    node.write_text('synthetic executable')
+    node.chmod(0o700)
+    silk = tmp_path / 'silk.cjs'
+    silk.write_text('synthetic codec')
     config = SimpleNamespace(
         VOICE_OUTPUT_ENABLED=True, SSL_VERIFY=True,
         PROVIDER_PRESETS={'openai': {'base_url': 'https://api.openai.com/v1'}},
-        VOICE_OUTPUT_NODE='/opt/homebrew/bin/node', VOICE_OUTPUT_SILK_ENTRY='/unused/silk.cjs',
+        VOICE_OUTPUT_NODE=str(node), VOICE_OUTPUT_SILK_ENTRY=str(silk),
         DATA_DIR=str(tmp_path), VOICE_OUTPUT_DAILY_LIMIT=20, VOICE_OUTPUT_AUTO_PROBABILITY=0,
     )
     outgoing = SimpleNamespace(attempt=AsyncMock(return_value=SimpleNamespace(status='sent')))

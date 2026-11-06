@@ -1,0 +1,110 @@
+{
+ "schema": 2,
+ "frame": [
+  360,
+  360
+ ],
+ "anchor": [
+  180,
+  348
+ ],
+ "figure_height": 320,
+ "actions": {
+  "idle": {
+   "file": "idle.webp",
+   "frames": 3
+  },
+  "look": {
+   "file": "look.webp",
+   "frames": 2
+  },
+  "walk": {
+   "file": "walk.webp",
+   "frames": 6
+  },
+  "wave": {
+   "file": "wave.webp",
+   "frames": 4
+  },
+  "hop": {
+   "file": "hop.webp",
+   "frames": 4
+  },
+  "sit": {
+   "file": "sit.webp",
+   "frames": 3
+  },
+  "sleep": {
+   "file": "sleep.webp",
+   "frames": 4
+  },
+  "dangle": {
+   "file": "dangle.webp",
+   "frames": 4
+  },
+  "fall": {
+   "file": "fall.webp",
+   "frames": 4
+  },
+  "think": {
+   "file": "think.webp",
+   "frames": 2
+  },
+  "phone": {
+   "file": "phone.webp",
+   "frames": 2
+  },
+  "talk": {
+   "file": "talk.webp",
+   "frames": 4
+  },
+  "stretch": {
+   "file": "stretch.webp",
+   "frames": 4
+  },
+  "read": {
+   "file": "read.webp",
+   "frames": 4
+  },
+  "draw": {
+   "file": "draw.webp",
+   "frames": 4
+  },
+  "sing": {
+   "file": "sing.webp",
+   "frames": 4
+  },
+  "pout": {
+   "file": "pout.webp",
+   "frames": 4
+  },
+  "shy": {
+   "file": "shy.webp",
+   "frames": 4
+  },
+  "startle": {
+   "file": "startle.webp",
+   "frames": 4
+  },
+  "cheer": {
+   "file": "cheer.webp",
+   "frames": 4
+  },
+  "tea": {
+   "file": "tea.webp",
+   "frames": 4
+  },
+  "lookaround": {
+   "file": "lookaround.webp",
+   "frames": 4
+  },
+  "eat": {
+   "file": "eat.webp",
+   "frames": 4
+  },
+  "laptop": {
+   "file": "laptop.webp",
+   "frames": 4
+  }
+ }
+}

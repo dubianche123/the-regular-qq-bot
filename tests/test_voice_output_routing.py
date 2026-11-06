@@ -113,10 +113,15 @@ os.close(fd)
 
 class RuntimeLockTests(unittest.IsolatedAsyncioTestCase):
     def config(self, directory):
+        node = Path(directory) / 'node'
+        node.write_text('')
+        node.chmod(0o700)
+        silk = Path(directory) / 'silk.cjs'
+        silk.write_text('')
         return SimpleNamespace(
             VOICE_OUTPUT_ENABLED=True, SSL_VERIFY=True,
             PROVIDER_PRESETS={'openai': {'base_url': 'https://api.openai.com/v1'}},
-            VOICE_OUTPUT_NODE='node', VOICE_OUTPUT_SILK_ENTRY='silk.cjs',
+            VOICE_OUTPUT_NODE=str(node), VOICE_OUTPUT_SILK_ENTRY=str(silk),
             DATA_DIR=directory, VOICE_OUTPUT_DAILY_LIMIT=10)
 
     async def test_busy_process_lock_skips_before_billing_or_synthesis(self):

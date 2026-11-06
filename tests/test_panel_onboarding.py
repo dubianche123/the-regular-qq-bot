@@ -77,15 +77,32 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
                                     "pid": pid, "lifecycle": "ready", "gateway_connected": True,
                                     "code": {"release": "synthetic-release", "source_root": "<code & root>"}}))
 
-    async def test_empty_instance_lands_on_setup_without_creating_config_or_starting(self):
+    async def test_empty_instance_lands_on_overview_with_one_setup_entry_without_starting(self):
         response = await self.client.get("/", headers=self.auth())
         self.assertEqual(response.status, 200)
         text = await response.text()
-        self.assertIn("先让它走进你的 QQ 群", text)
-        self.assertIn('action="/setup/save"', text)
-        self.assertIn(html.escape(str(self.root)), text)
+        self.assertIn("我的群友", text)
+        self.assertIn("连接 QQ 与模型", text)
+        self.assertIn('aria-label="首次连接进度"', text)
+        self.assertNotIn('action="/setup/save"', text)
         self.assertNotIn(str(self.root), text)
         self.assertFalse(self.file.exists())
+        self.runner.start.assert_not_called()
+        self.runner.stop.assert_not_awaited()
+
+    async def test_connected_owned_instance_hides_first_run_progress_and_collapses_logs(self):
+        self.assertEqual((await self.save()).status, 302)
+        self.health()
+        Path(self.cfg.OWNER_FILE).write_text("synthetic-owner\n")
+        Path(self.cfg.LOG_FILE).write_text("synthetic-log-line\n")
+        self.managed.update(external=True, running=True, pid=9876,
+                            gateway_connected=True, stale=False, lifecycle="ready")
+        response = await self.client.get("/", headers=self.auth())
+        text = await response.text()
+        self.assertIn("已连上 QQ", text)
+        self.assertNotIn('aria-label="首次连接进度"', text)
+        self.assertIn('<details class="wx-disclosure"><summary>运行日志与版本</summary>', text)
+        self.assertIn("synthetic-log-line", text)
         self.runner.start.assert_not_called()
         self.runner.stop.assert_not_awaited()
 

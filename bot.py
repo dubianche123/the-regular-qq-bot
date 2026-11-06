@@ -224,6 +224,7 @@ import runtime
 import activation
 import providers
 from runtime import owner_label, load_owner, named_members
+from regular import capabilities
 call_model = providers.call_model
 probe_provider = providers.probe_provider
 providers.initialize(budget=runtime.BUDGET, decision_budget=runtime.DECISION_BUDGET,
@@ -231,17 +232,17 @@ providers.initialize(budget=runtime.BUDGET, decision_budget=runtime.DECISION_BUD
 _voice_keys = config.load_api_keys("openai")
 VOICE = voice_runtime.VoiceRuntime(
     budget=runtime.BUDGET, mark_dirty=runtime.STATE.mark_dirty, persist=runtime.STATE.save_now,
-    api_key=_voice_keys[0] if _voice_keys else "",
-    base_url=config.PROVIDER_PRESETS["openai"]["base_url"] or "https://api.openai.com/v1",
-    model=config.VOICE_TRANSCRIPTION_MODEL)
+    api_key=capabilities.audio_key(config, _voice_keys[0] if _voice_keys else ""),
+    base_url=config.VOICE_BASE_URL, model=config.VOICE_TRANSCRIPTION_MODEL,
+    transcription_enabled=lambda: capabilities.enabled(config, "transcription"))
 del _voice_keys
 _VOICE_OUT = voice_output_runtime.VoiceOutputRuntime(
-    config, next(iter(config.load_api_keys("openai")), ""))
+    config, capabilities.audio_key(config, next(iter(config.load_api_keys("openai")), "")))
 
 
 async def _recognize_voices(voices, event_prefix):
     """Recognize at most three distinct current attachments in arrival order."""
-    if not event_prefix or not 0 < len(voices) <= 3:
+    if not capabilities.enabled(config, "voice_input") or not event_prefix or not 0 < len(voices) <= 3:
         return None
     results = await asyncio.gather(*(VOICE.processor.process(
         voice, event_key=f"{event_prefix}:{index}") for index, voice in enumerate(voices)))
@@ -326,6 +327,19 @@ def _note_own_line(group_id, text, *, medium="text", status="delivered"):
         slot = runtime.STATE.data.setdefault("groups", {}).setdefault(group_id, {})
         slot["own_lines"] = list(own_lines[group_id])[-config.GROUP_BUFFER_SIZE:]
         runtime.STATE.mark_dirty()
+
+
+def _note_media(message, user, medium, status):
+    """画图、发语音要花十几秒到一分钟：开始那一刻、以及最后没发成时，往交互日志记一行。
+
+    桌宠（regular/presence.py）靠它在过程中就拿起速写本或麦克风，而不是图发出去才比划。
+    只记媒介和状态，不记画面描述、要念的字；发成了照旧由 delivery 那一行记。私聊不记。
+    """
+    group_id = getattr(message, "group_openid", None)
+    if group_id:
+        runtime.INTERACTIONS.append("media", group_id, user=user, actor="assistant",
+                                    source_message_id=getattr(message, "id", None),
+                                    medium=medium, status=status)
 
 
 # ── 认出「这是在跟小王说话」：引用它的话、@ 它（2026-11-03，见 quotes.py）──
@@ -942,7 +956,7 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
         }
         if result.reason:
             fields["reason"] = result.reason
-        for key in ("generation", "provider", "model", "tier",
+        for key in ("medium", "generation", "provider", "model", "tier",
                     "finish_reason", "knowledge_supplied", "recall_supplied",
                     "search_supplied", "remind_applied", "personal_memory_used",
                     "personal_memory_enabled", "turn_id"):
@@ -1301,7 +1315,9 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             # 发语音持 owner-hint 锁：念出去的那句不能在合成途中被认主提示改掉。
             async with owner_hint_lock(owner_hint_group):
                 voice_result = receipt = None
-                if not owner_hint_pending(owner_hint_group):
+                attempted = not owner_hint_pending(owner_hint_group)
+                if attempted:
+                    _note_media(message, member, "voice", "started")
                     try:
                         voice_result, receipt = await _VOICE_OUT.attempt(
                             message, body, SENDER,
@@ -1312,8 +1328,12 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                         logger.warning("语音发送状态不明，停止本轮投递")
                         _note_own_line(getattr(message, "group_openid", None), body,
                                        medium="voice", status="unconfirmed")
+                        _note_media(message, member, "voice", "unconfirmed")
                         return body, delta, DeliveryResult("unknown", body)
                 status = getattr(voice_result, "status", None)
+                if attempted and status != "sent":
+                    _note_media(message, member, "voice",
+                                "unconfirmed" if status == "delivery_unknown" else "failed")
                 if status == "sent":
                     recorded["as"] = expression.record(said, True)
                     meta = dict(interaction)
@@ -1355,28 +1375,71 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         return body, delta, result
 
 
-_LOCAL_CHAT_NOTE = """【本机文字对话】
-这是本机面板里的普通文字聊天，对方没有因此获得 QQ 群主身份。
-这里只能用文字回应，不能发送 QQ 消息、画图、生成语音、保存或取消群提醒、改称呼。
-不能修改配置、密钥、代码或部署。不要承诺已执行这些动作；需要管理时请提示打开面板。
-只输出对话正文，不输出动作标记或内部指令。"""
+_LOCAL_CHAT_NOTE = """【本机管家】
+这是本机面板和桌宠里，和照看这台机器上的你的人的私聊；对方没有因此获得 QQ 群主身份。
+这里只用文字回应，不能发 QQ 消息、画图、生成语音、保存或取消群提醒、改称呼，也不能改密钥、代码或部署。
+你可以帮他打理下面这些事，但只能提议，他点了确认才算数：
+- 开关能力（读图、画图、动图、听语音、模型转写、发语音）：对方明确要开或关时，在回复最后单独一行写〔开关 画图 关〕这样的提议，能力名照括号里写，后面是开或关，一次最多一个。询问用法、引用或讨论标记不等于要求开关。
+- 总结：下面附了现在的开关和本机记录的今日概况（只有数字，没有群聊原文）。只能说明记录到的次数，不能据此编话题、原话或认定群里没有聊天。问今天聊了什么而没有原文时，说明这里没有话题记录。
+- 服务参数齐全不代表账号权限或实际可用。模型等配置变更须新进程加载；说明本进程载入的模型和启动环境覆盖，不把未生效的选择说成已经切换。
+- 改代码、调提示词、修毛病：在回复最后单独一行写〔交给Agent〕，他确认后会打开交给编码 Agent 的交接页；不要说你自己去改。
+他确认之前什么都没变：别说「已经关了」「已经交出去了」。除了这两种提议，不写别的动作标记或内部指令。"""
+
+
+def _manager_context():
+    """Bounded local facts for this dynamic layer; no keys, endpoints, paths or chat text."""
+    from regular import capabilities, presence
+    lines = []
+    try:
+        sections = capabilities.public_settings(config)
+        current = capabilities.runtime_status(config)
+        lines.append("【现在的开关】" + "、".join(
+            f"{label}{'开' if current['enabled'][flag] else '关'}"
+            for label, flag in local_chat.MANAGED.items()))
+        lines.append("【保存的服务配置】" + "；".join(
+            f"{label}：" + ("还差" + "、".join(sections[name]["missing"])
+                           if sections[name]["missing"] else "参数齐全，权限未验证")
+            for name, label in capabilities.NAMES))
+        lines.append("【本进程已载入模型】" + "、".join(
+            f"{label}：{current['models'][name] or '未配置'}"
+            for name, label in capabilities.NAMES) + f"；音色：{current['voice'] or '未配置'}")
+        overridden = [label for name, label in capabilities.NAMES if sections[name]["overridden"]]
+        if overridden:
+            lines.append("【启动环境覆盖】" + "、".join(overridden) + "有设置由启动环境提供，保存文件不能覆盖；相反的开关请求会被拒绝。")
+    except Exception:
+        logger.warning("本机管家读不到能力开关，这轮不附")
+    try:
+        lines.append("【今日概况】" + presence.render_day_summary(presence.day_summary(config)))
+    except Exception:
+        logger.warning("本机管家读不到今日概况，这轮不附")
+    return "\n".join(lines)
 
 
 async def reply_locally(text):
-    """Run a separate private conversation inside the one live state owner."""
+    """Run a separate private conversation inside the one live state owner.
+
+    Returns {"text", "action"}: action is at most one proposal (local_chat.manage_reply) that the
+    maintainer confirms in the panel or the pet; nothing is executed here.
+    """
     runtime.STATE.mark_dirty()
     if not runtime.BUDGET.can_consume():
-        return "今天的 AI 调用额度用完了，明天再聊吧。"
+        return {"text": "今天的 AI 调用额度用完了，明天再聊吧。", "action": None}
     message = local_chat.LocalReply()
+
+    def manage(body):
+        said, message.action = local_chat.manage_reply(body)
+        return said
+
+    context = _manager_context()
     _, _, result = await reply_in_session(
         message, "local_private", text, private=True, is_owner=False,
-        media_note=_LOCAL_CHAT_NOTE, reply_filter=local_chat.text_reply,
+        media_note=_LOCAL_CHAT_NOTE + ("\n" + context if context else ""), reply_filter=manage,
         raw_reply_filter=local_chat.strip_internal)
     if result is None:
-        return "这句我先安静陪你。"
+        return {"text": "这句我先安静陪你。", "action": None}
     if not result.delivered:
         raise local_chat.LocalChatError(503, "本机回复未确认，没有自动重试。")
-    return result.text
+    return {"text": result.text, "action": message.action}
 
 
 _unprompted_locks = collections.defaultdict(asyncio.Lock)
@@ -1518,6 +1581,8 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
         await said_first.wait()
         return SENDER._next_sequence(message)
 
+    medium = "animation" if said.animated else "image"
+    _note_media(message, media.user, medium, "started")
     task = asyncio.create_task(image_generation.generate_and_send(
         message, group_id=media.group, user_id=media.user, score=media.score,
         prompt=said.spec, animated=said.animated, before_send=after_text))
@@ -1556,8 +1621,9 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
             status="delivered", route="image", generation="model")
     else:
         detail = "QQ 送达回执不明" if outcome is None else expression.image_failed_line(outcome)
-        _note_own_line(media.group, f"{said.spec}；{detail}", medium="animation" if said.animated else "image",
+        _note_own_line(media.group, f"{said.spec}；{detail}", medium=medium,
                        status="unconfirmed" if outcome is None else "failed")
+        _note_media(message, media.user, medium, "unconfirmed" if outcome is None else "failed")
     if outcome is not True and outcome is not None:
         line = expression.image_failed_line(outcome)
         logger.info("🎨 这张没画成（%s）", outcome)
@@ -3020,10 +3086,12 @@ class GroupBot(botpy.Client):
         runtime.STATE.mark_dirty()
 
         # 3.4 交互观察：完整规范化输入落独立日志（只进不出，不进任何提示词路径）。
+        # call：at 是怎么叫到它的 —— 平台 @ / 引用它的话 / 正文里喊名字（桌宠据此说不同的话）。
         runtime.INTERACTIONS.append(
             "incoming", group_id, user=sender_openid, actor="user",
             message_id=message.id, text=heard,
-            at=bool(is_at), cmd=is_control_command(user_input))
+            at=bool(is_at), cmd=is_control_command(user_input),
+            call="at" if at_bot else "quote" if quotes_self else "name" if named else None)
 
         # 清空命令先于捎带和任何模型判断；不能先把待取消的提醒发出去。
         if is_cancel_all_reminders(user_input):
@@ -3710,9 +3778,10 @@ def _runtime_status_details():
     return {
         "code": {"release": code_release(),
                  "source_root": os.path.dirname(os.path.abspath(__file__))},
+        "capabilities": capabilities.runtime_status(config),
         "image_generation": {"model": config.IMAGE_GENERATION_MODEL,
                              "available": bool(image_generation.available()),
-                             "gif_enabled": bool(config.IMAGE_GENERATION_GIF_ENABLED),
+                             "gif_enabled": capabilities.enabled(config, "gif"),
                              "animation_available": bool(image_generation.animation_available())},
         "reminders": {"review_policy": reminder_review.POLICY_VERSION,
                       "paused": sum(bool(t["payload"].get("paused"))

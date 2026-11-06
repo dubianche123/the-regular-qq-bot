@@ -12,6 +12,7 @@ import delivery
 from realtime_synth import RealtimeSilkSynth
 from voice_budget import Budget
 from voice_outbound import Delivery, Settings, VoiceOutbound
+from regular import capabilities
 
 
 try:
@@ -91,17 +92,17 @@ class VoiceOutputRuntime:
         它决定稳定头里写不写「你会发语音」（bot.media_rules），所以只看配置，不看额度和在途。
         """
         c = self.config
-        if not c.VOICE_OUTPUT_ENABLED or not c.SSL_VERIFY or not self.key:
+        if not capabilities.enabled(c, "voice_output") or not c.SSL_VERIFY or not self.key:
             return False
         try:
-            endpoint = urlsplit(c.PROVIDER_PRESETS['openai']['base_url'] or 'https://api.openai.com/v1')
+            endpoint = urlsplit(getattr(c, 'VOICE_BASE_URL', None) or c.PROVIDER_PRESETS['openai']['base_url'] or 'https://api.openai.com/v1')
             if (endpoint.scheme != 'https' or endpoint.hostname != 'api.openai.com'
                     or endpoint.port not in (None, 443) or endpoint.username is not None
                     or endpoint.password is not None or endpoint.query or endpoint.fragment):
                 return False
         except (KeyError, TypeError, ValueError):
             return False
-        return bool(c.VOICE_OUTPUT_NODE and c.VOICE_OUTPUT_SILK_ENTRY)
+        return all(capabilities.dependencies(c.VOICE_OUTPUT_NODE, c.VOICE_OUTPUT_SILK_ENTRY).values())
 
     def busy(self):
         return self._lock.locked()
@@ -132,7 +133,10 @@ class VoiceOutputRuntime:
                 db = str(Path(c.DATA_DIR) / 'voice-outbound-budget.sqlite3')
                 synth = RealtimeSilkSynth(self.key, Budget(db, 'provider', c.VOICE_OUTPUT_DAILY_LIMIT),
                     c.VOICE_OUTPUT_NODE, c.VOICE_OUTPUT_SILK_ENTRY,
-                    str(Path(__file__).resolve().parent / 'regular' / 'voice_encode.mjs'))
+                    str(Path(__file__).resolve().parent / 'regular' / 'voice_encode.mjs'),
+                    model=getattr(c, 'VOICE_OUTPUT_MODEL', 'gpt-realtime-2.1-mini'),
+                    voice=getattr(c, 'VOICE_OUTPUT_VOICE', 'marin'),
+                    base_url=getattr(c, 'VOICE_BASE_URL', 'https://api.openai.com/v1'))
                 start_day = time.strftime('%Y-%m-%d')
                 transport = QQTransport(message, sender,
                     lambda: current() and time.strftime('%Y-%m-%d') == start_day)

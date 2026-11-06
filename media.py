@@ -8,6 +8,7 @@ import time
 
 import config
 import providers
+from regular import capabilities
 
 logger = logging.getLogger("qqbot")
 CAPTION_CACHE_SIZE = 300
@@ -132,7 +133,7 @@ class CaptionService:
 
     async def caption_for(self, group_id, message_id, sender, image_url, *, foreground=False):
         """所有读图路径共用同一任务，得到描述后分别按源 ID 关联每条消息。"""
-        if self._closing or not config.VISION_ENABLED or not image_url or not message_id:
+        if self._closing or not capabilities.enabled(config, "vision") or not image_url or not message_id:
             return None
         caption = self.cache.get(image_url)
         if caption:
@@ -155,7 +156,7 @@ class CaptionService:
     def remember(self, group_id, message_id, sender, image_url):
         """收到图就同步记一笔。不能等后台读图协程自己登记：它要等这条消息的分诊
         请求回来才排上，这期间紧跟着的提问会找不到它。"""
-        if not config.VISION_ENABLED or not image_url or not message_id:
+        if not capabilities.enabled(config, "vision") or not image_url or not message_id:
             return
         self._owed[(group_id, str(message_id))] = (sender, image_url)
         while len(self._owed) > self.cache_size:

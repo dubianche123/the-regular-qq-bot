@@ -174,6 +174,12 @@ def save_settings(cfg, values):
         if budget < 0:
             raise ValueError("每日调用上限必须是非负整数。")
         changes["DAILY_BUDGET"] = str(budget)
+    write_values(cfg, changes)
+    return public_settings(cfg, provider)
+
+
+def write_values(cfg, changes):
+    """Atomically save already-validated explicit fields without touching chat choices."""
     root = instance_dir(cfg)
     target = root / ".env"
     original = target.read_text(encoding="utf-8") if target.exists() else "# The Regular 本机配置。请勿公开此文件。\n"
@@ -195,4 +201,3 @@ def save_settings(cfg, values):
     finally:
         Path(temp_path).unlink(missing_ok=True)
     Path(getattr(cfg, "DATA_DIR", root / "data")).mkdir(parents=True, exist_ok=True, mode=0o700)
-    return public_settings(cfg, provider)

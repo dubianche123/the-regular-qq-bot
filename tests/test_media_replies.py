@@ -7,6 +7,7 @@
 修法：能力写进稳定头，〔画〕〔语音〕标记由小王写；会话里记下实际结果（expression.record）。
 """
 import asyncio
+import collections
 import sys
 import unittest
 from datetime import datetime, timezone
@@ -371,6 +372,87 @@ class MediaTurnTest(unittest.TestCase):
         t = self.turn("normal", tired=True)
         self.assertFalse(t.voice)
         self.assertIn(prompts.PROMPT_VOICE_TIRED, t.note)
+
+
+class MediaProgressRowTest(_Reply):
+    """桌宠在画图、录语音的过程中就要演（regular/presence.py）：开始和没发成各记一行交互日志，只有媒介和状态。"""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        # 这里回复很多次：自己那几句别塞满模块级的 own_lines，别的测试按长度差取新行。
+        lines = collections.defaultdict(lambda: collections.deque(maxlen=bot.config.GROUP_BUFFER_SIZE))
+        patcher = patch.object(bot, "own_lines", lines)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def media_rows(self):
+        rows = [c for c in bot.runtime.INTERACTIONS.append.call_args_list if c.args[0] == "media"]
+        for row in rows:
+            self.assertEqual(set(row.kwargs) - {"user", "actor", "source_message_id", "medium", "status"}, set())
+        return [(row.kwargs["medium"], row.kwargs["status"]) for row in rows]
+
+    async def test_drawing_is_logged_when_it_starts_and_again_only_if_it_did_not_land(self):
+        for outcome, rows in ((True, [("image", "started")]),
+                              ("busy", [("image", "started"), ("image", "failed")]),
+                              (None, [("image", "started"), ("image", "unconfirmed")])):
+            with self.subTest(outcome=outcome), self.said("〔画〕橘猫\n我试试"):
+                bot.runtime.INTERACTIONS.append.reset_mock()
+                started = []
+
+                async def draw(message, **kw):
+                    started.append(self.media_rows())
+                    await kw["before_send"]()
+                    return outcome
+
+                with patch.object(bot.image_generation, "generate_and_send", side_effect=draw):
+                    await bot.reply_in_session(self.message, "group_member", "画只猫", media=self.media())
+                self.assertEqual(started, [[("image", "started")]])   # 在开画之前就记了
+                self.assertEqual(self.media_rows(), rows)
+
+    async def test_animation_says_animation(self):
+        with self.said("〔动图〕小鸡运球，回到起始姿势循环\n来了"), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock(return_value=True)):
+            await bot.reply_in_session(self.message, "group_member", "画个动图", media=self.media())
+        self.assertEqual(self.media_rows(), [("animation", "started")])
+
+    async def test_voice_is_logged_when_recording_starts_and_the_sent_line_carries_its_medium(self):
+        cases = (("sent", [("voice", "started")]),
+                 ("send_failed", [("voice", "started"), ("voice", "failed")]),
+                 ("delivery_unknown", [("voice", "started"), ("voice", "unconfirmed")]))
+        for status, rows in cases:
+            with self.subTest(status=status), self.said("〔语音〕\n早啊各位"), \
+                 patch.object(bot._VOICE_OUT, "attempt", AsyncMock(return_value=(Result(status), None))):
+                bot.runtime.INTERACTIONS.append.reset_mock()
+                bot._delivery_observer.reset_mock()
+                await bot.reply_in_session(self.message, "group_member", "说句话",
+                                           owner_hint_group="group", media=self.media())
+                self.assertEqual(self.media_rows(), rows)
+                if status == "sent":
+                    self.assertEqual(bot._delivery_observer.call_args.args[2]["medium"], "voice")
+
+    async def test_voice_that_raises_is_marked_unconfirmed(self):
+        with self.said("〔语音〕\n早啊各位"), \
+             patch.object(bot._VOICE_OUT, "attempt", AsyncMock(side_effect=RuntimeError("boom"))):
+            await bot.reply_in_session(self.message, "group_member", "说句话",
+                                       owner_hint_group="group", media=self.media())
+        self.assertEqual(self.media_rows(), [("voice", "started"), ("voice", "unconfirmed")])
+
+    async def test_private_chats_and_plain_text_log_no_media_rows(self):
+        with self.said("早啊各位"):
+            await bot.reply_in_session(self.message, "group_member", "说句话", media=self.media())
+        self.assertEqual(self.media_rows(), [])
+        with patch.object(bot.runtime, "INTERACTIONS", SimpleNamespace(append=Mock())) as log:
+            bot._note_media(SimpleNamespace(id="m"), "member", "voice", "started")
+        log.append.assert_not_called()
+
+
+class DeliveryMediumTest(unittest.TestCase):
+    def test_delivery_row_keeps_the_medium_so_a_voice_is_not_mistaken_for_text(self):
+        with patch.object(bot.runtime, "INTERACTIONS", SimpleNamespace(append=Mock())) as log:
+            bot._delivery_observer("out", "group", {"route": "reply", "medium": "voice"}, "member")(
+                SimpleNamespace(status="queued", fallback=False, reason=None))
+        self.assertEqual(log.append.call_args.kwargs["medium"], "voice")
+        self.assertEqual(log.append.call_args.kwargs["route"], "reply")
 
 
 if __name__ == "__main__":

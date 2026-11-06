@@ -428,6 +428,9 @@ class CheckupCliTest(unittest.TestCase):
         html = panel._checkup(cfg, req, "csrf-tok")
         self.assertIn("每日体检", html)
         self.assertIn("叫了没回", html)
+        self.assertIn('<details class="wx-finding">', html)
+        self.assertNotIn('<details class="wx-finding" open', html)
+        self.assertIn('<summary>分类统计与扫描范围</summary>', html)
         # 面板多 turn 存例命令（例如 repeated 候选含 2 条 turn）必须生成各不相同的 --id，绝不重名覆盖
         import re
         repeated_out = [x for x in json.loads(open(os.path.join(tmp.name, "checkups", f"{DAY}.json"),
@@ -448,7 +451,7 @@ class CheckupCliTest(unittest.TestCase):
             import asyncio
             asyncio.run(panel._checkup_label(cfg, SimpleNamespace(post=post), "csrf-tok"))
         html_after = panel._checkup(cfg, req, "csrf-tok")
-        self.assertIn("已标 yes", html_after)
+        self.assertIn("已确认问题", html_after)
         self.assertIn("100%", html_after)
 
 

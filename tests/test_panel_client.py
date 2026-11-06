@@ -50,15 +50,17 @@ const drain = () => new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(requests.map(x => x.url), ['/companion/status']);
   assert.equal(portrait.getAttribute('src'), '/assets/mascot.png');
   assert.equal(submit.disabled, true);
-  portrait.events.click();
-  assert.equal(portrait.getAttribute('src'), '/assets/mascot.png');
-  assert.equal(timers.length, 0);
-  motion.events.click();
-  assert.equal(portrait.getAttribute('src'), '/assets/mascot.png');
+  assert.equal(motion.attrs['aria-pressed'], 'true');           // character actions are on by default
   portrait.events.click();
   assert.equal(portrait.getAttribute('src'), '/assets/mascot-blink.png');
   timers.shift()();
   assert.equal(portrait.getAttribute('src'), '/assets/mascot.png');
+  motion.events.click();                                          // the owner can turn them off
+  assert.equal(preference.get('regular.mascotActions'), 'off');
+  assert.equal(motion.attrs['aria-pressed'], 'false');
+  portrait.events.click();
+  assert.equal(portrait.getAttribute('src'), '/assets/mascot.png');
+  assert.equal(timers.length, 0);
   reduced.matches = true; reduced.events.change();
   assert.equal(portrait.getAttribute('src'), '/assets/mascot.png');
   assert.equal(motion.disabled, true);
@@ -89,6 +91,75 @@ const drain = () => new Promise(resolve => setImmediate(resolve));
 '''
         source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
         result = subprocess.run([shutil.which('node'), '-e', script, str(source)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_sprite_player_animates_reacts_and_follows_agent_presence(self):
+        script = r'''
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+class Element {
+  constructor() { this.dataset = {}; this.attrs = {}; this.events = {}; this.children = []; this.style = {}; this.classList = { set: new Set(), add: c => this.classList.set.add(c), toggle: (c, on) => on ? this.classList.set.add(c) : this.classList.set.delete(c) }; }
+  addEventListener(name, callback) { this.events[name] = callback; }
+  setAttribute(name, value) { this.attrs[name] = value; }
+  getAttribute(name) { return this.attrs[name]; }
+  append(...children) { this.children.push(...children); }
+  querySelector() { return this.frame; }
+  closest(selector) { return selector === '.room-scene' ? this : null; }
+  focus() {}
+}
+const clips = JSON.parse(process.argv[2]);
+const sprite = new Element(); sprite.frame = new Element(); sprite.dataset.clip = 'idle';
+const input = new Element(), submit = new Element(), status = new Element(), refresh = new Element(), history = new Element(), counter = new Element(), form = new Element(); input.value = '';
+const fields = { '[data-chat-input]': input, '[data-chat-submit]': submit, '[data-chat-count]': counter };
+form.querySelector = selector => fields[selector];
+form.elements = { namedItem: () => ({value: 'synthetic-csrf'}) };
+const nodes = { '[data-chat-form]': form, '[data-chat-status]': status, '[data-chat-refresh]': refresh, '[data-chat-history]': history };
+let now = 1000; const frames = []; const intervals = []; const requests = [];
+const manifest = {schema: 2, frame: [360, 360], actions: {}};
+for (const [name, [strip, seq]] of Object.entries(clips)) manifest.actions[strip] = {file: strip + '.webp', frames: Math.max(manifest.actions[strip]?.frames || 0, Math.max(...seq) + 1, strip === 'idle' ? 3 : 1)};
+let presence = {bot: 'ready', events: []};
+const respond = body => Promise.resolve({ok: true, json: async () => body});
+const document = { visibilityState: 'visible', body: {dataset: {poseStates: '', petClips: JSON.stringify(clips)}}, querySelector: s => nodes[s] || null,
+  querySelectorAll: s => s === '[data-pet-sprite]' ? [sprite] : [], createElement: () => new Element() };
+const context = { document, window: {matchMedia: () => ({matches: false, addEventListener() {}})}, localStorage: {getItem: () => null, setItem() {}},
+  performance: {now: () => now}, requestAnimationFrame: cb => frames.push(cb), setInterval: cb => intervals.push(cb), setTimeout: () => 0, clearTimeout() {},
+  AbortSignal: {timeout: () => ({})}, FormData: class extends Map {}, Math,
+  fetch: url => { requests.push(url); if (url === '/assets/pet/sprites.json') return respond(manifest);
+    if (url === '/companion/status') return respond({available: true}); if (url.startsWith('/companion/presence')) return respond(presence); throw new Error('unexpected ' + url); } };
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const drain = () => new Promise(resolve => setImmediate(resolve));
+const tick = ms => { now += ms; const pending = frames.splice(0); pending.forEach(cb => cb(now)); };
+(async () => {
+  await drain(); await drain();
+  assert.ok(sprite.classList.set.has('ready'));
+  assert.match(sprite.frame.style.backgroundImage, /idle\.webp/);
+  const seen = new Set();
+  for (let i = 0; i < 400; i++) { tick(33); seen.add(sprite.frame.style.backgroundPosition); }
+  assert.ok(seen.size >= 2, 'idle blinks');
+  sprite.events.click(); tick(16);
+  assert.match(sprite.frame.style.backgroundImage, /startle\.webp/);
+  for (let i = 0; i < 60; i++) tick(50);
+  assert.match(sprite.frame.style.backgroundImage, /idle\.webp/);
+  presence = {bot: 'ready', events: [{kind: 'drew', ts: 5}]};
+  intervals[0](); await drain(); await drain(); tick(16);
+  assert.match(sprite.frame.style.backgroundImage, /draw\.webp/);
+  assert.ok(requests.includes('/companion/presence'));
+  presence = {bot: 'offline', events: []};
+  for (let i = 0; i < 80; i++) tick(50);
+  intervals[0](); await drain(); await drain(); tick(16);
+  assert.ok(requests.includes('/companion/presence?since=5'));
+  assert.match(sprite.frame.style.backgroundImage, /sleep\.webp/);
+  assert.ok(!requests.includes('/companion/chat'));
+  console.log('sprite player: passed');
+})().catch(error => { process.stderr.write(String(error.stack)); process.exitCode = 1; });
+'''
+        import json
+        from regular.pet_brain import CLIPS
+        clips = json.dumps({k: [v[0], v[1], v[2], v[3]] for k, v in CLIPS.items()})
+        source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
+        result = subprocess.run([shutil.which('node'), '-e', script, str(source), clips],
+                                capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_provider_drafts_and_knowledge_composer_make_no_requests(self):
@@ -144,4 +215,62 @@ console.log('provider draft isolation, explicit chat choice, local knowledge com
         source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
         result = subprocess.run([shutil.which('node'), '-e', script, str(source)], capture_output=True,
                                 text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+@unittest.skipUnless(shutil.which('node'), 'Node is optional; browser script smoke requires it')
+class ManagerProposalTest(unittest.TestCase):
+    def test_a_proposal_is_a_card_and_only_a_click_saves_the_switch(self):
+        script = r'''
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+class Element {
+  constructor() { this.value = ''; this.dataset = {}; this.attrs = {}; this.events = {}; this.children = []; this.textContent = ''; this.classList = { add: name => (this.added = name) }; }
+  addEventListener(name, callback) { this.events[name] = callback; }
+  setAttribute(name, value) { this.attrs[name] = value; }
+  getAttribute(name) { return this.attrs[name]; }
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = children; }
+  focus() {}
+  set innerHTML(value) { throw new Error('Chat must use textContent, never innerHTML'); }
+}
+const [input, submit, status, refresh, history, counter, form] = Array.from({length: 7}, () => new Element());
+const fields = { '[data-chat-input]': input, '[data-chat-submit]': submit, '[data-chat-count]': counter };
+form.querySelector = selector => fields[selector];
+form.elements = { namedItem: () => ({value: 'synthetic-csrf'}) };
+const nodes = { '[data-chat-form]': form, '[data-chat-status]': status, '[data-chat-refresh]': refresh, '[data-chat-history]': history };
+const requests = [];
+const document = { body: {dataset: {}}, querySelector: selector => nodes[selector] || null, querySelectorAll: () => [], createElement: () => new Element() };
+const context = { document, window: {matchMedia: () => ({matches: false, addEventListener() {}}), location: {href: ''}}, localStorage: { getItem() {}, setItem() {} },
+  AbortSignal: {timeout: () => ({})}, FormData: class extends Map {}, setTimeout: () => 0, clearTimeout() {},
+  fetch: (url, options) => { requests.push({url, options});
+    if (url === '/companion/status') return Promise.resolve({ok: true, json: async () => ({available: true})});
+    if (url === '/companion/chat') return Promise.resolve({ok: true, json: async () => ({text: '画图先关一下？', action: {kind: 'toggle', flag: 'image', label: '画图', enabled: false}})});
+    return Promise.resolve({ok: true, json: async () => ({ok: true, timing: '对新消息生效。'})}); } };
+context.window.location = context.window.location; context.location = context.window.location;
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const drain = () => new Promise(resolve => setImmediate(resolve));
+const find = (node, test) => test(node) ? node : node.children.map(child => find(child, test)).find(Boolean);
+(async () => {
+  await drain();
+  input.value = '把画图关了吧'; input.events.input();
+  await form.events.submit({preventDefault() {}});
+  const card = history.children.find(child => child.className === 'chat-proposal');
+  assert.ok(card, 'the proposal is shown as a card');
+  assert.equal(card.children[0].textContent, '关掉「画图」？');
+  assert.ok(!requests.some(x => x.url === '/capabilities/toggle'), 'nothing is saved before the click');
+  const yes = card.children[1].children[0];
+  await yes.events.click();
+  const saved = requests.filter(x => x.url === '/capabilities/toggle');
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].options.body.get('flag'), 'image');
+  assert.equal(saved[0].options.body.get('enabled'), 'false');
+  assert.equal(saved[0].options.body.get('csrf'), 'synthetic-csrf');
+  assert.match(card.children[0].textContent, /已关掉「画图」/);
+  console.log('proposal card, explicit confirm: passed');
+})().catch(error => { process.stderr.write(String(error.stack)); process.exitCode = 1; });
+'''
+        source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
+        result = subprocess.run([shutil.which('node'), '-e', script, str(source)], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

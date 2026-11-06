@@ -22,6 +22,11 @@ class CompanionError(RuntimeError):
     """Safe local-client error with no credentials or response dump."""
 
 
+class Reply(str):
+    """Her words; .action is at most one proposal the maintainer still has to confirm."""
+    action = None
+
+
 class PanelClient:
     """Only fixed local status/chat/settings destinations are available."""
     def __init__(self, port, token):
@@ -29,14 +34,14 @@ class PanelClient:
             raise ValueError("invalid local port")
         self.base, self._token = f"http://127.0.0.1:{port}", token
 
-    def _request(self, method, path, data=None):
+    def _request(self, method, path, data=None, *, accept=None):
+        headers = {TOKEN_HEADER: self._token, **({"Accept": accept} if accept else {})}
         try:
-            with httpx.Client(timeout=httpx.Timeout(80.0 if method == "POST" else 2.0, connect=2.0),
+            with httpx.Client(timeout=httpx.Timeout(80.0 if method == "POST" and path == "/companion/chat" else 2.0, connect=2.0),
                               trust_env=False, follow_redirects=False) as client:
-                response = client.request(method, self.base + path,
-                                          headers={TOKEN_HEADER: self._token}, data=data)
+                response = client.request(method, self.base + path, headers=headers, data=data)
         except httpx.HTTPError:
-            raise CompanionError("连接中断或等待超时，回复结果未确认；没有自动重试。"
+            raise CompanionError("连接中断或等待超时，操作结果未确认；没有自动重试。"
                                  if method == "POST" else "本机面板暂时无法连接。") from None
         if response.is_redirect:
             raise CompanionError("本机请求发生跳转，已停止，没有继续发送凭据。")
@@ -74,10 +79,33 @@ class PanelClient:
         body = self._request("POST", "/companion/chat", {"text": text.strip(), "csrf": csrf})
         if not isinstance(body.get("text"), str):
             raise CompanionError("未收到有效回复，结果未确认；没有自动重试。")
-        return body["text"]
+        from regular.local_chat import proposal
+        reply = Reply(body["text"])
+        reply.action = proposal(body.get("action"))
+        return reply
+
+    def toggle(self, flag, enabled, csrf):
+        """The same switch as on the capabilities page; only after the maintainer confirmed it."""
+        body = self._request("POST", "/capabilities/toggle",
+                             {"flag": flag, "enabled": "true" if enabled else "false", "csrf": csrf},
+                             accept="application/json")
+        if body.get("ok") is not True:
+            raise CompanionError("开关没保存上，请到「能力与服务」里再试。")
+        return str(body.get("timing") or "")
+
+    def presence(self, since=None):
+        """Content-free agent state; an old panel without the route reads as unknown."""
+        path = "/companion/presence" + ("" if since is None else "?" + urlencode({"since": f"{since:.3f}"}))
+        return self._request("GET", path)
+
+    def cue(self, action, text, csrf):
+        body = self._request("POST", "/companion/cue", {"action": action or "", "text": text or "", "csrf": csrf})
+        if not isinstance(body.get("queued"), str):
+            raise CompanionError("桌宠没有收下这条提示。")
+        return body["queued"]
 
     def management_url(self, path):
-        if path not in ("/", "/setup", "/checkup", "/iterate"):
+        if path not in ("/", "/setup", "/capabilities", "/checkup", "/iterate"):
             raise ValueError("unsupported local destination")
         return self.base + path + "?" + urlencode({"token": self._token})
 
@@ -193,11 +221,47 @@ def _show_pet(port, token, browser, preferences_path=None):
         return _open_browser(url)
 
 
+def cue(cfg, *, action="", text="", port=8765):
+    """Ask an already running pet to act or say one line. Never starts a panel or the bot."""
+    from regular.pet_brain import CUE_ACTIONS
+    if action and action not in CUE_ACTIONS:
+        print("未知动作。可用：" + " ".join(CUE_ACTIONS), file=sys.stderr)
+        return 2
+    if not action and not text.strip():
+        print("请给出动作，或用 --say 说一句话。", file=sys.stderr)
+        return 2
+    if len(" ".join(text.split())) > 120:
+        print("一句话最多 120 个字符。", file=sys.stderr)
+        return 2
+    token = _read_token(cfg)
+    try:
+        if not _panel_ready(port, token):
+            print("本机面板没有运行，桌宠收不到提示。先运行 regular pet。", file=sys.stderr)
+            return 1
+        client = PanelClient(port, token)
+        client.cue(action, text, client.session()["csrf"])
+    except CompanionError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    print("已交给桌宠。")
+    return 0
+
+
 def run(cfg, *, port=8765, browser=False):
     """Open the pet first. Own only a panel child, never an existing process."""
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         print("面板端口必须在 1 到 65535 之间。", file=sys.stderr)
         return 1
+    # Once the source launcher has built the branded app, CLI reopening uses it
+    # too. Never recurse from its frozen executable or route browser requests
+    # to a native bundle. Missing builds retain the ordinary development path.
+    if sys.platform == "darwin" and not getattr(sys, "frozen", False) and not browser:
+        from regular.desktop_bundle import bundle_current
+        output = instance_dir(cfg) / "desktop"
+        executable = output / "老群友.app/Contents/MacOS/老群友"
+        if bundle_current(Path(__file__).resolve().parent.parent, output):
+            return subprocess.run([str(executable), "--directory", str(instance_dir(cfg)), "pet", "--port", str(port)],
+                                  env=child_environment(cfg), shell=False).returncode
     owned = None
     try:
         token, owned = _ensure_panel(cfg, port)

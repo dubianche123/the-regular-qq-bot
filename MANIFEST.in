@@ -4,5 +4,5 @@ include start.sh start.command start.bat AGENTS.md .gemini/settings.json
 recursive-include .agents/skills/regular-iterate *.md *.py
 recursive-include .claude/skills/regular-iterate *.md
 recursive-include tools *.py *.sh *.md *.swift
-recursive-include docs *.md *.svg *.jpg *.png
+recursive-include docs *.md *.svg *.jpg *.png *.webp
 recursive-include tests *.py

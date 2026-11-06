@@ -26,7 +26,13 @@ TURN_TIMEOUT_SECONDS = 70
 CLIENT_TIMEOUT_SECONDS = 75
 STATUS_MAX_AGE_SECONDS = 120
 _ACTION = re.compile(r"^\s*[〔【\[［]\s*(?:画|动图|语音)\s*[〕】\]］]", re.MULTILINE)
-_INTERNAL = re.compile(r"<(CMD|DIGEST)>.*?(?:</\1>|$)", re.DOTALL)
+_INTERNAL = re.compile(r"<(CMD|DIGEST)(?:\s[^<>]*)?>.*?(?:</\1\s*>|$)", re.DOTALL | re.IGNORECASE)
+# 本机管家能提的两种建议（固定写法，和〔画〕一样由小王写在单独一行）：开关某项能力、把事交给编码 Agent。
+# 只是提议：面板和桌宠把它画成确认卡，维护者点了才执行；这里从不执行。
+MANAGED = {"读图": "vision", "画图": "image", "动图": "gif", "听语音": "voice_input",
+           "模型转写": "transcription", "发语音": "voice_output"}
+_PROPOSAL = re.compile(r"^[ \t]*[〔【\[［][ \t]*(开关|交给[ \t]*Agent)([^\r\n〔【\[［〕】\]］]*)[〕】\]］][ \t]*$",
+                       re.MULTILINE | re.IGNORECASE)
 
 
 class LocalChatError(RuntimeError):
@@ -60,11 +66,47 @@ def text_reply(body):
     return said.text
 
 
+def manage_reply(body):
+    """The reply text plus at most one proposal for the maintainer to confirm (None when there is none)."""
+    body = strip_internal(body)
+    action = None
+    for match in _PROPOSAL.finditer(body):
+        parts = match.group(2).split()
+        if (match.group(1) == "开关" and len(parts) == 2 and parts[0] in MANAGED
+                and parts[1] in ("开", "关") and action is None):
+            action = {"kind": "toggle", "flag": MANAGED[parts[0]], "label": parts[0],
+                      "enabled": parts[1] == "开"}
+        elif match.group(1) != "开关" and not parts and action is None:
+            action = {"kind": "handoff"}
+    body = _PROPOSAL.sub("", body).strip()
+    said = expression.parse(body)
+    if said.kind in ("pass", "image", "voice") or said.remind or _ACTION.search(body):
+        return text_reply(body), None
+    if not body and action:
+        body = ("要把这件事交给编码 Agent 吗？" if action["kind"] == "handoff"
+                else f"要把{action['label']}{'打开' if action['enabled'] else '关掉'}吗？")
+    return text_reply(body) or "这句我先安静陪你。", action
+
+
+def proposal(value):
+    """Accept only the two proposal shapes; anything else from the bot is dropped."""
+    if not isinstance(value, dict):
+        return None
+    if value.get("kind") == "handoff":
+        return {"kind": "handoff"}
+    names = {flag: label for label, flag in MANAGED.items()}
+    if (value.get("kind") == "toggle" and isinstance(value.get("flag"), str)
+            and value["flag"] in names and type(value.get("enabled")) is bool):
+        return {"kind": "toggle", "flag": value["flag"], "label": names[value["flag"]], "enabled": value["enabled"]}
+    return None
+
+
 class LocalReply:
     """A local sink with no QQ client, platform identity or group destination."""
     def __init__(self):
         self.id = "local-" + uuid.uuid4().hex
         self.text = None
+        self.action = None
 
     async def reply(self, *, content, msg_type=0, **kwargs):
         if msg_type != 0 or set(kwargs) - {"msg_seq"}:
@@ -140,7 +182,7 @@ async def send_chat(cfg, text):
                 body = await response.json()
                 if not isinstance(body, dict) or not isinstance(body.get("text"), str):
                     raise LocalChatError(503, "未收到有效的本机回复；没有自动重试。")
-                return {"text": body["text"]}
+                return {"text": body["text"], "action": proposal(body.get("action"))}
     except asyncio.TimeoutError:
         raise LocalChatError(504, "等待本机回复超时，结果未确认；没有自动重试。") from None
     except (aiohttp.ClientError, ValueError):
@@ -175,9 +217,13 @@ class LocalChatBridge:
         self.busy = True
         try:
             reply = await asyncio.wait_for(self.reply(text), timeout=TURN_TIMEOUT_SECONDS)
+            action = None
+            if isinstance(reply, dict):
+                reply, action = reply.get("text"), proposal(reply.get("action"))
             if not isinstance(reply, str):
                 raise web.HTTPServiceUnavailable(text="未收到有效的本机回复。")
-            return web.json_response({"text": reply}, headers={"Cache-Control": "no-store"})
+            body = {"text": reply, **({"action": action} if action else {})}
+            return web.json_response(body, headers={"Cache-Control": "no-store"})
         except asyncio.TimeoutError:
             raise web.HTTPGatewayTimeout(text="本机对话超时，没有自动重试。") from None
         except LocalChatError as error:

@@ -296,11 +296,18 @@ VISION_SETTLE_SECONDS = _env_float("VISION_SETTLE_SECONDS", 15.0)
 VISION_MAX_TOKENS = _env_int("VISION_MAX_TOKENS", 300)
 
 # 入站语音转写仅使用已有的官方 OpenAI 配置；预算与普通调用共用。
+VOICE_INPUT_ENABLED = _env_bool("VOICE_INPUT_ENABLED", True)
+VOICE_TRANSCRIPTION_ENABLED = _env_bool("VOICE_TRANSCRIPTION_ENABLED", True)
 VOICE_TRANSCRIPTION_MODEL = _env_str("VOICE_TRANSCRIPTION_MODEL", "gpt-transcribe")
+# Audio may use a dedicated official OpenAI credential even when chat uses a gateway.
+VOICE_API_KEY = _env_str("VOICE_API_KEY")
+VOICE_BASE_URL = _env_str("VOICE_BASE_URL", "https://api.openai.com/v1")
 
 # 出站语音默认关闭；路径须指向可信且预先安装的本机依赖。
 # 什么时候发由小王自己在回复里写〔语音〕（见 expression.py），这里只管开关和日额。
 VOICE_OUTPUT_ENABLED = _env_bool("VOICE_OUTPUT_ENABLED", False)
+VOICE_OUTPUT_MODEL = _env_str("VOICE_OUTPUT_MODEL", "gpt-realtime-2.1-mini")
+VOICE_OUTPUT_VOICE = _env_str("VOICE_OUTPUT_VOICE", "marin")
 VOICE_OUTPUT_DAILY_LIMIT = min(100, max(0, _env_int("VOICE_OUTPUT_DAILY_LIMIT", 10)))
 # Private instance-owned codec installation beside DATA_DIR; no NODE_PATH lookup.
 VOICE_CODEC_DIR = _env_str("VOICE_CODEC_DIR", str(Path(DATA_DIR).parent / ".voice-codecs"))

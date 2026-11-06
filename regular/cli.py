@@ -627,6 +627,23 @@ def policy_command(config, args):
     return 1
 
 
+def manage_command(config, args, parser):
+    """The maintainer's controls as data: switches, one-line states, today's numbers. No model, no network."""
+    from regular import capabilities, presence
+    if args.verb == "set":
+        if args.flag not in capabilities.FLAGS or args.value not in ("on", "off"):
+            parser.error("usage: manage set {" + ",".join(capabilities.FLAGS) + "} {on,off}")
+        sections = capabilities.set_enabled(config, args.flag, args.value == "on")
+    else:
+        if args.verb != "show" or args.flag or args.value is not None:
+            parser.error("usage: manage [show] | manage set FLAG {on,off}")
+        sections = capabilities.public_settings(config)
+    summary = presence.day_summary(config)
+    print(json.dumps({**capabilities.overview(sections), "today": summary,
+                      "today_text": presence.render_day_summary(summary)}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="regular", description="The Regular: local demo, configuration, diagnostics and QQ runtime")
     parser.add_argument("--version", action="version", version=__version__)
@@ -736,6 +753,15 @@ def main(argv=None):
     pet = sub.add_parser("pet", help="open the desktop pet; prepare a local settings service if needed")
     pet.add_argument("--port", type=int, default=8765, help="local settings service port (default: 8765)")
     pet.add_argument("--browser", action="store_true", help="use a compact web page instead of a native floating window")
+    pet_cue = sub.add_parser("pet-cue", help="ask the running desktop pet to act or say one line (for coding agents)")
+    pet_cue.add_argument("action", nargs="?", default="", help="e.g. cheer, wave, laptop, think, sleep; omit to only speak")
+    pet_cue.add_argument("--say", default="", help="one short line shown in her speech bubble (max 120 chars)")
+    pet_cue.add_argument("--port", type=int, default=8765, help="local settings service port (default: 8765)")
+    mg = sub.add_parser("manage", help="what she can do and what she did today, for coding agents (JSON); "
+                                       "'manage set image off' flips one switch like the panel does")
+    mg.add_argument("verb", nargs="?", choices=("show", "set"), default="show")
+    mg.add_argument("flag", nargs="?", default="", help="vision, image, gif, voice_input, transcription, voice_output")
+    mg.add_argument("value", nargs="?", choices=("on", "off"), help="with set")
     sub.add_parser("run", help="validate and connect the QQ runtime")
     svc = sub.add_parser("service", help="generate a launchd or systemd definition; never install or start it")
     svc.add_argument("kind", choices=("launchd", "systemd"))
@@ -806,6 +832,11 @@ def main(argv=None):
         if args.command == "pet":
             from regular import desktop
             return desktop.run(config, port=args.port, browser=args.browser)
+        if args.command == "pet-cue":
+            from regular import desktop
+            return desktop.cue(config, action=args.action, text=args.say, port=args.port)
+        if args.command == "manage":
+            return manage_command(config, args, parser)
         if args.command == "run":
             errors = config.validate()
             if errors:

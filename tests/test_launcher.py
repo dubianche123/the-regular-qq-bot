@@ -35,14 +35,14 @@ class SourceLauncherTest(unittest.TestCase):
         self.python.parent.mkdir(parents=True, exist_ok=True)
         self.python.touch()
 
-    def run_launcher(self, args=(), *, run_result=None, env=None):
+    def run_launcher(self, args=(), *, run_result=None, env=None, native_app=False):
         with patch.object(launcher, "ROOT", self.root), \
              patch.object(launcher.venv, "EnvBuilder") as builder, \
              patch.object(launcher.subprocess, "run", return_value=run_result or SimpleNamespace(returncode=0)) as run, \
              patch.dict(os.environ, env or {}, clear=True), \
              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             builder.return_value.create.side_effect = self.create_environment
-            code = launcher.main(list(args))
+            code = launcher.main([*(() if native_app else ("--no-app",)), *args])
         return code, builder, run
 
     def test_help_does_not_create_or_launch_anything(self):
@@ -105,6 +105,18 @@ class SourceLauncherTest(unittest.TestCase):
         _, _, run = self.run_launcher(args)
         self.assertEqual(run.call_count, 2)
         self.assertEqual(json.loads(self.marker.read_text())["version"], "0.3.1")
+
+    def test_macos_default_builds_and_opens_a_branded_app_in_the_instance(self):
+        with patch.object(launcher.sys, "platform", "darwin"):
+            code, _, run = self.run_launcher(["--directory", str(self.instance)], native_app=True)
+        self.assertEqual(code, 0)
+        install, build, opened = run.call_args_list
+        self.assertEqual(install.args[0][-1], str(self.root) + "[desktop-build]")
+        self.assertEqual(build.args[0], [str(self.python), str(self.root / "tools/build_desktop.py"),
+                                       "--source", str(self.root), "--output", str(self.instance / "desktop")])
+        self.assertEqual(opened.args[0], [str(self.instance / "desktop/老群友.app/Contents/MacOS/老群友"),
+                                         "--directory", str(self.instance), "pet"])
+        self.assertTrue(json.loads(self.marker.read_text())["native_app"])
 
     def test_failed_install_does_not_mark_success_or_start_panel(self):
         failure = subprocess.CalledProcessError(9, ["pip"])

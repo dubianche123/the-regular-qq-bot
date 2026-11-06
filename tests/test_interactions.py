@@ -394,6 +394,14 @@ class _HandlerBase:
 class GateAndIncomingTest(_HandlerBase, unittest.IsolatedAsyncioTestCase):
     """门控决策可区分、不重复调用；入口输入完整落日志。"""
 
+    async def test_incoming_says_how_it_was_called(self):
+        with patch.object(bot.naming, "bot_names", return_value=["小王"]):
+            await self._drive("小王 在吗", msg_id="by-name")
+            await self._drive("今天天气不错", msg_id="nobody")
+        calls = {r["message_id"]: (r["at"], r.get("call")) for r in self.incomings()}
+        self.assertEqual(calls["by-name"], (True, "name"))
+        self.assertEqual(calls["nobody"], (False, None))
+
     async def test_incoming_records_full_text_and_dedup(self):
         long_text = "长消息 " + "字" * 600
         await self._drive(long_text, is_at=True)
@@ -405,6 +413,7 @@ class GateAndIncomingTest(_HandlerBase, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(rows[0]["cmd"])
         self.assertEqual(rows[0]["user"], self.A)
         self.assertEqual(rows[0]["actor"], "user")
+        self.assertEqual(rows[0]["call"], "at")       # 桌宠据此说「有人@我」而不是「有人喊我名字」
         # 同一 message.id 重复投递：入口去重，不再写第二条 incoming
         msg = self._msg("重复投递", msg_id="dup-1")
         fake_self = SimpleNamespace(robot=SimpleNamespace(id="BOT_OBS", name="regular"))

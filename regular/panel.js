@@ -45,6 +45,55 @@ if (setup) {
   setup.elements.namedItem("models").addEventListener("input", describeChoice);
 }
 
+// Capabilities: a switch is saved the moment it flips; settings forms wait for their own Save.
+const capChildren = { image: "gif", voice_input: "transcription" };
+function applyCapabilities(data) {
+  for (const [flag, on] of Object.entries(data.flags || {})) {
+    const button = document.querySelector(`[data-cap-toggle] input[name="flag"][value="${flag}"]`)?.form.querySelector("button");
+    if (!button) continue;
+    button.setAttribute("aria-checked", on ? "true" : "false");
+    button.value = on ? "false" : "true";
+  }
+  for (const [parent, child] of Object.entries(capChildren)) {
+    const button = document.querySelector(`[data-cap-sub="${child}"] button`);
+    if (button && !button.title) button.disabled = !data.flags?.[parent];
+  }
+  for (const [name, state] of Object.entries(data.states || {})) {
+    const item = document.querySelector(`[data-cap="${name}"]`);
+    if (!item) continue;
+    item.dataset.tone = state.tone;
+    item.querySelector("[data-cap-state]").textContent = state.text;
+  }
+  const runtime = document.querySelector("[data-cap-runtime]");
+  if (runtime && data.timing) runtime.textContent = data.timing;
+}
+for (const form of document.querySelectorAll("[data-cap-toggle]")) {
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = event.submitter || form.querySelector("button");
+    if (button.disabled || button.getAttribute("aria-busy") === "true") return;
+    const body = new FormData(form);
+    body.set("enabled", button.value);
+    button.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch(form.action, { method: "POST", body, credentials: "same-origin", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(String(response.status));
+      applyCapabilities(await response.json());
+    } catch {
+      const item = form.closest("[data-cap]");
+      const state = item?.querySelector("[data-cap-state]");
+      if (state) state.textContent = "没保存上，刷新后再试";
+    } finally {
+      button.removeAttribute("aria-busy");
+    }
+  });
+}
+for (const form of document.querySelectorAll("[data-cap-form]")) {
+  form.addEventListener("input", () => {
+    form.querySelector("[data-cap-form-status]").textContent = "有未保存的更改。";
+  });
+}
+
 // Compose a Markdown entry locally; it remains a draft until explicit Save.
 const knowledgeForm = document.querySelector("[data-knowledge-form]");
 if (knowledgeForm) {
@@ -105,8 +154,8 @@ for (const dock of document.querySelectorAll("[data-companion-dock]")) {
 // Static poses carry state. Optional click feedback never runs on a loop.
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const poseStates = (document.body.dataset.poseStates || "").split(",");
-let actionsEnabled = false;
-try { actionsEnabled = localStorage.getItem("regular.mascotActions") === "on"; } catch { /* Private browsing can deny storage. */ }
+let actionsEnabled = true;
+try { actionsEnabled = localStorage.getItem("regular.mascotActions") !== "off"; } catch { /* Private browsing can deny storage. */ }
 function poseSource(state) {
   return poseStates.includes(state) ? `/assets/mascot-${state}.png` : "/assets/mascot.png";
 }
@@ -117,12 +166,83 @@ function updateActionPreference() {
       if (image.getAttribute("src") !== image.dataset.staticSrc) image.setAttribute("src", image.dataset.staticSrc);
     }
   }
+  for (const sprite of sprites) sprite.setMotion(enabled);
   for (const button of document.querySelectorAll("[data-actions-toggle]")) {
     button.setAttribute("aria-pressed", String(enabled));
     button.textContent = reducedMotion.matches ? "动作：遵循系统减弱" : `角色动作：${actionsEnabled ? "开" : "关"}`;
     button.disabled = reducedMotion.matches;
   }
 }
+// Animated chibi: the same strips and clip table as the native pet (regular/pet_brain.py).
+const petClips = (() => { try { return JSON.parse(document.body.dataset.petClips || "{}"); } catch { return {}; } })();
+let petManifest;
+function loadPetManifest() {
+  petManifest ??= fetch("/assets/pet/sprites.json", { credentials: "same-origin" })
+    .then(response => (response.ok ? response.json() : null)).catch(() => null);
+  return petManifest;
+}
+class SpritePlayer {
+  constructor(root) {
+    this.root = root;
+    this.frame = root.querySelector(".pet-frame");
+    this.base = root.dataset.clip || "idle";
+    this.clip = this.base;
+    this.started = performance.now();
+    this.until = 0;
+    this.blinkAt = this.started + 1800;
+    this.motion = true;
+    this.lastWave = 0;
+    loadPetManifest().then(manifest => {
+      if (!manifest || !manifest.actions) return;
+      this.manifest = manifest;
+      root.classList.add("ready");
+      this.render(performance.now());
+      requestAnimationFrame(now => this.loop(now));
+    });
+    root.addEventListener("pointerenter", () => {
+      if (this.clip === this.base && performance.now() - this.lastWave > 8000) { this.lastWave = performance.now(); this.play("wave"); }
+    });
+    root.addEventListener("click", () => this.play(this.base === "sleep" ? "wake" : "startle"));
+  }
+  setMotion(enabled) { this.motion = enabled; this.root.classList.toggle("still", !enabled); if (this.manifest) this.render(performance.now()); }
+  rest(clip) { this.base = clip; if (!this.until) this.play(clip, 0); }
+  play(clip, seconds) {
+    if (!petClips[clip]) return;
+    this.clip = clip;
+    this.started = performance.now();
+    const [, sequence, fps, loop] = petClips[clip];
+    this.until = seconds === 0 ? 0 : this.started + 1000 * (seconds ?? (loop ? 4 : sequence.length / fps));
+  }
+  loop(now) {
+    if (this.until && now >= this.until) { this.until = 0; this.clip = this.base; this.started = now; }
+    this.render(now);
+    requestAnimationFrame(next => this.loop(next));
+  }
+  render(now) {
+    const clip = this.motion ? this.clip : this.base;
+    const spec = petClips[clip] || petClips.idle;
+    const [strip, sequence, fps, loop] = spec;
+    const action = this.manifest.actions[strip];
+    if (!action) return;
+    let index = Math.floor(Math.max(0, now - this.started) / 1000 * fps);
+    index = loop ? index % sequence.length : Math.min(index, sequence.length - 1);
+    let frame = this.motion ? sequence[index] : sequence[0];
+    if (this.motion && clip === "idle") {
+      const t = now - this.blinkAt;
+      if (t > 200) this.blinkAt = now + 2400 + Math.random() * 3600;
+      else if (t >= 0) frame = t < 50 || t >= 130 ? 1 : 2;
+    }
+    const key = `${strip}:${frame}`;
+    if (key === this.key) return;
+    this.key = key;
+    this.frame.style.backgroundImage = `url("/assets/pet/${action.file}")`;
+    this.frame.style.backgroundSize = `${action.frames * 100}% 100%`;
+    this.frame.style.backgroundPosition = `${action.frames > 1 ? (frame / (action.frames - 1)) * 100 : 0}% 0`;
+    this.root.dataset.posture = ["sit", "laptop", "read", "tea", "sleep", "doze", "wake", "sit_swing"].includes(clip) ? "low" : "stand";
+  }
+}
+const sprites = [...document.querySelectorAll("[data-pet-sprite]")].map(root => new SpritePlayer(root));
+
 for (const image of document.querySelectorAll("img[data-static-src]")) {
   image.addEventListener("error", () => {
     image.dataset.staticSrc = "/assets/mascot.png";
@@ -170,15 +290,112 @@ if (chatForm) {
   const history = document.querySelector("[data-chat-history]");
   const counter = chatForm.querySelector("[data-chat-count]");
   const portrait = document.querySelector("[data-chat-mascot]");
+  const stage = sprites.find(sprite => sprite.root.closest(".room-scene"));
+  const sceneBubble = document.querySelector("[data-scene-bubble]");
+  const chips = document.querySelector("[data-presence-chips]");
+  const moodMeter = document.querySelector("[data-mood-meter]");
+  const feed = document.querySelector("[data-presence-feed]");
+  const suggestions = document.querySelector("[data-chat-suggestions]");
+  let bubbleTimer;
+  function say(text, seconds = 4) {
+    if (!sceneBubble) return;
+    clearTimeout(bubbleTimer);
+    sceneBubble.textContent = text;
+    sceneBubble.hidden = false;
+    bubbleTimer = setTimeout(() => { sceneBubble.hidden = true; }, seconds * 1000);
+  }
   let available = false;
   let sending = false;
   let settleTimer;
+  const spriteFor = { idle: ["idle", 0], sleeping: ["sleep", 0], thinking: ["think", 0], celebrate: ["talk", 3.2] };
 
   function setState(state) {
+    if (stage) {
+      const [clip, seconds] = spriteFor[state] || spriteFor.idle;
+      if (seconds) stage.play(clip, seconds); else stage.rest(clip);
+      return;
+    }
     if (!portrait) return;
     portrait.dataset.mascotState = state;
     portrait.dataset.staticSrc = poseSource(state);
     portrait.setAttribute("src", portrait.dataset.staticSrc);
+  }
+  // Read-only, content-free agent state: the character mirrors what she is doing in QQ.
+  let presenceSince;
+  const reactions = { mention: ["phone", 4], named: ["phone", 4], quoted: ["phone", 4], called: ["phone", 4], replying: ["phone", 6], said: ["talk", 3], chimed: ["talk", 3], searching: ["laptop", 300], proactive: ["talk", 3], drawing: ["drawing", 200], drew: ["show_drawing", 2.6], singing: ["sing", 90], voice: ["sing", 1.6], media_end: ["idle"], cue: ["cheer"] };
+  const narration = { mention: "群里有人@我，我去看看。", named: "嗯？好像有人在说我。", quoted: "有人引用了我刚才那句。", called: "有人在群里叫我！", said: "（在群里回了一句）", chimed: "（刚在群里插了句嘴）", searching: "我去查查～", proactive: "（在群里开了个话头）", drawing: "群里有人要画，我画画看～", drew: "画好啦，发群里了！", singing: "我去群里唱两句。", voice: "（在群里发了条语音）" };
+  const feedText = { mention: "群里有人@了她", named: "群里有人喊了她的名字", quoted: "有人引用了她的话", called: "群里有人叫她", replying: "她在琢磨怎么接话", said: "她在群里回了一句", chimed: "她在群里插了句嘴", searching: "她在帮群里查资料", proactive: "她主动开了个话头", drawing: "她开始给群里画图", drew: "她给群里画了张图", singing: "她在录一段语音", voice: "她在群里发了条语音", media_end: "这次没发出去" };
+  function chip(text, tone) {
+    const item = document.createElement("li");
+    item.className = `chip ${tone || ""}`;
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    item.append(dot, document.createTextNode(text));
+    return item;
+  }
+  function renderPresence(state) {
+    if (chips) {
+      const items = [chip(state.bot === "ready" ? "在线" : "机器人未运行", state.bot === "ready" ? "good" : "warn")];
+      if (state.bot === "ready") items.push(chip(state.gateway_connected ? "QQ 已连接" : "QQ 未连接", state.gateway_connected ? "good" : "warn"));
+      if (state.circadian) items.push(chip(state.circadian, "lilac"));
+      if (state.chatter > 0) items.push(chip(`群里 5 分钟 ${state.chatter} 条`));
+      chips.replaceChildren(...items);
+    }
+    if (moodMeter && typeof state.mood === "number") {
+      const mood = Math.max(-1, Math.min(1, state.mood));
+      moodMeter.querySelector("i").style.left = `${(mood + 1) * 50}%`;
+      moodMeter.querySelector("[data-mood-word]").textContent = mood >= 0.3 ? "不错" : mood <= -0.7 ? "烦透了" : mood <= -0.3 ? "有点烦" : "平稳";
+    }
+  }
+  function remember(event) {
+    const text = event.kind === "cue" && typeof event.text === "string" && event.text ? `Agent：${event.text}` : feedText[event.kind];
+    if (!feed || !text) return;
+    feed.querySelector(".empty")?.remove();
+    const item = document.createElement("li");
+    const time = document.createElement("time");
+    const stamp = new Date(event.ts * 1000);
+    time.textContent = `${String(stamp.getHours()).padStart(2, "0")}:${String(stamp.getMinutes()).padStart(2, "0")}`;
+    item.append(time, document.createTextNode(text));
+    feed.prepend(item);
+    while (feed.children.length > 5) feed.lastElementChild.remove();
+  }
+  let mediaUntil = 0;
+  async function pollPresence() {
+    if (document.visibilityState !== "visible" || sending) return;
+    try {
+      const query = presenceSince === undefined ? "" : `?since=${presenceSince}`;
+      const response = await fetch(`/companion/presence${query}`, { credentials: "same-origin", signal: AbortSignal.timeout(4000) });
+      if (!response.ok) return;
+      const state = await response.json();
+      renderPresence(state);
+      for (const event of state.events || []) {
+        if (typeof event.ts !== "number" || event.ts <= (presenceSince ?? 0)) continue;
+        presenceSince = event.ts;
+        remember(event);
+        // While 小王 is drawing or recording in QQ, her other lines don't take the sketchbook away.
+        if (event.kind === "drawing" || event.kind === "singing") mediaUntil = performance.now() + 1000 * reactions[event.kind][1];
+        else if (["drew", "voice", "media_end"].includes(event.kind)) mediaUntil = 0;
+        if (performance.now() < mediaUntil && ["mention", "named", "quoted", "called", "replying", "said", "chimed", "proactive"].includes(event.kind)) continue;
+        const [clip, seconds] = reactions[event.kind] || [];
+        if (clip && stage) stage.play(event.kind === "cue" && petClips[event.action] ? event.action : clip, seconds);
+        const line = event.kind === "cue" ? event.text : narration[event.kind];
+        if (line) say(line);
+      }
+      if (stage && !sending) stage.rest(state.bot === "ready" ? "idle" : "sleep");
+    } catch { /* The next poll tries again; nothing is sent. */ }
+  }
+  if (stage) setInterval(pollPresence, 5000);
+  const roomLines = { shy: ["嘿嘿。", "再摸一下也行。"], eat: ["好吃！", "谢谢投喂～"], wave: ["嗨～", "我在这儿哦。"] };
+  for (const button of document.querySelectorAll("[data-room-action]")) {
+    button.addEventListener("click", () => {
+      const clip = button.dataset.roomAction;
+      if (stage) stage.play(clip);
+      const lines = roomLines[clip] || [];
+      if (lines.length) say(lines[Math.floor(Math.random() * lines.length)], 2.6);
+    });
+  }
+  for (const button of document.querySelectorAll("[data-suggestion]")) {
+    button.addEventListener("click", () => { input.value = button.textContent; syncComposer(); input.focus(); });
   }
   function syncComposer() {
     counter.textContent = `${input.value.length} / 2000`;
@@ -206,18 +423,66 @@ if (chatForm) {
       const result = await response.json();
       available = result.available === true;
       status.textContent = available ? `本机聊天已就绪${result.qq_connected ? " · QQ 已连接" : " · QQ 暂未连接"}` : `${result.reason || "机器人尚未提供本机聊天。"} 请由你更新并启动，页面不会自动操作。`;
-      if (!available) setState("sleeping");
+      if (stage) pollPresence();             // the bot's own state decides her resting pose
+      else if (!available) setState("sleeping");
       else if (!sending) setState("idle");
     } catch {
       available = false;
       status.textContent = "本机连接暂不可用。请检查机器人运行状态，再手动刷新。";
-      setState("sleeping");
+      if (!stage) setState("sleeping");
     } finally {
       refresh.disabled = false;
       syncComposer();
     }
   }
   input.addEventListener("input", syncComposer);
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      if (!submit.disabled) chatForm.requestSubmit?.();
+    }
+  });
+  // The manager may propose one thing; nothing changes until the maintainer confirms it here.
+  function proposeAction(action) {
+    const card = document.createElement("div");
+    card.className = "chat-proposal";
+    const words = document.createElement("p");
+    const yes = document.createElement("button");
+    const no = document.createElement("button");
+    yes.type = no.type = "button";
+    no.className = "ghost";
+    no.textContent = "算了";
+    if (action.kind === "toggle") {
+      words.textContent = `${action.enabled ? "打开" : "关掉"}「${action.label}」？`;
+      yes.textContent = action.enabled ? "打开" : "关掉";
+    } else {
+      words.textContent = "交给编码 Agent：生成一份交接说明？";
+      yes.textContent = "去生成";
+    }
+    const done = text => { card.replaceChildren(Object.assign(document.createElement("p"), { textContent: text })); card.classList.add("settled"); };
+    no.addEventListener("click", () => done("好，先不动。"));
+    yes.addEventListener("click", async () => {
+      if (action.kind !== "toggle") { window.location.href = "/iterate"; return; }
+      yes.disabled = no.disabled = true;
+      try {
+        const body = new FormData();
+        body.set("csrf", chatForm.elements.namedItem("csrf").value);
+        body.set("flag", action.flag);
+        body.set("enabled", action.enabled ? "true" : "false");
+        const response = await fetch("/capabilities/toggle", { method: "POST", body, credentials: "same-origin", headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        done(`已${action.enabled ? "打开" : "关掉"}「${action.label}」。${data.timing || ""}`);
+      } catch {
+        done("没保存上，可以去「能力与服务」里再试。");
+      }
+    });
+    const row = document.createElement("div");
+    row.append(yes, no);
+    card.append(words, row);
+    history.append(card);
+    history.scrollTop = history.scrollHeight;
+  }
   refresh.addEventListener("click", refreshStatus);
   chatForm.addEventListener("submit", async event => {
     event.preventDefault();
@@ -229,6 +494,7 @@ if (chatForm) {
     syncComposer();
     setState("thinking");
     appendMessage("user", "你", text);
+    if (suggestions) suggestions.hidden = true;
     status.textContent = "正在听你说…";
     try {
       const form = new FormData();
@@ -241,6 +507,8 @@ if (chatForm) {
       if (!response.ok) throw new Error(result.error || "这一句暂时没有收到回复。");
       if (typeof result.text !== "string" || !result.text.trim()) throw new Error("没有收到有效回复；本页没有自动重试。");
       appendMessage("assistant", "老群友", result.text);
+      if (result.action) proposeAction(result.action);
+      say(result.text.length > 60 ? `${result.text.slice(0, 58)}…` : result.text, 6);
       status.textContent = "我在。还想聊点什么？";
       setState("celebrate");
       settleTimer = setTimeout(() => setState("idle"), 2600);
@@ -256,5 +524,5 @@ if (chatForm) {
     }
   });
   syncComposer();
-  refreshStatus(); // One local, read-only check. There is no polling or automatic chat.
+  refreshStatus(); // One local, read-only check; presence polling above only reads. No automatic chat.
 }

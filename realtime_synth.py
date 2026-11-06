@@ -17,6 +17,7 @@ import time
 import unicodedata
 from pathlib import Path
 import wave
+from urllib.parse import urlencode, urlsplit
 
 import aiohttp
 
@@ -121,10 +122,21 @@ class RealtimeSilkSynth:
     max_chars: int = 120
     max_seconds: int = 30
     max_output_tokens: int = 512
+    model: str = MODEL
+    voice: str = VOICE
+    base_url: str = 'https://api.openai.com/v1'
 
     def __post_init__(self):
         if not isinstance(self.api_key, str) or not self.api_key:
             raise ValueError('missing API key')
+        endpoint = urlsplit(self.base_url)
+        if (endpoint.scheme != 'https' or endpoint.hostname != 'api.openai.com'
+                or endpoint.port not in (None, 443) or endpoint.username or endpoint.password
+                or endpoint.query or endpoint.fragment):
+            raise ValueError('official voice endpoint required')
+        if any(not isinstance(value, str) or not value or len(value) > 200
+               or any(c in value for c in ('\n', '\r', '\x00')) for value in (self.model, self.voice)):
+            raise ValueError('invalid voice model or voice')
         if not all(Path(p).is_absolute() for p in (self.node, self.silk_wasm_entry, self.encoder)):
             raise ValueError('local dependency paths must be absolute')
         if (not 0 < self.timeout <= 60 or not 0 < self.encode_timeout <= 30 or
@@ -188,10 +200,11 @@ class RealtimeSilkSynth:
         transcript = []
         transcript_chars = 0
         requested = False
-        async with self.connector(URL, self.api_key) as ws:
+        url = 'wss://api.openai.com' + urlsplit(self.base_url).path.rstrip('/') + '/realtime?' + urlencode({'model': self.model})
+        async with self.connector(url, self.api_key) as ws:
             await ws.send_json({'type':'session.update', 'session': {
                 'type':'realtime', 'output_modalities':['audio'],
-                'audio':{'output':{'voice':VOICE, 'format':{'type':'audio/pcm', 'rate':RATE}}}
+                'audio':{'output':{'voice':self.voice, 'format':{'type':'audio/pcm', 'rate':RATE}}}
             }})
             async for msg in ws:
                 # aiohttp TEXT enum has numeric value 1; fake transports use same integer.

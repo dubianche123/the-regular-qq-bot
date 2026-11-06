@@ -13,7 +13,7 @@ import config
 import delivery
 import quotes
 import runtime
-from regular import decision_settings
+from regular import capabilities, decision_settings
 
 logger = logging.getLogger("qqbot")
 _lock = asyncio.Lock()
@@ -42,8 +42,11 @@ def _log_generation_error(exc):
 
 def _key():
     keys = config.load_api_keys("openai")
-    if config.IMAGE_GENERATION_API_KEY or keys:
-        return config.IMAGE_GENERATION_API_KEY or keys[0]
+    if config.IMAGE_GENERATION_API_KEY:
+        return config.IMAGE_GENERATION_API_KEY
+    source = config.PROVIDER_PRESETS["openai"].get("base_url", "")
+    if keys and capabilities.same_endpoint(config.IMAGE_GENERATION_BASE_URL, source):
+        return keys[0]
     # 密钥只能在原本发给官方 OpenAI 且生图目标也是官方时复用。
     settings = decision_settings.load_settings(config.DATA_DIR)
     if settings and _official(config.IMAGE_GENERATION_BASE_URL) and _official(settings["endpoint"]):
@@ -62,13 +65,13 @@ def _official(url):
 
 def available():
     """生图已启用且配置、凭据就绪。额度和在途状态在请求时检查。"""
-    return bool(config.IMAGE_GENERATION_ENABLED and config.IMAGE_GENERATION_BASE_URL
+    return bool(capabilities.enabled(config, "image") and config.IMAGE_GENERATION_BASE_URL
                 and config.IMAGE_GENERATION_MODEL and _key())
 
 
 def animation_available():
     """动图使用同一个 Images API 与额度，由部署配置声明支持能力。"""
-    return bool(config.IMAGE_GENERATION_GIF_ENABLED and available())
+    return bool(capabilities.enabled(config, "gif") and available())
 
 
 def precheck(group_id, user_id, score):
@@ -129,7 +132,7 @@ async def generate_and_send(message, *, group_id, user_id, score, prompt, msg_se
     只把图片内容交给 QQ 的 file_data 接口，不存盘、不记录生成提示或图片内容。
     """
     if (not prompt or not available() or _expired(message)
-            or (animated and not config.IMAGE_GENERATION_GIF_ENABLED)):
+            or (animated and not capabilities.enabled(config, "gif"))):
         return False
     if _lock.locked():
         return "busy"

@@ -204,7 +204,8 @@ class VoiceProcessor:
     def __init__(self, transcriber: Callable[[bytes], Awaitable[str]] | None, *,
                  downloader=download_qq_voice, max_bytes=4 * 1024 * 1024,
                  max_seconds=60.0, download_timeout=15.0, transcription_timeout=30.0,
-                 dedup_ttl=120.0, dedup_capacity=128, clock=time.monotonic):
+                 dedup_ttl=120.0, dedup_capacity=128, clock=time.monotonic,
+                 transcription_enabled=lambda: True):
         if (not isinstance(max_bytes, int) or isinstance(max_bytes, bool)
                 or not 1 <= max_bytes <= 25_000_000
                 or not isinstance(dedup_capacity, int) or isinstance(dedup_capacity, bool)
@@ -215,6 +216,7 @@ class VoiceProcessor:
                                             (transcription_timeout, 300), (dedup_ttl, 3600)))):
             raise ValueError("invalid_limit")
         self._transcriber, self._downloader = transcriber, downloader
+        self._transcription_enabled = transcription_enabled
         self._max_bytes, self._max_seconds = max_bytes, max_seconds
         self._download_timeout, self._transcription_timeout = download_timeout, transcription_timeout
         self._ttl, self._capacity, self._clock = dedup_ttl, dedup_capacity, clock
@@ -265,6 +267,8 @@ class VoiceProcessor:
             if len(text) > MAX_TRANSCRIPT_CHARS:
                 return VoiceResult("transcript_too_long")
             return VoiceResult("ok", text, "qq_reference")
+        if not self._transcription_enabled():
+            return VoiceResult("transcription_disabled")
         if self._transcriber is None:
             return VoiceResult("transcription_unconfigured")
         data = attachment.audio_bytes

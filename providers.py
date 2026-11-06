@@ -79,7 +79,7 @@ def initialize(*, budget=None, decision_budget=None, on_usage=None):
                                           "all://localhost": None})
     selected = list(dict.fromkeys(name for chain in _TIER_PROVIDER_CHAINS.values()
                                   for name in chain))
-    if config.VISION_ENABLED and config.VISION_PROVIDER not in selected:
+    if config.VISION_PROVIDER not in selected:
         selected.append(config.VISION_PROVIDER)
     for name in selected:
         preset = config.PROVIDER_PRESETS[name]
@@ -537,6 +537,9 @@ async def describe_image(image_url, context_text=""):
     多模态看图本来就该带着对话看——知道大家在聊什么，才知道这张图值得描述
     什么（2026-10-20 群主定调）。
     """
+    from regular import capabilities
+    if not capabilities.enabled(config, "vision"):
+        return None
     initialize()
     name, model = config.VISION_PROVIDER, config.VISION_MODEL
     if not model or not AI_CLIENTS.get(name) or not _available(name) or not _bound_budget().can_consume():

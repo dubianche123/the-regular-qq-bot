@@ -198,6 +198,25 @@ class DesktopTest(unittest.TestCase):
         self.assertIn("不会停止面板或机器人", self.output.getvalue())
         self.assertNotIn(self.TOKEN, self.output.getvalue())
 
+    def test_cli_reopens_the_matching_branded_bundle_without_starting_an_extra_panel(self):
+        import json
+        import time
+        from regular import __version__
+        output = self.root / "desktop"
+        exe = output / "老群友.app/Contents/MacOS/老群友"
+        exe.parent.mkdir(parents=True)
+        exe.touch()
+        (output / "desktop-build.json").write_text(json.dumps({"schema": 1, "version": __version__, "built_at": time.time() + 1,
+            "source": str(Path(desktop.__file__).resolve().parent.parent)}))
+        with patch.object(desktop.sys, "platform", "darwin"), \
+             patch.object(desktop.sys, "frozen", False, create=True), \
+             patch.object(desktop, "_ensure_panel") as ensure, \
+             patch.object(desktop.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as opened:
+            self.assertEqual(desktop.run(self.cfg, port=8881), 0)
+        opened.assert_called_once()
+        self.assertEqual(opened.call_args.args[0], [str(exe), "--directory", str(self.root), "pet", "--port", "8881"])
+        ensure.assert_not_called()
+
     def test_gui_backend_error_falls_back_without_echoing_authenticated_url(self):
         self.token()
         self.client()
@@ -321,3 +340,45 @@ class PanelClientTest(unittest.TestCase):
         url = self.client.management_url("/setup")
         self.assertEqual(urlsplit(url).netloc, "127.0.0.1:8877")
         self.assertEqual(parse_qs(urlsplit(url).query), {"token": [self.TOKEN]})
+
+
+class PetPresenceClientTest(PanelClientTest):
+    def test_presence_is_one_read_with_an_optional_since_cursor(self):
+        body = {"bot": "ready", "events": [], "mood": 0.1}
+        self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: "1"}, json=body))
+        self.assertEqual(self.client.presence(), body)
+        self.assertEqual(self.client.presence(1793925000.5), body)
+        self.assertEqual([str(r.url) for r in self.calls],
+                         ["http://127.0.0.1:8877/companion/presence",
+                          "http://127.0.0.1:8877/companion/presence?since=1793925000.500"])
+        self.assertTrue(all(r.headers[desktop.TOKEN_HEADER] == self.TOKEN for r in self.calls))
+
+    def test_cue_posts_action_text_and_csrf_once(self):
+        self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: "1"}, json={"queued": "abc"}))
+        self.assertEqual(self.client.cue("cheer", "测试全过了", self.CSRF), "abc")
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(parse_qs(self.calls[0].content.decode()),
+                         {"action": ["cheer"], "text": ["测试全过了"], "csrf": [self.CSRF]})
+
+
+class PetCueCommandTest(DesktopTest):
+    def test_cli_cue_reaches_only_a_running_panel_and_never_starts_one(self):
+        with patch.object(cli, "load_config", return_value=self.cfg), \
+             patch.object(desktop, "cue", return_value=0) as cue:
+            self.assertEqual(cli.main(["--directory", str(self.root), "pet-cue", "cheer", "--say", "跑完了"]), 0)
+        cue.assert_called_once_with(self.cfg, action="cheer", text="跑完了", port=8765)
+        self.token()
+        with patch.object(desktop, "_panel_ready") as probe:
+            for action, text in (("dance", ""), ("", "  "), ("wave", "长" * 121)):
+                self.assertEqual(desktop.cue(self.cfg, action=action, text=text), 2)
+            probe.assert_not_called()
+        self.assertIn("可用：wave", self.output.getvalue())
+        with patch.object(desktop, "_panel_ready", return_value=False), \
+             patch.object(desktop.subprocess, "Popen") as popen:
+            self.assertEqual(desktop.cue(self.cfg, action="wave"), 1)
+        popen.assert_not_called()
+        with patch.object(desktop, "_panel_ready", return_value=True), \
+             patch.object(desktop.PanelClient, "session", return_value={"csrf": "c" * 20}), \
+             patch.object(desktop.PanelClient, "cue", return_value="id") as send:
+            self.assertEqual(desktop.cue(self.cfg, action="wave", text="嗨"), 0)
+        send.assert_called_once_with("wave", "嗨", "c" * 20)

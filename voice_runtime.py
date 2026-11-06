@@ -12,7 +12,7 @@ from voice_input import OpenAIWavTranscriber, VoiceProcessor
 
 class VoiceRuntime:
     def __init__(self, *, budget, mark_dirty, persist, api_key="", base_url="https://api.openai.com/v1",
-                 model="gpt-transcribe", processor=None):
+                 model="gpt-transcribe", processor=None, transcription_enabled=lambda: True):
         self._client = None
         if processor is not None:
             self.processor = processor
@@ -31,13 +31,15 @@ class VoiceRuntime:
             self._client = client
 
             async def transcribe(data):
+                if not transcription_enabled():
+                    raise RuntimeError("voice_transcription_disabled")
                 if not budget.try_consume():
                     raise RuntimeError("voice_budget_exhausted")
                 mark_dirty()
                 # Fail closed on persistence errors, before any billable call.
                 persist()
                 return await actual(data)
-        self.processor = VoiceProcessor(transcribe)
+        self.processor = VoiceProcessor(transcribe, transcription_enabled=transcription_enabled)
 
     async def close(self):
         await self.processor.close()

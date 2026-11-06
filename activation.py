@@ -79,6 +79,21 @@ def current_mood(now=None):
     return max(-_MOOD_MAX, min(_MOOD_MAX, _decay(now)))
 
 
+def mood_from_state(raw, now=None):
+    """别的进程（面板/桌宠）读 state.json 里落盘的心情：同一套半衰期，不碰本进程的心情。"""
+    if not isinstance(raw, dict):
+        return 0.0
+    try:
+        v = max(-_MOOD_MAX, min(_MOOD_MAX, float(raw.get("v") or 0.0)))
+        ts = float(raw.get("ts") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    now = time.time() if now is None else now
+    if not ts or v != v:
+        return 0.0
+    return v * (0.5 ** (max(0.0, now - ts) / _MOOD_HALFLIFE))
+
+
 # 烦透了的那条线。以前心情压在这下面半小时，整群会自动切进「发疯模式」（换一套人设、
 # 发一段固定的进场词，回升了再发一段退场词）；2026-11-01 模式全删了，发疯只剩这一句状态，
 # 每轮跟着心情走 —— 不用切换，也就不会卡在一个状态里。
