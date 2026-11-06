@@ -1,2 +1,2 @@
 """Operator tools for The Regular. Domain logic stays in the runtime modules."""
-__version__ = "0.4.1"
+__version__ = "0.4.2"

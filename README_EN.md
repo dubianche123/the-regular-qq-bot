@@ -57,13 +57,13 @@ Prepare **Python 3.10+, your own QQ Open Platform bot's AppID / AppSecret, and a
 | --- | --- | --- |
 | Double-click `start.bat` | Double-click `start.command` | Run `bash start.sh` in the project directory |
 
-The first launch downloads dependencies and places the transparent character on your desktop. Move the pointer near her to reveal chat, snack, activity and settings. It stays visible when you switch applications. If macOS blocks the double-click, run `bash start.sh` instead. A browser entry is available when the native desktop component is unavailable. You can also give your coding agent the [installation prompt](docs/agent-setup.md) (Chinese).
+The first launch downloads dependencies and places the transparent character on your desktop. Move the pointer near her to reveal chat, snack, activity and Workspace. It stays visible when you switch applications. If macOS blocks the double-click, run `bash start.sh` instead. A browser entry is available when the native desktop component is unavailable. You can also give your coding agent the [installation prompt](docs/agent-setup.md) (Chinese).
 
 ### 2. Give it a name and connect the services
 
-Choose “工作台” (Workspace) beside the character, then follow the overview to “QQ 与模型” (QQ and models). Fill in QQ credentials, bot names, the reply model, and a daily call-count limit. **Opening the pet and saving settings do not call a model.** Keys stay on your computer; blank password fields preserve saved values.
+Choose “工作台” (Workspace) beside the character. The overview guides you through two connections: **“QQ 连接与身份” (QQ connection and identity)** for QQ credentials and its name, then **“模型与能力” (Models and capabilities)** for the chat service, model and key. Choose a saved model from the dropdown, or select “填写其他模型” to enter another model ID. Once configured, settings show a summary until you choose to edit.
 
-![Setup panel: connecting QQ and a reply model (Chinese interface)](docs/readme/setup.jpg)
+![QQ connection and identity: connection status and an edit entry (Chinese interface)](docs/readme/setup.jpg)
 
 ### 3. Start it and say hello
 
@@ -89,12 +89,12 @@ This terminal demo uses no QQ connection or model calls. It demonstrates message
 
 ## Add more things to do
 
-The local panel's “能力与服务” (Capabilities and services) page has separate controls for vision, images/GIFs, incoming voice and speech output. Choose their models and credentials, set call limits, or disable them independently. Incoming voice can use only QQ-provided transcripts. See the [capability controls guide](docs/capabilities.md) (Chinese).
+**“模型与能力” (Models and capabilities)** puts chat, judgment, vision, images, incoming voice and speech in one list. Open a row to edit; switch off capabilities you do not need. Chat and judgment can use different models, and judgment can explicitly use the chat key when both belong to the same service. See the [settings guide](docs/capabilities.md) (Chinese).
 
 <details>
-<summary>Shared services and four simple capability switches</summary>
+<summary>Choose models by purpose, with settings folded until needed</summary>
 
-![Capabilities page in a demo instance with no API keys](docs/readme/capabilities.jpg)
+![Models and capabilities in the local panel](docs/readme/capabilities.jpg)
 
 </details>
 
@@ -105,7 +105,7 @@ Start with chat, then add the capabilities you want. **A key that supports chat 
 | Understand pictures | An image-capable reply model or a separate vision model; [vision setup](docs/providers.md#识图默认继承也可独立配置) |
 | Draw still images or looping GIFs | An Images API with the required output support and quota, plus the pre-drawing decision check; [image setup](docs/image-generation.md) |
 | Hear and send voice | Corresponding speech services and local audio dependencies; [voice setup](docs/getting-started.md#语音单独开启), [media behavior](docs/media-replies.md) |
-| Reminders and more semantic judgments | Native Decisions configured in the panel's “判断 API” page; reminders are saved only after review; [reminders](docs/reminders.md) |
+| Reminders and more semantic judgments | Connect the judgment service under “模型与能力 → 判断”; reminders are saved only after review; [reminders](docs/reminders.md) |
 
 Text conversation, requested images and voice replies are implemented. **Choosing images or voice for spontaneous scheduled messages is still deferred.** Speech output is synthesized speaking, not singing; animations are short looping GIFs, not long videos.
 
@@ -113,13 +113,13 @@ Text conversation, requested images and voice replies are implemented. **Choosin
 
 <p align="center"><img src="docs/readme/pet-demo.webp" width="720" alt="Desktop pet demo: she lands, wanders, has tea, checks her phone when mentioned, talks when she replies in the group, sketches when she sends a picture, dangles when picked up, answers local chat in a bubble and naps at night"></p>
 
-The desktop character is the default entry: **a chibi dragon who lives on the bottom edge of your screen** — she walks, sits down for tea or a book, naps when sleepy, dangles when you pick her up and falls back when you let go. More importantly, she acts out what the bot is really doing: she checks her phone when someone @-mentions her in the group, talks when she replies, sketches when she sends a picture, and dozes off when the bot stops. Hover to make her look at you and reveal chat, snack, activity and settings; pet her head and she blushes, poke too often and she pouts. Motion can be reduced.
+The desktop character is the default entry: **a chibi dragon who lives on the bottom edge of your screen** — she walks, sits down for tea or a book, naps when sleepy, dangles when you pick her up and falls back when you let go. More importantly, she acts out what the bot is really doing: she checks her phone when someone @-mentions her in the group, talks when she replies, sketches when she sends a picture, and dozes off when the bot stops. Hover to make her look at you and reveal chat, snack, activity and Workspace; pet her head and she blushes, poke too often and she pouts. Motion can be reduced.
 
 Use the source launcher, or run `regular --directory ~/.the-regular pet`; it prepares the local panel when needed. The panel's “聊两句” page provides the same text conversation in a browser. Microphone input and desktop voice chat are not implemented yet.
 
 **She can also help manage her capabilities.** Say “stop drawing for now” and she can offer a confirmation card; only your click changes the switch. Ask what she did today for a summary based on local activity counts. Code changes lead to a handoff brief you can copy to your coding agent.
 
-Resize from the character's context menu; size, position and motion preference are remembered. A coding agent can cue her too, e.g. `regular pet-cue cheer --say "eval finished"`. Settings explicitly choose the chat API and primary model shared by local and QQ replies. The knowledge library provides entry previews and drafts before saving group agreements or recurring context.
+Resize from the character's context menu; size, position and motion preference are remembered. A coding agent can cue her too, e.g. `regular pet-cue cheer --say "eval finished"`. Local and QQ replies share the chat model selected under Models and capabilities. Group knowledge is an entry list: choose its group, add or edit one entry, preview, then save. Deleting an entry asks for confirmation.
 
 [Desktop companion and local chat guide (Chinese) →](docs/companion.md)
 

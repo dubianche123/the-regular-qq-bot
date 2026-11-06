@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.2 — 2026-11-06
+
+- Separate settings into QQ identity and Models & capabilities. Show saved profiles
+  and compact capability rows; reveal credentials and fields only when editing.
+- Replace the chat model autocomplete with a real saved-model selector and custom
+  entry. Preserve provider drafts and the fallback chain when promoting a model.
+- Configure judgment beside chat, with explicit same-service credential reuse and
+  blank-key preservation. Keep QQ identity changes isolated from model settings.
+- Rebuild group knowledge around scoped entries, editing, preview, save and delete
+  confirmation. Preserve unparsed source and reject stale previews before writing.
+- Remove diagnostic pages from primary navigation and reduce developer-facing copy
+  across the workspace and pet. Show readable group names and keep the companion
+  dock compact so it does not cover settings.
+
 ## 0.4.1 — 2026-11-06
 
 - Keep the overview available before setup, with one connection action and a
