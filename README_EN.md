@@ -115,7 +115,7 @@ Text conversation, requested images and voice replies are implemented. **Choosin
 
 The desktop character is the default entry: **a chibi dragon who lives on the bottom edge of your screen** — she walks, sits down for tea or a book, naps when sleepy, dangles when you pick her up and falls back when you let go. More importantly, she acts out what the bot is really doing: she checks her phone when someone @-mentions her in the group, talks when she replies, sketches when she sends a picture, and dozes off when the bot stops. Hover to make her look at you and reveal chat, snack, activity and Workspace; pet her head and she blushes, poke too often and she pouts. Motion can be reduced.
 
-Use the source launcher, or run `regular --directory ~/.the-regular pet`; it prepares the local panel when needed. The panel's “聊两句” page provides the same text conversation in a browser. Microphone input and desktop voice chat are not implemented yet.
+Use the source launcher, or run `regular --directory ~/.the-regular pet`; it prepares the local panel when needed. The panel's “聊两句” page provides text conversation in a browser. For voice, open “语音” beside the native pet: start a session, hold to talk, release to hear a streamed reply, and hold again to interrupt. It uses the configured OpenAI realtime speech model and voice; QQ does not need to be running. Desktop voice has its own daily turn limit.
 
 **She can also help manage her capabilities.** Say “stop drawing for now” and she can offer a confirmation card; only your click changes the switch. Ask what she did today for a summary based on local activity counts. Code changes lead to a handoff brief you can copy to your coding agent.
 

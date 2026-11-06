@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.3 — 2026-11-06
+
+- Add native desktop push-to-talk using the configured OpenAI realtime speech
+  model and voice. Stream microphone PCM and generated audio; interrupt playback
+  and truncate unheard speech when starting a new turn. QQ need not be running.
+- Add an explicit voice card, microphone permission handling and macOS bundle
+  usage description. Capture only while held; release commits, leaving the button
+  or losing focus cancels the turn, and ending closes audio devices and transport.
+- Keep API keys in the local panel, with CSRF-issued single-use tickets, one active
+  voice session and no automatic reconnect. Bound sessions, audio and daily turns
+  separately from QQ voice messages; configure the daily limit under Voice service.
+- Reuse capability confirmation cards and numeric activity summaries for voice.
+  No recording files, QQ message delivery, raw group history or direct model writes.
+
 ## 0.4.2 — 2026-11-06
 
 - Separate settings into QQ identity and Models & capabilities. Show saved profiles
