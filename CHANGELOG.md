@@ -5,9 +5,12 @@
 - Add native desktop push-to-talk using the configured OpenAI realtime speech
   model and voice. Stream microphone PCM and generated audio; interrupt playback
   and truncate unheard speech when starting a new turn. QQ need not be running.
-- Add an explicit voice card, microphone permission handling and macOS bundle
-  usage description. Capture only while held; release commits, leaving the button
-  or losing focus cancels the turn, and ending closes audio devices and transport.
+- Add a compact voice card that connects when opened, with one rounded push-to-talk
+  button and a close control. Capture only while held; release commits, leaving the
+  button or losing focus cancels the turn, and closing ends audio and transport.
+  Handle microphone permission and include the macOS bundle usage description.
+- Buffer bursty voice packets before playback and use a steadier soundcard latency
+  to avoid inserting silence into speech during brief network gaps.
 - Keep API keys in the local panel, with CSRF-issued single-use tickets, one active
   voice session and no automatic reconnect. Bound sessions, audio and daily turns
   separately from QQ voice messages; configure the daily limit under Voice service.
