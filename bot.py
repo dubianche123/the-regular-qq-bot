@@ -1061,7 +1061,7 @@ def media_rules(flags=None):
 
 
 class MediaTurn(SimpleNamespace):
-    """这一轮小王能用哪几样（draw / animate / voice / remind）、额度记在谁头上、即时提示里要补的那句。"""
+    """本轮可用媒介、额度归属和即时提示；draw_unavailable_reason 保留代码确定的不可用原因。"""
 
 
 def media_turn(group_id, user_id, score, *, asked, remind=False, voice=True):
@@ -1076,13 +1076,16 @@ def media_turn(group_id, user_id, score, *, asked, remind=False, voice=True):
     """
     speak, voice = voice, False
     draw = False
+    draw_unavailable_reason = "unavailable"
     notes = []
     if asked and image_generation.available():
         state = image_generation.precheck(group_id, user_id, score)
         draw = state in ("normal", "exception", "extra")
         if state == "tired":
+            draw_unavailable_reason = "quota"
             notes.append(prompts.PROMPT_DRAW_TIRED)
         elif state == "busy":
+            draw_unavailable_reason = "busy"
             notes.append(prompts.PROMPT_DRAW_BUSY)
         elif state == "exception":
             notes.append(prompts.PROMPT_DRAW_EXCEPTION)
@@ -1098,6 +1101,7 @@ def media_turn(group_id, user_id, score, *, asked, remind=False, voice=True):
         task = runtime.SCHEDULER.tasks.get(reminders.task_id(group_id, user_id))
         notes.append(_reminder_note(task, time.time()))
     return MediaTurn(group=group_id, user=user_id, score=score, draw=draw,
+                     draw_unavailable_reason=draw_unavailable_reason if not draw else None,
                      animate=draw and image_generation.animation_available(), voice=voice,
                      remind=remind, reminder_revision=_reminder_revisions[group_id],
                      note="\n".join(notes))
@@ -1180,7 +1184,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                 and (not said.animated or getattr(media, "animate", False))):
             logger.info("🎨 这一轮不执行作图标记，交代未执行（%s）", session_id[-12:])
             # 动作和承诺是一起生成的，不能只摘掉动作、把「我这就画」照发出去。
-            reason = "animation_unavailable" if getattr(media, "draw", False) else "unavailable"
+            reason = ("animation_unavailable" if getattr(media, "draw", False)
+                      else getattr(media, "draw_unavailable_reason", None) or "unavailable")
             said = expression.Said(None, "", expression.image_failed_line(reason), said.remind)
         declined = said.kind == "image" and await _drawing_declined(message, media, said, history)
         if declined:

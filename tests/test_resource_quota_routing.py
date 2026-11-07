@@ -134,13 +134,26 @@ class ImageQuotaRoutingTest(_Base):
 
         async def model(messages, max_tokens, **kw):
             self.model_calls.append(messages)
-            return "〔画〕一只猫\n今天画累了"
+            return "〔画〕一只猫\n今天画累了，不过我这就给你画"
         with patch.object(bot, "call_model", model), \
              patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as draw:
             msg = await self._drive("画只猫", is_at=True)
         self.assertIn(prompts.PROMPT_DRAW_TIRED, self.tail())
         draw.assert_not_awaited()
-        self.assertEqual(msg.reply.await_args.kwargs["content"], "今天画累了")
+        self.assertEqual(msg.reply.await_args.kwargs["content"], "今天画不动了，明天再画")
+
+    async def test_busy_drawing_explains_the_inflight_picture_without_promising_another(self):
+        async def model(messages, max_tokens, **kw):
+            self.model_calls.append(messages)
+            return "〔画〕一只猫\n手上那张我画着呢，这张也马上画"
+
+        with patch.object(bot, "call_model", model), \
+             patch.object(bot.image_generation, "precheck", return_value="busy"), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as draw:
+            msg = await self._drive("画只猫", is_at=True)
+        self.assertIn(prompts.PROMPT_DRAW_BUSY, self.tail())
+        draw.assert_not_awaited()
+        self.assertEqual(msg.reply.await_args.kwargs["content"], "手上那张还没画完，等会儿再叫我")
 
     async def test_first_extra_share_tells_it_this_one_is_an_exception(self):
         self.relations.get(self.G, self.A, create=True)["score"] = 30

@@ -393,9 +393,12 @@ class MediaTurnTest(unittest.TestCase):
         self.assertEqual((self.turn("normal").draw, self.turn("normal").note), (True, ""))
         self.assertEqual(self.turn("tired").note, prompts.PROMPT_DRAW_TIRED)
         self.assertFalse(self.turn("tired").draw)
+        self.assertEqual(self.turn("tired").draw_unavailable_reason, "quota")
         self.assertEqual(self.turn("busy").note, prompts.PROMPT_DRAW_BUSY)
+        self.assertEqual(self.turn("busy").draw_unavailable_reason, "busy")
         exception = self.turn("exception")
         self.assertTrue(exception.draw)
+        self.assertIsNone(exception.draw_unavailable_reason)
         self.assertEqual(exception.note, prompts.PROMPT_DRAW_EXCEPTION)
 
     def test_unasked_turns_never_draw_but_may_speak(self):
