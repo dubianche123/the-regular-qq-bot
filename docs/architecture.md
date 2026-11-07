@@ -85,7 +85,7 @@ Decisions 收到的是**现场 `input` + 一组 `questions`**。`input` 装当�
 
 你可以让自己的编码 Agent 围绕这个群的真实反馈改进机器人。一次迭代会产出**候选改动、新的回归用例和新旧对比报告**。线上留下输入、判断与实际送达；`checkup` 只读这些记录、列出可疑片段，独立评审模型另行标注。编码 Agent 据此定位原因并修改，评测命令负责重放与比较，维护者决定是否发布。
 
-**让你的 Agent 接手这一圈**：仓库自带一份自迭代 skill，[`.agents/skills/regular-iterate`](../.agents/skills/regular-iterate/SKILL.md)。Claude Code、CodeX、Gemini CLI 可以读取这份流程（Claude Code 从 `.claude/skills/` 指过去，Gemini CLI 另由 `.gemini/settings.json` 读 `AGENTS.md`）。把小王出岔子的截图丢给 Agent，或者说一句「看看今天的体检」，它便有找现场 → 存用例 → 新旧回放 → 读报告的现成工具和步骤；上线仍然等你一句话。
+**让你的 Agent 接手这一圈**：仓库自带一份自迭代 skill，[`.agents/skills/regular-iterate`](../.agents/skills/regular-iterate/SKILL.md)。Claude Code、CodeX、Gemini CLI 可以读取这份流程（Claude Code 从 `.claude/skills/` 指过去，Gemini CLI 另由 `.gemini/settings.json` 读 `AGENTS.md`）。把小团团出岔子的截图丢给 Agent，或者说一句「看看今天的体检」，它便有找现场 → 存用例 → 新旧回放 → 读报告的现成工具和步骤；上线仍然等你一句话。
 
 ![自迭代闭环：独立完整标注、训练与验证、新旧对照、误报漏报，以及代码部署与策略人工生效](readme/iteration-cn.svg)
 

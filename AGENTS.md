@@ -93,7 +93,7 @@ launchctl bootout gui/$(id -u)/io.github.the-regular; launchctl bootstrap gui/$(
 
 ## 自我迭代：先读 skill
 
-排查小王的表现（群主发来截图、看每日体检）、改提示词或判断题、跑回放和盲评、决定上不上线，
+排查小团团的表现（群主发来截图、看每日体检）、改提示词或判断题、跑回放和盲评、决定上不上线，
 **先读 `.agents/skills/regular-iterate/SKILL.md`**，照着走一圈。CodeX 和 Gemini CLI 会自动发现 `.agents/skills/`，
 Claude Code 里它是 `regular-iterate` skill。设计和来龙去脉在 `docs/self-iteration.md`。
 

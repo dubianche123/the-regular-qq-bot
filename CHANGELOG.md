@@ -253,7 +253,7 @@
   content-free `lookup` row), and only says she “chimed in” for unprompted
   banter, not for a direct reply.
 - The pet no longer picks a nap within three minutes of her own group activity,
-  and anything 小王 does in QQ wakes her (she used to sleep through a drawing
+  and anything 小团团 does in QQ wakes her (she used to sleep through a drawing
   delivered right after an afternoon nap began).
 - Redesign “能力与服务” into a one-screen list: shared services on top, one row
   per capability with a plain-language state and a switch that saves at once

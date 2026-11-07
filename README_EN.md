@@ -4,52 +4,118 @@
 
 # The Regular · 老群友
 
-**One more friend in your QQ group: joins the jokes, remembers you, draws pictures, and speaks.**
+**One more friend in your QQ group: joins the jokes, remembers you, draws animated GIFs, speaks aloud, and hangs out right on your desktop.**
 
-Let your coding agent help it fit your group better, guided by your group's feedback.
+Let your Coding Agent install her in one step—and evolve her over time around your group's real feedback.
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+**Let Codex / Claude Code install it. Enter one OpenAI key and your QQ bot credentials, then start chatting.** [Copy the install prompt ↓](#quick-start)
 
-[中文](README.md) · **English** · [Download](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) · [Quick start](#quick-start) · [Make it your group's own](#make-it-your-groups-own) · [Under the hood](#architecture-and-design)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-2100%2B-3A9F82)](.github/workflows/ci.yml) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+
+[中文](README.md) · **English** · [Download Latest](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) · [Desktop Pet Sync](#meet-at-your-desktop-too) · [Group Self-Iteration](#make-it-your-groups-own) · [Quick Start](#quick-start) · [Under the Hood](#architecture-and-design)
 
 </div>
 
-The Regular hangs out where your group chats. Call its name and it joins in; leave it unmentioned and it considers whether there is something worth adding. It follows jokes, takes corrections, and gives people space when asked. Names, shared stories, and what it actually said before give the next conversation some continuity.
+You chat; she's there too.
 
-Want something fun? Ask for a chicken playing basketball—even a short animated one. Want to hear it? Ask it to say a line aloud. **Choose its name and personality, then find the rhythm that suits your group.** The everyday bot experience is primarily designed for Chinese QQ groups; the local panel is in Chinese.
+She isn't a stiff command bot waiting for `/help` or repeating *"How may I assist you today?"* Call her name and she jumps in; leave her unmentioned and she reads the room to decide whether a follow-up is meant for her. She plays along with running jokes, takes corrections in stride, and gives people space when asked. Nicknames, shared stories, and what she actually said two minutes ago all carry into the next exchange.
 
-> **Claimed ChatGPT Pro API credits and wondering what to build?** Give your group a new companion. Eligible Pro / Business subscriptions must claim the benefit and link an API organization; the credits expire with the applicable billing cycle. They are not automatically included with every subscription. Check [OpenAI's current eligibility rules](https://developers.openai.com/api/docs/guides/chatgpt-api-credits) and your account benefits. Other reply model services can be configured too.
+Want something fun? Ask her to draw a chicken playing basketball—even as a short looping GIF. Want to hear her voice? Ask for a sleepy good-morning line. **Choose her name and personality, and let your group shape a rhythm of its own.**
 
-## A little life in the group
+### ✨ Why Groups (and Desktops) Love Her
 
-These are **illustrative use cases, not real chat transcripts**. Images, voice and reminders require their corresponding services to be configured first.
+- **🧠 Ultra-Cheap Turn-Taking via Decisions API (`Jev`)**: Group bots usually suffer from noisy regex triggers or burn tokens calling a full LLM just to output `SKIP`. The Regular uses the **Decisions API (`Jev` closed-set judgment endpoint)**—at roughly **0.1 USD / 1M tokens and a 0.71s median latency**—to decide *when to speak* before calling the main chat model: distinguishing direct questions from third-party mentions, catching implicit follow-ups, recalling old quotes, and respecting back-off cues.
+- **🔄 Tailored to Your Group via Self-Iteration (Even for *When to Speak*)**: Every friend group has its own humor and conversational pace. When she feels too quiet, too chatty, or too literal, you don't need to dig through Python files—hand a screenshot to your Coding Agent. Both **the judgment layer (Decisions API triage questions & margins)** and **the generation layer (reply prompts)** can be replayed, tuned, and blind-evaluated on real group turns.
+- **🐉 Desktop Pet Synced Live with Your Group**: She doesn't just live in a chat window—she's a chibi dragon-girl strolling, sipping tea, reading, and napping along the bottom edge of your screen. **When someone `@`-mentions her in QQ, she pulls out her phone on your desktop; when she replies, she talks; when someone asks for a drawing, she sketches until the image lands in the chat.** You can also pat her head, play high-five rally games, or talk with her hands-free via real-time voice.
+- **🤖 Agent-First + Effortless One-Key Setup**: From downloading the release, preparing Python, and building the desktop pet, to running daily health checkups, tuning triage & reply rules, and making the desktop pet jump for joy when evals finish (`regular pet-cue cheer`), **Codex, Claude Code, or Gemini CLI** can handle the heavy lifting. You just enter **one official OpenAI API key** (shared across chat, Jev judgment, vision, image/GIF generation, and voice with pre-selected models) and your QQ bot credentials.
 
-| What you ask | What it can do |
+> 💡 **Sitting on monthly ChatGPT Pro / Business API credits and wondering what to build?**
+> Give your group a new companion ([OpenAI API credits guide](https://developers.openai.com/api/docs/guides/chatgpt-api-credits)). You can also plug in Zhipu GLM, Gemini, or any compatible model service.
+
+---
+
+## A Little Life in the Group
+
+With the default official OpenAI setup, chat, vision, drawing, voice, and reminders all share the same API key—toggle whatever you want in the local workbench:
+
+| What your group says | How The Regular responds |
 | --- | --- |
-| “Xiaowang, what do you think?” | Reply using the surrounding conversation; a follow-up need not repeat the @ mention every time |
-| “Draw an animated chicken playing basketball” | Fill in a short looping motion and send the generated GIF to the group |
-| “Say good morning like you just woke up” | Write the line, then deliver it as synthesized speech |
-| “Remind me about the meeting at nine tomorrow” | Clarify what is needed, confirm the saved reminder, and @ its creator when due |
-| “That wasn't a question for you” | Back off, while leaving feedback that can guide a later improvement |
+| “Tuantuan, what do you think?” | Replies using surrounding context—and catches follow-ups without needing an `@` on every message |
+| “Draw an animated chicken playing basketball” | Fills in a short looping motion and sends the generated GIF straight to the group |
+| “Say good morning like you just woke up” | Writes the line in character, then delivers it as expressive synthesized speech |
+| “Remind me about the 9 AM meeting tomorrow” | Clarifies what's needed, confirms and logs the reminder locally, and `@`s you right on time |
+| “That wasn't a question for you” | Steps back immediately—and logs the moment as feedback for future tuning |
 
 <details>
-<summary>See an illustrated group conversation</summary>
+<summary>🎬 See an illustrated group conversation</summary>
 
 ![Synthetic group conversation: replies, memory and actions](docs/readme/conversation.svg)
 
 </details>
 
-Three things shape the experience:
+Three things shape the everyday experience:
 
-- **Conversation with room for others.** Messages need not all be commands. It considers context before joining in; corrections and quiet time help when it gets that wrong.
-- **Continuity between conversations.** It keeps names, relationships and selected source-backed quotes, along with its own delivered messages. When returning to an older line, it can link the original.
-- **A way to improve what feels off.** Your coding agent can turn “why did it miss that?” or “why did it answer the wrong person?” into a replayable case and compare a proposed fix with the previous version.
+- **Conversation with room for others.** No slash commands required. She considers conversational turn-taking before chiming in, and respects quiet time whenever someone asks her to chill.
+- **Continuity between conversations.** Local deterministic code tracks nicknames, rapport scores, and source-backed quotes alongside her own delivered messages—linking back to original lines when revisiting older topics.
+- **A built-in loop to fix what feels off.** Your Coding Agent can turn *"why did she miss that?"* or *"why did she answer the wrong person?"* into a replayable regression case and benchmark a proposed fix against the current version.
 
-## Quick start
+---
 
-### Let your agent install and open it
+## Meet at Your Desktop, Too
 
-Copy this into Codex, Claude Code, Gemini CLI, or another coding agent with access to this computer:
+<p align="center"><img src="docs/readme/pet-demo.webp" width="720" alt="Ring-menu pet demo: hover to reveal five actions, play a high-five rally, pick her up and chat locally"></p>
+
+The desktop companion is your default entry point: **a chibi dragon-girl who lives along the bottom edge of your screen**—she strolls around, sits down for tea or a book, naps when sleepy, dangles her legs when you pick her up, and plops back down when you let go.
+
+Best of all, **her desktop animations mirror what Tuantuan is doing in your QQ group in real time**:
+- Someone `@`-mentions her in the group → she pulls out her phone on your desktop;
+- She sends a reply → she talks;
+- Someone requests a drawing → she grabs her sketchbook and draws until the picture is sent;
+- The bot service stops or late night arrives → she yawns and curls up to sleep.
+
+**Interactive desktop perks & local butler controls:**
+- **Headpats, snacks & high-five rallies**: Hover near her and she turns to look at you, revealing a five-button radial ring (`Play / Chat / Voice / Activity / More`). Patting her head or feeding her cookies boosts her mood and walking pep; click *Play* for a multi-tap high-five combo game.
+- **Hands-free continuous voice chat**: Click *Voice* on the radial ring to speak naturally—she detects when you finish, replies aloud, and lets you interrupt anytime without holding a button (no QQ connection required).
+- **One-sentence capability switches & Coding Agent cues**: Tell her *"stop drawing for now"* and she offers a confirmation card for you to approve; ask *"what did you do today?"* for a summary of today's group activity. When your Coding Agent finishes an evaluation run in the background, it can run `regular pet-cue cheer --say "eval finished"` to make her celebrate on your screen!
+
+Launch her via the starter script or `regular --directory ~/.the-regular pet`. Size, position, and motion preferences persist automatically. [Desktop companion & local chat guide →](docs/companion.md)
+
+---
+
+## Make It Your Group's Own
+
+Every friend group has its own inside jokes and rhythm. When Tuantuan replies too literally, chimes in at the wrong moment, misses an implicit follow-up, or needs tuning to fit your group's style, **you never have to dig through code or hand-edit prompts**—just hand a screenshot or note to your Coding Agent:
+
+> *“Look at Tuantuan's last reply. Why did she answer the wrong person? Follow the repository's self-iteration workflow, try a fix, and compare it with the current version.”*
+
+```text
+Keep live triage & reply scenes → Agent diagnoses Judgment (Decisions) vs. Reply layer → Paired replay & blind A/B judging → You decide what goes live
+```
+
+**Tune both *how she speaks* and *when she speaks*:**
+- **Triage Layer (`Decisions / Jev`) Iteration**: If she chimes in too often or stays too quiet in your group, your agent can replay historical triage logs (`regular eval --layer triage`) to refine the closed-set decision questions, option phrasing, or confidence margins.
+- **Generation Layer Iteration**: If her tone feels stiff or repetitive, your agent can replay real conversation windows, run independent blind A/B judging, and prune redundant prompt rules with `--ablate`.
+
+The repository ships with replay tools and **[`.agents/skills/regular-iterate/SKILL.md`](.agents/skills/regular-iterate/SKILL.md)**. Open **“让 Agent 改进” (Improve with your agent)** in the local workbench to download a ready-to-use handoff brief telling Codex, Claude Code, or Gemini CLI exactly where the source and data live and how to begin.
+
+<details>
+<summary>🛠️ See how the workbench hands feedback to your Coding Agent</summary>
+
+![Feedback and agent handoff in the local panel](docs/readme/iterate.jpg)
+
+</details>
+
+[Walk through a complete self-iteration cycle →](docs/self-iteration.md#iteration-example) · [See all 8 customizable surfaces →](docs/self-iteration.md#iteration-surfaces)
+
+---
+
+## Quick Start
+
+### Option 1: Let Your Coding Agent Install & Open Everything (Recommended)
+
+**Copy the prompt → Codex / Claude Code installs and opens it → enter your credentials locally and complete QQ authorization → connect and chat.** Recommended models are pre-selected out of the box.
+
+Copy and paste this into Codex, Claude Code, Gemini CLI, or any local coding agent:
 
 ```text
 Install and open The Regular on this computer:
@@ -59,132 +125,124 @@ Read the repository's docs/agent-setup.md, then download its latest stable sourc
 release. Prepare Python, install dependencies, build the pet, and launch it.
 Reuse my existing instance and settings if present. Verify that the pet is
 visible and the local workspace opens; resolve ordinary installation errors.
-Use the project's recommended OpenAI model settings. I will enter my key
-locally and complete QQ authorization. Handle the remaining setup for me,
+Use the project's recommended OpenAI model settings. I will enter my official
+OpenAI key and QQ AppID / AppSecret locally and complete QQ authorization.
+Handle the remaining setup for me,
 apart from account actions or system permissions that require my input.
 Once I confirm configuration and QQ authorization are complete, start the bot
 and verify its connection.
 ```
 
-**Your agent handles download, installation and launch; you provide your own key and QQ authorization.** [Full installation workflow (Chinese) →](docs/agent-setup.md)
+**Your agent handles download, Python setup, desktop pet build, and launch; you only enter credentials locally and scan for QQ authorization.** [Full agent installation workflow →](docs/agent-setup.md)
 
-Prefer doing it yourself? Follow the three steps below. Prepare **Python 3.10+, a model service's API key, and your own QQ bot's AppID / AppSecret**. Official OpenAI can use the project's model presets; other services need their corresponding endpoint and model. Creating the QQ bot and setting its event subscriptions and access scope remain your account actions.
+---
 
-### 1. Download and meet it on your desktop
+### Option 2: Do It Yourself in 3 Steps
 
-[**Download the latest version →**](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) Choose **Source code (zip)**, extract it completely, then use your system's launcher:
+Prepare **Python 3.10+, a model service API key, and your QQ bot's AppID / AppSecret**:
+
+#### 1. Download & Meet Her on Your Desktop
+
+[**Download the latest release →**](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) Choose **Source code (zip)**, extract it, and run your OS launcher:
 
 | Windows | macOS | Linux |
 | --- | --- | --- |
-| Double-click `start.bat` | Double-click `start.command` | Run `bash start.sh` in the project directory |
+| Double-click `start.bat` | Double-click `start.command` (or `bash start.sh`) | Run `bash start.sh` in the project directory |
 
-The first launch downloads dependencies and places the transparent character on your desktop. Move the pointer near her to reveal a ring with play, chat, voice, activity and more. It stays visible when you switch applications. If macOS blocks the double-click, run `bash start.sh` instead. A browser entry is available when the native desktop component is unavailable.
+The first launch installs dependencies and places the chibi dragon-girl on your desktop. Move your pointer near her to reveal the radial ring (`Play / Chat / Voice / Activity / More`).
 
-### 2. Give it a name and connect the services
+#### 2. Enter Your OpenAI and QQ Credentials
 
-Choose **“更多 → 打开工作台” (More → Open workspace)** from the ring. The overview guides you through two connections: **“QQ 连接与身份” (QQ connection and identity)** for QQ credentials and its name, then **“模型与能力” (Models and capabilities)** to connect your official OpenAI key at the top and use the project's chat and judgment presets. For another service, expand Chat to choose its provider and model. Existing choices are preserved; expand a row when you want to change it.
+Choose **“更多 → 打开工作台” (More → Open workspace)** from the ring and complete two quick cards:
+- **“QQ 连接与身份” (QQ connection and identity)**: Enter your QQ bot credentials and give her a group name (e.g., *Tuantuan* / *小团团*);
+- **“模型与能力” (Models and capabilities)**: Connect your official OpenAI key at the top to unlock all recommended chat, judgment, and multimodal presets at once (or expand *Chat* to pick Zhipu GLM, Gemini, etc.).
 
-![QQ connection and identity: connection status and an edit entry (Chinese interface)](docs/readme/setup.jpg)
+![QQ connection and identity setup](docs/readme/setup.jpg)
 
-### 3. Start it and say hello
+#### 3. Start the Bot & Say Hello
 
-On “我的群友” (My companion), click “启动机器人” (Start bot) and wait for the actual **“已连上 QQ” (Connected to QQ)** status. Send its first nonempty private message yourself to claim ownership, then add it to your group, allow group messages, and try an @ mention or its name.
+On **“我的群友” (My companion)**, click **“启动机器人” (Start bot)** and wait for **“已连上 QQ” (Connected to QQ)**. Send her a first private message (C2C) to automatically claim owner permissions, then invite her to your group and say hi!
 
-Keep the computer and panel terminal running. Closing the browser tab leaves the bot running; exiting the panel service stops the bot it started. Private data defaults to **`~/.the-regular`** and is reused on later launches.
-
-[Full setup and troubleshooting](docs/getting-started.md) · [Services and keys](docs/providers.md) · [Configuration example](.env.example)
+> Private settings and group memories live in **`~/.the-regular`** and persist across updates. [Full setup & troubleshooting →](docs/getting-started.md) · [Services & keys →](docs/providers.md) · [Config example →](.env.example)
 
 <details>
-<summary>No QQ bot or API key yet? Try the offline message flow</summary>
+<summary>🧪 No QQ bot or API key yet? Try the offline terminal demo</summary>
 
-After dependency installation, run this in the project directory:
+After installing dependencies, run:
 
 ```bash
 # macOS / Linux; on Windows use .venv\Scripts\python.exe
 .venv/bin/python -m regular demo
 ```
 
-This terminal demo uses no QQ connection or model calls. It demonstrates message handling and local commands, rather than real model conversation quality.
+Runs 100% offline with zero model calls so you can explore message routing, rapport ledgers, and local commands.
 
 </details>
 
-## Add more things to do
+---
 
-**“模型与能力” (Models and capabilities)** lists chat, vision, images, incoming voice and speech in editable rows. Switch off capabilities you do not need. The separate OpenAI connection at the top lets you update the shared key without switching an existing chat service. Capabilities using the same official service can share credentials; other addresses or services need their own credentials. Official OpenAI has a default judgment model; “高级” (Advanced) lets you choose another. See the [settings guide](docs/capabilities.md) (Chinese).
+## One Key, with Capabilities You Can Switch On or Off
+
+With the default official OpenAI setup, **chat, judgment, vision, images, and voice all share the single key you entered at the start—and models are already pre-selected.** Just choose which capabilities to enable and set their daily call limits.
+
+Open **“模型与能力” (Models and capabilities)** to view each row's status, model, and daily quota at a glance. Toggles save immediately; expand any row when you want to customize its model or limit. See the [settings guide](docs/capabilities.md).
+
+| What you want | How the default setup works |
+| --- | --- |
+| **👀 Understand pictures & memes** | Enabled by default using the chat model; toggle off or pick a dedicated model under *Vision* |
+| **🎨 Draw still art or looping GIFs** | Shares the OpenAI connection; adjust switches, GIF animation, and daily limits under *Images* |
+| **🎧 Transcribe QQ voice notes** | Enabled by default; the preset transcription model fills in whenever QQ omits text |
+| **🎙️ Send voice replies in QQ** | Off by default; ask your install agent to prepare local audio dependencies, then enable *Speech* |
+| **🗣️ Continuous voice chat with the pet** | Open *Voice* from the desktop pet's ring; independent of QQ speech and needs no QQ connection |
+| **⏰ Set timed reminders** | Judgment model is pre-configured; ask for a reminder and it saves after clarification and review |
+| **📒 Group rules & inside jokes** | Add, preview, and save lore entries under *Group knowledge* with zero extra services |
 
 <details>
-<summary>Choose models by purpose, with settings folded until needed</summary>
+<summary>🎛️ Preview the Models & Capabilities workbench</summary>
 
 ![Models and capabilities in the local panel](docs/readme/capabilities.jpg)
 
 </details>
 
-Start with chat, then add the capabilities you want. **A key that supports chat does not necessarily grant image, voice or Decisions API access.**
-
-| Capability | What else it needs |
-| --- | --- |
-| Understand pictures | An image-capable reply model or a separate vision model; [vision setup](docs/providers.md#识图默认继承也可独立配置) |
-| Draw still images or looping GIFs | An Images API with the required output support and quota, plus the pre-drawing decision check; [image setup](docs/image-generation.md) |
-| Hear and send voice | Corresponding speech services and local audio dependencies; [voice setup](docs/getting-started.md#语音单独开启), [media behavior](docs/media-replies.md) |
-| Reminders and more semantic judgments | Connect the judgment service under “模型与能力 → 判断”; reminders are saved only after review; [reminders](docs/reminders.md) |
-
-Text conversation, requested images and voice replies are implemented. **Choosing images or voice for spontaneous scheduled messages is still deferred.** Speech output is synthesized speaking, not singing; animations are short looping GIFs, not long videos.
-
-## Meet at your desktop, too
-
-<p align="center"><img src="docs/readme/pet-demo.webp" width="720" alt="Ring-menu pet demo: hover to reveal five actions, play a high-five rally, pick her up and chat locally using preset dialogue"></p>
-
-Ring-menu and local-interaction demo; chat uses preset dialogue.
-
-The desktop character is the default entry: **a chibi dragon who lives on the bottom edge of your screen** — she walks, sits down for tea or a book, naps when sleepy, dangles when you pick her up and falls back when you let go. More importantly, she acts out what the bot is really doing: she checks her phone when someone @-mentions her in the group, talks when she replies, sketches when she sends a picture, and dozes off when the bot stops. Hover to make her look at you and reveal a five-button ring (play, chat, voice, activity and more). Click her head, body or feet for different small reactions; "play" is a multi-tap high-five rally — she keeps raising her hand, you keep tapping, and stopping wraps up the streak. Text chat lives on the ring's "chat" button: double-clicking her no longer steals the clicks. Poking her repeatedly never turns into an angry routine. Notifications and settings close as soon as you click elsewhere. Motion can be reduced.
-
-Use the source launcher, or run `regular --directory ~/.the-regular pet`; it prepares the local panel when needed. The panel's “聊两句” page provides text conversation in a browser. For voice, open “语音” beside the native pet and speak naturally: it detects when you finish, replies aloud, and lets you interrupt without holding a button. Mute when needed; close the card to end. Connect official OpenAI using the separate card at the top of Models and capabilities; credentials can be shared with capabilities using the same service. Choose the realtime speech model and voice under “发语音” and its daily turn limit under “桌宠语音”. QQ does not need to be running.
-
-**She can also help manage her capabilities.** Say “stop drawing for now” and she can offer a confirmation card; only your click changes the switch. Ask what she did today for a summary based on local activity counts. Code changes lead to a handoff brief you can copy to your coding agent.
-
-Cycle her size from the "More" panel; size, position and motion preference are remembered. A coding agent can cue her too, e.g. `regular pet-cue cheer --say "eval finished"`. Local and QQ replies share the chat model selected under Models and capabilities. Group knowledge is an entry list: choose its group, add or edit one entry, preview, then save. Deleting an entry asks for confirmation.
-
-[Desktop companion and local chat guide (Chinese) →](docs/companion.md)
-
-## Make it your group's own
-
-Every group has its own humor. When a reply is too literal, an interjection misses the target, or you want a different way of getting along, hand a screenshot or feedback to your coding agent:
-
-> “Look at this reply. Why did it answer the wrong person? Use the repository's iteration workflow to try a fix and compare it with the previous version.”
-
-**Keep the scene → the agent diagnoses and edits → replay the same examples → you decide what goes live.**
-
-The repository includes replay tools and an [iteration skill](.agents/skills/regular-iterate/SKILL.md). The panel's “让 Agent 改进” (Improve with your agent) page downloads a handoff explaining where the source and data live and how to begin. Codex, Claude Code and Gemini CLI have workflow entry points.
-
-Improvement comes from your feedback and changes you can inspect. **The bot does not edit its own code or deploy itself.** You can start with conversation and bring your agent in when something feels off.
-
 <details>
-<summary>Hand feedback to your agent from the panel</summary>
+<summary>📖 Preview the Group Lore & Knowledge editor</summary>
 
-![Feedback and agent handoff in the local panel](docs/readme/iterate.jpg)
+![Group lore and shared conventions](docs/readme/knowledge.jpg)
 
 </details>
 
-[Walk through an improvement](docs/self-iteration.md#iteration-example) · [What can change](docs/self-iteration.md#iteration-surfaces)
+<details>
+<summary>🔌 Want different models or another provider?</summary>
 
-## A few practical details
+Expand *Chat* to choose Zhipu GLM, Gemini, or another compatible endpoint; capabilities on the official OpenAI connection keep sharing your original key. Existing custom models, dedicated providers, and disabled capabilities are preserved.
 
-- **Bring your own service quota.** The daily limit counts calls, not money; costs depend on models and usage.
-- **Chat content goes to the model services you configure.** Settings, state and records are saved locally. Explain this to your group, and keep the panel's token-bearing URL private.
-- **It will make mistakes.** Memory is selective and services can fail. Existing measurements describe particular test conditions.
-- **Keep a host running.** It cannot reply while the computer sleeps or its service is stopped. See [later launches and persistent operation](docs/getting-started.md#以后如何再打开).
+[Models and services](docs/providers.md) · [Images](docs/image-generation.md) · [QQ voice and audio components](docs/getting-started.md#语音单独开启) · [Media behavior](docs/media-replies.md) · [Reminders](docs/reminders.md)
 
-The cover is an AI-generated original mascot for The Regular; bot names and personalities are configurable. [Assets and generation prompts](docs/visual-identity.md). This project is not affiliated with OpenAI or QQ.
+</details>
 
-## Architecture and design
+---
 
-- **Separate fixed judgments from open-ended replies.** Intent triage and reminder checks use closed-set Decisions API questions; the chat model writes replies. [908 historical triage calls had a 0.71-second median latency](docs/judgment-layer.md).
-- **Four context layers preserve a reusable prefix.** Stable instructions → daily memory → conversation history → current-turn facts. Speaker- and turn-specific information goes last, keeping stable input available for [prefix caching](docs/DESIGN_NOTES_EN.md).
-- **Compare changes, and reject weak candidates.** [Generation, triage, retrieval and message replays](docs/self-iteration.md), independent model blind judging, and single-rule ablation with `--ablate` help decide whether a change is worth shipping.
-- **2,100+ offline regression cases protect state boundaries.** Relationships, names, tasks and quotas stay in local code. [CI](.github/workflows/ci.yml) covers Python 3.10 / 3.12 / 3.13 and desktop audio paths on Windows / macOS.
+## Architecture and Design
 
-The previous technical README is preserved in [Architecture and design](docs/architecture-en.md), including message flow, Decisions, iteration, measurements and the design document index.
+Beneath the friendly group regular and live desktop pet is a compact **Agent Harness** engineered around deterministic state boundaries, prefix-cache economics, and regression-proof self-evolution:
+
+- **⚡ 0.71s Closed-Set Judgment Layer (`Decisions API / Jev`)**: Replaces brittle regex rules and costly full-LLM `SKIP` calls with ultra-cheap (~0.1 USD / 1M tokens) closed-set Decisions API checks for intent triage, back-off detection, memory recall, and reminder screening while the chat model focuses on writing replies; [908 historical triage calls recorded a 0.71-second median latency](docs/judgment-layer.md).
+- **🧱 Four-Layer Context Layout for Prefix Caching**: Structured strictly as `Stable Instructions → Daily Memory → Session History → Current-Turn Facts`. Speaker- and turn-specific data always goes last, preserving a stable prefix for [prefix caching](docs/DESIGN_NOTES_EN.md) (75.6%–98% measured hit rates).
+- **🔄 Controlled Self-Evolution with Blind Judging & Rule Ablation**: Combines zero-token daily health scans (`regular checkup`), [generation / triage / retrieval / message replays](docs/self-iteration.md), independent blind pairwise judging, and single-rule ablation (`--ablate`) so weak candidates are rejected and obsolete prompt rules get pruned.
+- **🛡️ 2,100+ Offline Regression Cases Protect State Boundaries**: Rapport scores, nicknames, promises, and daily quotas live strictly in deterministic local Python code. [CI](.github/workflows/ci.yml) covers Python 3.10 / 3.12 / 3.13 and desktop audio pipelines across Windows and macOS.
+
+Explore the full message flow diagrams, Decisions calibration data, self-iteration walkthroughs, and design notes in **[Architecture and Design (`docs/architecture-en.md`)](docs/architecture-en.md)**.
+
+### Practical Notes
+
+- **Predictable quotas**: Set independent daily call limits per capability in the workbench so group banter never burns through your budget.
+- **Local-first privacy**: Credentials, state ledgers, and logs stay on your machine under `~/.the-regular` with the workbench bound to `127.0.0.1`. For 24/7 operation, see [persistent operation](docs/getting-started.md#以后如何再打开).
+- **Customizable identity**: The original dragon-girl mascot, name, and persona can be customized freely ([Visual identity & prompts](docs/visual-identity.md)).
 
 [Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
 
-If you would like a friend like this in your group, give it a try. A ⭐ helps other groups find it too.
+---
+
+<p align="center">
+  If your group could use a companion who knows when to chime in, when to chill, and how to hang out on your desktop, give her a try—and drop a <b>⭐ Star</b> to help more groups find her!
+</p>
