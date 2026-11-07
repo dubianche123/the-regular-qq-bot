@@ -57,6 +57,27 @@ class DesktopPetTest(unittest.TestCase):
         self.pet.pool.waitForDone(1000)
         self.app.processEvents()
 
+    def test_native_care_waits_for_the_shared_panel_and_applies_each_event_once(self):
+        self.settle()
+        self.pet.csrf = 'synthetic-care-csrf-0123456789'
+        with patch.object(self.pet, '_submit') as submit:
+            self.pet.feed()
+            self.assertEqual(self.pet.brain.warmth, 0)
+            self.pet.step()
+        self.assertEqual(submit.call_args.args[0], 'care')
+        event = {'kind': 'care', 'id': 'care-1', 'ts': 100, 'action': 'feed',
+                 'result': 'gain', 'text': '吃饱了，心情也好了。'}
+        value = {'care': {'warmth': .26, 'updated_at': 100}, 'care_event': event}
+        self.pet._finished('care', {'ok': True, 'value': value})
+        self.assertEqual(self.pet.brain.warmth, .26)
+        self.assertEqual(self.pet.brain.bubble.text, event['text'])
+        serial = self.pet.brain.bubble.serial
+        self.pet.brain.observe(self.t[0], {'care': value['care'], 'events': [event]})
+        self.assertEqual(self.pet.brain.bubble.serial, serial)
+        # A late pre-feeding presence response must not erase the just-confirmed change.
+        self.pet.brain.sync_care({'warmth': 0, 'updated_at': 99}, self.t[0])
+        self.assertEqual(self.pet.brain.warmth, .26)
+
     def advance(self, seconds, fps=30, pet=None):
         pet = pet or self.pet
         for _ in range(int(seconds * fps)):

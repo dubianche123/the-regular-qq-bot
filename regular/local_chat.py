@@ -18,6 +18,7 @@ from aiohttp import web
 
 import expression
 import storage
+from regular.pet_care import CARE_MAX
 from regular.panel_runtime import _pid_alive
 
 FILENAME = "local-chat.json"
@@ -47,6 +48,34 @@ def _text(value):
     if len(value) > MAX_TEXT_CHARS:
         raise LocalChatError(400, f"一条消息最多 {MAX_TEXT_CHARS} 个字符。")
     return value.strip()
+
+
+def care_facts(value):
+    """Only bounded panel-owned facts cross the private bridge, never arbitrary context."""
+    if value is None:
+        return None
+    if (not isinstance(value, dict)
+            or set(value) != {"warmth", "fed_recently", "patted_recently"}
+            or type(value["warmth"]) not in (int, float)
+            or not math.isfinite(value["warmth"]) or not 0 <= value["warmth"] <= CARE_MAX
+            or type(value["fed_recently"]) is not bool
+            or type(value["patted_recently"]) is not bool):
+        raise LocalChatError(400, "本机照顾状态无效。")
+    return {**value, "warmth": round(value["warmth"], 4)}
+
+
+def care_note(value):
+    facts = care_facts(value)
+    if facts is None:
+        return ""
+    recent = []
+    if facts["fed_recently"]:
+        recent.append("最近收到过对方投喂的饼干")
+    if facts["patted_recently"]:
+        recent.append("最近被对方摸过头")
+    return ("【本机照顾的即时状态】" + ("，".join(recent) if recent else "最近没有新的投喂或摸头记录")
+            + f"；照顾带来的短暂心情加成为 {facts['warmth']:g}，会自然回落。"
+              "这是本机代码记录的事实，不是QQ群好感分，也不代表全部心情。可自然回应关心，别编造没记录的照顾；你不能改这份状态。")
 
 
 def strip_internal(body):
@@ -162,15 +191,17 @@ def bridge_status(cfg):
     return {"available": True, "reason": ""}
 
 
-async def send_chat(cfg, text):
+async def send_chat(cfg, text, *, care=None):
     """Make one bounded request to this instance's bot; never start a worker."""
     text = _text(text)
+    care = care_facts(care)
+    payload = {"text": text, **({"care": care} if care is not None else {})}
     descriptor = _endpoint(cfg)
     url = f"http://127.0.0.1:{descriptor['port']}/chat"
     try:
         async with aiohttp.ClientSession(trust_env=False,
                 timeout=aiohttp.ClientTimeout(total=CLIENT_TIMEOUT_SECONDS, connect=3)) as client:
-            async with client.post(url, json={"text": text}, allow_redirects=False,
+            async with client.post(url, json=payload, allow_redirects=False,
                     headers={"Authorization": "Bearer " + descriptor["token"]}) as response:
                 if response.status == 409:
                     raise LocalChatError(409, "上一句还在回复，请稍等。")
@@ -205,9 +236,11 @@ class LocalChatBridge:
             if request.content_type != "application/json":
                 raise LocalChatError(400, "请发送文字消息。")
             payload = await request.json()
-            if not isinstance(payload, dict) or set(payload) != {"text"}:
+            if (not isinstance(payload, dict) or "text" not in payload
+                    or set(payload) - {"text", "care"}):
                 raise LocalChatError(400, "本机对话只接受文字消息。")
             text = _text(payload["text"])
+            care = care_facts(payload.get("care"))
         except (ValueError, UnicodeError):
             raise web.HTTPBadRequest(text="消息格式无效。") from None
         except LocalChatError as error:
@@ -216,7 +249,8 @@ class LocalChatBridge:
             raise web.HTTPConflict(text="上一句还在回复，请稍等。")
         self.busy = True
         try:
-            reply = await asyncio.wait_for(self.reply(text), timeout=TURN_TIMEOUT_SECONDS)
+            pending = self.reply(text) if care is None else self.reply(text, care=care)
+            reply = await asyncio.wait_for(pending, timeout=TURN_TIMEOUT_SECONDS)
             action = None
             if isinstance(reply, dict):
                 reply, action = reply.get("text"), proposal(reply.get("action"))

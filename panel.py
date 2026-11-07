@@ -540,11 +540,12 @@ def _capabilities_page(cfg, request, csrf, runner=None):
     except ValueError:
         raise web.HTTPBadRequest(text="请选择支持的模型服务。") from None
     openai = instance_settings.public_settings(cfg, "openai")
-    judgment = decision_settings.public_settings(cfg.DATA_DIR)
+    single_key_start = (chat["provider"] == "openai" and not chat["key_configured"]
+                        and bool(chat["primary_model"]) and capabilities.official(chat["base_url"]))
+    judgment = decision_settings.effective_public_settings(cfg)
     same_service = bool(capabilities.key_for_endpoint(
         cfg, judgment["endpoint"], suffix="/decisions"))
-    judgment = decision_settings.public_settings(cfg.DATA_DIR, shared_ready=same_service)
-    judgment_saved = decision_settings.load_settings(cfg.DATA_DIR)
+    judgment_saved = decision_settings.effective_settings(cfg)
     _, effective = instance_settings._values(cfg)
     judgment_enabled = capabilities._bool(effective.get("DECISION_ENABLED", getattr(cfg, "DECISION_ENABLED", True)))
     tone, timing, reported = _cap_runtime(cfg, runner)
@@ -640,6 +641,8 @@ def _capabilities_page(cfg, request, csrf, runner=None):
     if same_service:
         shared_note = ('<p class="cap-note cap-shared-note">连接凭据：共用上方 OpenAI 连接的 Key。'
                        '换 Key 只改一处，这里会跟着变。</p>')
+        if judgment.get("automatic"):
+            shared_note += '<p class="cap-note">已使用默认判断模型，需要时可以在这里更换。</p>'
     else:
         shared_note = ('<p class="cap-note cap-need">请先连接上方 OpenAI 服务，并让判断接口使用同一地址。</p>')
     judgment_form = (
@@ -669,9 +672,10 @@ def _capabilities_page(cfg, request, csrf, runner=None):
     judgment_facts = ('<span class="cap-facts" aria-label="模型与次数">'
                       + _cap_chip("模型", judgment["model"])
                       + _cap_chip("连接", judgment_connection)
+                      + (_cap_chip("方案", "默认配置") if judgment.get("automatic") else "")
                       + '</span>')
     model_rows = [model_row("chat", "聊天", "和群友、和你聊天", chat["primary_model"] if chat_ready else "还没连接",
-                            chat_form, facts=chat_facts, configured=chat_ready, first=True),
+                            chat_form, facts=chat_facts, configured=chat_ready, first=not single_key_start),
                   model_row("decision", "判断", "拿捏接话分寸，审核提醒", judgment_state,
                             judgment_form, facts=judgment_facts, configured=judgment["key_configured"],
                             state_tone="off" if not judgment_enabled else None)]
@@ -758,8 +762,9 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         f'{model_rows[1]}<a href="/decision">判断帮手 →</a><a href="/search">检查联网搜索 →</a></details>')
     key_ready = bool(openai["key_configured"] and openai["base_url"])
     official = capabilities.official(openai["base_url"])
-    key_title = ("一把 OpenAI Key 已就位" if official else "OpenAI 兼容服务已连接") if key_ready else "连接 OpenAI"
-    key_description = ("使用官方 OpenAI 的能力可共用这把 Key；其他服务分别连接。" if official or not key_ready
+    key_title = (("一把 OpenAI Key 已就位" if official else "OpenAI 兼容服务已连接") if key_ready
+                 else "连接 OpenAI" if official or not openai["base_url"] else "连接兼容服务")
+    key_description = ("默认模型已配好，填一次 Key 即可开始；已有选择会保留，其他服务分别连接。" if official or not openai["base_url"]
                        else "同一接口的能力可共用这把 Key；实时语音需要 OpenAI 官方连接。")
     key_managed = openai["key_source"] in ("file", "environment")
     base_managed = "OPENAI_BASE_URL" in openai["overridden"]
@@ -769,15 +774,17 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         key_form = (
             '<form method="post" action="/models/openai" class="cap-form" data-cap-form>'
             f'<input type="hidden" name="csrf" value="{_esc(csrf)}">'
-            f'<div class="cap-fields">{field("openai", openai, "api_key", "OpenAI API Key", secret=True, hint="更换接口地址时，请同时填写新 Key。")}'
+            f'<div class="cap-fields">{field("openai", openai, "api_key", "OpenAI API Key", secret=True)}</div>'
+            '<details class="cap-advanced"><summary>接口地址</summary><div class="cap-fields">'
             + field("openai", {**openai, "base_url": openai["base_url"] or "https://api.openai.com/v1"},
                     "base_url", "接口地址", disabled=base_managed,
-                    hint="地址由安装配置管理；这里可以更换 Key。" if base_managed else "")
-            + '</div><footer><button type="submit">保存连接</button><span data-cap-form-status aria-live="polite">'
+                    hint=("地址由安装配置管理；这里可以更换 Key。" if base_managed else
+                          "更换接口地址时，请同时填写新 Key。" if openai["key_configured"] else ""))
+            + '</div></details><footer><button type="submit">保存连接</button><span data-cap-form-status aria-live="polite">'
             + ('已保存，聊天服务保持原来的选择。' if saved == "openai" else '') + '</span></footer></form>')
     key_card = (
         f'<details class="cap-key-card" id="openai" data-tone="{"ok" if key_ready else "todo"}"'
-        f'{" open" if saved == "openai" or editing == "openai" else ""}>'
+        f'{" open" if saved == "openai" or editing == "openai" or single_key_start else ""}>'
         f'<summary><span><strong>{key_title}</strong><span class="cap-key-description">{key_description}</span></span>'
         '<span class="cap-open">设置</span></summary>'
         f'<div class="cap-body">{key_form}</div></details>')
@@ -855,7 +862,7 @@ def _companion_page(cfg, request, csrf, runner=None):
 <div class="room-layout"><aside class="room-card" aria-label="她现在的样子">
 <div class="room-scene" data-room-scene><span class="scene-window" aria-hidden="true"></span><span class="scene-glow" aria-hidden="true"></span><p class="scene-bubble" data-scene-bubble aria-live="polite" hidden></p>{_pet_sprite('idle', size='stage')}<span class="scene-floor" aria-hidden="true"></span></div>
 <div class="room-status"><ul class="status-chips" data-presence-chips><li class="chip"><span class="dot"></span>正在连接…</li></ul>
-<div class="mood-meter" data-mood-meter><span>心情</span><span class="meter" aria-hidden="true"><i></i></span><b data-mood-word>平稳</b></div></div>
+<div class="mood-meter" data-mood-meter title="摸摸头、喂块饼干，会让她高兴一会儿"><span>心情</span><span class="meter" aria-hidden="true"><i></i></span><b data-mood-word>平稳</b></div></div>
 <div class="room-recent"><h2>刚才</h2><ol data-presence-feed><li class="empty">她最近在群里的动态会留在这里。</li></ol></div>
 <div class="room-actions"><button type="button" data-room-action="shy">摸摸头</button><button type="button" data-room-action="eat">投喂饼干</button><button type="button" data-room-action="wave">打个招呼</button></div></aside>
 <div class="chat-panel"><div class="chat-head"><span class="chat-avatar" aria-hidden="true"></span><div><strong>老群友</strong><p data-chat-status aria-live="polite">正在连接…</p></div><button type="button" class="icon-button" data-chat-refresh title="刷新状态" aria-label="刷新状态">↻</button></div>
@@ -1604,15 +1611,37 @@ def create_app(cfg, *, token):
         return web.json_response({"csrf": csrf, **companion_state()})
 
     cues = deque(maxlen=20)
+    from regular.pet_care import CareState
+    care = CareState(time.time())
+
+    def presence_payload(since=None):
+        from regular import presence
+        now = time.time()
+        payload = {**companion_state(), **presence.snapshot(cfg, since=since, now=now, cues=cues)}
+        payload["care"] = care.snapshot(now)
+        payload["effective_mood"] = round(max(-1.0, min(1.0,
+            payload.get("mood", 0.0) + payload["care"]["warmth"])), 4)
+        return payload
 
     async def companion_presence(request):
         # Content-free agent state for the pet: no text, group or user identifiers.
-        from regular import presence
         try:
             since = float(request.query.get("since", "nan"))
         except ValueError:
             since = float("nan")
-        return web.json_response({**companion_state(), **presence.snapshot(cfg, since=since, cues=cues)})
+        return web.json_response(presence_payload(since))
+
+    async def companion_care(request):
+        form = await checked_form(request)
+        action = str(form.get("action") or "")
+        if action not in ("pat", "feed"):
+            return web.json_response({"error": "请选摸摸头或投喂饼干。"}, status=400)
+        now = time.time()
+        result, text = care.apply(action, now)
+        event = {"kind": "care", "id": secrets.token_hex(6), "ts": round(now, 3),
+                 "action": action, "result": result, "text": text}
+        cues.append(event)
+        return web.json_response({**presence_payload(), "care_event": event})
 
     async def companion_cue(request):
         """Coding agents may ask the pet to act or say one short line; nothing reaches QQ."""
@@ -1649,7 +1678,7 @@ def create_app(cfg, *, token):
             return web.json_response({"error": "请发送 1–2000 个字符。"}, status=400)
         from regular.local_chat import LocalChatError, send_chat
         try:
-            result = await send_chat(cfg, text)
+            result = await send_chat(cfg, text, care=care.facts(time.time()))
         except LocalChatError as error:
             return web.json_response({"error": error.message}, status=error.status)
         # A proposal is only shown; confirming it calls /capabilities/toggle like any switch on the page.
@@ -1718,6 +1747,7 @@ def create_app(cfg, *, token):
     app.router.add_get("/companion/session", companion_session)
     app.router.add_post("/companion/chat", companion_chat)
     app.router.add_get("/companion/presence", companion_presence)
+    app.router.add_post("/companion/care", companion_care)
     app.router.add_post("/companion/cue", companion_cue)
     app.router.add_get("/", home)
     app.router.add_get("/setup", setup_page)

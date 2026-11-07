@@ -1433,7 +1433,7 @@ def _manager_context():
     return "\n".join(lines)
 
 
-async def reply_locally(text):
+async def reply_locally(text, *, care=None):
     """Run a separate private conversation inside the one live state owner.
 
     Returns {"text", "action"}: action is at most one proposal (local_chat.manage_reply) that the
@@ -1448,7 +1448,7 @@ async def reply_locally(text):
         said, message.action = local_chat.manage_reply(body)
         return said
 
-    context = _manager_context()
+    context = "\n".join(filter(None, (_manager_context(), local_chat.care_note(care))))
     _, _, result = await reply_in_session(
         message, "local_private", text, private=True, is_owner=False,
         media_note=_LOCAL_CHAT_NOTE + ("\n" + context if context else ""), reply_filter=manage,

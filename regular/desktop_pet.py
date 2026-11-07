@@ -851,6 +851,7 @@ class PetWidget(QWidget):
         self.sprites = sprites or SpriteBank()
         self.brain = PetBrain(rng=rng or random.Random(), now=self.now(), motion=motion,
                               quiet=preferences.get("quiet", False), scale=preferences.get("scale", 1.0))
+        self.brain.external_care = True
         self.setObjectName("regular-desktop-pet")
         self.setWindowTitle("The Regular · 老群友")
         self.setAccessibleName("老群友：靠近显示聊天和设置，拖起来会晃，戳一下有反应")
@@ -975,6 +976,10 @@ class PetWidget(QWidget):
         brain.hover(now, cursor.x(), cursor.y(), near=self._near(cursor))
         brain.set_attention(self._attention(), now)
         brain.tick(now)
+        if brain.care_requests:
+            kind = brain.care_requests.pop()
+            brain.care_requests.clear()
+            self._request_care(kind)
         # Smooth 60 fps only while she moves; idle poses and breathing are fine at 30 fps.
         moving = brain.mode != "ground" or brain.clip in ("walk", "hop", "land") or brain.fading(now)
         self.animation.setInterval(16 if moving else 33)
@@ -1489,6 +1494,15 @@ class PetWidget(QWidget):
         self._dismiss_transients()               # 投喂完收起面板，好看她吃
         self.brain.feed(self.now())
 
+    def _request_care(self, action):
+        if "care" in self._jobs:
+            return
+        if not self.csrf:
+            self.brain.say("还没连上本机，等连好后再来吧。", now=self.now(), seconds=3)
+            return
+        csrf = self.csrf
+        self._submit("care", lambda: self.client.care(action, csrf))
+
     def propose(self, action):
         """Show the manager's proposal beside her; it only runs on confirm."""
         if self.proposal_card is not None:
@@ -1628,6 +1642,13 @@ class PetWidget(QWidget):
             else:
                 self.brain.chat_failed(now, result["message"])
                 self._record(result["message"])
+        elif key == "care":
+            if result["ok"]:
+                value = result["value"]
+                self.brain.sync_care(value.get("care"), now)
+                self.brain.receive_care(now, value.get("care_event"))
+            else:
+                self.brain.say("这次还没确认，连好后再看看。", now=now, seconds=3)
         elif key == "toggle":
             action, self._pending_toggle = self._pending_toggle or {}, None
             if self.proposal_card is not None:

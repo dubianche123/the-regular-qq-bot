@@ -307,6 +307,16 @@ class PanelClientTest(unittest.TestCase):
         self.assertEqual(str(request.url), "http://127.0.0.1:8877/companion/chat")
         self.assertEqual(parse_qs(request.content.decode()), {"text": ["合成请求"], "csrf": [self.CSRF]})
 
+    def test_care_uses_the_same_panel_owner_and_does_not_retry(self):
+        result = {'care': {'warmth': .26, 'updated_at': 100},
+                  'care_event': {'id': 'care-1', 'kind': 'care', 'action': 'feed', 'result': 'gain'}}
+        self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: '1'}, json=result))
+        self.assertEqual(self.client.care('feed', self.CSRF), result)
+        self.assertEqual(len(self.calls), 1)
+        request = self.calls[0]
+        self.assertEqual(str(request.url), 'http://127.0.0.1:8877/companion/care')
+        self.assertEqual(parse_qs(request.content.decode()), {'action': ['feed'], 'csrf': [self.CSRF]})
+
     def test_voice_ticket_is_explicit_and_credentials_stay_in_headers(self):
         ticket = "synthetic-single-use-voice-ticket-0123456"
         self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: "1"},

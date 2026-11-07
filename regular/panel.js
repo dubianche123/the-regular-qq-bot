@@ -385,8 +385,13 @@ if (chatForm) {
   const chips = document.querySelector("[data-presence-chips]");
   const moodMeter = document.querySelector("[data-mood-meter]");
   const feed = document.querySelector("[data-presence-feed]");
-  const suggestions = document.querySelector("[data-chat-suggestions]");
   let bubbleTimer;
+  let careStamp = -Infinity;
+  const seenCare = new Set();
+  function markCare(id) {
+    seenCare.add(id);
+    if (seenCare.size > 40) seenCare.delete(seenCare.values().next().value);
+  }
   function say(text, seconds = 4) {
     if (!sceneBubble) return;
     clearTimeout(bubbleTimer);
@@ -431,10 +436,13 @@ if (chatForm) {
       if (state.chatter > 0) items.push(chip(`群里 5 分钟 ${state.chatter} 条`));
       chips.replaceChildren(...items);
     }
-    if (moodMeter && typeof state.mood === "number") {
-      const mood = Math.max(-1, Math.min(1, state.mood));
+    const stamp = state.care?.updated_at;
+    const currentMood = typeof state.effective_mood === "number" ? state.effective_mood : state.mood;
+    if (moodMeter && typeof currentMood === "number" && (typeof stamp !== "number" || stamp >= careStamp)) {
+      if (typeof stamp === "number") careStamp = stamp;
+      const mood = Math.max(-1, Math.min(1, currentMood));
       moodMeter.querySelector("i").style.left = `${(mood + 1) * 50}%`;
-      moodMeter.querySelector("[data-mood-word]").textContent = mood >= 0.3 ? "不错" : mood <= -0.7 ? "烦透了" : mood <= -0.3 ? "有点烦" : "平稳";
+      moodMeter.querySelector("[data-mood-word]").textContent = mood >= 0.2 ? "不错" : mood <= -0.7 ? "烦透了" : mood <= -0.3 ? "有点烦" : "平稳";
     }
   }
   function remember(event) {
@@ -462,6 +470,14 @@ if (chatForm) {
         if (typeof event.ts !== "number" || event.ts <= (presenceSince ?? 0)) continue;
         presenceSince = event.ts;
         remember(event);
+        if (event.kind === "care") {
+          if (!seenCare.has(event.id)) {
+            markCare(event.id);
+            if (stage) stage.play(event.result === "fed_full" ? "peek" : event.action === "feed" ? "eat" : "pat");
+            say(event.text, 3.2);
+          }
+          continue;
+        }
         // While 小王 is drawing or recording in QQ, her other lines don't take the sketchbook away.
         if (event.kind === "drawing" || event.kind === "singing") mediaUntil = performance.now() + 1000 * reactions[event.kind][1];
         else if (["drew", "voice", "media_end"].includes(event.kind)) mediaUntil = 0;
@@ -475,17 +491,39 @@ if (chatForm) {
     } catch { /* The next poll tries again; nothing is sent. */ }
   }
   if (stage) setInterval(pollPresence, 5000);
-  const roomLines = { shy: ["嘿嘿。", "再摸一下也行。"], eat: ["好吃！", "谢谢投喂～"], wave: ["嗨～", "我在这儿哦。"] };
+  let caring = false;
   for (const button of document.querySelectorAll("[data-room-action]")) {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const clip = button.dataset.roomAction;
-      if (stage) stage.play(clip);
-      const lines = roomLines[clip] || [];
-      if (lines.length) say(lines[Math.floor(Math.random() * lines.length)], 2.6);
+      if (clip === "wave") {
+        if (stage) stage.play(clip);
+        say("嗨～我在这儿。", 2.6);
+        return;
+      }
+      if (caring) return;
+      caring = true;
+      button.disabled = true;
+      try {
+        const form = new FormData();
+        form.set("csrf", chatForm.elements.namedItem("csrf").value);
+        form.set("action", clip === "eat" ? "feed" : "pat");
+        const response = await fetch("/companion/care", { method: "POST", body: form, credentials: "same-origin", signal: AbortSignal.timeout(5000) });
+        const result = await response.json();
+        if (!response.ok || !result.care_event) throw new Error();
+        markCare(result.care_event.id);
+        renderPresence(result);
+        if (stage) stage.play(result.care_event.result === "fed_full" ? "peek" : clip);
+        say(result.care_event.text, 3.2);
+      } catch {
+        say("这次还没有确认，连好后再看看。", 3.2);
+      } finally {
+        caring = false;
+        button.disabled = false;
+      }
     });
   }
   for (const button of document.querySelectorAll("[data-suggestion]")) {
-    button.addEventListener("click", () => { input.value = button.textContent; syncComposer(); input.focus(); });
+    button.addEventListener("click", () => { input.value = button.textContent; syncComposer(); input.focus({ preventScroll: true }); });
   }
   function syncComposer() {
     counter.textContent = `${input.value.length} / 2000`;
@@ -584,7 +622,6 @@ if (chatForm) {
     syncComposer();
     setState("thinking");
     appendMessage("user", "你", text);
-    if (suggestions) suggestions.hidden = true;
     status.textContent = "正在听你说…";
     try {
       const form = new FormData();
@@ -610,7 +647,7 @@ if (chatForm) {
     } finally {
       sending = false;
       syncComposer();
-      input.focus();
+      input.focus({ preventScroll: true });
     }
   });
   syncComposer();

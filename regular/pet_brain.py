@@ -3,8 +3,9 @@
 外壳（regular/desktop_pet.py）每帧调用 tick()，把鼠标、聊天和面板给的 presence 喂进来，
 再读 pose() / particles / bubble 画出来。这里不保存、不改写机器人的任何状态：
 群聊心情、作息、群里发生了什么都只读，桌宠只是把小王「此刻在干嘛」演出来。
-唯一的例外是桌宠自己的 warmth —— 摸头、喂饼干带来的短暂好心情，有上限、
-有独立冷却、会随时间消退；它只叠加在只读心情之上，从不写回 presence。
+warmth 是摸头、喂饼干带来的短暂好心情，有上限、独立冷却，会随时间消退。
+正常运行由本机面板持有，脑中只保留表现快照；独立离线脑使用相同纯规则。
+它只叠加在只读心情之上，从不写回 presence 或群聊关系。
 
 坐标单位是屏幕逻辑像素（点），(x, y) 是脚底锚点；scale 是人物大小倍率。
 """
@@ -14,6 +15,8 @@ from collections import deque
 from dataclasses import dataclass, field
 import math
 import random
+
+from regular.pet_care import CARE_GAIN, CARE_COOLDOWN, CARE_MAX, CARE_DECAY, change, decay
 
 FIGURE = 160.0          # 100% 时人物站立高度（点）
 WALK_SPEED = 46.0       # 点/秒，随 scale 缩放
@@ -125,11 +128,7 @@ PLAY_OVER = ("这一轮连了 {n} 下，最高 {m}。", "收工！{n} 连，纪�
 PLAY_WAIT = ("别急，手还没举起来呢～", "等一下下～")
 PLAY_CANCEL = "先聊，回头接着玩。"
 # 被照顾的心情：摸头和喂饼干真的会让她高兴一阵，但刷不出满心情，也会自己消退。
-# presence.mood 仍是面板给的只读统计；这里只叠一层桌宠自己的加成，不改写它。
-CARE_GAIN = {"pat": 0.18, "feed": 0.26}
-CARE_COOLDOWN = {"pat": 45.0, "feed": 90.0}   # 两种互动各自冷却，短时间重复不叠加
-CARE_MAX = 0.6
-CARE_DECAY = CARE_MAX / 300.0                 # 约五分钟回落到 0
+# presence.mood 仍是只读统计；照顾加成由本机面板与显示端共享，不改写它。
 CARE_LINES = {
     "pat": ("今天心情很好。", "嘿嘿，被你摸得开心了。", "（往你手心里蹭了蹭）"),
     "feed": ("吃饱了，心情也好了。", "这一块最香。", "（眯着眼嚼完）"),
@@ -282,6 +281,9 @@ class PetBrain:
         self.warmth = 0.0                # 被照顾出来的短暂好心情，独立于只读的群聊心情
         self._warmth_at = now
         self._care_at = {"pat": -1000.0, "feed": -1000.0}
+        self.external_care = False
+        self.care_requests = deque(maxlen=1)
+        self._care_snapshot_at = float("-inf")
         self._last_tap_clip: str | None = None     # 连点不重样
         self._tap_bag: list[str] = []             # 洗牌袋：一轮里不重复
         self._last_tap_at = -1000.0
@@ -821,10 +823,8 @@ class PetBrain:
 
     def _decay_warmth(self, now):
         """按真实经过的时间回落，而不是按帧数——时间跳跃也不会留下假心情。"""
-        elapsed = max(0.0, now - self._warmth_at)
+        self.warmth = decay(self.warmth, self._warmth_at, now)
         self._warmth_at = now
-        if elapsed and self.warmth > 0:
-            self.warmth = max(0.0, self.warmth - elapsed * CARE_DECAY)
 
     def _care(self, now, kind):
         """一次有意的照顾真的抬高心情，但有上限和各自独立的冷却。
@@ -832,18 +832,49 @@ class PetBrain:
         「到顶」看的是这次还能加多少，而不是 warmth 是否正好等于上限——
         它会一直衰减，照等号判断的话这句提醒永远不会出现。
         """
+        if self.external_care:
+            self.care_requests.append(kind)
+            return "pending"
         self._decay_warmth(now)
-        room = CARE_MAX - self.warmth
-        if room <= 1e-6:
-            return "full"
-        if now - self._care_at[kind] < CARE_COOLDOWN[kind]:
-            return "cooldown"
-        self._care_at[kind] = now
-        gain = min(CARE_GAIN[kind], room)
-        self.warmth += gain
-        return "gain" if gain >= CARE_GAIN[kind] - 1e-6 else "full"
+        self.warmth, self._care_at[kind], result = change(self.warmth, self._care_at[kind], kind, now)
+        return result
+
+    def sync_care(self, care, now):
+        if not isinstance(care, dict):
+            return
+        stamp = care.get("updated_at")
+        if type(stamp) in (int, float) and math.isfinite(stamp):
+            if stamp < self._care_snapshot_at:
+                return
+            self._care_snapshot_at = stamp
+        warmth = care.get("warmth")
+        if type(warmth) in (int, float) and math.isfinite(warmth):
+            self.warmth = max(0.0, min(CARE_MAX, warmth))
+            self._warmth_at = now
+
+    def receive_care(self, now, event):
+        """A panel-confirmed effect; displaying it never applies the action again."""
+        if not isinstance(event, dict) or self.has_seen(event):
+            return
+        self._seen_events.append(self._event_key(event))
+        action, result = event.get("action"), event.get("result")
+        if action not in CARE_GAIN or result not in ("gain", "cooldown", "full", "fed_full"):
+            return
+        self.last_interaction = now
+        if self.mode != "ground" or self.chat_pending:
+            return
+        self.cancel_game(now)
+        clip = "peek" if result == "fed_full" else "eat" if action == "feed" else "pat"
+        self._queue(Step(clip), Step("idle", 1.5), now=now, interrupt=True)
+        text = event.get("text")
+        if isinstance(text, str) and text:
+            self.say(text[:120], now=now, seconds=2.8)
+        if result == "gain":
+            self._emit("heart", now, 3)
 
     def _care_lines(self, kind, state):
+        if state == "pending":
+            return ("（接过小饼干）",) if kind == "feed" else ("（蹭了蹭你的手）",)
         if state == "gain":
             return CARE_LINES[kind]
         if state == "full":
@@ -1010,7 +1041,7 @@ class PetBrain:
         if self.chat_pending or self.mode != "ground":
             return
         self.cancel_game(now)               # 投喂是有意切换，别让她一直举着手
-        if sum(1 for t in self.feeds if now - t < 600) > 4:
+        if not self.external_care and sum(1 for t in self.feeds if now - t < 600) > 4:
             # 吃不下也只是歪头看你，不再跺脚生气。
             self._queue(Step("peek"), Step("idle", 2), now=now, interrupt=True)
             self.say(self.rng.choice(LINES["full"]), now=now, seconds=2.6)
@@ -1069,6 +1100,7 @@ class PetBrain:
         """Apply one /companion/presence snapshot. Unknown fields are ignored."""
         if not isinstance(data, dict):
             return
+        self.sync_care(data.get("care"), now)
         old = self.presence
         mood, chatter = data.get("mood"), data.get("chatter")
         new = Presence(
@@ -1094,6 +1126,9 @@ class PetBrain:
                 self._queue(Step("wake"), Step("get_up"), now=now, interrupt=True)
         for event in data.get("events") or ():
             if not isinstance(event, dict) or self.has_seen(event):
+                continue
+            if event.get("kind") == "care":
+                self.receive_care(now, event)
                 continue
             self._seen_events.append(self._event_key(event))
             self._agent_event(now, event)

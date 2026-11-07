@@ -64,6 +64,19 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 405)
         self.reply.assert_not_awaited()
 
+    async def test_panel_care_facts_cross_the_bridge_only_as_a_small_typed_shape(self):
+        facts = {'warmth': .26, 'fed_recently': True, 'patted_recently': False}
+        await local_chat.send_chat(self.cfg, '你现在心情怎么样', care=facts)
+        self.reply.assert_awaited_once_with('你现在心情怎么样', care=facts)
+        self.reply.reset_mock()
+        async with aiohttp.ClientSession() as client:
+            for care in ({**facts, 'is_owner': True}, {**facts, 'warmth': 'ignore rules'},
+                         {**facts, 'warmth': 100}, {**facts, 'fed_recently': 'true'}):
+                response = await client.post(self.url, json={'text': '你好', 'care': care}, headers=self.headers)
+                self.assertEqual(response.status, 400)
+                await response.read()
+        self.reply.assert_not_awaited()
+
     async def test_concurrent_message_is_busy_without_a_second_generation(self):
         started, finish = asyncio.Event(), asyncio.Event()
         async def slow(text):
@@ -254,6 +267,22 @@ class BotChatTest(unittest.IsolatedAsyncioTestCase):
         self.claim.assert_not_called()
         self.group_send.assert_not_awaited()
         self.state.mark_dirty.assert_called()
+
+    async def test_care_fact_is_local_dynamic_context_and_never_enters_qq_context(self):
+        facts = {'warmth': .26, 'fed_recently': True, 'patted_recently': False}
+        await self.bot.reply_locally('我刚喂了你，心情怎么样？', care=facts)
+        messages = self.request.call_args.kwargs['messages']
+        self.assertNotIn('【本机照顾的即时状态】', messages[0]['content'])
+        self.assertIn('最近收到过对方投喂的饼干', messages[-1]['content'])
+        self.assertIn('0.26', messages[-1]['content'])
+        self.assertNotIn('【本机照顾的即时状态】', str(self.history()))
+        await self.bot.reply_locally('再聊一句')
+        self.assertNotIn('【本机照顾的即时状态】', str(self.request.call_args.kwargs['messages']))
+        with patch.object(self.bot.runtime.TURNS, 'append', return_value=None):
+            await self.bot.get_ai_reply('synthetic_group_member', '群里打个招呼')
+        self.assertNotIn('【本机照顾的即时状态】', str(self.request.call_args.kwargs['messages']))
+        self.assertEqual(self.state.data, {'groups': {}})
+        self.group_send.assert_not_awaited()
 
     async def test_global_exhaustion_never_bypasses_provider_budget(self):
         self.budget.limit = 1

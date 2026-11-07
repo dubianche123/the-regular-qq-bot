@@ -18,7 +18,7 @@ class Element {
   setAttribute(name, value) { this.attrs[name] = value; }
   getAttribute(name) { return this.attrs[name]; }
   append(...children) { this.children.push(...children); }
-  focus() {}
+  focus(options) { this.focusOptions = options; }
   set innerHTML(value) { throw new Error('Chat must use textContent, never innerHTML'); }
 }
 const input = new Element();
@@ -82,12 +82,74 @@ const drain = () => new Promise(resolve => setImmediate(resolve));
   assert.equal(history.children[0].children[1].textContent, '<b>你好</b>');
   assert.equal(history.children[1].children[1].textContent, literal);
   assert.equal(input.readOnly, false);
+  assert.equal(input.focusOptions.preventScroll, true);
   assert.equal(requests.filter(x => x.url === '/companion/chat').length, 1);
   assert.equal(portrait.getAttribute('src'), '/assets/mascot-celebrate.png');
   timers.shift()();
   assert.equal(portrait.getAttribute('src'), '/assets/mascot.png');
   console.log('explicit send, no reentry, literal text, static state poses and optional blink: passed');
 })().catch(error => { process.stderr.write(String(error.stack)); process.exitCode = 1; });
+'''
+        source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
+        result = subprocess.run([shutil.which('node'), '-e', script, str(source)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_feeding_waits_for_shared_care_result_and_never_retries(self):
+        script = r'''
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+class Element {
+  constructor() { this.dataset = {}; this.attrs = {}; this.events = {}; this.children = []; this.style = {}; this.value = ''; }
+  addEventListener(name, callback) { this.events[name] = callback; }
+  setAttribute(name, value) { this.attrs[name] = value; }
+  append(...children) { this.children.push(...children); }
+  focus() {}
+}
+const input = new Element(), submit = new Element(), status = new Element(), refresh = new Element(), history = new Element(), counter = new Element(), form = new Element();
+const fields = {'[data-chat-input]': input, '[data-chat-submit]': submit, '[data-chat-count]': counter};
+form.querySelector = selector => fields[selector];
+form.elements = {namedItem: () => ({value: 'synthetic-care-csrf'})};
+const pin = new Element(), word = new Element(), meter = new Element(), bubble = new Element(), feed = new Element();
+feed.dataset.roomAction = 'eat'; pin.style.left = '50%'; word.textContent = '平稳';
+meter.querySelector = selector => selector === 'i' ? pin : word;
+const nodes = {'[data-chat-form]': form, '[data-chat-status]': status, '[data-chat-refresh]': refresh,
+  '[data-chat-history]': history, '[data-mood-meter]': meter, '[data-scene-bubble]': bubble};
+const document = {addEventListener() {}, visibilityState: 'visible', body: {dataset: {}},
+  querySelector: selector => nodes[selector] || null,
+  querySelectorAll: selector => selector === '[data-room-action]' ? [feed] : [], createElement: () => new Element()};
+let resolveCare, requestCount = 0, failCare = false;
+const context = {document, window: {matchMedia: () => ({matches: false, addEventListener() {}})},
+  localStorage: {getItem: () => null, setItem() {}}, FormData: class extends Map {},
+  AbortSignal: {timeout: () => ({})}, setTimeout: () => 0, clearTimeout() {},
+  fetch: (url, options) => {
+    if (url === '/companion/status') return Promise.resolve({ok: true, json: async () => ({available: true})});
+    assert.equal(url, '/companion/care'); requestCount++;
+    assert.equal(options.method, 'POST'); assert.equal(options.body.get('csrf'), 'synthetic-care-csrf');
+    assert.equal(options.body.get('action'), 'feed');
+    return failCare ? Promise.reject(new Error('network')) : new Promise(resolve => {resolveCare = resolve;});
+  }};
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const drain = () => new Promise(resolve => setImmediate(resolve));
+(async () => {
+  await drain();
+  const first = feed.events.click(); await feed.events.click();
+  assert.equal(requestCount, 1); assert.equal(feed.disabled, true);
+  assert.equal(pin.style.left, '50%');
+  resolveCare({ok: true, json: async () => ({care: {warmth: .26, updated_at: 100}, effective_mood: .26,
+    care_event: {id: 'care1', result: 'gain', text: '吃饱了，心情也好了。'}})});
+  await first;
+  assert.equal(pin.style.left, '63%'); assert.equal(word.textContent, '不错');
+  assert.equal(bubble.textContent, '吃饱了，心情也好了。'); assert.equal(feed.disabled, false);
+  const second = feed.events.click();
+  resolveCare({ok: true, json: async () => ({care: {warmth: .26, updated_at: 101}, effective_mood: .26,
+    care_event: {id: 'care2', result: 'cooldown', text: '刚吃过一块啦。'}})});
+  await second;
+  assert.equal(pin.style.left, '63%'); assert.equal(bubble.textContent, '刚吃过一块啦。');
+  failCare = true; await feed.events.click();
+  assert.equal(requestCount, 3); assert.match(bubble.textContent, /没有确认/);
+  assert.equal(pin.style.left, '63%');
+})().catch(error => {process.stderr.write(String(error.stack)); process.exitCode = 1;});
 '''
         source = Path(__file__).resolve().parents[1] / 'regular/panel.js'
         result = subprocess.run([shutil.which('node'), '-e', script, str(source)], capture_output=True, text=True, timeout=10)

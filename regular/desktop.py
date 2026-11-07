@@ -132,6 +132,17 @@ class PanelClient:
         path = "/companion/presence" + ("" if since is None else "?" + urlencode({"since": f"{since:.3f}"}))
         return self._request("GET", path)
 
+    def care(self, action, csrf):
+        if action not in ("pat", "feed"):
+            raise ValueError("unsupported local care action")
+        body = self._request("POST", "/companion/care", {"action": action, "csrf": csrf})
+        event = body.get("care_event")
+        if (not isinstance(body.get("care"), dict) or not isinstance(event, dict)
+                or event.get("action") != action
+                or event.get("result") not in ("gain", "cooldown", "full", "fed_full")):
+            raise CompanionError("这次照顾还没有确认，请等连接恢复后再看看。")
+        return body
+
     def cue(self, action, text, csrf):
         body = self._request("POST", "/companion/cue", {"action": action or "", "text": text or "", "csrf": csrf})
         if not isinstance(body.get("queued"), str):

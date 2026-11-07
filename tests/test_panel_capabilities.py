@@ -108,11 +108,26 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('SDK', text)
         self.assertNotIn('/chat/completions', text)
 
-    async def test_unconfigured_chat_opens_only_its_required_connection(self):
+    async def test_official_starter_opens_only_the_shared_key_connection(self):
+        self.cfg.PROVIDER_PRESETS['openai'] = {
+            'base_url': 'https://api.openai.com/v1',
+            'models': ['gpt-6-luna', 'gpt-6.1-terra']}
+        text, _ = await self.form('image')
+        key_card = text[text.index('<details class="cap-key-card"'):].split('<p class="cap-runtime"')[0]
+        self.assertIn('id="openai" data-tone="todo" open>', key_card)
+        self.assertIn('id="chat" data-tone="todo"><details class="cap-more" name="cap">', text)
+        self.assertIn('id="decision" data-tone="todo"><details class="cap-more" name="cap">', text)
+        self.assertIn('data-custom-model-field hidden', text)
+        self.assertIn('默认模型已配好', key_card)
+        self.assertIn('<details class="cap-advanced"><summary>接口地址</summary>', key_card)
+
+    async def test_unconfigured_compatible_service_still_asks_for_its_own_model(self):
+        self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://gateway.example/v1\n')
         text, _ = await self.form('image')
         self.assertIn('id="chat" data-tone="todo"><details class="cap-more" name="cap" open>', text)
-        self.assertIn('id="decision" data-tone="todo"><details class="cap-more" name="cap">', text)
         self.assertNotIn('data-custom-model-field hidden', text)
+        key_card = text[text.index('id="openai"'):].split('<p class="cap-runtime"')[0]
+        self.assertNotIn('默认模型已配好', key_card)
 
     async def test_judgment_reuses_openai_connection_without_its_own_key_input(self):
         self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://api.openai.com/v1\n'
@@ -296,13 +311,16 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 400)
         self.assertEqual((Path(self.cfg.DATA_DIR) / 'decision_api.json').read_bytes(), before)
 
-    async def test_judgment_distinguishes_available_key_unsaved_connection_and_disabled(self):
+    async def test_official_key_uses_default_judgment_without_an_extra_save(self):
         self.file.write_text('CHAT_PROVIDER=zhipu\nZHIPU_API_KEY=private-z-key\n'
                              'OPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_API_KEY=private-openai-key\n')
         text, _ = await self.form('image')
         decision = text[text.index('id="decision"'):].split('</article>')[0]
-        self.assertIn('待保存判断设置', decision)
-        self.assertIn('可共用 OpenAI Key', decision)
+        self.assertIn('<span class="cap-state">gpt-6-luna</span>', decision)
+        self.assertIn('共用 OpenAI Key', decision)
+        self.assertIn('默认配置', decision)
+        self.assertIn('已使用默认判断模型', decision)
+        self.assertFalse((Path(self.cfg.DATA_DIR) / 'decision_api.json').exists())
         self.assertNotIn('还没连接', decision)
         panel.decision_settings.save_settings(self.cfg.DATA_DIR,
             endpoint='https://api.openai.com/v1/decisions', model='judge', credential='shared')
@@ -310,6 +328,7 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         decision = text[text.index('id="decision"'):].split('</article>')[0]
         self.assertIn('<span class="cap-state">judge</span>', decision)
         self.assertIn('共用 OpenAI Key', decision)
+        self.assertNotIn('默认配置', decision)
         self.assertNotIn('待保存判断设置', decision)
         self.file.write_text(self.file.read_text() + 'DECISION_ENABLED=false\n')
         text, _ = await self.form('image')
