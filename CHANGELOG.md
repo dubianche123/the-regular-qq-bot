@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.1 — 2026-11-07
+
+- Feeding and head pats now change the same temporary local mood in the browser
+  and desktop pet, with shared cooldowns, a cap and decay. Local chat receives
+  the recent care as read-only facts; QQ relationship scores stay separate.
+- Keep long conversations inside their scrolling area. Constrain hidden speaker
+  labels, preserve the composer position and fit the character to her scene.
+- An official OpenAI key now has maintained chat, vision and judgment defaults.
+  The first-run page opens one key field; custom models, disabled capabilities
+  and separately configured services retain their choices.
+- Put a copyable install prompt before manual download in both READMEs. The
+  agent handles downloading, dependencies, desktop startup and verification;
+  the user enters credentials locally and completes QQ authorization.
+
 ## 0.5.0 — 2026-11-07
 
 ### Highlights
