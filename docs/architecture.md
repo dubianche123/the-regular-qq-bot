@@ -172,7 +172,7 @@ DEPLOY=/path/to/regular-bot
 
 | 已有证据 | 测量范围 |
 | --- | --- |
-| 1689 项离线回归测试 | 验证代码行为；不等于每句话都能接对 |
+| 2,100+ 项离线回归用例 | 2026-11-07 收集 2143 项；验证代码行为，不等于每句话都能接对；各环境执行结果见 [CI](https://github.com/dubianche123/the-regular-qq-bot/actions/workflows/ci.yml) |
 | 旧账检索 8 / 8 用例判据通过，相关证据取回 7 / 9 | [合成完整标注集](self-iteration.md#local-strategy-evaluation)；新旧结果一致，预算约束造成的 2 条漏检如实计入 |
 | 接住 17 / 20 条没带名字但冲它说的话，旧方案 3 / 20 | [141 条消息、9 种写法回放](when-to-reply.md)；「该接 / 不该接」由独立评审模型标注 |
 | 回复输入 token 的 75.6% 命中前缀缓存 | [线上一天 261 次调用](providers.md)，与该模型和当时流量有关 |

@@ -10,7 +10,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
-**中文** · [English](README_EN.md) · [下载](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) · [开始使用](#开始使用) · [让它更懂你们](#让它更懂你们)
+**中文** · [English](README_EN.md) · [下载](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) · [开始使用](#开始使用) · [让它更懂你们](#让它更懂你们) · [技术亮点](#架构与设计)
 
 </div>
 
@@ -184,6 +184,11 @@ Python 环境、依赖安装、桌宠构建和启动。已有安装则沿用原�
 封面为 AI 生成的原创“老群友”形象，名字和人设可以自行调整；[形象素材与生成提示](docs/visual-identity.md)。本项目与 OpenAI、QQ 无官方隶属关系。
 
 ## 架构与设计
+
+- **轻量判断与开放式回复分工。** 意图分诊、提醒审核等固定问题交给 Decisions API 闭集判断，聊天模型负责回复；[908 次历史分诊的中位延迟为 0.71 秒](docs/judgment-layer.md)。
+- **四层上下文，复用稳定前缀。** 稳定头 → 每日记忆 → 会话历史 → 本轮动态；随人、随轮次变化的信息放在最后，为[前缀缓存](docs/DESIGN_NOTES.md#提示词的排列顺序就是缓存策略)保留稳定输入。
+- **改动有对照，也能被否决。** [生成、分诊、检索、消息四类回放](docs/self-iteration.md)，配合独立模型盲评与 `--ablate` 单条规则消融；看不出更好的候选就搁置。
+- **2,100+ 项离线回归用例守住状态边界。** 关系、称呼、任务和额度由本地代码维护；[CI](.github/workflows/ci.yml)覆盖 Python 3.10 / 3.12 / 3.13，以及 Windows / macOS 桌面音频链路。
 
 消息流、Decisions、自迭代流程、验证数据与设计文档索引，完整保留在[架构与设计文档](docs/architecture.md)（原技术版 README）。
 

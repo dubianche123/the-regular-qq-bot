@@ -172,7 +172,7 @@ Conversation content needed for judgment and replies goes to the configured mode
 
 | Existing evidence | Scope |
 | --- | --- |
-| 1689 offline regression tests | code behavior, not a guarantee that every reply lands |
+| 2,100+ offline regression cases | 2143 collected on 2026-11-07; checks code behavior, not a guarantee that every reply lands; see [CI](https://github.com/dubianche123/the-regular-qq-bot/actions/workflows/ci.yml) for results in each environment |
 | Archive recall passes 8 / 8 case checks, retrieves 7 / 9 relevant messages | [fully labeled synthetic cases](self-iteration.md#local-strategy-evaluation); both versions agree, and the 2 budget-limited misses remain counted |
 | 17 / 20 unaddressed lines aimed at it answered, versus 3 / 20 before | [141 messages and 9 prompt variants](when-to-reply.md); answer/pass labels came from a separate judge model |
 | 75.6% of reply input tokens hit the prefix cache | [261 calls from one live day](providers.md), tied to that model and traffic |

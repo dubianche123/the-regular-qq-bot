@@ -10,7 +10,7 @@ Let your coding agent help it fit your group better, guided by your group's feed
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
-[中文](README.md) · **English** · [Download](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) · [Quick start](#quick-start) · [Make it your group's own](#make-it-your-groups-own)
+[中文](README.md) · **English** · [Download](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) · [Quick start](#quick-start) · [Make it your group's own](#make-it-your-groups-own) · [Under the hood](#architecture-and-design)
 
 </div>
 
@@ -177,6 +177,11 @@ Improvement comes from your feedback and changes you can inspect. **The bot does
 The cover is an AI-generated original mascot for The Regular; bot names and personalities are configurable. [Assets and generation prompts](docs/visual-identity.md). This project is not affiliated with OpenAI or QQ.
 
 ## Architecture and design
+
+- **Separate fixed judgments from open-ended replies.** Intent triage and reminder checks use closed-set Decisions API questions; the chat model writes replies. [908 historical triage calls had a 0.71-second median latency](docs/judgment-layer.md).
+- **Four context layers preserve a reusable prefix.** Stable instructions → daily memory → conversation history → current-turn facts. Speaker- and turn-specific information goes last, keeping stable input available for [prefix caching](docs/DESIGN_NOTES_EN.md).
+- **Compare changes, and reject weak candidates.** [Generation, triage, retrieval and message replays](docs/self-iteration.md), independent model blind judging, and single-rule ablation with `--ablate` help decide whether a change is worth shipping.
+- **2,100+ offline regression cases protect state boundaries.** Relationships, names, tasks and quotas stay in local code. [CI](.github/workflows/ci.yml) covers Python 3.10 / 3.12 / 3.13 and desktop audio paths on Windows / macOS.
 
 The previous technical README is preserved in [Architecture and design](docs/architecture-en.md), including message flow, Decisions, iteration, measurements and the design document index.
 
