@@ -1,12 +1,12 @@
 {
  "schema": 2,
  "frame": [
-  360,
-  360
+  512,
+  512
  ],
  "anchor": [
-  180,
-  348
+  256,
+  492
  ],
  "figure_height": 320,
  "actions": {
@@ -153,6 +153,3486 @@
   "nod": {
    "file": "nod.webp",
    "frames": 4
+  },
+  "popcorn": {
+   "file": "popcorn.webp",
+   "frames": 4
+  },
+  "headphones": {
+   "file": "headphones.webp",
+   "frames": 4
+  },
+  "gamepad": {
+   "file": "gamepad.webp",
+   "frames": 4
+  },
+  "tail_care": {
+   "file": "tail_care.webp",
+   "frames": 4
+  },
+  "lie_chin": {
+   "file": "lie_chin.webp",
+   "frames": 4
+  },
+  "wing_stretch": {
+   "file": "wing_stretch.webp",
+   "frames": 4
+  },
+  "edge_peek": {
+   "file": "edge_peek.webp",
+   "frames": 4
+  },
+  "dragon_fire_palm": {
+   "file": "dragon_fire_palm.webp",
+   "frames": 4
+  },
+  "dragon_fire_marshmallow": {
+   "file": "dragon_fire_marshmallow.webp",
+   "frames": 4
+  },
+  "dragon_fire_candle": {
+   "file": "dragon_fire_candle.webp",
+   "frames": 4
+  },
+  "dragon_fire_teacup": {
+   "file": "dragon_fire_teacup.webp",
+   "frames": 4
+  },
+  "dragon_fire_lantern": {
+   "file": "dragon_fire_lantern.webp",
+   "frames": 4
+  },
+  "dragon_fire_toast": {
+   "file": "dragon_fire_toast.webp",
+   "frames": 4
+  },
+  "dragon_fire_spark": {
+   "file": "dragon_fire_spark.webp",
+   "frames": 4
+  },
+  "dragon_fire_kettle": {
+   "file": "dragon_fire_kettle.webp",
+   "frames": 4
+  },
+  "dragon_wing_brush": {
+   "file": "dragon_wing_brush.webp",
+   "frames": 4
+  },
+  "dragon_wing_stretch": {
+   "file": "dragon_wing_stretch.webp",
+   "frames": 4
+  },
+  "dragon_wing_polish": {
+   "file": "dragon_wing_polish.webp",
+   "frames": 4
+  },
+  "dragon_wing_ribbon": {
+   "file": "dragon_wing_ribbon.webp",
+   "frames": 4
+  },
+  "dragon_tail_chase": {
+   "file": "dragon_tail_chase.webp",
+   "frames": 4
+  },
+  "dragon_tail_bow": {
+   "file": "dragon_tail_bow.webp",
+   "frames": 4
+  },
+  "dragon_tail_ball": {
+   "file": "dragon_tail_ball.webp",
+   "frames": 4
+  },
+  "dragon_tail_brush": {
+   "file": "dragon_tail_brush.webp",
+   "frames": 4
+  },
+  "dragon_magic_star": {
+   "file": "dragon_magic_star.webp",
+   "frames": 4
+  },
+  "dragon_magic_book": {
+   "file": "dragon_magic_book.webp",
+   "frames": 4
+  },
+  "dragon_magic_crane": {
+   "file": "dragon_magic_crane.webp",
+   "frames": 4
+  },
+  "dragon_magic_flower": {
+   "file": "dragon_magic_flower.webp",
+   "frames": 4
+  },
+  "dragon_magic_portal": {
+   "file": "dragon_magic_portal.webp",
+   "frames": 4
+  },
+  "dragon_magic_crystal": {
+   "file": "dragon_magic_crystal.webp",
+   "frames": 4
+  },
+  "dragon_magic_wand": {
+   "file": "dragon_magic_wand.webp",
+   "frames": 4
+  },
+  "dragon_magic_feather": {
+   "file": "dragon_magic_feather.webp",
+   "frames": 4
+  },
+  "dragon_magic_butterfly": {
+   "file": "dragon_magic_butterfly.webp",
+   "frames": 4
+  },
+  "dragon_magic_moon": {
+   "file": "dragon_magic_moon.webp",
+   "frames": 4
+  },
+  "dragon_magic_snow": {
+   "file": "dragon_magic_snow.webp",
+   "frames": 4
+  },
+  "dragon_magic_bubble": {
+   "file": "dragon_magic_bubble.webp",
+   "frames": 4
+  },
+  "dragon_treasure_count": {
+   "file": "dragon_treasure_count.webp",
+   "frames": 4
+  },
+  "dragon_treasure_polish": {
+   "file": "dragon_treasure_polish.webp",
+   "frames": 4
+  },
+  "dragon_treasure_hide": {
+   "file": "dragon_treasure_hide.webp",
+   "frames": 4
+  },
+  "dragon_treasure_pouch": {
+   "file": "dragon_treasure_pouch.webp",
+   "frames": 4
+  },
+  "dragon_treasure_find": {
+   "file": "dragon_treasure_find.webp",
+   "frames": 4
+  },
+  "dragon_treasure_share": {
+   "file": "dragon_treasure_share.webp",
+   "frames": 4
+  },
+  "dragon_treasure_sort": {
+   "file": "dragon_treasure_sort.webp",
+   "frames": 4
+  },
+  "dragon_treasure_open": {
+   "file": "dragon_treasure_open.webp",
+   "frames": 4
+  },
+  "dragon_treasure_coin_spin": {
+   "file": "dragon_treasure_coin_spin.webp",
+   "frames": 4
+  },
+  "dragon_treasure_key": {
+   "file": "dragon_treasure_key.webp",
+   "frames": 4
+  },
+  "dragon_toy_ball": {
+   "file": "dragon_toy_ball.webp",
+   "frames": 4
+  },
+  "dragon_toy_top": {
+   "file": "dragon_toy_top.webp",
+   "frames": 4
+  },
+  "dragon_toy_plane": {
+   "file": "dragon_toy_plane.webp",
+   "frames": 4
+  },
+  "dragon_toy_pinwheel": {
+   "file": "dragon_toy_pinwheel.webp",
+   "frames": 4
+  },
+  "dragon_toy_clockwork": {
+   "file": "dragon_toy_clockwork.webp",
+   "frames": 4
+  },
+  "dragon_toy_bubbles": {
+   "file": "dragon_toy_bubbles.webp",
+   "frames": 4
+  },
+  "dragon_toy_puzzle": {
+   "file": "dragon_toy_puzzle.webp",
+   "frames": 4
+  },
+  "dragon_toy_handheld": {
+   "file": "dragon_toy_handheld.webp",
+   "frames": 4
+  },
+  "dragon_toy_musicbox": {
+   "file": "dragon_toy_musicbox.webp",
+   "frames": 4
+  },
+  "dragon_toy_yoyo": {
+   "file": "dragon_toy_yoyo.webp",
+   "frames": 4
+  },
+  "dragon_toy_blocks": {
+   "file": "dragon_toy_blocks.webp",
+   "frames": 4
+  },
+  "dragon_toy_kaleidoscope": {
+   "file": "dragon_toy_kaleidoscope.webp",
+   "frames": 4
+  },
+  "dragon_music_ukulele": {
+   "file": "dragon_music_ukulele.webp",
+   "frames": 4
+  },
+  "dragon_music_flute": {
+   "file": "dragon_music_flute.webp",
+   "frames": 4
+  },
+  "dragon_music_bell": {
+   "file": "dragon_music_bell.webp",
+   "frames": 4
+  },
+  "dragon_music_kalimba": {
+   "file": "dragon_music_kalimba.webp",
+   "frames": 4
+  },
+  "dragon_music_tambourine": {
+   "file": "dragon_music_tambourine.webp",
+   "frames": 4
+  },
+  "dragon_music_harmonica": {
+   "file": "dragon_music_harmonica.webp",
+   "frames": 4
+  },
+  "dragon_craft_sketch": {
+   "file": "dragon_craft_sketch.webp",
+   "frames": 4
+  },
+  "dragon_craft_paint": {
+   "file": "dragon_craft_paint.webp",
+   "frames": 4
+  },
+  "dragon_craft_origami": {
+   "file": "dragon_craft_origami.webp",
+   "frames": 4
+  },
+  "dragon_craft_knit": {
+   "file": "dragon_craft_knit.webp",
+   "frames": 4
+  },
+  "dragon_craft_stamp": {
+   "file": "dragon_craft_stamp.webp",
+   "frames": 4
+  },
+  "dragon_craft_clay": {
+   "file": "dragon_craft_clay.webp",
+   "frames": 4
+  },
+  "dragon_garden_water": {
+   "file": "dragon_garden_water.webp",
+   "frames": 4
+  },
+  "dragon_garden_seed": {
+   "file": "dragon_garden_seed.webp",
+   "frames": 4
+  },
+  "dragon_garden_sprout": {
+   "file": "dragon_garden_sprout.webp",
+   "frames": 4
+  },
+  "dragon_garden_prune": {
+   "file": "dragon_garden_prune.webp",
+   "frames": 4
+  },
+  "dragon_snack_cookie": {
+   "file": "dragon_snack_cookie.webp",
+   "frames": 4
+  },
+  "dragon_snack_berry": {
+   "file": "dragon_snack_berry.webp",
+   "frames": 4
+  },
+  "dragon_snack_stir": {
+   "file": "dragon_snack_stir.webp",
+   "frames": 4
+  },
+  "dragon_play_bubble_catch": {
+   "file": "dragon_play_bubble_catch.webp",
+   "frames": 4
+  },
+  "dragon_play_paper_fan": {
+   "file": "dragon_play_paper_fan.webp",
+   "frames": 4
+  },
+  "dragon_play_ribbon": {
+   "file": "dragon_play_ribbon.webp",
+   "frames": 4
+  },
+  "life_comic_open": {
+   "file": "life_comic_open.webp",
+   "frames": 4
+  },
+  "life_comic_turn": {
+   "file": "life_comic_turn.webp",
+   "frames": 4
+  },
+  "life_comic_amused": {
+   "file": "life_comic_amused.webp",
+   "frames": 4
+  },
+  "life_note_read": {
+   "file": "life_note_read.webp",
+   "frames": 4
+  },
+  "life_map_unfold": {
+   "file": "life_map_unfold.webp",
+   "frames": 4
+  },
+  "life_bookmark_place": {
+   "file": "life_bookmark_place.webp",
+   "frames": 4
+  },
+  "life_book_doodle": {
+   "file": "life_book_doodle.webp",
+   "frames": 4
+  },
+  "life_book_stack": {
+   "file": "life_book_stack.webp",
+   "frames": 4
+  },
+  "life_pencil_note": {
+   "file": "life_pencil_note.webp",
+   "frames": 4
+  },
+  "life_pencil_sharpen": {
+   "file": "life_pencil_sharpen.webp",
+   "frames": 4
+  },
+  "life_sticky_note": {
+   "file": "life_sticky_note.webp",
+   "frames": 4
+  },
+  "life_whiteboard": {
+   "file": "life_whiteboard.webp",
+   "frames": 4
+  },
+  "life_letter_open": {
+   "file": "life_letter_open.webp",
+   "frames": 4
+  },
+  "life_letter_fold": {
+   "file": "life_letter_fold.webp",
+   "frames": 4
+  },
+  "life_laptop_type": {
+   "file": "life_laptop_type.webp",
+   "frames": 4
+  },
+  "life_laptop_think": {
+   "file": "life_laptop_think.webp",
+   "frames": 4
+  },
+  "life_tea_pour": {
+   "file": "life_tea_pour.webp",
+   "frames": 4
+  },
+  "life_tea_sip": {
+   "file": "life_tea_sip.webp",
+   "frames": 4
+  },
+  "life_tea_stir": {
+   "file": "life_tea_stir.webp",
+   "frames": 4
+  },
+  "life_bread_break": {
+   "file": "life_bread_break.webp",
+   "frames": 4
+  },
+  "life_riceball": {
+   "file": "life_riceball.webp",
+   "frames": 4
+  },
+  "life_candy_unwrap": {
+   "file": "life_candy_unwrap.webp",
+   "frames": 4
+  },
+  "life_cookie_offer": {
+   "file": "life_cookie_offer.webp",
+   "frames": 4
+  },
+  "life_paper_plane": {
+   "file": "life_paper_plane.webp",
+   "frames": 4
+  },
+  "life_blocks": {
+   "file": "life_blocks.webp",
+   "frames": 4
+  },
+  "life_hair_comb": {
+   "file": "life_hair_comb.webp",
+   "frames": 4
+  },
+  "life_water": {
+   "file": "life_water.webp",
+   "frames": 4
+  },
+  "life_shoulder_roll": {
+   "file": "life_shoulder_roll.webp",
+   "frames": 4
+  },
+  "life_clock_check": {
+   "file": "life_clock_check.webp",
+   "frames": 4
+  },
+  "life_hair_clip": {
+   "file": "life_hair_clip.webp",
+   "frames": 4
+  },
+  "life_phone_read": {
+   "file": "life_phone_read.webp",
+   "frames": 4
+  },
+  "life_phone_reply": {
+   "file": "life_phone_reply.webp",
+   "frames": 4
+  },
+  "life_phone_compose": {
+   "file": "life_phone_compose.webp",
+   "frames": 4
+  },
+  "life_phone_greet": {
+   "file": "life_phone_greet.webp",
+   "frames": 4
+  },
+  "life_chat_peek": {
+   "file": "life_chat_peek.webp",
+   "frames": 4
+  },
+  "life_chat_listen": {
+   "file": "life_chat_listen.webp",
+   "frames": 4
+  },
+  "life_chat_nod": {
+   "file": "life_chat_nod.webp",
+   "frames": 4
+  },
+  "life_image_photo": {
+   "file": "life_image_photo.webp",
+   "frames": 4
+  },
+  "life_image_compare": {
+   "file": "life_image_compare.webp",
+   "frames": 4
+  },
+  "life_image_tilt": {
+   "file": "life_image_tilt.webp",
+   "frames": 4
+  },
+  "life_search_book": {
+   "file": "life_search_book.webp",
+   "frames": 4
+  },
+  "life_search_lens": {
+   "file": "life_search_lens.webp",
+   "frames": 4
+  },
+  "life_search_laptop": {
+   "file": "life_search_laptop.webp",
+   "frames": 4
+  },
+  "life_search_cards": {
+   "file": "life_search_cards.webp",
+   "frames": 4
+  },
+  "life_voice_headphone": {
+   "file": "life_voice_headphone.webp",
+   "frames": 4
+  },
+  "life_voice_speaker": {
+   "file": "life_voice_speaker.webp",
+   "frames": 4
+  },
+  "life_voice_record": {
+   "file": "life_voice_record.webp",
+   "frames": 4
+  },
+  "life_drawing_pencil": {
+   "file": "life_drawing_pencil.webp",
+   "frames": 4
+  },
+  "life_drawing_brush": {
+   "file": "life_drawing_brush.webp",
+   "frames": 4
+  },
+  "life_drawing_tablet": {
+   "file": "life_drawing_tablet.webp",
+   "frames": 4
+  },
+  "life_sent_confetti": {
+   "file": "life_sent_confetti.webp",
+   "frames": 4
+  },
+  "life_sent_check": {
+   "file": "life_sent_check.webp",
+   "frames": 4
+  },
+  "life_wait_hourglass": {
+   "file": "life_wait_hourglass.webp",
+   "frames": 4
+  },
+  "life_wait_think": {
+   "file": "life_wait_think.webp",
+   "frames": 4
+  },
+  "life_tea_cool": {
+   "file": "life_tea_cool.webp",
+   "frames": 4
+  },
+  "life_bread_bite": {
+   "file": "life_bread_bite.webp",
+   "frames": 4
+  },
+  "life_fruit_slice": {
+   "file": "life_fruit_slice.webp",
+   "frames": 4
+  },
+  "life_paper_crane": {
+   "file": "life_paper_crane.webp",
+   "frames": 4
+  },
+  "life_yarn_ball": {
+   "file": "life_yarn_ball.webp",
+   "frames": 4
+  },
+  "life_windup": {
+   "file": "life_windup.webp",
+   "frames": 4
+  },
+  "life_spinning_top": {
+   "file": "life_spinning_top.webp",
+   "frames": 4
+  },
+  "life_ribbon": {
+   "file": "life_ribbon.webp",
+   "frames": 4
+  },
+  "life_puzzle": {
+   "file": "life_puzzle.webp",
+   "frames": 4
+  },
+  "life_tail_pillow": {
+   "file": "life_tail_pillow.webp",
+   "frames": 4
+  },
+  "life_fan": {
+   "file": "life_fan.webp",
+   "frames": 4
+  },
+  "life_wrist_stretch": {
+   "file": "life_wrist_stretch.webp",
+   "frames": 4
+  },
+  "life_phone_notice": {
+   "file": "life_phone_notice.webp",
+   "frames": 4
+  },
+  "life_phone_scroll": {
+   "file": "life_phone_scroll.webp",
+   "frames": 4
+  },
+  "life_chat_popcorn": {
+   "file": "life_chat_popcorn.webp",
+   "frames": 4
+  },
+  "life_image_magnify": {
+   "file": "life_image_magnify.webp",
+   "frames": 4
+  },
+  "life_voice_mic_check": {
+   "file": "life_voice_mic_check.webp",
+   "frames": 4
+  },
+  "life_drawing_palette": {
+   "file": "life_drawing_palette.webp",
+   "frames": 4
+  },
+  "life_sleep_hug_tail": {
+   "file": "life_sleep_hug_tail.webp",
+   "frames": 4
+  },
+  "life_sleep_curled_tail": {
+   "file": "life_sleep_curled_tail.webp",
+   "frames": 4
+  },
+  "life_sleep_wing_blanket": {
+   "file": "life_sleep_wing_blanket.webp",
+   "frames": 4
+  },
+  "life_sleep_face_down": {
+   "file": "life_sleep_face_down.webp",
+   "frames": 4
+  },
+  "life_sleep_side_hands": {
+   "file": "life_sleep_side_hands.webp",
+   "frames": 4
+  },
+  "life_sleep_back": {
+   "file": "life_sleep_back.webp",
+   "frames": 4
+  },
+  "life_sleep_tail_pillow": {
+   "file": "life_sleep_tail_pillow.webp",
+   "frames": 4
+  },
+  "life_sleep_star_pillow": {
+   "file": "life_sleep_star_pillow.webp",
+   "frames": 4
+  },
+  "life_sleep_round_pillow": {
+   "file": "life_sleep_round_pillow.webp",
+   "frames": 4
+  },
+  "life_sleep_book": {
+   "file": "life_sleep_book.webp",
+   "frames": 4
+  },
+  "life_sleep_wing_fold": {
+   "file": "life_sleep_wing_fold.webp",
+   "frames": 4
+  },
+  "life_sleep_knees": {
+   "file": "life_sleep_knees.webp",
+   "frames": 4
+  },
+  "life_reply_air_phone": {
+   "file": "life_reply_air_phone.webp",
+   "frames": 4
+  },
+  "life_reply_air_note": {
+   "file": "life_reply_air_note.webp",
+   "frames": 4
+  },
+  "life_reply_air_wave": {
+   "file": "life_reply_air_wave.webp",
+   "frames": 4
+  },
+  "life_reply_air_type": {
+   "file": "life_reply_air_type.webp",
+   "frames": 4
+  },
+  "life_reply_sit_calm": {
+   "file": "life_reply_sit_calm.webp",
+   "frames": 4
+  },
+  "life_reply_sit_sleepy": {
+   "file": "life_reply_sit_sleepy.webp",
+   "frames": 4
+  },
+  "life_reply_sit_note": {
+   "file": "life_reply_sit_note.webp",
+   "frames": 4
+  },
+  "life_reply_sit_laptop": {
+   "file": "life_reply_sit_laptop.webp",
+   "frames": 4
+  },
+  "life_reply_stand_bright": {
+   "file": "life_reply_stand_bright.webp",
+   "frames": 4
+  },
+  "life_reply_stand_quiet": {
+   "file": "life_reply_stand_quiet.webp",
+   "frames": 4
+  },
+  "life_reply_stand_think": {
+   "file": "life_reply_stand_think.webp",
+   "frames": 4
+  },
+  "life_reply_stand_wave": {
+   "file": "life_reply_stand_wave.webp",
+   "frames": 4
+  },
+  "motion_walk_brisk": {
+   "file": "motion_walk_brisk.webp",
+   "frames": 4
+  },
+  "motion_walk_slow": {
+   "file": "motion_walk_slow.webp",
+   "frames": 4
+  },
+  "motion_walk_tiptoe": {
+   "file": "motion_walk_tiptoe.webp",
+   "frames": 4
+  },
+  "motion_walk_backward": {
+   "file": "motion_walk_backward.webp",
+   "frames": 4
+  },
+  "motion_walk_phone": {
+   "file": "motion_walk_phone.webp",
+   "frames": 4
+  },
+  "motion_walk_sleepy": {
+   "file": "motion_walk_sleepy.webp",
+   "frames": 4
+  },
+  "motion_walk_trip": {
+   "file": "motion_walk_trip.webp",
+   "frames": 4
+  },
+  "motion_walk_message_stop": {
+   "file": "motion_walk_message_stop.webp",
+   "frames": 4
+  },
+  "motion_walk_hands_behind": {
+   "file": "motion_walk_hands_behind.webp",
+   "frames": 4
+  },
+  "motion_walk_wing_balance": {
+   "file": "motion_walk_wing_balance.webp",
+   "frames": 4
+  },
+  "motion_walk_look_up": {
+   "file": "motion_walk_look_up.webp",
+   "frames": 4
+  },
+  "motion_walk_tail_sway": {
+   "file": "motion_walk_tail_sway.webp",
+   "frames": 4
+  },
+  "motion_walk_march": {
+   "file": "motion_walk_march.webp",
+   "frames": 4
+  },
+  "motion_walk_scuff": {
+   "file": "motion_walk_scuff.webp",
+   "frames": 4
+  },
+  "motion_walk_look_side": {
+   "file": "motion_walk_look_side.webp",
+   "frames": 4
+  },
+  "motion_walk_pause": {
+   "file": "motion_walk_pause.webp",
+   "frames": 4
+  },
+  "motion_fly_takeoff": {
+   "file": "motion_fly_takeoff.webp",
+   "frames": 4
+  },
+  "motion_fly_takeoff_tip": {
+   "file": "motion_fly_takeoff_tip.webp",
+   "frames": 4
+  },
+  "motion_fly_glide": {
+   "file": "motion_fly_glide.webp",
+   "frames": 4
+  },
+  "motion_fly_glide_tucked": {
+   "file": "motion_fly_glide_tucked.webp",
+   "frames": 4
+  },
+  "motion_fly_glide_arms": {
+   "file": "motion_fly_glide_arms.webp",
+   "frames": 4
+  },
+  "motion_fly_flap_slow": {
+   "file": "motion_fly_flap_slow.webp",
+   "frames": 4
+  },
+  "motion_fly_flap_quick": {
+   "file": "motion_fly_flap_quick.webp",
+   "frames": 4
+  },
+  "motion_fly_flap_asymmetric": {
+   "file": "motion_fly_flap_asymmetric.webp",
+   "frames": 4
+  },
+  "motion_fly_hover": {
+   "file": "motion_fly_hover.webp",
+   "frames": 4
+  },
+  "motion_fly_hover_curious": {
+   "file": "motion_fly_hover_curious.webp",
+   "frames": 4
+  },
+  "motion_fly_hover_tail": {
+   "file": "motion_fly_hover_tail.webp",
+   "frames": 4
+  },
+  "motion_fly_hover_hands": {
+   "file": "motion_fly_hover_hands.webp",
+   "frames": 4
+  },
+  "motion_fly_land": {
+   "file": "motion_fly_land.webp",
+   "frames": 4
+  },
+  "motion_fly_land_soft": {
+   "file": "motion_fly_land_soft.webp",
+   "frames": 4
+  },
+  "motion_fly_turn": {
+   "file": "motion_fly_turn.webp",
+   "frames": 4
+  },
+  "motion_fly_turn_look": {
+   "file": "motion_fly_turn_look.webp",
+   "frames": 4
+  },
+  "motion_fly_circle": {
+   "file": "motion_fly_circle.webp",
+   "frames": 4
+  },
+  "motion_fly_circle_tucked": {
+   "file": "motion_fly_circle_tucked.webp",
+   "frames": 4
+  },
+  "motion_drag_dangle": {
+   "file": "motion_drag_dangle.webp",
+   "frames": 4
+  },
+  "motion_drag_swing": {
+   "file": "motion_drag_swing.webp",
+   "frames": 4
+  },
+  "motion_drag_turn": {
+   "file": "motion_drag_turn.webp",
+   "frames": 4
+  },
+  "motion_drag_wriggle": {
+   "file": "motion_drag_wriggle.webp",
+   "frames": 4
+  },
+  "motion_drag_hug": {
+   "file": "motion_drag_hug.webp",
+   "frames": 4
+  },
+  "motion_drag_curl": {
+   "file": "motion_drag_curl.webp",
+   "frames": 4
+  },
+  "motion_fall_upward": {
+   "file": "motion_fall_upward.webp",
+   "frames": 4
+  },
+  "motion_fall_flutter": {
+   "file": "motion_fall_flutter.webp",
+   "frames": 4
+  },
+  "motion_fall_curl": {
+   "file": "motion_fall_curl.webp",
+   "frames": 4
+  },
+  "motion_fall_reach": {
+   "file": "motion_fall_reach.webp",
+   "frames": 4
+  },
+  "motion_ceiling_bonk": {
+   "file": "motion_ceiling_bonk.webp",
+   "frames": 4
+  },
+  "motion_ceiling_hold": {
+   "file": "motion_ceiling_hold.webp",
+   "frames": 4
+  },
+  "motion_ceiling_rub": {
+   "file": "motion_ceiling_rub.webp",
+   "frames": 4
+  },
+  "motion_ceiling_release": {
+   "file": "motion_ceiling_release.webp",
+   "frames": 4
+  },
+  "motion_floor_squat": {
+   "file": "motion_floor_squat.webp",
+   "frames": 4
+  },
+  "motion_floor_kneel": {
+   "file": "motion_floor_kneel.webp",
+   "frames": 4
+  },
+  "motion_floor_balance": {
+   "file": "motion_floor_balance.webp",
+   "frames": 4
+  },
+  "motion_floor_wings": {
+   "file": "motion_floor_wings.webp",
+   "frames": 4
+  },
+  "motion_bottom_peek": {
+   "file": "motion_bottom_peek.webp",
+   "frames": 4
+  },
+  "motion_bottom_look": {
+   "file": "motion_bottom_look.webp",
+   "frames": 4
+  },
+  "motion_bottom_grip": {
+   "file": "motion_bottom_grip.webp",
+   "frames": 4
+  },
+  "motion_bottom_kick": {
+   "file": "motion_bottom_kick.webp",
+   "frames": 4
+  },
+  "motion_edge_peek": {
+   "file": "motion_edge_peek.webp",
+   "frames": 4
+  },
+  "motion_edge_look": {
+   "file": "motion_edge_look.webp",
+   "frames": 4
+  },
+  "motion_edge_fingers": {
+   "file": "motion_edge_fingers.webp",
+   "frames": 4
+  },
+  "motion_edge_tilt": {
+   "file": "motion_edge_tilt.webp",
+   "frames": 4
+  },
+  "motion_land_soft": {
+   "file": "motion_land_soft.webp",
+   "frames": 4
+  },
+  "motion_land_slide": {
+   "file": "motion_land_slide.webp",
+   "frames": 4
+  },
+  "motion_land_one_foot": {
+   "file": "motion_land_one_foot.webp",
+   "frames": 4
+  },
+  "motion_land_wing": {
+   "file": "motion_land_wing.webp",
+   "frames": 4
+  },
+  "boundary_top_peek": {
+   "file": "boundary_top_peek.webp",
+   "frames": 4
+  },
+  "boundary_popout": {
+   "file": "boundary_popout.webp",
+   "frames": 4
+  },
+  "boundary_tuck": {
+   "file": "boundary_tuck.webp",
+   "frames": 4
+  },
+  "boundary_top_return": {
+   "file": "boundary_top_return.webp",
+   "frames": 4
   }
+ },
+ "geometry": {
+  "idle": {
+   "bounds": [
+    -98,
+    -320,
+    89,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "look": {
+   "bounds": [
+    -95,
+    -309,
+    86,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "walk": {
+   "bounds": [
+    -104,
+    -310,
+    85,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "wave": {
+   "bounds": [
+    -112,
+    -376,
+    104,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "hop": {
+   "bounds": [
+    -122,
+    -320,
+    116,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "sit": {
+   "bounds": [
+    -98,
+    -229,
+    92,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "sleep": {
+   "bounds": [
+    -112,
+    -231,
+    149,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dangle": {
+   "bounds": [
+    -117,
+    -335,
+    134,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "fall": {
+   "bounds": [
+    -124,
+    -278,
+    123,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "think": {
+   "bounds": [
+    -94,
+    -310,
+    97,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "phone": {
+   "bounds": [
+    -98,
+    -307,
+    88,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "talk": {
+   "bounds": [
+    -108,
+    -308,
+    89,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "stretch": {
+   "bounds": [
+    -107,
+    -326,
+    95,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "read": {
+   "bounds": [
+    -122,
+    -267,
+    94,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "draw": {
+   "bounds": [
+    -116,
+    -337,
+    91,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "sing": {
+   "bounds": [
+    -101,
+    -301,
+    92,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "pout": {
+   "bounds": [
+    -109,
+    -319,
+    97,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "shy": {
+   "bounds": [
+    -97,
+    -289,
+    88,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "startle": {
+   "bounds": [
+    -104,
+    -309,
+    98,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "cheer": {
+   "bounds": [
+    -95,
+    -294,
+    90,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "tea": {
+   "bounds": [
+    -96,
+    -246,
+    93,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "lookaround": {
+   "bounds": [
+    -105,
+    -364,
+    105,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "eat": {
+   "bounds": [
+    -101,
+    -315,
+    94,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "laptop": {
+   "bounds": [
+    -125,
+    -259,
+    89,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "reply": {
+   "bounds": [
+    -103,
+    -291,
+    99,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "listen": {
+   "bounds": [
+    -73,
+    -266,
+    105,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "inspect": {
+   "bounds": [
+    -145,
+    -396,
+    104,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "checkup": {
+   "bounds": [
+    -74,
+    -229,
+    128,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "handoff": {
+   "bounds": [
+    -120,
+    -326,
+    92,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "stuck": {
+   "bounds": [
+    -117,
+    -378,
+    111,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "wake": {
+   "bounds": [
+    -88,
+    -199,
+    119,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "getup": {
+   "bounds": [
+    -126,
+    -315,
+    96,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "pat": {
+   "bounds": [
+    -120,
+    -359,
+    101,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "highfive": {
+   "bounds": [
+    -106,
+    -338,
+    94,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "peek": {
+   "bounds": [
+    -107,
+    -359,
+    97,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "nod": {
+   "bounds": [
+    -83,
+    -290,
+    80,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "popcorn": {
+   "bounds": [
+    -97,
+    -241,
+    89,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "headphones": {
+   "bounds": [
+    -125,
+    -275,
+    97,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "gamepad": {
+   "bounds": [
+    -111,
+    -260,
+    99,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "tail_care": {
+   "bounds": [
+    -112,
+    -284,
+    103,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "lie_chin": {
+   "bounds": [
+    -106,
+    -209,
+    140,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "wing_stretch": {
+   "bounds": [
+    -117,
+    -335,
+    114,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "edge_peek": {
+   "bounds": [
+    -133,
+    -343,
+    92,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_fire_palm": {
+   "bounds": [
+    -111,
+    -351,
+    108,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_fire_marshmallow": {
+   "bounds": [
+    -97,
+    -312,
+    90,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_fire_candle": {
+   "bounds": [
+    -99,
+    -302,
+    91,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_fire_teacup": {
+   "bounds": [
+    -107,
+    -268,
+    100,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_fire_lantern": {
+   "bounds": [
+    -98,
+    -309,
+    89,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_fire_toast": {
+   "bounds": [
+    -125,
+    -384,
+    111,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_fire_spark": {
+   "bounds": [
+    -107,
+    -335,
+    88,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_fire_kettle": {
+   "bounds": [
+    -105,
+    -250,
+    81,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_wing_brush": {
+   "bounds": [
+    -117,
+    -323,
+    89,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_wing_stretch": {
+   "bounds": [
+    -104,
+    -318,
+    92,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_wing_polish": {
+   "bounds": [
+    -105,
+    -324,
+    100,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_wing_ribbon": {
+   "bounds": [
+    -101,
+    -307,
+    107,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_tail_chase": {
+   "bounds": [
+    -156,
+    -384,
+    141,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_tail_bow": {
+   "bounds": [
+    -114,
+    -326,
+    101,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_tail_ball": {
+   "bounds": [
+    -132,
+    -362,
+    116,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_tail_brush": {
+   "bounds": [
+    -112,
+    -268,
+    92,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_star": {
+   "bounds": [
+    -116,
+    -366,
+    101,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_book": {
+   "bounds": [
+    -106,
+    -282,
+    89,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_crane": {
+   "bounds": [
+    -116,
+    -326,
+    127,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_flower": {
+   "bounds": [
+    -111,
+    -344,
+    99,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_portal": {
+   "bounds": [
+    -107,
+    -325,
+    98,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_crystal": {
+   "bounds": [
+    -119,
+    -375,
+    101,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_wand": {
+   "bounds": [
+    -131,
+    -373,
+    146,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_feather": {
+   "bounds": [
+    -109,
+    -344,
+    117,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_butterfly": {
+   "bounds": [
+    -108,
+    -271,
+    104,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_moon": {
+   "bounds": [
+    -106,
+    -343,
+    95,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_snow": {
+   "bounds": [
+    -98,
+    -319,
+    86,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_magic_bubble": {
+   "bounds": [
+    -111,
+    -332,
+    125,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_count": {
+   "bounds": [
+    -102,
+    -320,
+    93,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_polish": {
+   "bounds": [
+    -112,
+    -355,
+    96,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_hide": {
+   "bounds": [
+    -121,
+    -337,
+    95,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_pouch": {
+   "bounds": [
+    -109,
+    -353,
+    96,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_find": {
+   "bounds": [
+    -101,
+    -314,
+    89,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_share": {
+   "bounds": [
+    -111,
+    -369,
+    163,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_sort": {
+   "bounds": [
+    -126,
+    -320,
+    98,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_open": {
+   "bounds": [
+    -116,
+    -270,
+    96,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_coin_spin": {
+   "bounds": [
+    -94,
+    -304,
+    85,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_treasure_key": {
+   "bounds": [
+    -109,
+    -339,
+    91,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_ball": {
+   "bounds": [
+    -103,
+    -309,
+    113,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_top": {
+   "bounds": [
+    -106,
+    -321,
+    97,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_plane": {
+   "bounds": [
+    -115,
+    -370,
+    169,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_pinwheel": {
+   "bounds": [
+    -111,
+    -331,
+    104,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_clockwork": {
+   "bounds": [
+    -113,
+    -343,
+    112,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_bubbles": {
+   "bounds": [
+    -119,
+    -356,
+    131,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_puzzle": {
+   "bounds": [
+    -121,
+    -264,
+    91,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_handheld": {
+   "bounds": [
+    -129,
+    -273,
+    98,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_musicbox": {
+   "bounds": [
+    -124,
+    -266,
+    105,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_yoyo": {
+   "bounds": [
+    -108,
+    -346,
+    101,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_blocks": {
+   "bounds": [
+    -125,
+    -264,
+    97,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_toy_kaleidoscope": {
+   "bounds": [
+    -102,
+    -328,
+    103,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_music_ukulele": {
+   "bounds": [
+    -91,
+    -289,
+    101,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_music_flute": {
+   "bounds": [
+    -99,
+    -294,
+    103,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_music_bell": {
+   "bounds": [
+    -112,
+    -328,
+    103,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_music_kalimba": {
+   "bounds": [
+    -99,
+    -252,
+    104,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_music_tambourine": {
+   "bounds": [
+    -96,
+    -291,
+    85,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_music_harmonica": {
+   "bounds": [
+    -95,
+    -292,
+    87,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_craft_sketch": {
+   "bounds": [
+    -120,
+    -338,
+    95,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_craft_paint": {
+   "bounds": [
+    -131,
+    -361,
+    119,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_craft_origami": {
+   "bounds": [
+    -118,
+    -334,
+    108,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_craft_knit": {
+   "bounds": [
+    -107,
+    -315,
+    85,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_craft_stamp": {
+   "bounds": [
+    -113,
+    -316,
+    103,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_craft_clay": {
+   "bounds": [
+    -110,
+    -332,
+    91,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_garden_water": {
+   "bounds": [
+    -110,
+    -345,
+    93,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_garden_seed": {
+   "bounds": [
+    -118,
+    -265,
+    94,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_garden_sprout": {
+   "bounds": [
+    -103,
+    -338,
+    94,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_garden_prune": {
+   "bounds": [
+    -117,
+    -340,
+    103,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_snack_cookie": {
+   "bounds": [
+    -96,
+    -243,
+    81,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_snack_berry": {
+   "bounds": [
+    -88,
+    -255,
+    78,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_snack_stir": {
+   "bounds": [
+    -96,
+    -287,
+    91,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_play_bubble_catch": {
+   "bounds": [
+    -101,
+    -300,
+    103,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "dragon_play_paper_fan": {
+   "bounds": [
+    -110,
+    -350,
+    113,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "dragon_play_ribbon": {
+   "bounds": [
+    -111,
+    -264,
+    101,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_comic_open": {
+   "bounds": [
+    -117,
+    -261,
+    91,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_comic_turn": {
+   "bounds": [
+    -100,
+    -216,
+    75,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_comic_amused": {
+   "bounds": [
+    -117,
+    -260,
+    92,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_note_read": {
+   "bounds": [
+    -117,
+    -282,
+    94,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_map_unfold": {
+   "bounds": [
+    -118,
+    -288,
+    94,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_bookmark_place": {
+   "bounds": [
+    -116,
+    -258,
+    92,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_book_doodle": {
+   "bounds": [
+    -116,
+    -256,
+    93,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_book_stack": {
+   "bounds": [
+    -117,
+    -259,
+    104,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_pencil_note": {
+   "bounds": [
+    -110,
+    -320,
+    88,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_pencil_sharpen": {
+   "bounds": [
+    -121,
+    -344,
+    92,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sticky_note": {
+   "bounds": [
+    -110,
+    -320,
+    84,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_whiteboard": {
+   "bounds": [
+    -117,
+    -355,
+    96,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_letter_open": {
+   "bounds": [
+    -118,
+    -294,
+    93,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_letter_fold": {
+   "bounds": [
+    -115,
+    -306,
+    94,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_laptop_type": {
+   "bounds": [
+    -104,
+    -218,
+    76,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_laptop_think": {
+   "bounds": [
+    -120,
+    -250,
+    89,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_tea_pour": {
+   "bounds": [
+    -119,
+    -277,
+    97,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_tea_sip": {
+   "bounds": [
+    -113,
+    -282,
+    106,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_tea_stir": {
+   "bounds": [
+    -101,
+    -282,
+    89,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_bread_break": {
+   "bounds": [
+    -96,
+    -245,
+    81,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_riceball": {
+   "bounds": [
+    -112,
+    -293,
+    96,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_candy_unwrap": {
+   "bounds": [
+    -105,
+    -261,
+    97,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_cookie_offer": {
+   "bounds": [
+    -94,
+    -281,
+    84,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_paper_plane": {
+   "bounds": [
+    -109,
+    -323,
+    103,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_blocks": {
+   "bounds": [
+    -113,
+    -346,
+    97,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_hair_comb": {
+   "bounds": [
+    -124,
+    -307,
+    102,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_water": {
+   "bounds": [
+    -112,
+    -281,
+    95,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_shoulder_roll": {
+   "bounds": [
+    -111,
+    -351,
+    96,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_clock_check": {
+   "bounds": [
+    -113,
+    -365,
+    102,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_hair_clip": {
+   "bounds": [
+    -102,
+    -309,
+    93,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_phone_read": {
+   "bounds": [
+    -115,
+    -291,
+    91,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_phone_reply": {
+   "bounds": [
+    -118,
+    -292,
+    100,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_phone_compose": {
+   "bounds": [
+    -99,
+    -240,
+    77,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_phone_greet": {
+   "bounds": [
+    -95,
+    -344,
+    95,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_chat_peek": {
+   "bounds": [
+    -111,
+    -359,
+    97,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_chat_listen": {
+   "bounds": [
+    -101,
+    -327,
+    91,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_chat_nod": {
+   "bounds": [
+    -98,
+    -279,
+    90,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_image_photo": {
+   "bounds": [
+    -111,
+    -275,
+    89,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_image_compare": {
+   "bounds": [
+    -96,
+    -250,
+    80,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_image_tilt": {
+   "bounds": [
+    -100,
+    -294,
+    92,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_search_book": {
+   "bounds": [
+    -114,
+    -283,
+    95,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_search_lens": {
+   "bounds": [
+    -106,
+    -270,
+    85,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_search_laptop": {
+   "bounds": [
+    -115,
+    -236,
+    82,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_search_cards": {
+   "bounds": [
+    -97,
+    -261,
+    78,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_voice_headphone": {
+   "bounds": [
+    -90,
+    -275,
+    83,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_voice_speaker": {
+   "bounds": [
+    -114,
+    -353,
+    104,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_voice_record": {
+   "bounds": [
+    -98,
+    -298,
+    82,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_drawing_pencil": {
+   "bounds": [
+    -115,
+    -299,
+    86,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_drawing_brush": {
+   "bounds": [
+    -109,
+    -321,
+    84,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_drawing_tablet": {
+   "bounds": [
+    -117,
+    -311,
+    89,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_sent_confetti": {
+   "bounds": [
+    -94,
+    -286,
+    87,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sent_check": {
+   "bounds": [
+    -87,
+    -272,
+    85,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_wait_hourglass": {
+   "bounds": [
+    -108,
+    -365,
+    100,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_wait_think": {
+   "bounds": [
+    -113,
+    -366,
+    98,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_tea_cool": {
+   "bounds": [
+    -113,
+    -275,
+    100,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_bread_bite": {
+   "bounds": [
+    -102,
+    -267,
+    86,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_fruit_slice": {
+   "bounds": [
+    -110,
+    -303,
+    91,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_paper_crane": {
+   "bounds": [
+    -107,
+    -318,
+    83,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_yarn_ball": {
+   "bounds": [
+    -108,
+    -368,
+    102,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_windup": {
+   "bounds": [
+    -94,
+    -314,
+    87,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_spinning_top": {
+   "bounds": [
+    -101,
+    -268,
+    81,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_ribbon": {
+   "bounds": [
+    -97,
+    -286,
+    88,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_puzzle": {
+   "bounds": [
+    -104,
+    -301,
+    127,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_tail_pillow": {
+   "bounds": [
+    -105,
+    -279,
+    97,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_fan": {
+   "bounds": [
+    -104,
+    -332,
+    92,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_wrist_stretch": {
+   "bounds": [
+    -93,
+    -305,
+    86,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_phone_notice": {
+   "bounds": [
+    -119,
+    -377,
+    108,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_phone_scroll": {
+   "bounds": [
+    -106,
+    -288,
+    89,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_chat_popcorn": {
+   "bounds": [
+    -116,
+    -289,
+    105,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_image_magnify": {
+   "bounds": [
+    -115,
+    -251,
+    87,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_voice_mic_check": {
+   "bounds": [
+    -90,
+    -295,
+    84,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_drawing_palette": {
+   "bounds": [
+    -112,
+    -321,
+    97,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_hug_tail": {
+   "bounds": [
+    -90,
+    -208,
+    193,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_curled_tail": {
+   "bounds": [
+    -74,
+    -142,
+    118,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_wing_blanket": {
+   "bounds": [
+    -73,
+    -135,
+    142,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_face_down": {
+   "bounds": [
+    -66,
+    -124,
+    136,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_side_hands": {
+   "bounds": [
+    -58,
+    -110,
+    109,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_back": {
+   "bounds": [
+    -96,
+    -204,
+    149,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_tail_pillow": {
+   "bounds": [
+    -78,
+    -151,
+    126,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_star_pillow": {
+   "bounds": [
+    -78,
+    -160,
+    141,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_round_pillow": {
+   "bounds": [
+    -64,
+    -131,
+    118,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_book": {
+   "bounds": [
+    -73,
+    -138,
+    137,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_wing_fold": {
+   "bounds": [
+    -74,
+    -140,
+    149,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_sleep_knees": {
+   "bounds": [
+    -73,
+    -139,
+    122,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_reply_air_phone": {
+   "bounds": [
+    -141,
+    -309,
+    142,
+    0
+   ]
+  },
+  "life_reply_air_note": {
+   "bounds": [
+    -138,
+    -302,
+    133,
+    0
+   ]
+  },
+  "life_reply_air_wave": {
+   "bounds": [
+    -139,
+    -321,
+    136,
+    0
+   ]
+  },
+  "life_reply_air_type": {
+   "bounds": [
+    -140,
+    -322,
+    139,
+    0
+   ]
+  },
+  "life_reply_sit_calm": {
+   "bounds": [
+    -105,
+    -221,
+    75,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "life_reply_sit_sleepy": {
+   "bounds": [
+    -124,
+    -251,
+    88,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_reply_sit_note": {
+   "bounds": [
+    -126,
+    -268,
+    93,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_reply_sit_laptop": {
+   "bounds": [
+    -116,
+    -242,
+    83,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_reply_stand_bright": {
+   "bounds": [
+    -108,
+    -328,
+    93,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_reply_stand_quiet": {
+   "bounds": [
+    -121,
+    -362,
+    99,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "life_reply_stand_think": {
+   "bounds": [
+    -116,
+    -343,
+    96,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "life_reply_stand_wave": {
+   "bounds": [
+    -101,
+    -320,
+    87,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_brisk": {
+   "bounds": [
+    -107,
+    -326,
+    90,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_slow": {
+   "bounds": [
+    -114,
+    -324,
+    93,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_tiptoe": {
+   "bounds": [
+    -108,
+    -327,
+    91,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_backward": {
+   "bounds": [
+    -99,
+    -299,
+    83,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_phone": {
+   "bounds": [
+    -112,
+    -307,
+    83,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_sleepy": {
+   "bounds": [
+    -100,
+    -313,
+    87,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_trip": {
+   "bounds": [
+    -90,
+    -283,
+    100,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_message_stop": {
+   "bounds": [
+    -89,
+    -281,
+    79,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_hands_behind": {
+   "bounds": [
+    -101,
+    -325,
+    86,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_wing_balance": {
+   "bounds": [
+    -104,
+    -293,
+    100,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_look_up": {
+   "bounds": [
+    -107,
+    -304,
+    87,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_tail_sway": {
+   "bounds": [
+    -110,
+    -324,
+    90,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_march": {
+   "bounds": [
+    -118,
+    -364,
+    100,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_scuff": {
+   "bounds": [
+    -109,
+    -320,
+    91,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_look_side": {
+   "bounds": [
+    -104,
+    -328,
+    90,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_walk_pause": {
+   "bounds": [
+    -104,
+    -308,
+    85,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_takeoff": {
+   "bounds": [
+    -94,
+    -316,
+    88,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_takeoff_tip": {
+   "bounds": [
+    -121,
+    -354,
+    102,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_glide": {
+   "bounds": [
+    -123,
+    -345,
+    118,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_glide_tucked": {
+   "bounds": [
+    -114,
+    -324,
+    96,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_glide_arms": {
+   "bounds": [
+    -106,
+    -327,
+    101,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_flap_slow": {
+   "bounds": [
+    -127,
+    -307,
+    131,
+    0
+   ]
+  },
+  "motion_fly_flap_quick": {
+   "bounds": [
+    -137,
+    -348,
+    136,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_flap_asymmetric": {
+   "bounds": [
+    -153,
+    -385,
+    144,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_hover": {
+   "bounds": [
+    -114,
+    -353,
+    106,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_hover_curious": {
+   "bounds": [
+    -130,
+    -389,
+    127,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_hover_tail": {
+   "bounds": [
+    -105,
+    -331,
+    110,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_hover_hands": {
+   "bounds": [
+    -127,
+    -406,
+    130,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_land": {
+   "bounds": [
+    -96,
+    -227,
+    113,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_land_soft": {
+   "bounds": [
+    -106,
+    -244,
+    109,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_turn": {
+   "bounds": [
+    -114,
+    -356,
+    114,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_turn_look": {
+   "bounds": [
+    -116,
+    -348,
+    105,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_circle": {
+   "bounds": [
+    -120,
+    -361,
+    119,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fly_circle_tucked": {
+   "bounds": [
+    -105,
+    -303,
+    93,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_drag_dangle": {
+   "bounds": [
+    -103,
+    -350,
+    142,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_drag_swing": {
+   "bounds": [
+    -107,
+    -344,
+    137,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_drag_turn": {
+   "bounds": [
+    -99,
+    -321,
+    127,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_drag_wriggle": {
+   "bounds": [
+    -100,
+    -346,
+    100,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_drag_hug": {
+   "bounds": [
+    -112,
+    -346,
+    139,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_drag_curl": {
+   "bounds": [
+    -106,
+    -338,
+    111,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fall_upward": {
+   "bounds": [
+    -119,
+    -284,
+    118,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fall_flutter": {
+   "bounds": [
+    -123,
+    -264,
+    122,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_fall_curl": {
+   "bounds": [
+    -106,
+    -269,
+    106,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_fall_reach": {
+   "bounds": [
+    -105,
+    -264,
+    102,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_ceiling_bonk": {
+   "bounds": [
+    -97,
+    -319,
+    104,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_ceiling_hold": {
+   "bounds": [
+    -103,
+    -340,
+    131,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_ceiling_rub": {
+   "bounds": [
+    -105,
+    -343,
+    107,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_ceiling_release": {
+   "bounds": [
+    -100,
+    -306,
+    132,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_floor_squat": {
+   "bounds": [
+    -112,
+    -302,
+    106,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_floor_kneel": {
+   "bounds": [
+    -119,
+    -251,
+    108,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_floor_balance": {
+   "bounds": [
+    -114,
+    -344,
+    97,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_floor_wings": {
+   "bounds": [
+    -123,
+    -318,
+    90,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_bottom_peek": {
+   "bounds": [
+    -117,
+    -263,
+    110,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_bottom_look": {
+   "bounds": [
+    -103,
+    -338,
+    107,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_bottom_grip": {
+   "bounds": [
+    -100,
+    -281,
+    87,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_bottom_kick": {
+   "bounds": [
+    -105,
+    -320,
+    100,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_edge_peek": {
+   "bounds": [
+    -133,
+    -343,
+    92,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_edge_look": {
+   "bounds": [
+    -127,
+    -332,
+    88,
+    -1
+   ],
+   "head_width": 136.0
+  },
+  "motion_edge_fingers": {
+   "bounds": [
+    -133,
+    -338,
+    88,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_edge_tilt": {
+   "bounds": [
+    -153,
+    -397,
+    97,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_land_soft": {
+   "bounds": [
+    -119,
+    -259,
+    106,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_land_slide": {
+   "bounds": [
+    -114,
+    -298,
+    107,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "motion_land_one_foot": {
+   "bounds": [
+    -107,
+    -268,
+    97,
+    1
+   ],
+   "head_width": 136.0
+  },
+  "motion_land_wing": {
+   "bounds": [
+    -124,
+    -250,
+    115,
+    0
+   ],
+   "head_width": 136.0
+  },
+  "boundary_top_peek": {
+   "bounds": [
+    -94,
+    -255,
+    74,
+    0
+   ]
+  },
+  "boundary_popout": {
+   "bounds": [
+    -110,
+    -303,
+    93,
+    0
+   ]
+  },
+  "boundary_tuck": {
+   "bounds": [
+    -104,
+    -284,
+    88,
+    0
+   ]
+  },
+  "boundary_top_return": {
+   "bounds": [
+    -159,
+    -300,
+    95,
+    -1
+   ]
+  }
+ },
+ "calibration": {
+  "method": "head-width-v1",
+  "head_width": 136.0
  }
 }

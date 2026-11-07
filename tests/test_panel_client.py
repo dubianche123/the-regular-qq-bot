@@ -178,7 +178,7 @@ form.querySelector = selector => fields[selector];
 form.elements = { namedItem: () => ({value: 'synthetic-csrf'}) };
 const nodes = { '[data-chat-form]': form, '[data-chat-status]': status, '[data-chat-refresh]': refresh, '[data-chat-history]': history };
 let now = 1000; const frames = []; const intervals = []; const requests = [];
-const manifest = {schema: 2, frame: [360, 360], actions: {}};
+const manifest = {schema: 2, frame: [512, 512], anchor: [256, 492], actions: {}};
 for (const [name, [strip, seq]] of Object.entries(clips)) manifest.actions[strip] = {file: strip + '.webp', frames: Math.max(manifest.actions[strip]?.frames || 0, Math.max(...seq) + 1, strip === 'idle' ? 3 : 1)};
 let presence = {bot: 'ready', events: []};
 const respond = body => Promise.resolve({ok: true, json: async () => body});
@@ -195,6 +195,7 @@ const tick = ms => { now += ms; const pending = frames.splice(0); pending.forEac
 (async () => {
   await drain(); await drain();
   assert.ok(sprite.classList.set.has('ready'));
+      assert.equal(sprite.frame.style.scale, String(512 / 360));
   assert.match(sprite.frame.style.backgroundImage, /idle\.webp/);
   const seen = new Set();
   for (let i = 0; i < 400; i++) { tick(33); seen.add(sprite.frame.style.backgroundPosition); }

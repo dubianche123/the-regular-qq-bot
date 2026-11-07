@@ -2,8 +2,34 @@
 
 ## Unreleased
 
+- Expand the desktop pet to 279 shipped animation strips, including 236 new
+  four-frame actions for everyday life, dragon magic, treasure, toys and movement.
+  Shuffled action pools and short routines reduce repetition during long sessions.
+- Add 12 sleeping variations and 14 reply actions. Mood, energy and time of day
+  shape her replies; a cheerful pet can fly while replying in QQ, while local
+  text chat keeps her nearby. New sleep poses retain the nap cooldown.
+- Add varied walking, bounded flight and landing, reactions while held against
+  the top or bottom, upward-throw collisions, and peeking from screen edges.
+  Redraw peeking hands and hide the supporting guide behind the screen edge.
+- Keep character scale stable across poses using head measurements and a roomier
+  transparent canvas. Ceiling reactions no longer pause gravity. Releasing her
+  at any screen edge hides her there until a click or drag brings her back.
+- Let quiet activities stay longer and interleave ordered stories such as
+  boiling water, pouring and drinking tea. Feeding, gentle surprise reactions,
+  sleep variations and occasional toy chasing use the adopted repertoire.
+- Replace the ring's high-five entry with “next activity”. Keep ordinary taps
+  as small reactions, with rare surprises rather than frequent flower tricks.
+- Limit persistent toys to two. Balls, coins and diamond-shaped gems support
+  dragging, throwing and returning; the pet can kick or collect them herself.
+  Decorative sparkles fade quickly and let mouse input pass through.
+- Remove whole-sprite breathing, press and landing scaling. Redraw five wingbeat
+  strips and phase flight into preparation, flapping, gliding and landing, with
+  eased screen-edge movement.
 - Add local Codex and Claude Code hook adapters for reply-completion and
   permission cues, with a `pet-notify` command and setup examples.
+- Decode sprite strips on demand with bounded caches, so the larger library
+  does not require loading every animation into memory at startup. Document
+  the adopted repertoire, generation prompts and offline visual checks.
 
 ## 0.5.1 — 2026-11-07
 

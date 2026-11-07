@@ -4,11 +4,12 @@ from importlib.resources import files
 import json
 import random
 import unittest
+from unittest.mock import patch
 
 from regular.pet_brain import (ASLEEP, CARE_COOL_LINES, CARE_FULL_LINES, CARE_GAIN,
-                               CARE_LINES, CARE_MAX, CLIPS, CUE_ACTIONS, FIGURE, LINES, PLAY,
+                               CARE_LINES, CARE_MAX, CLIPS, CUE_ACTIONS, EDGE, EDGE_PEEK, FIGURE, LINES, PLAY,
                                PLAY_CANCEL, PLAY_GAP, PLAY_MAX_STREAK, PLAY_START, PLAY_WINDOW,
-                               TAP_POOL, PetBrain, Step)
+                               TAP_POOL, WALK_SPEED, PetBrain, Step)
 
 LEGAL = {("stand", "stand"), ("sit", "sit"), ("lie", "lie"), ("air", "air"),
          ("stand", "sit"), ("sit", "stand"), ("sit", "lie"), ("lie", "sit"),
@@ -17,6 +18,8 @@ LEGAL = {("stand", "stand"), ("sit", "sit"), ("lie", "lie"), ("air", "air"),
 
 def brain(seed=7, **kwargs):
     b = PetBrain(rng=random.Random(seed), now=0.0, **kwargs)
+    # Existing deterministic scenarios exercise the legacy fallback with no optional strips.
+    b.repertoire.actions = {}
     b.set_ground(0, 1440, 860)
     b.place(700)
     return b
@@ -40,6 +43,338 @@ def ready(mood=0.0, circadian="", chatter=0, events=(), bot="ready"):
             "circadian": circadian, "chatter": chatter, "events": list(events)}
 
 
+class MotionRepertoireTest(unittest.TestCase):
+    def test_rest_uses_repertoire_bag_and_story_records_played_beats(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        group = [name for name, spec in b.repertoire.actions.items()
+                 if spec["role"] == "study" and spec["family"] == "reading" and spec["posture"] == "sit"]
+        if len(group) < 3:
+            self.skipTest("no adopted reading variants")
+        with (patch.object(b, "_weighted", return_value="library"),
+              patch("regular.pet_brain.choose_routine", return_value=("ambient:reading", [(group[0], 30)]))):
+            selected = [b._choose(i)[0].clip for i in range(3)]
+        self.assertEqual(len(set(selected)), 3)
+        b.repertoire.recent.clear()
+        b._queue(Step(group[0], 1), Step(group[1], 1), now=3, interrupt=True)
+        run(b, 3, 3)
+        self.assertIn(group[0], b.repertoire.recent)
+        self.assertIn(group[1], b.repertoire.recent)
+
+    def test_bottom_target_preserves_clickable_head_across_assets_and_scales(self):
+        for scale in (0.6, 1.0, 1.5):
+            b = PetBrain(rng=random.Random(7), now=0, scale=scale)
+            b.set_ground(0, 1440, 860, 0)
+            names = [name for name, spec in b.repertoire.actions.items()
+                     if spec["role"] == "bottom" and spec.get("geometry")]
+            if not names:
+                self.skipTest("no measured bottom assets")
+            for name in names:
+                with self.subTest(scale=scale, clip=name):
+                    clearance = b._head_clearance(name)
+                    target = b._bottom_target(name)
+                    visible = b.floor - (target - clearance)
+                    self.assertAlmostEqual(visible, min(clearance, max(60, min(80, b.figure * 0.45))))
+                    b.hidden_edge, b.bottom_peek, b._hidden_clip, b.mode = "bottom", True, name, "hidden"
+                    b.y = target
+                    b.set_ground(0, 1440, 860, 0)
+                    self.assertAlmostEqual(b.y, target)
+
+    def test_automatic_bottom_peek_uses_same_measured_target(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        with patch.object(b, "_weighted", return_value="bottom"):
+            steps = b._choose(1)
+        step = steps[0]
+        self.assertEqual(step.target_y, b._bottom_target(step.clip))
+        b._queue(*steps, now=1, interrupt=True)
+        t, _ = run(b, 1, 3, fps=10, each=lambda _: b.set_ground(0, 1440, 860, 0))
+        self.assertAlmostEqual(b.y, b._bottom_target(step.clip), delta=1.5)
+
+    def test_library_selects_long_rest_and_story_modes(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        def selected(*args, mode, **kwargs):
+            return (("tea", [("idle", 20)]) if mode == "story" else
+                    ("ambient:work", [("life_laptop_type", 60)]))
+        for now, expected in ((1, "rest"), (80, "rest"), (179, "rest"), (180, "story"), (181, "rest")):
+            with (patch.object(b, "_weighted", return_value="library"),
+                  patch.object(b.rng, "random", return_value=0),
+                  patch("regular.pet_brain.choose_routine", side_effect=selected) as choose):
+                steps = b._choose(now)
+            self.assertEqual(choose.call_args.kwargs["mode"], expected)
+            self.assertEqual(steps[0].duration, 20 if expected == "story" else 60)
+
+    def test_reduced_motion_does_not_emit_hidden_props(self):
+        for motion in (False, True):
+            with self.subTest(motion=motion):
+                b = brain(motion=motion)
+                b._queue(Step("dragon_magic_flower"), now=0, interrupt=True)
+                self.assertFalse(b.props.items)
+                b._queue(Step("dragon_toy_ball"), now=1, interrupt=True)
+                self.assertEqual(len(b.props.items), int(motion))
+                b.props.items.clear()
+                b._queue(Step("dragon_toy_ball"), now=60, interrupt=True)
+                self.assertFalse(b.props.items)
+                b._queue(Step("dragon_toy_ball"), now=181, interrupt=True)
+                self.assertEqual(len(b.props.items), int(motion))
+
+    def test_next_activity_works_under_toolbar_attention_and_preserves_real_work(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        b.set_attention(True, 1)
+        self.assertTrue(b.next_activity(1))
+        self.assertFalse(b.game_active)
+        self.assertTrue(any(s.clip != "idle" for s in (b.step, *b.plan) if s))
+        b.set_state("reply", 2, seconds=30)
+        work = (b.clip, b.step, tuple(b.plan), b.state_until)
+        self.assertFalse(b.next_activity(3))
+        self.assertEqual((b.clip, b.step, tuple(b.plan), b.state_until), work)
+
+    def test_prop_feedback_and_return_do_not_change_relationship_state(self):
+        b = brain()
+        gem = b.props.emit("gem", b.x + 50, b.floor - 12, 0)
+        b.prop_dragged(gem, 1)
+        self.assertIn("宝贝", b.bubble.text)
+        self.assertEqual(b.return_prop(gem, 2), "gem")
+        self.assertEqual(b.bubble.text, "收好啦。")
+        self.assertFalse(b.props.items)
+        self.assertEqual(b.warmth, 0)
+
+    def test_pet_notices_a_settled_toy_during_a_long_activity_before_it_expires(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        with (patch.object(b.props, "kick", wraps=b.props.kick) as kick,
+              patch.object(b.rng, "random", return_value=0)):
+            b._queue(Step("dragon_toy_ball"), Step("laptop", 60), now=0, interrupt=True)
+            self.assertEqual(len(b.props.items), 1)
+            run(b, 0, 25)
+            self.assertEqual(kick.call_count, 1)
+            self.assertLess(kick.call_args.args[1], 20)
+
+    def test_settled_treasure_does_not_interrupt_a_real_reply(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        b.set_state("reply", 0, seconds=60)
+        b.props.emit("gem", b.x + 50, b.floor - 12, 0)
+        item = b.props.items[0]
+        item.grounded, item.vx, item.vy = True, 0, 0
+        with (patch.object(b.props, "collect", wraps=b.props.collect) as collect,
+              patch.object(b.rng, "random", return_value=0)):
+            run(b, 0, 25)
+            self.assertFalse(collect.called)
+        self.assertEqual(b.state_name, "reply")
+        self.assertIsNone(b._chasing_prop)
+
+    def test_magic_surprises_have_a_cooldown_and_do_not_drop_props(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        with patch.object(b.rng, "random", return_value=0):
+            b.poke(1)
+            self.assertIn(b._role(b.clip), ("magic", "fire"))
+            self.assertFalse(b.props.items)
+            b._queue(Step("idle", 30), now=2, interrupt=True)
+            b.poke(3)
+            self.assertNotIn(b._role(b.clip), ("magic", "fire"))
+            b._queue(Step("idle", 30), now=122, interrupt=True)
+            b.poke(123)
+            self.assertIn(b._role(b.clip), ("magic", "fire"))
+
+    def test_fall_and_landing_keep_fixed_character_scale(self):
+        b = brain()
+        b.enter(0, 200)
+        transforms = []
+        _, clips = run(b, 0, 3, each=lambda t: transforms.append(b.transform(t)))
+        self.assertIn("land", clips)
+        self.assertTrue(all(t["sx"] == t["sy"] == 1 for t in transforms))
+
+    def test_bottom_motion_accelerates_and_slows_before_arrival(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        clip = "motion_bottom_peek"
+        b._queue(Step(clip, target_y=b._bottom_target(clip)), Step(clip, 5), now=0, interrupt=True)
+        duration = b._move_duration
+        positions = []
+        for fraction in (0, .1, .4, .5, .8, .9, 1):
+            b._fly(duration * fraction, 0)
+            positions.append(b.y)
+        self.assertLess(positions[1] - positions[0], positions[3] - positions[2])
+        self.assertLess(positions[6] - positions[5], positions[3] - positions[2])
+        self.assertAlmostEqual(positions[-1], b._bottom_target(clip), delta=1.5)
+
+    def test_repeated_reply_heartbeat_rotates_variants_and_stops(self):
+        b = PetBrain(rng=random.Random(42), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        if sum(s["role"] == "reply" and s["posture"] != "air" for s in b.repertoire.actions.values()) < 2:
+            self.skipTest("no adopted reply variants")
+        seen = set()
+        for i in range(600):
+            now = i * 0.1
+            if i % 50 == 0:
+                b.set_state("reply", now)
+            b.tick(now)
+            if b._role(b.clip) == "reply":
+                seen.add(b.clip)
+        self.assertGreater(len(seen), 1)
+        b.clear_state(60)
+        run(b, 60, 5, fps=10)
+        self.assertIsNone(b.state_name)
+        self.assertNotEqual(b._role(b.clip), "reply")
+
+    def test_sleep_pool_varies_without_increasing_frequency(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        if sum(s["role"] == "sleep" for s in b.repertoire.actions.values()) < 2:
+            self.skipTest("no adopted sleep variations")
+        b.observe(0, ready(circadian="午后有点困"))
+        chosen = set()
+        for now in (1, 482, 963, 1444):
+            with patch.object(b, "_weighted", return_value="nap"):
+                step = b._choose(now)[0]
+            chosen.add(step.clip)
+            self.assertEqual(b._role(step.clip), "sleep")
+            self.assertLessEqual(step.duration, 25)
+            with patch.object(b, "_weighted", return_value="idle") as choose:
+                b._choose(now + 1)
+            self.assertEqual(choose.call_args.args[0].get("nap", 0), 0)
+        self.assertGreater(len(chosen), 1)
+
+    def test_local_text_reply_uses_reply_pool_but_voice_does_not(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        b.observe(0, ready(mood=0.8))
+        b.set_attention(True, 0)
+        b.chat_sent(1)
+        b.chat_reply(2, "收到啦")
+        self.assertEqual(b.state_name, "reply")
+        self.assertNotEqual(b.mode, "fly")
+        self.assertTrue(b.state_clip == "reply" or b._role(b.state_clip) == "reply")
+        old_state = b.state_name
+        b.chat_reply(3, "语音文本", animate=False)
+        self.assertEqual(b.state_name, old_state)
+
+    def test_quiet_and_reduced_motion_keep_a_stationary_catalog(self):
+        for settings in ({"quiet": True}, {"motion": False}):
+            with self.subTest(**settings):
+                b = PetBrain(rng=random.Random(42), now=0, **settings)
+                b.set_ground(0, 1440, 860, 0)
+                b.place(700)
+                if not b.repertoire.actions:
+                    self.skipTest("no adopted catalog")
+                visited, positions, modes = set(), [], set()
+                run(b, 0, 900, fps=10, each=lambda _: (visited.add(b.clip), positions.append(b.x), modes.add(b.mode)))
+                self.assertTrue(visited & b.repertoire.actions.keys())
+                self.assertTrue(all(x == 700 for x in positions))
+                self.assertEqual(modes, {"ground"})
+                self.assertTrue(all(CLIPS[name][4] != "air" for name in visited))
+
+    def test_changing_state_during_flying_reply_lands_and_shows_new_state(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        b.observe(0, ready(mood=0.9))
+        if not any(s["role"] == "reply" and s["posture"] == "air" for s in b.repertoire.actions.values()):
+            self.skipTest("no adopted airborne reply")
+        b.set_state("reply", 1, seconds=30)
+        t, _ = run(b, 1, 1)
+        self.assertEqual(b.mode, "fly")
+        before = b.y
+        b.set_state("listen", t, seconds=20)
+        self.assertEqual(b.y, before)
+        t, clips = run(b, t, 6)
+        self.assertEqual(b.mode, "ground")
+        self.assertEqual(b.y, b.floor)
+        self.assertTrue(any(b._role(clip) == "listen" for clip in clips))
+
+    def test_adopted_catalog_drives_daytime_life(self):
+        b = PetBrain(rng=random.Random(42), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        if len(b.repertoire.actions) < 30:
+            self.skipTest("full adopted catalog not present")
+        b.observe(0, ready(chatter=2))
+        counts = Counter()
+        for i in range(36000):
+            b.tick((i + 1) * 0.1)
+            counts[b.clip] += 1
+        self.assertGreater(sum(n for clip, n in counts.items() if clip in b.repertoire.actions), 18000)
+        self.assertGreaterEqual(sum(clip in b.repertoire.actions for clip in counts), 30)
+        self.assertLess(sum(n for clip, n in counts.items() if clip in ASLEEP), 1800)
+
+    def test_adopted_drawing_remains_semantically_busy(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860)
+        b.place(700)
+        if not any(spec["role"] == "drawing" for spec in b.repertoire.actions.values()):
+            self.skipTest("no adopted drawing assets")
+        b.observe(1, ready(events=[{"kind": "drawing", "ts": 10}]))
+        t, _ = run(b, 1, 4)
+        self.assertEqual(b._role(b.clip), "drawing")
+        self.assertEqual(b.media, "drawing")
+        t, _ = run(b, t, 25)
+        self.assertEqual(b._role(b.clip), "drawing")
+        b.observe(t, ready(events=[{"kind": "media_end", "ts": 11}]))
+        self.assertIsNone(b.media)
+
+    def test_controlled_flight_moves_and_lands_without_teleporting(self):
+        b = brain()
+        b._queue(Step("fall", target_y=600), Step("fall", target_x=850, target_y=600),
+                 Step("fall", target_y=b.floor), now=0, interrupt=True)
+        self.assertEqual(b.mode, "fly")
+        before = (b.x, b.y)
+        b.tick(0.1)
+        self.assertLess(b.y, before[1])
+        self.assertLessEqual(before[1] - b.y, 11)
+        run(b, 0.1, 9)
+        self.assertEqual(b.mode, "ground")
+        self.assertAlmostEqual(b.y, b.floor)
+
+    def test_prop_touch_is_local_and_bounded(self):
+        b = brain()
+        item = b.props.emit("coin", b.x, b.y - 20, 0)
+        self.assertEqual(b.touch_prop(item, 1), "coin")
+        self.assertFalse(any(prop.id == item for prop in b.props.items))
+        self.assertIsNone(b.touch_prop(item, 2))
+
+    def test_bottom_peek_survives_geometry_refresh_and_returns(self):
+        b = brain()
+        b.bottom_peek = True
+        b._queue(Step("dangle", target_y=b._bottom_target("dangle")), Step("dangle", 0.5),
+                 Step("dangle", target_y=b.floor), now=0, interrupt=True)
+        t, _ = run(b, 0, 1)
+        before = b.y
+        self.assertGreater(before, b.floor)
+        b.set_ground(0, 1440, 860, 0)
+        self.assertEqual(b.y, before)
+        run(b, t, 4)
+        self.assertFalse(b.bottom_peek)
+        self.assertEqual(b.mode, "ground")
+        self.assertEqual(b.y, b.floor)
+
+    def test_happy_reply_uses_real_flight_and_returns_after_state(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        b.observe(0, ready(mood=0.8))
+        with patch.object(b, "_weighted", return_value="idle"):
+            b.set_state("reply", 1, seconds=6)
+            self.assertEqual(b.mode, "ground")
+            self.assertEqual(b.repertoire.actions[b.clip]["family"], "takeoff")
+            self.assertEqual(b.y, b.floor)
+            now, clips = run(b, 1, 2)
+            self.assertEqual(b.mode, "fly")
+            self.assertLess(b.y, b.floor)
+            now, after = run(b, now, 10)
+            self.assertTrue(any(name.startswith("life_reply_air_") for name in clips + after))
+            self.assertTrue(any("flap" in name for name in clips + after))
+            self.assertEqual(b.mode, "ground")
+            self.assertEqual(b.y, b.floor)
+
+
 class ShippedSpritesTest(unittest.TestCase):
     def test_every_clip_uses_frames_that_ship_in_the_package(self):
         root = files("regular").joinpath("assets", "pet")
@@ -58,23 +393,94 @@ class ShippedSpritesTest(unittest.TestCase):
                 self.assertIn(posture, ("stand", "sit", "lie", "air"))
         self.assertTrue(set(CUE_ACTIONS) <= set(CLIPS))
         total = sum(len(root.joinpath(a["file"]).read_bytes()) for a in spec["actions"].values())
-        # 四个新增的小幅互动动作各占约 100 KB；预算随素材一起上调，仍卡住失控增长。
-        self.assertLess(total, 3_500_000)
+        # Bound the average packaged strip size as the catalog grows.
+        self.assertLess(total, 120_000 * len(spec["actions"]))
         self.assertEqual((width, height), tuple(spec["frame"]))
 
 
 class AmbientLifeTest(unittest.TestCase):
+    def test_stretching_unfolds_her_wings_then_settles_back_down(self):
+        b = brain()
+        with patch.object(b, "_weighted", return_value="stretch"):
+            steps = b._choose(0.0)
+        self.assertEqual([step.clip for step in steps], ["stretch", "wing_stretch", "sit_swing"])
+        self.assertIn("wing_stretch", CUE_ACTIONS)
+        self.assertFalse(CLIPS["wing_stretch"][3])
+
+    def test_routines_continue_past_one_gesture_without_an_idle_tail(self):
+        b = brain()
+        b.observe(0.0, ready())
+        for name in ("tea_time", "book", "sketch", "observe", "patrol"):
+            with self.subTest(routine=name), patch.object(b, "_weighted", return_value=name):
+                steps = b._choose(1.0)
+                self.assertGreater(len(steps), 1)
+                self.assertNotEqual(steps[-1].clip, "idle")
+                self.assertNotIn("pout", [step.clip for step in steps])
+                self.assertNotIn("point", [step.clip for step in steps])
+
+    def test_recent_routines_do_not_repeat_back_to_back(self):
+        b = brain(seed=12)
+        b.observe(0.0, ready(chatter=20))
+        recent = []
+        for _ in range(120):
+            b._choose(1.0)
+            choice = b._ambient_recent[-1]
+            self.assertNotIn(choice, recent[-3:])
+            recent.append(choice)
+
+    def test_self_served_snack_is_not_a_feed_or_care_action(self):
+        b = brain()
+        b.external_care = True
+        with patch.object(b, "_weighted", return_value="tea_time"):
+            b._queue(*b._choose(0.0), now=0.0, interrupt=True)
+        self.assertEqual(b.clip, "eat")
+        run(b, 0.0, 5)
+        self.assertEqual(b.warmth, 0.0)
+        self.assertEqual(list(b.feeds), [])
+        self.assertEqual(list(b.care_requests), [])
+
+    def test_quiet_activities_last_longer_than_a_quick_gesture(self):
+        b = brain()
+        b.observe(0.0, ready(chatter=20))
+        for name in ("popcorn", "headphones", "gamepad", "tail_care", "lie_chin"):
+            with self.subTest(activity=name), patch.object(b, "_weighted", return_value=name):
+                step = next(step for step in b._choose(0.0) if step.clip == name)
+                self.assertGreaterEqual(step.duration, 24.0)
+                self.assertLessEqual(CLIPS[name][2], 1.1)
+
+    def test_popcorn_follows_lively_group_chatter(self):
+        def count(chatter):
+            b = brain(seed=16)
+            b.observe(0.0, ready(chatter=chatter))
+            return sum(any(step.clip == "popcorn" for step in b._choose(1.0)) for _ in range(200))
+        self.assertEqual(count(0), 0)
+        self.assertGreater(count(30), 10)
+
+    def test_lying_awake_is_not_a_nap_and_uses_a_short_sit_up_transition(self):
+        b = brain()
+        b.energy = 0.5
+        b._queue(Step("lie_chin", 30), now=1.0, interrupt=True)
+        self.assertEqual([b.clip] + [s.clip for s in b.plan], ["sit_down", "lie_chin"])
+        t, clips = run(b, 1.0, 10)
+        self.assertEqual(b.clip, "lie_chin")
+        self.assertFalse(set(clips) & ASLEEP)
+        self.assertLess(b.energy, 0.5)
+        b.poke(t)
+        self.assertEqual(b.clip, "lie_chin")
+        b.chat_sent(t + 1)
+        self.assertEqual([b.clip] + [s.clip for s in b.plan], ["sit_up", "stand_up", "think"])
+
     def test_she_keeps_doing_varied_things_and_never_jumps_between_postures(self):
         b = brain(seed=3)
         b.observe(0.0, ready(mood=0.3))
         xs = []
-        _, clips = run(b, 0.0, 30 * 60, each=lambda t: xs.append(b.x))
+        _, clips = run(b, 0.0, 30 * 60, each=lambda t: xs.append((b.x, b.edge_side)))
         kinds = Counter(clips)
         self.assertGreaterEqual(len(kinds), 10, kinds)
         self.assertIn("walk", kinds)
         self.assertGreater(len(clips), 60)        # ~2 changes a minute or more
-        margin = FIGURE * 0.35
-        self.assertTrue(all(margin <= x <= 1440 - margin for x in xs))
+        self.assertTrue(all(FIGURE * (EDGE_PEEK if side == -1 else EDGE) <= x
+                            <= 1440 - FIGURE * (EDGE_PEEK if side == 1 else EDGE) for x, side in xs))
         for before, after in zip(clips, clips[1:]):
             self.assertIn((CLIPS[before][4], CLIPS[after][4]), LEGAL, (before, after))
 
@@ -99,7 +505,7 @@ class AmbientLifeTest(unittest.TestCase):
         self.assertEqual(still.particles, [])
         self.assertEqual(still.transform(1.0)["sy"], 1.0)
 
-    def test_idle_breathes_and_blinks_with_the_composited_eye_frames(self):
+    def test_idle_blinks_without_scaling_the_character(self):
         b = brain()
         b._queue(Step("idle", 30), now=0.0, interrupt=True)
         frames, heights = set(), set()
@@ -112,10 +518,304 @@ class AmbientLifeTest(unittest.TestCase):
             frames.add(frame)
             heights.add(round(transform["sy"], 3))
         self.assertEqual(frames, {0, 1, 2})
-        self.assertGreater(len(heights), 5)
+        self.assertEqual(heights, {1.0})
+
+
+class ScreenEdgeTest(unittest.TestCase):
+    @staticmethod
+    def edge(side, *, left=0, right=1440, scale=1):
+        b = brain(scale=scale)
+        b.set_ground(left, right, 860, 20)
+        b.place(left + b.figure if side == -1 else right - b.figure)
+        with patch.object(b, "_weighted", return_value="edge"):
+            b._queue(*b._choose(0.0), now=0.0, interrupt=True)
+        return b
+
+    def test_both_edges_approach_peek_and_return_without_position_jumps(self):
+        for left, right, scale in ((0, 1440, 1), (-1440, 0, 0.6), (320, 1280, 1.5)):
+            for side in (-1, 1):
+                with self.subTest(left=left, side=side, scale=scale):
+                    b = self.edge(side, left=left, right=right, scale=scale)
+                    positions, peeks = [b.x], []
+                    for index in range(30 * 60):
+                        now = (index + 1) / 60
+                        b.set_ground(left, right, 860, 20)    # native shell refreshes bounds every frame
+                        b.tick(now)
+                        positions.append(b.x)
+                        if b.clip == "edge_peek":
+                            peeks.append(b.x)
+                            self.assertEqual(b.facing, -side)
+                            visible_left, _, visible_right, _ = b.body_rect()
+                            self.assertGreater(visible_right - visible_left, b.figure * 0.25)
+                    self.assertTrue(peeks)
+                    expected = left + b.figure * EDGE_PEEK if side == -1 else right - b.figure * EDGE_PEEK
+                    self.assertTrue(all(abs(x - expected) < 0.001 for x in peeks))
+                    self.assertLessEqual(max(abs(x2 - x1) for x1, x2 in zip(positions, positions[1:])),
+                                         WALK_SPEED * scale / 60 + 0.001)
+                    self.assertEqual(b.edge_side, 0)
+                    self.assertGreaterEqual(b.x, left + b.figure * EDGE)
+                    self.assertLessEqual(b.x, right - b.figure * EDGE)
+
+    def test_a_chat_retreats_first_and_hover_cannot_cancel_the_return(self):
+        for side in (-1, 1):
+            with self.subTest(side=side):
+                b = self.edge(side)
+                t, _ = run(b, 0.0, 3.2, fps=60)
+                self.assertEqual(b.clip, "edge_peek")
+                x = b.x
+                b.chat_sent(t)
+                self.assertEqual(b.x, x)
+                self.assertEqual((b.clip, b.edge_side), ("walk", side))
+                b.pointer.near = True
+                b.set_attention(True, t)
+                _, clips = run(b, t, 1.2, fps=60)
+                self.assertEqual(b.clip, "think")
+                self.assertNotIn("idle", clips)
+                self.assertEqual(b.edge_side, 0)
+                self.assertTrue(b.chat_pending)
+
+    def test_clicks_and_dragging_interrupt_a_peek(self):
+        b = self.edge(-1)
+        t, _ = run(b, 0.0, 3.2, fps=60)
+        x = b.x
+        b.poke(t)
+        self.assertEqual(b.x, x)
+        self.assertEqual((b.clip, b.edge_side), ("walk", -1))
+        self.assertTrue(any(step.clip in TAP_POOL for step in b.plan))
+        b.press(t + 0.1, b.x, b.y - b.figure * 0.5)
+        b.drag(t + 0.2, b.x + 30, b.y - 100)
+        self.assertEqual((b.mode, b.clip, b.edge_side), ("drag", "dangle", 0))
+        b.release(t + 0.3, b.x + 30, b.y - 100)
+        t, _ = run(b, t + 0.3, 3)
+        self.assertEqual(b.mode, "hidden")
+        b.poke(t)
+        run(b, t, 3)
+        self.assertEqual(b.mode, "ground")
+        self.assertGreaterEqual(b.x, b.left + b.figure * EDGE)
+
+    def test_arriving_at_an_edge_is_a_direct_environment_reaction(self):
+        for side in (-1, 1):
+            b = brain()
+            b.place(b.left + b.figure * EDGE if side == -1 else b.right - b.figure * EDGE)
+            steps = b._choose(0.0)
+            self.assertIn("edge_peek", [step.clip for step in steps])
+            self.assertEqual(steps[0].edge_side, side)
+            self.assertNotIn("edge_peek", CUE_ACTIONS)
+
+    def test_staying_put_or_a_nearby_user_does_not_start_an_edge_trip(self):
+        for quiet, near, motion in ((True, False, True), (False, True, True), (False, False, False)):
+            b = brain(quiet=quiet, motion=motion)
+            b.place(b.left + b.figure * EDGE)
+            b.pointer.near = near
+            for _ in range(15):
+                self.assertNotIn("edge_peek", [step.clip for step in b._choose(0.0)])
+
+    def test_edge_visits_have_a_cooldown_even_after_other_routines(self):
+        b = brain()
+        b.place(b.left + b.figure * EDGE)
+        self.assertIn("edge_peek", [step.clip for step in b._choose(0.0)])
+        for name in ("book", "tea_time", "headphones"):
+            with patch.object(b, "_weighted", return_value=name):
+                b._choose(10.0)
+        self.assertNotIn("edge_peek", [step.clip for step in b._choose(120.0)])
+        self.assertIn("edge_peek", [step.clip for step in b._choose(241.0)])
 
 
 class InteractionTest(unittest.TestCase):
+    def test_body_poke_can_show_magic_but_head_keeps_pat(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        with patch.object(b.rng, "random", return_value=0), patch.object(b, "_pick", return_value="dragon_magic_star"):
+            b.poke(1)
+        self.assertEqual(b.clip, "dragon_magic_star")
+        left, top, right, bottom = b.body_rect()
+        b.poke(2, (left + right) / 2, top + (bottom - top) * 0.2)
+        self.assertEqual(b.clip, "pat")
+
+    def test_head_clearance_uses_optional_normalized_geometry(self):
+        b = brain(scale=1.2)
+        b._set_clip("fall", 0)
+        b.repertoire.actions["fall"] = {"geometry": None}
+        self.assertAlmostEqual(b._head_clearance(), b.figure * 1.05)
+        b.repertoire.actions["fall"]["geometry"] = {"bounds": [-100, -400, 100, 0]}
+        self.assertAlmostEqual(b._head_clearance(), 240)
+
+    def test_ambient_prop_chase_rechecks_and_kicks_once(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        prop_id = b.props.emit("ball", 800, 848, 0)
+        prop = b.props.items[0]
+        prop.grounded, prop.vx, prop.vy = True, 0, 0
+        with patch.object(b.rng, "random", return_value=0):
+            steps = b._prop_routine(1)
+        self.assertIsNotNone(steps)
+        b._queue(*steps, now=1)
+        b._advance(1)
+        with patch.object(b.props, "kick", wraps=b.props.kick) as kick:
+            run(b, 1, 4)
+        self.assertEqual(kick.call_count, 1)
+        self.assertEqual(b._prop_chase_at, 1)
+        self.assertIsNone(b._chasing_prop)
+        self.assertEqual(prop.id, prop_id)
+        self.assertIsNone(b._prop_routine(10))
+
+    def test_ambient_prop_chase_ignores_stale_or_ineligible_items(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        prop_id = b.props.emit("coin", 800, 848, 0)
+        prop = b.props.items[0]
+        prop.grounded, prop.vx, prop.vy = True, 0, 0
+        b.pointer.near = True
+        self.assertIsNone(b._prop_routine(1))
+        b.pointer.near = False
+        with patch.object(b.rng, "random", return_value=0):
+            steps = b._prop_routine(1)
+        b._queue(*steps, now=1)
+        b._advance(1)
+        b.props.drag(prop_id, 900, 500, 1.1)
+        b.tick(1.1)
+        self.assertIsNone(b._chasing_prop)
+        self.assertIn(prop, b.props.items)
+
+    def test_explicit_sleep_cue_rotates_and_wakes_on_poke(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        b.observe(1, ready(events=[{"kind": "cue", "action": "sleep", "ts": 1}]))
+        seen = set()
+        t, _ = run(b, 1, 90, fps=10, each=lambda _: seen.add(b.clip) if b._role(b.clip) == "sleep" else None)
+        self.assertGreaterEqual(len(seen), 2)
+        self.assertGreater(b._sleep_cue_until, t)
+        b.poke(t)
+        self.assertEqual(b._sleep_cue_until, 0)
+
+    def test_feed_and_confirmed_care_keep_cookie_semantics(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        picked = set()
+        for _ in range(30):
+            picked.add(b._feed_clip())
+        self.assertEqual(picked, {"eat", "dragon_snack_cookie"})
+        with patch.object(b.rng, "random", return_value=0):
+            b.receive_care(1, {"kind": "care", "action": "feed", "result": "gain", "id": "x"})
+        self.assertEqual(b.clip, "dragon_snack_cookie")
+
+    def test_released_at_edge_hides_until_click_or_drag(self):
+        for edge, cursor in (("left", (-50, 400)), ("right", (1500, 400)),
+                             ("bottom", (700, 1000)), ("top", (700, -300))):
+            with self.subTest(edge=edge):
+                b = PetBrain(rng=random.Random(7), now=0)
+                b.set_ground(0, 1440, 860, 38)
+                b.place(700)
+                b.press(1, 700, 760)
+                b.drag(1.1, 700, 500)
+                b.tick(1.1)
+                b.drag(1.2, *cursor)
+                b.tick(1.2)
+                b.release(1.3, *cursor)
+                if edge in ("left", "right"):
+                    self.assertEqual((b.mode, b.clip), ("hiding", "walk"))
+                observed = []
+                t, _ = run(b, 1.3, 5, each=lambda _: observed.append((b.mode, b.clip)))
+                self.assertEqual((b.mode, b.hidden_edge), ("hidden", edge))
+                if edge in ("left", "right"):
+                    self.assertTrue(all(clip == "walk" for mode, clip in observed if mode == "hiding"))
+                    self.assertEqual(b.clip, b._hidden_clip)
+                    self.assertEqual(b._role(b.clip), "edge")
+                self.assertEqual(b.top_peek, edge == "top")
+                if edge == "top" and "boundary_top_peek" in CLIPS:
+                    self.assertEqual(b.clip, "boundary_top_peek")
+                b.hover(t, b.x, b.y, near=True)
+                b.set_attention(True, t)
+                b.observe(t, ready(events=[{"kind": "mention", "ts": 12}]))
+                t, _ = run(b, t, 3)
+                self.assertEqual((b.mode, b.hidden_edge), ("hidden", edge))
+                b.press(t, b.x, b.y - 20)
+                self.assertEqual(b.release(t + 0.1, b.x, b.y - 20), "click")
+                b.poke(t + 0.1)
+                self.assertIsNone(b.hidden_edge)
+                if edge == "top" and "boundary_top_return" in CLIPS:
+                    self.assertEqual(b.clip, "boundary_top_return")
+                t, clips = run(b, t + 0.1, 5)
+                if "boundary_popout" in CLIPS:
+                    self.assertIn("boundary_popout", clips)
+                self.assertEqual(b.mode, "ground")
+                self.assertEqual(b.y, b.floor)
+                self.assertFalse(b.top_peek)
+
+    def test_hidden_reanchors_after_scale_and_screen_changes(self):
+        for edge in ("left", "right", "bottom", "top"):
+            with self.subTest(edge=edge):
+                b = PetBrain(rng=random.Random(7), now=0)
+                b.set_ground(0, 1440, 860, 38)
+                b.place(700)
+                b.hidden_edge, b.mode = edge, "hidden"
+                b.bottom_peek, b.top_peek = edge == "bottom", edge == "top"
+                b._hidden_clip = "motion_bottom_peek" if edge == "bottom" else "edge_peek"
+                old_clip = b.clip
+                for scale, bounds in ((0.6, (100, 1200, 800, 30)), (1.5, (-200, 1800, 1000, 50))):
+                    b.scale = scale
+                    b.set_ground(*bounds)
+                    self.assertEqual((b.x, b.y), b._hidden_target())
+                    self.assertEqual((b.mode, b.hidden_edge, b.clip), ("hidden", edge, old_clip))
+
+    def test_hidden_can_be_dragged_away(self):
+        b = brain()
+        b.hidden_edge, b.mode, b.x = "left", "hidden", b.left + b.figure * EDGE_PEEK
+        b.press(1, b.x, b.y - 50)
+        b.drag(1.1, b.x + 100, b.y - 80)
+        self.assertEqual((b.mode, b.hidden_edge), ("drag", None))
+
+    def test_ceiling_impact_does_not_suspend_gravity(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 38)
+        b.place(700)
+        b.mode, b.y, b.vy = "air", b.ceiling + b.figure + 5, -1000
+        b._set_clip("fall", 0)
+        b.tick(0.1)
+        self.assertEqual(b._role(b.clip), "ceiling")
+        y = b.y
+        b.tick(0.2)
+        self.assertGreater(b.y, y)
+
+    def test_drag_reacts_once_to_top_and_bottom_and_recovers_between(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 38)
+        b.place(700)
+        if not {"drag", "ceiling", "floor"} <= {s["role"] for s in b.repertoire.actions.values()}:
+            self.skipTest("no adopted boundary assets")
+        b.press(1, 700, 760)
+        b.drag(1.1, 700, 500)
+        b.tick(1.1)
+        b.drag(1.2, -100, -300)
+        b.tick(1.2)
+        self.assertEqual(b._role(b.clip), "ceiling")
+        self.assertGreaterEqual(b.y - b._head_clearance(), b.ceiling - 0.01)
+        self.assertGreaterEqual(b.x, b.left + b.figure * EDGE)
+        clip, started = b.clip, b.clip_started
+        for n in range(1, 6):
+            b.tick(1.2 + n * 0.1)
+        self.assertEqual((b.clip, b.clip_started), (clip, started))
+        b.drag(1.8, 700, 400)
+        b.tick(1.8)
+        self.assertEqual(b._role(b.clip), "drag")
+        b.drag(1.9, 700, 1000)
+        b.tick(1.9)
+        self.assertEqual(b._role(b.clip), "floor")
+        self.assertEqual(b.y, b.floor)
+        clip, started = b.clip, b.clip_started
+        b.tick(2.0)
+        self.assertEqual((b.clip, b.clip_started), (clip, started))
+        b.drag(2.1, 700, 400)
+        b.tick(2.1)
+        self.assertEqual(b._role(b.clip), "drag")
+        self.assertEqual(b.release(2.2, 700, 400), "drop")
+        self.assertEqual(b.mode, "air")
+        run(b, 2.2, 3)
+        self.assertEqual((b.mode, b.y), ("ground", b.floor))
+
     def test_dragging_hangs_her_by_the_hands_swings_and_she_falls_and_lands(self):
         b = brain()
         b.press(1.0, 700, 760)
@@ -362,6 +1062,45 @@ class InteractionTest(unittest.TestCase):
 
 
 class AgentPresenceTest(unittest.TestCase):
+    def test_perception_heartbeat_ends_without_clearing_other_busy_work(self):
+        b = brain()
+        b.observe(1.0, {**ready(), "state": "inspect"})
+        self.assertEqual(b.clip, "inspect")
+        b.observe(2.0, {**ready(), "state": None})
+        self.assertIsNone(b.state_clip)
+        self.assertEqual(b.clip, "idle")
+        b.chat_sent(3.0)
+        b.observe(4.0, {**ready(), "state": None,
+                        "events": [{"kind": "listening", "ts": 10.0}]})
+        self.assertEqual(b.state_source, "local")
+        self.assertTrue(b.chat_pending)
+        self.assertEqual(b.clip, "think")
+
+    def test_short_perception_events_play_once_without_stealing_a_drawing(self):
+        b = brain()
+        b.observe(1.0, {**ready(), "state": None,
+                        "events": [{"kind": "inspecting", "ts": 10.0}]})
+        self.assertEqual(b.clip, "inspect")
+        b.observe(2.0, {**ready(), "state": None})
+        self.assertEqual(b.clip, "inspect")             # 一次性事件不被空心跳立即擦掉
+        b.observe(3.0, ready(events=[{"kind": "drawing", "ts": 11.0}]))
+        self.assertEqual(b.media, "drawing")
+        b.clear_state(4.0)
+        run(b, 4.0, 2)
+        self.assertEqual(b.clip, "drawing")
+        b.observe(6.1, {**ready(), "state": None,
+                        "events": [{"kind": "listening", "ts": 12.0}]})
+        self.assertEqual(b.media, "drawing")
+        self.assertEqual(b.clip, "drawing")
+
+    def test_one_shot_panel_actions_survive_the_next_empty_heartbeat(self):
+        b = brain()
+        b.observe(1.0, {**ready(), "state": None,
+                        "events": [{"kind": "state", "state": "handoff", "ts": 10.0}]})
+        self.assertEqual(b.clip, "handoff")
+        b.observe(2.0, {**ready(), "state": None})
+        self.assertEqual(b.clip, "handoff")
+
     def test_group_events_become_visible_behaviour_once(self):
         b = brain()
         b.observe(1.0, ready(events=[{"kind": "mention", "ts": 10.0}]))
@@ -514,20 +1253,20 @@ class AgentPresenceTest(unittest.TestCase):
         self.assertEqual(b.clip, "think")
         self.assertEqual((b.bubble.kind, b.bubble.text), ("think", "…"))
         b.chat_reply(5.0, "回来啦，刚在想你说的事。")
-        self.assertEqual(b.clip, "talk")
+        self.assertEqual(b.state_name, "reply")
+        self.assertTrue(any(s.clip == "reply" for s in b.plan))
         self.assertEqual((b.bubble.kind, b.bubble.text), ("say", "回来啦，刚在想你说的事。"))
         b.chat_failed(9.0, "本机对话暂时不可用")
         self.assertEqual(b.bubble.kind, "status")
 
-    def test_bot_offline_puts_her_to_sleep_and_online_wakes_her(self):
+    def test_bot_offline_keeps_her_awake_and_online_reports_status(self):
         b = brain()
         b.observe(1.0, ready())
         b.observe(2.0, ready(bot="offline"))
         self.assertIn(b.bubble.text, LINES["offline"])
         t, clips = run(b, 2.0, 20)
-        self.assertEqual(b.clip, "sleep")
+        self.assertNotIn("sleep", clips)
         b.observe(t, ready())
-        self.assertEqual(b.clip, "wake")
         self.assertIn(b.bubble.text, LINES["online"])
 
     def test_qq_offline_does_not_interrupt_a_local_chat_or_its_reply(self):
@@ -541,21 +1280,22 @@ class AgentPresenceTest(unittest.TestCase):
         b.chat_reply(3.0, "我在这里和你聊。")
         b.observe(3.1, ready())
         b.observe(3.2, ready(bot="offline"))
-        self.assertEqual(b.clip, "talk")
+        self.assertEqual(b.state_name, "reply")
+        self.assertTrue(any(s.clip == "reply" for s in b.plan))
         self.assertNotIn("sleep", [s.clip for s in b.plan])
         b.chat_failed(4.0, "这次没接上。")
         self.assertIsNone(b.state_source)
 
     def test_mood_and_night_shift_what_she_chooses(self):
-        def tally(**presence):
+        def weights(**presence):
             b = brain(seed=11)
             b.observe(0.0, ready(**presence))
-            _, clips = run(b, 0.0, 40 * 60)
-            return Counter(clips)
-        happy = tally(mood=0.9)
-        grumpy_night = tally(mood=-0.9, circadian="熬到半夜")
-        self.assertGreater(grumpy_night["lookaround"] + grumpy_night["sleep"],
-                           happy["lookaround"] + happy["sleep"])
+            with patch.object(b, "_weighted", return_value="idle") as choose:
+                b._choose(1)
+            return choose.call_args.args[0]
+        happy = weights(mood=0.9)
+        grumpy_night = weights(mood=-0.9, circadian="熬到半夜")
+        self.assertGreater(grumpy_night["nap"], happy["nap"])
         self.assertGreater(happy["hop"] + happy["sing"] + happy["cheer"],
                            grumpy_night["hop"] + grumpy_night["sing"] + grumpy_night["cheer"])
 

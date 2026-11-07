@@ -642,10 +642,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 /* Animated chibi (regular/assets/pet): the same strips and clip table as the desktop pet. */
 .pet-sprite { position: relative; display: block; flex: none; cursor: pointer; }
 .pet-sprite .pet-frame { position: absolute; inset: 0; background-repeat: no-repeat; transform-origin: 50% 96.7%; }
-.pet-sprite.ready:not(.still) .pet-frame { animation: pet-breathe 3.1s ease-in-out infinite; }
 .pet-sprite::after { content: ""; position: absolute; left: 32%; right: 32%; bottom: 2.4%; height: 3.2%; border-radius: 50%; background: rgb(23 59 50 / 13%); z-index: -1; }
 .pet-sprite[data-posture=low]::after { left: 22%; right: 22%; }
-@keyframes pet-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.004, 1.012); } }
 .companion-dock .pet-sprite-dock { width: 50px; height: 54px; margin: -14px 0 -2px; overflow: hidden; border-radius: 0 0 14px 14px; }
 .companion-dock .pet-sprite-dock .pet-frame { inset: -4px auto auto -35px; width: 120px; height: 120px; }
 .companion-dock .pet-sprite-dock::after { display: none; }

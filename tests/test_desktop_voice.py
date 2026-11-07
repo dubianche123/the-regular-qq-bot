@@ -388,12 +388,20 @@ class NativeVoiceCardTest(unittest.TestCase):
         generation = pet._voice_generation
         self.assertEqual(pet.brain.state_name, "think")  # connecting, not listening yet
         pet._voice_event(generation, {"type": "ready"})
-        self.assertEqual(pet.brain.clip, "listen")
+        self.assertEqual(pet.voice_state, "listening")
+        self.assertEqual(pet.brain.state_name, "listen")
+        self.assertEqual(pet.brain.state_source, "local")
+        self.assertTrue(pet.brain.clip == "listen" or pet.brain._role(pet.brain.clip) == "listen")
         for stage, clip in (("thinking", "think"), ("speaking", "talk"),
                             ("muted", "idle"), ("listening", "listen")):
             with self.subTest(stage=stage):
                 pet._voice_event(generation, {"type": "state", "state": stage})
-                self.assertEqual(pet.brain.clip, clip)
+                self.assertEqual(pet.voice_state, stage)
+                if stage == "listening":
+                    self.assertTrue(pet.brain.clip == "listen" or pet.brain._role(pet.brain.clip) == "listen")
+                else:
+                    self.assertEqual(pet.brain.clip, clip)
+                self.assertEqual(pet.brain.state_name, clip)
                 self.assertEqual(pet.brain.state_source, "local")
                 self.assertEqual(pet.brain.chat_pending, stage == "thinking")
                 pet._finished("presence", {"ok": True, "value": {
@@ -419,7 +427,10 @@ class NativeVoiceCardTest(unittest.TestCase):
         self.assertEqual(pet.voice_state, "muted")
         self.assertEqual(pet.brain.clip, "idle")
         pet.toggle_voice_mute()
-        self.assertEqual(pet.brain.clip, "listen")
+        self.assertEqual(pet.voice_state, "listening")
+        self.assertEqual(pet.brain.state_name, "listen")
+        self.assertEqual(pet.brain.state_source, "local")
+        self.assertTrue(pet.brain.clip == "listen" or pet.brain._role(pet.brain.clip) == "listen")
         pet._voice_event(generation, {"type": "closed"})
         self.assertIsNone(pet.brain.state_name)
 

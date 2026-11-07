@@ -5,7 +5,8 @@
 """
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
+from collections.abc import Mapping
 from importlib.resources import files
 import json
 import math
@@ -19,7 +20,7 @@ import webbrowser
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetricsF, QIcon, QImageReader, QPainter,
-                           QPainterPath, QPen, QPixmap, QRegion, QTransform)
+                           QPainterPath, QPen, QPixmap, QPolygonF, QRegion, QTransform)
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from regular.desktop import CompanionError, PanelClient
@@ -93,6 +94,35 @@ class _Request(QRunnable):
 
 
 # ── sprites ──
+class _LazyFrames(Mapping):
+    """Decode only the strips in use, keeping a bounded least-recently-used cache."""
+    def __init__(self, root, strips, width, height, limit=8):
+        self.root, self.strips = root, strips
+        self.width, self.height, self.limit = width, height, limit
+        self.cache = OrderedDict()
+
+    def __iter__(self):
+        return iter(self.strips)
+
+    def __len__(self):
+        return len(self.strips)
+
+    def __getitem__(self, name):
+        filename, count = self.strips[name]
+        if name in self.cache:
+            self.cache.move_to_end(name)
+            return self.cache[name]
+        strip = QPixmap()
+        if (not strip.loadFromData(self.root.joinpath(filename).read_bytes())
+                or strip.size() != QSize(self.width * count, self.height)):
+            raise ValueError(f"unreadable strip {name}")
+        frames = [strip.copy(i * self.width, 0, self.width, self.height) for i in range(count)]
+        self.cache[name] = frames
+        if len(self.cache) > self.limit:
+            self.cache.popitem(last=False)
+        return frames
+
+
 class SpriteBank:
     """WebP strips from tools/pet_sprites.py, cut once and cached per size and direction."""
     def __init__(self, root=None):
@@ -107,19 +137,26 @@ class SpriteBank:
         self.width, self.height = (int(v) for v in frame)
         self.anchor = (float(anchor[0]), float(anchor[1]))
         self.figure = float(spec.get("figure_height") or 320)
-        self.frames = {}
+        strips = {}
         for name, action in spec.get("actions", {}).items():
             count, filename = action.get("frames"), action.get("file")
             if not isinstance(filename, str) or "/" in filename or type(count) is not int or not 1 <= count <= 32:
                 raise ValueError(f"invalid strip {name}")
-            strip = QPixmap()
-            if not strip.loadFromData(root.joinpath(filename).read_bytes()) or strip.size() != QSize(self.width * count, self.height):
-                raise ValueError(f"unreadable strip {name}")
-            self.frames[name] = [strip.copy(i * self.width, 0, self.width, self.height) for i in range(count)]
+            strips[name] = (filename, count)
         for clip, (strip, sequence, *_rest) in CLIPS.items():
-            if strip not in self.frames or max(sequence) >= len(self.frames[strip]):
+            if strip not in strips or max(sequence) >= strips[strip][1]:
                 raise ValueError(f"clip {clip} needs missing frames")
-        self._cache, self._regions = {}, {}
+        self.frames = _LazyFrames(root, strips, self.width, self.height)
+        self._cache, self._regions = OrderedDict(), OrderedDict()
+        self._cache_bytes = 0
+
+    def cache_stats(self):
+        """Return cache sizes and estimated pixel bytes for runtime diagnostics."""
+        originals = sum(frame.width() * frame.height() * 4
+                        for frames in self.frames.cache.values() for frame in frames)
+        return {"original_strips": len(self.frames.cache), "original_bytes": originals,
+                "scaled_pixmaps": len(self._cache), "scaled_bytes": self._cache_bytes,
+                "regions": len(self._regions)}
 
     def points(self, scale):
         """Source pixels are 2x of the on-screen size at 100%."""
@@ -136,9 +173,13 @@ class SpriteBank:
             cached = source.scaled(max(1, round(self.width * factor)), max(1, round(self.height * factor)),
                                    Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
             cached.setDevicePixelRatio(dpr)
-            if len(self._cache) > 400:
-                self._cache.clear()
             self._cache[key] = cached
+            self._cache_bytes += cached.width() * cached.height() * 4
+            while len(self._cache) > 96 or (self._cache_bytes > 48 * 1024 * 1024 and len(self._cache) > 1):
+                _, evicted = self._cache.popitem(last=False)
+                self._cache_bytes -= evicted.width() * evicted.height() * 4
+        else:
+            self._cache.move_to_end(key)
         return cached
 
     def region(self, strip, index, mirrored, scale):
@@ -152,7 +193,155 @@ class SpriteBank:
             for dx, dy in ((3, 0), (-3, 0), (0, 3), (0, -3)):
                 region = region.united(base.translated(dx, dy))
             self._regions[key] = region
+            if len(self._regions) > 192:
+                self._regions.popitem(last=False)
+        else:
+            self._regions.move_to_end(key)
         return region
+
+
+class PropWindow(QWidget):
+    """One small shaped native window per toy, leaving the desktop around it clickable."""
+    COLORS = {"ball": "#b9a3e3", "coin": "#eecb72", "gem": "#92d7c4",
+              "star": "#f0d994", "orb": "#b9dcdb", "feather": "#e7dbf1"}
+    NAMES = {"ball": "玩具球", "coin": "金币", "gem": "宝石", "star": "星光", "orb": "光球", "feather": "羽毛"}
+
+    def __init__(self, layer, item):
+        super().__init__(None, FLOATING)
+        _floating(self)
+        self.layer, self.item_id = layer, item.id
+        self.pressed = None
+        self.dragged = False
+        self.samples = deque(maxlen=5)
+        self.setWindowTitle("老群友 · " + self.NAMES[item.kind])
+        self.setAccessibleName("老群友 · " + self.NAMES[item.kind])
+        if item.kind in ("star", "orb", "feather"):
+            self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.sync(item)
+
+    def sync(self, item):
+        self.item = item
+        diameter = max(4, round(item.radius * 2))
+        self.setGeometry(round(item.x - diameter / 2), round(item.y - diameter / 2), diameter, diameter)
+        if item.kind == "gem":
+            w, h = self.width(), self.height()
+            from PySide6.QtGui import QPolygon
+            self.setMask(QRegion(QPolygon([QPoint(w // 2, 1), QPoint(w - 2, h // 2),
+                                          QPoint(w // 2, h - 2), QPoint(1, h // 2)])))
+        else:
+            self.setMask(QRegion(self.rect(), QRegion.RegionType.Ellipse))
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        _clear(p, self.rect())
+        if self.item.kind in ("star", "orb", "feather"):
+            remaining = self.item.born + self.item.ttl - self.layer.pet.now()
+            p.setOpacity(max(0.0, min(1.0, remaining / 1.5)))
+        p.setPen(QPen(QColor("#71867e"), 1))
+        p.setBrush(QColor(self.COLORS[self.item.kind]))
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        cx, cy, radius = self.width() / 2, self.height() / 2, min(self.width(), self.height()) * .43
+        if self.item.kind in ("star", "gem"):
+            points = 10 if self.item.kind == "star" else 4
+            polygon = QPolygonF()
+            for i in range(points):
+                angle = -math.pi / 2 + i * 2 * math.pi / points
+                r = radius * (.44 if points == 10 and i % 2 else 1)
+                polygon.append(QPointF(cx + r * math.cos(angle), cy + r * math.sin(angle)))
+            p.drawPolygon(polygon)
+        elif self.item.kind == "feather":
+            p.save()
+            p.translate(cx, cy)
+            p.rotate(35)
+            p.drawEllipse(QRectF(-radius * .42, -radius, radius * .84, radius * 2))
+            p.drawLine(QPointF(0, -radius * .75), QPointF(0, radius * .75))
+            p.restore()
+        else:
+            p.drawEllipse(rect)
+            if self.item.kind == "coin":
+                p.drawEllipse(rect.adjusted(4, 4, -4, -4))
+            elif self.item.kind == "ball":
+                p.setPen(QPen(QColor("#7159a8"), 2))
+                p.drawArc(rect.adjusted(3, 1, -3, -1), 70 * 16, 180 * 16)
+                p.drawArc(rect.adjusted(1, 5, -1, -5), 0, 180 * 16)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            self.layer.pet.brain.return_prop(self.item_id, self.layer.pet.now())
+            self.layer.sync()
+            event.accept()
+        elif event.button() == Qt.MouseButton.LeftButton:
+            now = self.layer.pet.now()
+            if not self.layer.play.drag(self.item_id, self.item.x, self.item.y, now):
+                return
+            self.pressed = event.globalPosition()
+            self.offset = QPointF(self.item.x, self.item.y) - self.pressed
+            self.dragged = False
+            self.samples.clear()
+            self.samples.append((now, self.pressed.x(), self.pressed.y()))
+            self.grabMouse()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.pressed is None:
+            return
+        pos, now = event.globalPosition(), self.layer.pet.now()
+        if not self.dragged and (pos - self.pressed).manhattanLength() > 3:
+            self.dragged = True
+            self.layer.pet.brain.prop_dragged(self.item_id, now)
+        if self.dragged and self.layer.play.drag(self.item_id, pos.x() + self.offset.x(), pos.y() + self.offset.y(), now):
+            self.samples.append((now, pos.x(), pos.y()))
+            self.sync(self.item)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self.pressed is None or event.button() != Qt.MouseButton.LeftButton:
+            return
+        now = self.layer.pet.now()
+        self.releaseMouse()
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        vx = vy = 0.0
+        if self.dragged and len(self.samples) > 1:
+            first, last = self.samples[0], self.samples[-1]
+            dt = last[0] - first[0]
+            if dt > 0 and now - last[0] < 0.15:
+                vx, vy = (last[1] - first[1]) / dt, (last[2] - first[2]) / dt
+        self.layer.play.release(self.item_id, now, vx, vy)
+        if not self.dragged:
+            self.layer.pet.brain.touch_prop(self.item_id, now)
+        self.pressed = None
+        self.layer.sync()
+        event.accept()
+
+
+class PropLayer:
+    def __init__(self, pet):
+        self.pet, self.windows = pet, {}
+
+    @property
+    def play(self):
+        return self.pet.brain.props
+
+    def sync(self):
+        items = {item.id: item for item in self.play.items} if self.pet.brain.motion else {}
+        for item_id in set(self.windows) - items.keys():
+            self.windows.pop(item_id).close()
+        for item_id, item in items.items():
+            if item_id not in self.windows:
+                self.windows[item_id] = PropWindow(self, item)
+            self.windows[item_id].sync(item)
+            if self.pet.isVisible():
+                self.windows[item_id].show()
+
+    def close(self):
+        for window in self.windows.values():
+            window.close()
+        self.windows.clear()
 
 
 # ── painting helpers ──
@@ -160,6 +349,21 @@ def _clear(painter, rect):
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
     painter.fillRect(rect, Qt.GlobalColor.transparent)
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+
+
+def _edge_peeking(brain):
+    """Only the peeking pose hides its shadow; approach and retreat keep theirs."""
+    return brain.clip == "edge_peek" or brain._role(brain.clip) == "edge"
+
+
+def _screen_clipped(brain):
+    return bool(brain.edge_side or brain.bottom_peek or brain.top_peek)
+
+
+def _screen_clip(window, brain):
+    """The current screen's available rectangle, in this top-level window's coordinates."""
+    return QRect(round(brain.left) - window.x(), round(brain.ceiling) - window.y(),
+                 round(brain.right - brain.left), round(brain.floor - brain.ceiling))
 
 
 def _soft_card(painter, rect, radius, fill=PAPER, border=QColor(23, 59, 50, 30)):
@@ -195,6 +399,8 @@ class FxLayer(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         _clear(painter, self.rect())
         brain, now = self.pet.brain, self.pet.now()
+        if _screen_clipped(brain):
+            painter.setClipRect(_screen_clip(self, brain))
         origin = self.mapFromGlobal(QPoint(round(brain.x), round(brain.y)))
         f = brain.figure
         for p in brain.particles:
@@ -398,12 +604,10 @@ class _RoundButton(QPushButton):
                 painter.drawEllipse(QPointF(-5, y), 1.6, 1.6)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawLine(QPointF(-1, y), QPointF(7 if y != 0 else 4, y))
-        elif kind == "play":
-            # a four-point sparkle: the "play with me" button
-            painter.drawLine(QPointF(0, -8), QPointF(0, 8))
-            painter.drawLine(QPointF(-8, 0), QPointF(8, 0))
-            painter.drawLine(QPointF(-5, -5), QPointF(5, 5))
-            painter.drawLine(QPointF(-5, 5), QPointF(5, -5))
+        elif kind == "next":
+            painter.drawArc(QRectF(-8, -8, 16, 16), 35 * 16, 260 * 16)
+            painter.drawLine(QPointF(7, -7), QPointF(8, -2))
+            painter.drawLine(QPointF(8, -2), QPointF(3, -3))
         else:
             for x, y in ((-5, -3), (0, 3), (5, -1)):
                 painter.drawLine(QPointF(x, -7), QPointF(x, 7))
@@ -432,9 +636,8 @@ class _OutsideClick(QObject):
 class PetToolbar(QWidget):
     """五个按钮真的绕成一圈贴在她旁边；不再是一条竖着的长方形。
 
-    玩 / 聊 / 听 / 她在忙啥 / 更多。投喂、大小、不乱跑这些设置收进「更多」，
-    右键原生菜单也不再存在。「玩一下」是一局击掌接龙：她反复抬手，你一直点，停手结算。
-    双击不再弹聊天——那会抢走连点；聊天走这个圆盘的「聊两句」按钮。
+    换个节目 / 聊 / 听 / 她在忙啥 / 更多。投喂、大小、不乱跑这些设置收进「更多」。
+    换节目由本机选下一段动作；聊天走圆盘的「聊两句」按钮。
     """
     SIZE = 140
 
@@ -442,16 +645,16 @@ class PetToolbar(QWidget):
         super().__init__(None, FLOATING)
         _floating(self)
         self.setWindowTitle("老群友 · 快捷操作")
-        self.setAccessibleName("老群友快捷操作：玩一下、聊天、语音、她在忙啥、更多")
+        self.setAccessibleName("老群友快捷操作：换个节目、聊天、语音、她在忙啥、更多")
         self.setFixedSize(self.SIZE, self.SIZE)
-        self.play = _RoundButton("play", "来玩击掌接龙：她反复抬手，一直点，停手就结算")
+        self.play = _RoundButton("next", "换个节目")
         self.chat = _RoundButton("chat", "和老群友聊两句")
         self.voice = _RoundButton("voice", "和老群友语音聊聊")
         self.activity = _RoundButton("activity", "她最近在忙什么")
         self.more = _RoundButton("settings", "更多设置")
         # 半径 42 的真环形：从正上方顺时针排开，五个按钮互不重叠。
         spots = ((51, 9), (91, 38), (76, 85), (26, 85), (11, 38))
-        callbacks = (lambda: pet.play(), pet.show_chat, pet.show_voice, pet.show_activity,
+        callbacks = (pet.next_activity, pet.show_chat, pet.show_voice, pet.show_activity,
                      lambda: pet.show_menu())
         for button, callback, (x, y) in zip((self.play, self.chat, self.voice, self.activity, self.more),
                                             callbacks, spots):
@@ -888,6 +1091,7 @@ class PetWidget(QWidget):
         self.voice_signals.permission.connect(self._voice_permission)
         self._pending_toggle = None
         self.fx = FxLayer(self)
+        self.props = PropLayer(self)
         self.bubble = SpeechBubble(self)
         self.toolbar = PetToolbar(self)
         self._apply_size()
@@ -971,16 +1175,17 @@ class PetWidget(QWidget):
         if brain.mode == "drag":
             self._ground_from(QCursor.pos().x(), QCursor.pos().y())
         else:
-            self._ground_from(brain.x, brain.y - 10)
+            self._ground_from(brain.x, brain.floor - 1 if getattr(brain, "bottom_peek", False) else brain.y - 10)
         cursor = QCursor.pos()
         brain.hover(now, cursor.x(), cursor.y(), near=self._near(cursor))
         brain.set_attention(self._attention(), now)
         brain.tick(now)
+        self.props.sync()
         if brain.care_requests:
             kind = brain.care_requests.pop()
             brain.care_requests.clear()
             self._request_care(kind)
-        # Smooth 60 fps only while she moves; idle poses and breathing are fine at 30 fps.
+        # Smooth 60 fps while moving; stationary animation frames use 30 fps.
         moving = brain.mode != "ground" or brain.clip in ("walk", "hop", "land") or brain.fading(now)
         self.animation.setInterval(16 if moving else 33)
         self._sync_windows()
@@ -999,6 +1204,10 @@ class PetWidget(QWidget):
         zone = QRect(round(left - 36), round(top - 30), round(right - left + 72), round(bottom - top + 50))
         if self.toolbar.isVisible():
             zone = zone.united(self.toolbar.geometry().adjusted(-14, -14, 14, 14))
+        if _screen_clipped(self.brain):
+            zone = zone.intersected(QRect(round(self.brain.left), round(self.brain.ceiling),
+                                         round(self.brain.right - self.brain.left),
+                                         round(self.brain.floor - self.brain.ceiling)))
         return zone.contains(cursor)
 
     def transient_surfaces(self):
@@ -1034,6 +1243,10 @@ class PetWidget(QWidget):
         self._dismiss_transients()
         self.brain.play(self.now(), kind)
 
+    def next_activity(self):
+        self._dismiss_transients()
+        self.brain.next_activity(self.now())
+
     def _attention(self):
         return bool(self.toolbar.isVisible()
                     or any(card is not None and card.isVisible()
@@ -1059,6 +1272,7 @@ class PetWidget(QWidget):
         fade = transform["fade"]
         key = (strip, frame, mirrored, round(transform["sx"], 3), round(transform["sy"], 3),
                round(transform["rot"], 1), round(transform["dy"], 1), brain.mode,
+               _screen_clip(self, brain).getRect() if _screen_clipped(brain) else None,
                fade and (fade[0], fade[1], fade[2], round(fade[3], 2)))
         if force or key != self._paint_key:
             self._paint_key = key
@@ -1072,6 +1286,25 @@ class PetWidget(QWidget):
 
     def _update_mask(self, strip, frame, mirrored, transform):
         brain = self.brain
+        if _screen_clipped(brain):
+            clip = _screen_clip(self, brain)
+            fade = transform["fade"]
+            key = ("edge", strip, frame, mirrored, brain.scale, clip.getRect(), fade and fade[:3])
+            if key != self._mask_key:
+                self._mask_key = key
+                anchor = self.window_anchor()
+                origin = QPoint(round(anchor.x() - self.anchor_pt[0]), round(anchor.y() - self.anchor_pt[1]))
+                region = self.sprites.region(strip, frame, mirrored, brain.scale).translated(origin)
+                if fade is not None:
+                    old_strip, old_frame, old_mirrored, _ = fade
+                    region = region.united(self.sprites.region(old_strip, old_frame, old_mirrored,
+                                                              brain.scale).translated(origin))
+                if not _edge_peeking(brain) and not (brain.bottom_peek or brain.top_peek):
+                    shadow = QRect(round(anchor.x() - brain.figure * 0.22), round(anchor.y() - 6),
+                                   round(brain.figure * 0.44), 12)
+                    region = region.united(QRegion(shadow, QRegion.RegionType.Ellipse))
+                self.setMask(region.intersected(QRegion(clip)))
+            return
         # While moving or dissolving between two frames the silhouette changes every paint.
         if brain.mode != "ground" or transform["rot"] or transform["dy"] or transform["fade"]:
             if self._mask_key is not None:
@@ -1094,10 +1327,12 @@ class PetWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         _clear(painter, self.rect())
         brain = self.brain
+        if _screen_clipped(brain):
+            painter.setClipRect(_screen_clip(self, brain))
         strip, frame, mirrored, transform = brain.pose()
         anchor = self.window_anchor()
         figure = brain.figure
-        if brain.mode == "ground":
+        if brain.mode == "ground" and not _edge_peeking(brain) and not (brain.bottom_peek or brain.top_peek):
             lift = min(1.0, -transform["dy"] / (figure * 0.32)) if transform["dy"] else 0.0
             width = figure * (0.5 if brain.posture() == "lie" else 0.36) * (1 - 0.35 * lift)
             painter.setPen(Qt.PenStyle.NoPen)
@@ -1211,6 +1446,9 @@ class PetWidget(QWidget):
         if not enabled:
             self.brain.settle(self.now())
         self.brain.particles.clear()
+        if not enabled:
+            self.props.play.items.clear()
+            self.props.sync()
         self._sync_windows(force=True)
         self._save_preferences()
 
@@ -1676,6 +1914,7 @@ class PetWidget(QWidget):
         for timer in (self.poll, self.presence_poll, self.animation):
             timer.stop()
         self.end_voice()
+        self.props.close()
         for surface in (self.toolbar, self.bubble, self.fx, self.chat_bar, self.activity_card,
                         self.proposal_card, self.voice_card, self._menu):
             if surface is not None:

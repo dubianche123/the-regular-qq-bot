@@ -285,6 +285,9 @@ class SpritePlayer {
     loadPetManifest().then(manifest => {
       if (!manifest || !manifest.actions) return;
       this.manifest = manifest;
+      // Extra transparent room keeps raised hands/wings from shrinking the figure.
+      this.frame.style.scale = String(manifest.frame[0] / 360);
+      this.frame.style.transformOrigin = `${manifest.anchor[0] / manifest.frame[0] * 100}% ${manifest.anchor[1] / manifest.frame[1] * 100}%`;
       root.classList.add("ready");
       this.render(performance.now());
       requestAnimationFrame(now => this.loop(now));
@@ -328,7 +331,7 @@ class SpritePlayer {
     this.frame.style.backgroundImage = `url("/assets/pet/${action.file}")`;
     this.frame.style.backgroundSize = `${action.frames * 100}% 100%`;
     this.frame.style.backgroundPosition = `${action.frames > 1 ? (frame / (action.frames - 1)) * 100 : 0}% 0`;
-    this.root.dataset.posture = ["sit", "laptop", "read", "tea", "sleep", "doze", "wake", "sit_swing"].includes(clip) ? "low" : "stand";
+    this.root.dataset.posture = ["sit", "laptop", "read", "tea", "sleep", "doze", "wake", "sit_swing", "popcorn", "headphones", "gamepad", "tail_care", "lie_chin"].includes(clip) ? "low" : "stand";
   }
 }
 const sprites = [...document.querySelectorAll("[data-pet-sprite]")].map(root => new SpritePlayer(root));

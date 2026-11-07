@@ -16,13 +16,13 @@ from unittest.mock import Mock, patch
 HAS_QT = importlib.util.find_spec("PySide6") is not None
 if HAS_QT:
     from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
-    from PySide6.QtGui import QImage, QMouseEvent
+    from PySide6.QtGui import QImage, QMouseEvent, QRegion
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
     from PySide6.QtWidgets import QPushButton
     from regular import desktop_pet
     from regular.desktop_pet import PetWidget, SpriteBank
-    from regular.pet_brain import Step, TAP_POOL
+    from regular.pet_brain import EDGE_PEEK, Step, TAP_POOL
 
 CSRF = "synthetic-csrf-0123456789"
 
@@ -56,6 +56,140 @@ class DesktopPetTest(unittest.TestCase):
         self.pet.close()
         self.pet.pool.waitForDone(1000)
         self.app.processEvents()
+
+    def test_sprite_bank_loads_strips_on_demand_and_evicts_lru(self):
+        bank = SpriteBank()
+        self.assertEqual(len(bank.frames.cache), 0)
+        names = list(bank.frames)
+        limit = bank.frames.limit
+        self.assertLessEqual(limit, 8)
+        for name in names[:limit]:
+            bank.frames[name]
+        bank.frames[names[0]]
+        bank.frames[names[limit]]
+        self.assertEqual(len(bank.frames.cache), limit)
+        self.assertIn(names[0], bank.frames.cache)
+        self.assertNotIn(names[1], bank.frames.cache)
+        self.assertEqual(len(bank.frames[names[1]]), bank.frames.strips[names[1]][1])
+        for i in range(105):
+            bank.pixmap(names[0], 0, False, .5 + i / 200, 1.0)
+        self.assertLessEqual(len(bank._cache), 96)
+        self.assertLessEqual(bank._cache_bytes, 48 * 1024 * 1024)
+        stats = bank.cache_stats()
+        self.assertEqual(stats["original_strips"], limit)
+        self.assertEqual(stats["scaled_pixmaps"], len(bank._cache))
+        self.assertEqual(stats["scaled_bytes"], bank._cache_bytes)
+        self.assertGreater(stats["original_bytes"], 0)
+
+    def test_prop_windows_follow_brain_and_close_with_motion(self):
+        self.pet.show()
+        brain = self.pet.brain
+        item_id = brain.props.emit("ball", brain.x, brain.floor - 30, self.t[0])
+        self.pet.props.sync()
+        window = self.pet.props.windows[item_id]
+        self.assertTrue(window.isVisible())
+        self.assertEqual(window.width(), 24)
+        self.assertFalse(window.mask().contains(QPoint(0, 0)))
+        self.pet.set_motion(False)
+        self.assertFalse(self.pet.props.windows)
+        self.assertFalse(brain.props.items)
+
+    def test_closing_pet_reclaims_prop_windows(self):
+        self.pet.show()
+        brain = self.pet.brain
+        brain.props.emit("gem", brain.x, brain.floor - 30, self.t[0])
+        self.pet.props.sync()
+        window = next(iter(self.pet.props.windows.values()))
+        self.assertTrue(window.isVisible())
+        self.pet.close()
+        self.assertFalse(self.pet.props.windows)
+        self.assertFalse(window.isVisible())
+
+    def test_prop_click_delegates_to_brain(self):
+        self.pet.show()
+        brain = self.pet.brain
+        item_id = brain.props.emit("coin", brain.x, brain.floor - 30, self.t[0])
+        self.pet.props.sync()
+        window = self.pet.props.windows[item_id]
+        with patch.object(brain, "touch_prop", wraps=brain.touch_prop) as touch:
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=window.rect().center())
+        touch.assert_called_once_with(item_id, self.t[0])
+        self.assertFalse(brain.props.items)
+        self.assertNotIn(item_id, self.pet.props.windows)
+
+    def test_adopted_library_renders_real_strips_at_multiple_scales(self):
+        from regular.pet_repertoire import available
+        adopted = available()
+        self.assertGreaterEqual(len(adopted), 168)
+        for name in ("life_sleep_hug_tail", "life_reply_air_phone", "dragon_magic_wand"):
+            with self.subTest(name=name):
+                self.assertIn(name, adopted)
+                strip, sequence, *_ = desktop_pet.CLIPS[name]
+                for scale in (.8, 1.5):
+                    pixmap = self.pet.sprites.pixmap(strip, sequence[0], False, scale, 2.0)
+                    self.assertFalse(pixmap.isNull())
+                    self.assertFalse(self.pet.sprites.region(strip, sequence[0], False, scale).isEmpty())
+
+    def test_prop_native_mouse_drag_follows_multiple_moves_and_releases_with_velocity(self):
+        self.pet.show()
+        brain = self.pet.brain
+        for kind in ("ball", "coin", "gem"):
+            with self.subTest(kind=kind):
+                brain.props.items.clear()
+                brain.props.tick(self.t[0], 0, 800, 0, 800)
+                item_id = brain.props.emit(kind, 350, 350, self.t[0])
+                self.pet.props.sync()
+                window = self.pet.props.windows[item_id]
+                item = brain.props.items[0]
+                self.assertIn(window.accessibleName(), window.windowTitle())
+                def send(kind_, x, y, button, buttons):
+                    local = QPointF(x - window.x(), y - window.y())
+                    event = QMouseEvent(kind_, local, QPointF(x, y), button, buttons, Qt.KeyboardModifier.NoModifier)
+                    self.app.sendEvent(window, event)
+                with patch.object(brain, "prop_dragged", create=True) as notified, \
+                     patch.object(window, "grabMouse", wraps=window.grabMouse) as grabbed, \
+                     patch.object(window, "releaseMouse", wraps=window.releaseMouse) as released:
+                    send(QEvent.Type.MouseButtonPress, 350, 350, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+                    self.assertTrue(item.dragging)
+                    for x, y in ((370, 360), (390, 380), (420, 390)):
+                        self.t[0] += .05
+                        send(QEvent.Type.MouseMove, x, y, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+                        self.assertEqual((item.x, item.y), (x, y))
+                    send(QEvent.Type.MouseButtonRelease, 420, 390, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton)
+                    notified.assert_called_once()
+                    grabbed.assert_called_once_with()
+                    released.assert_called_once_with()
+                self.assertFalse(item.dragging)
+                self.assertGreater(item.vx, 0)
+                before = (item.x, item.y)
+                brain.props.tick(self.t[0] + .1, 0, 800, 0, 800)
+                self.assertNotEqual((item.x, item.y), before)
+
+    def test_prop_decorations_are_click_through_and_short_lived(self):
+        self.pet.show()
+        brain = self.pet.brain
+        for kind in ("star", "orb", "feather"):
+            with self.subTest(kind=kind):
+                item_id = brain.props.emit(kind, 350, 350, self.t[0])
+                self.pet.props.sync()
+                window = self.pet.props.windows[item_id]
+                self.assertTrue(window.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+                self.assertLessEqual(next(item.ttl for item in brain.props.items if item.id == item_id), 7)
+        brain.props.tick(self.t[0] + 8, 0, 800, 0, 800)
+        self.pet.props.sync()
+        self.assertFalse(self.pet.props.windows)
+
+    def test_prop_right_click_returns_toy_through_brain(self):
+        self.pet.show()
+        brain = self.pet.brain
+        item_id = brain.props.emit("gem", 350, 350, self.t[0])
+        self.pet.props.sync()
+        window = self.pet.props.windows[item_id]
+        with patch.object(brain, "return_prop", create=True, side_effect=lambda id, now: brain.props.discard(id, now)) as returned:
+            QTest.mouseClick(window, Qt.MouseButton.RightButton, pos=window.rect().center())
+        returned.assert_called_once_with(item_id, self.t[0])
+        self.assertFalse(brain.props.items)
+        self.assertNotIn(item_id, self.pet.props.windows)
 
     def test_native_care_waits_for_the_shared_panel_and_applies_each_event_once(self):
         self.settle()
@@ -114,6 +248,137 @@ class DesktopPetTest(unittest.TestCase):
         self.assertIsNone(pet.activity_card)
         self.client.send.assert_not_called()
 
+    def _edge_pet(self, side, area, scale):
+        pet = self.make()
+        pet.set_scale(scale)
+        b = pet.brain
+        b.set_ground(area.left(), area.right() + 1, area.bottom() + 1, area.top())
+        b.place(area.center().x())
+        b._queue(Step("edge_peek", 30, edge_side=side), now=self.t[0], interrupt=True)
+        b.place(b.left + b.figure * EDGE_PEEK if side == -1 else b.right - b.figure * EDGE_PEEK)
+        pet._sync_windows(force=True)
+        return pet
+
+    def test_edge_mask_and_paint_stay_on_the_chosen_screen_even_during_retreat_and_fade(self):
+        area = QRect(-1100, 30, 1100, 800)
+        for side, scale in ((-1, 0.8), (1, 1.5)):
+            with self.subTest(side=side, scale=scale):
+                pet = self._edge_pet(side, area, scale)
+                try:
+                    for retreat in (False, True):
+                        if retreat:
+                            pet.brain._queue(Step("idle", 4), now=self.t[0], interrupt=True)
+                            pet.brain._fade = ("idle", 0, False, self.t[0], 1.0)
+                            pet._sync_windows(force=True)
+                            self.assertEqual(pet.brain.clip, "walk")
+                        self.assertFalse(pet.mask().isEmpty())
+                        self.assertTrue(pet.mask().translated(pet.pos()).subtracted(QRegion(area)).isEmpty())
+                        image = pet.grab().toImage()
+                        visible = 0
+                        for y in range(image.height()):
+                            for x in range(image.width()):
+                                alpha = image.pixelColor(x, y).alpha()
+                                if area.contains(pet.pos() + QPoint(x, y)):
+                                    visible += alpha > 0
+                                else:
+                                    self.assertEqual(alpha, 0)
+                        self.assertGreater(visible, 100)
+                finally:
+                    pet.close()
+                    pet.pool.waitForDone(1000)
+
+    def test_drag_hidden_at_each_edge_stays_clickable_and_clipped(self):
+        from PySide6.QtGui import QCursor
+        area = QRect(0, 0, 800, 800)
+        for edge, target in (("left", (-50, 400)), ("right", (850, 400)),
+                             ("top", (400, -300)), ("bottom", (400, 1100))):
+            with self.subTest(edge=edge):
+                pet = self.make()
+                try:
+                    pet.show()
+                    pet.animation.stop()
+                    pet._ground_from = lambda x, y: None
+                    brain = pet.brain
+                    brain.set_ground(0, 800, 800, 0)
+                    brain.place(400)
+                    self.t[0] += .1
+                    start = (brain.x, brain.y - 80)
+                    pet.mousePressEvent(self.mouse(QEvent.Type.MouseButtonPress, start))
+                    self.t[0] += .1
+                    pet.mouseMoveEvent(self.mouse(QEvent.Type.MouseMove, (400, 500),
+                                                 button=Qt.MouseButton.NoButton,
+                                                 buttons=Qt.MouseButton.LeftButton))
+                    pet.step()
+                    self.t[0] += .1
+                    pet.mouseMoveEvent(self.mouse(QEvent.Type.MouseMove, target,
+                                                 button=Qt.MouseButton.NoButton,
+                                                 buttons=Qt.MouseButton.LeftButton))
+                    pet.step()
+                    self.t[0] += .1
+                    pet.mouseReleaseEvent(self.mouse(QEvent.Type.MouseButtonRelease, target,
+                                                    buttons=Qt.MouseButton.NoButton))
+                    self.advance(5, pet=pet)
+                    self.assertEqual((brain.mode, brain.hidden_edge), ("hidden", edge))
+                    pet._sync_windows(force=True)
+                    self.assertFalse(pet.mask().isEmpty())
+                    self.assertTrue(pet.mask().translated(pet.pos()).subtracted(QRegion(area)).isEmpty())
+                    self.assertEqual(brain.top_peek, edge == "top")
+                    img = pet.grab().toImage()
+                    clickable = [QPoint(x, y) for y in range(0, img.height(), 2)
+                                 for x in range(0, img.width(), 2)
+                                 if pet.mask().contains(QPoint(x, y)) and img.pixelColor(x, y).alpha() > 30]
+                    self.assertGreaterEqual(len(clickable), 100, "hidden figure has too little visible clickable area")
+                    self.assertGreaterEqual(max(p.x() for p in clickable) - min(p.x() for p in clickable), 20)
+                    self.assertGreaterEqual(max(p.y() for p in clickable) - min(p.y() for p in clickable), 20)
+                    point = pet.pos() + clickable[len(clickable) // 2]
+                    brain.hover(self.t[0], point.x(), point.y(), near=True)
+                    self.advance(.2, pet=pet)
+                    self.assertEqual((brain.mode, brain.hidden_edge), ("hidden", edge))
+                    pos = (point.x(), point.y())
+                    pet.mousePressEvent(self.mouse(QEvent.Type.MouseButtonPress, pos))
+                    pet.mouseReleaseEvent(self.mouse(QEvent.Type.MouseButtonRelease, pos,
+                                                    buttons=Qt.MouseButton.NoButton))
+                    self.assertIsNone(brain.hidden_edge)
+                finally:
+                    pet.close()
+                    pet.pool.waitForDone(1000)
+
+    def test_new_edge_role_has_no_shadow_but_walking_keeps_it(self):
+        area = QRect(-1100, 30, 1100, 800)
+        pet = self._edge_pet(-1, area, 1.0)
+        try:
+            brain = pet.brain
+            with patch.dict(desktop_pet.CLIPS, {"motion_edge_peek": ("edge_peek", [0], 1, True, "stand")}), \
+                 patch.dict(brain.repertoire.actions, {"motion_edge_peek": {"role": "edge"}}):
+                brain.step.clip = "motion_edge_peek"
+                brain._set_clip("motion_edge_peek", self.t[0], restart=True)
+                strip, frame, mirrored, transform = brain.pose()
+                pet._update_mask(strip, frame, mirrored, transform)
+                anchor = pet.window_anchor()
+                origin = QPoint(round(anchor.x() - pet.anchor_pt[0]), round(anchor.y() - pet.anchor_pt[1]))
+                expected = pet.sprites.region(strip, frame, mirrored, brain.scale).translated(origin)
+                expected = expected.intersected(QRegion(desktop_pet._screen_clip(pet, brain)))
+                self.assertEqual(pet.mask(), expected)
+                self.assertTrue(desktop_pet._edge_peeking(brain))
+                brain.clip = "walk"
+                self.assertFalse(desktop_pet._edge_peeking(brain))
+        finally:
+            pet.close()
+            pet.pool.waitForDone(1000)
+
+    def test_edge_particles_are_clipped_in_their_own_window_coordinates(self):
+        area = QRect(-1100, 30, 1100, 800)
+        pet = self._edge_pet(-1, area, 1.0)
+        try:
+            pet.brain._emit("heart", self.t[0])
+            pet.brain.particles[-1].x = -0.7        # wholly behind the selected screen edge
+            image = pet.fx.grab().toImage()
+            self.assertFalse(any(image.pixelColor(x, y).alpha()
+                                 for y in range(image.height()) for x in range(image.width())))
+        finally:
+            pet.close()
+            pet.pool.waitForDone(1000)
+
     def test_she_drops_in_lands_and_keeps_animating(self):
         self.pet.show()
         self.assertEqual(self.pet.brain.mode, "air")
@@ -121,14 +386,19 @@ class DesktopPetTest(unittest.TestCase):
         self.assertEqual(self.pet.brain.mode, "ground")
         floor = self.pet.brain.floor
         self.assertEqual(self.pet.brain.y, floor)
+        from regular.pet_brain import Step
+        # 长段坐姿可以持续几分钟；明确排一段走路，验证原生窗口跟着脚底锚移动。
+        brain = self.pet.brain
+        brain.place((brain.left + brain.right) / 2)
+        brain._queue(Step("walk", target_x=brain.x + 100), now=self.t[0], interrupt=True)
         frames, positions = set(), set()
-        for _ in range(60 * 3):
-            self.advance(1)
+        for _ in range(90):
+            self.advance(1 / 30)
             strip, frame, *_ = self.pet.brain.pose()
             frames.add((strip, frame))
             positions.add(self.pet.pos().x())
-        self.assertGreater(len(frames), 8)
-        self.assertGreater(len(positions), 3)          # she walks around on her own
+        self.assertGreater(len(frames), 3)
+        self.assertGreater(len(positions), 3)
         anchor = self.pet.window_anchor()
         self.assertAlmostEqual(self.pet.pos().y() + anchor.y(), floor, delta=1)
 
@@ -142,7 +412,7 @@ class DesktopPetTest(unittest.TestCase):
             pet.mouseMoveEvent(self.mouse(QEvent.Type.MouseMove, (pet.brain.x + 15, 400 - i * 10),
                                           button=Qt.MouseButton.NoButton, buttons=Qt.MouseButton.LeftButton))
             pet.step()
-        self.assertEqual(pet.brain.clip, "dangle")
+        self.assertTrue(pet.brain.clip == "dangle" or pet.brain._role(pet.brain.clip) == "drag")
         self.assertNotEqual(pet.pos(), start)
         self.assertTrue(pet.mask().isEmpty())           # rotated frames are not clipped while held
         pet.mouseReleaseEvent(self.mouse(QEvent.Type.MouseButtonRelease, (pet.brain.x, 290),
@@ -153,13 +423,14 @@ class DesktopPetTest(unittest.TestCase):
         self.assertFalse(pet.mask().isEmpty())
         self.assertFalse(pet.mask().contains(QPoint(0, 0)))
 
-    def test_press_squishes_at_once_click_reacts_and_double_click_stays_with_the_pet(self):
+    def test_press_keeps_character_size_click_reacts_and_double_click_stays_with_the_pet(self):
         self.settle()
         pet = self.pet
         where = (pet.brain.x, pet.brain.y - 80)
         pet.mousePressEvent(self.mouse(QEvent.Type.MouseButtonPress, where))
         self.advance(0.1)
-        self.assertLess(pet.brain.transform(self.t[0])["sy"], 0.97)      # immediate feedback
+        self.assertEqual(pet.brain.transform(self.t[0])["sx"], 1.0)
+        self.assertEqual(pet.brain.transform(self.t[0])["sy"], 1.0)
         pet.mouseReleaseEvent(self.mouse(QEvent.Type.MouseButtonRelease, where, buttons=Qt.MouseButton.NoButton))
         self.assertIn(pet.brain.clip, TAP_POOL)                           # 点击立刻有小幅反应
         self.assertNotIn(pet.brain.clip, ("pout", "point"))               # 不再跺脚 / 指人
@@ -277,7 +548,7 @@ class DesktopPetTest(unittest.TestCase):
         pet.show_activity()                              # 再点一次通知就收起
         self.assertFalse(pet.activity_card.isVisible())
 
-    def test_ring_has_five_separate_buttons_and_play_reacts(self):
+    def test_ring_has_five_separate_buttons_and_changes_activity(self):
         self.settle()
         pet = self.pet
         buttons = (pet.toolbar.play, pet.toolbar.chat, pet.toolbar.voice,
@@ -286,10 +557,11 @@ class DesktopPetTest(unittest.TestCase):
         for i, first in enumerate(buttons):
             for second in buttons[i + 1:]:
                 self.assertFalse(first.geometry().intersects(second.geometry()))
-        pet.play()
-        self.assertEqual(pet.brain.clip, "highfive")       # 击掌接龙，不再是随机小动作
-        self.assertTrue(pet.brain.game_active)
-        self.assertGreater(pet.brain.game_until, self.t[0])
+        pet.toolbar.play.click()
+        self.assertFalse(pet.brain.game_active)
+        chosen = [pet.brain.clip] + [step.clip for step in pet.brain.plan]
+        self.assertTrue(any(clip != "idle" for clip in chosen))
+        self.assertNotIn("highfive", chosen)
         self.assertNotIn(pet.brain.clip, ("pout", "point"))
 
     def test_a_gesture_never_makes_the_whole_figure_translucent(self):
@@ -332,7 +604,9 @@ class DesktopPetTest(unittest.TestCase):
         self.assertLess(abs(panel.center().y() - ring.center().y()), panel.height() // 2 + 1)
         feed = next(b for b in menu.findChildren(QPushButton) if b.text() == "投喂一块小饼干")
         feed.click()
-        self.assertEqual(pet.brain.clip, "eat")
+        clip = pet.brain.clip
+        spec = pet.brain.repertoire.actions.get(clip, {})
+        self.assertTrue(clip == "eat" or (spec.get("role"), spec.get("family")) == ("snack", "cookie"))
         with patch.object(desktop_pet.webbrowser, "open") as browser:
             self.client.management_url.return_value = "http://127.0.0.1:8765/?token=x"
             next(b for b in menu.findChildren(QPushButton) if b.text() == "打开工作台").click()
@@ -533,7 +807,8 @@ print("confirmation ownership and exit passed")
         self.client.send.assert_called_once_with("<img src='never-fetch-this'>合成文字", CSRF)
         pet._finished("chat", {"ok": True, "value": "<script>这也是纯文本</script>"})
         pet.step()
-        self.assertEqual(pet.brain.clip, "talk")
+        self.assertEqual(pet.brain.state_name, "reply")
+        self.assertTrue(pet.brain.clip == "talk" or pet.brain._role(pet.brain.clip) == "reply")
         self.assertTrue(pet.bubble.isVisible())
         self.assertEqual(pet.bubble.text, "<script>这也是纯文本</script>")
         self.assertLessEqual(pet.bubble.geometry().bottom(), bar.geometry().bottom())
@@ -614,6 +889,24 @@ print("confirmation ownership and exit passed")
         pet.set_scale(1.5)
         self.assertGreater(pet.width(), small.width() * 1.4)
         self.assertAlmostEqual(pet.pos().y() + pet.window_anchor().y(), pet.brain.floor, delta=1)
+
+    def test_bottom_peek_keeps_upper_screen_and_recovers_when_removed(self):
+        upper = SimpleNamespace(availableGeometry=lambda: QRect(0, 0, 800, 800))
+        lower = SimpleNamespace(availableGeometry=lambda: QRect(0, 800, 800, 800))
+        brain = self.pet.brain
+        brain.set_ground(0, 800, 800, 0)
+        brain.bottom_peek = True
+        brain.y = 840
+        with patch.object(QApplication, "screens", return_value=[upper, lower]), \
+             patch.object(brain, "tick"):
+            self.pet.step()
+            self.assertEqual(brain.floor, 800)
+        brain.y = 840
+        with patch.object(QApplication, "screens", return_value=[lower]), \
+             patch.object(brain, "tick"):
+            self.pet.step()
+            self.assertEqual(brain.floor, 1600)
+            self.assertGreaterEqual(brain.y, 800)
 
     def test_she_stays_on_a_remaining_screen_when_a_monitor_is_removed(self):
         primary = SimpleNamespace(availableGeometry=lambda: QRect(0, 0, 800, 800))
