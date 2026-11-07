@@ -47,7 +47,28 @@ Three things shape the experience:
 
 ## Quick start
 
-Prepare **Python 3.10+, your own QQ Open Platform bot's AppID / AppSecret, and a reply model service's API key, base URL and model ID**. Creating the QQ bot, subscribing to events and setting its access scope still require your action. This project uses QQ's bot interface; it does not log in to a personal QQ account.
+### Let your agent install and open it
+
+Copy this into Codex, Claude Code, Gemini CLI, or another coding agent with access to this computer:
+
+```text
+Install and open The Regular on this computer:
+https://github.com/dubianche123/the-regular-qq-bot
+
+Read the repository's docs/agent-setup.md, then download its latest stable source
+release. Prepare Python, install dependencies, build the pet, and launch it.
+Reuse my existing instance and settings if present. Verify that the pet is
+visible and the local workspace opens; resolve ordinary installation errors.
+Use the project's recommended OpenAI model settings. I will enter my key
+locally and complete QQ authorization. Handle the remaining setup for me,
+apart from account actions or system permissions that require my input.
+Once I confirm configuration and QQ authorization are complete, start the bot
+and verify its connection.
+```
+
+**Your agent handles download, installation and launch; you provide your own key and QQ authorization.** [Full installation workflow (Chinese) →](docs/agent-setup.md)
+
+Prefer doing it yourself? Follow the three steps below. Prepare **Python 3.10+, a model service's API key, and your own QQ bot's AppID / AppSecret**. Official OpenAI can use the project's model presets; other services need their corresponding endpoint and model. Creating the QQ bot and setting its event subscriptions and access scope remain your account actions.
 
 ### 1. Download and meet it on your desktop
 
@@ -57,11 +78,11 @@ Prepare **Python 3.10+, your own QQ Open Platform bot's AppID / AppSecret, and a
 | --- | --- | --- |
 | Double-click `start.bat` | Double-click `start.command` | Run `bash start.sh` in the project directory |
 
-The first launch downloads dependencies and places the transparent character on your desktop. Move the pointer near her to reveal chat, snack, activity and Workspace. It stays visible when you switch applications. If macOS blocks the double-click, run `bash start.sh` instead. A browser entry is available when the native desktop component is unavailable. You can also give your coding agent the [installation prompt](docs/agent-setup.md) (Chinese).
+The first launch downloads dependencies and places the transparent character on your desktop. Move the pointer near her to reveal a ring with play, chat, voice, activity and more. It stays visible when you switch applications. If macOS blocks the double-click, run `bash start.sh` instead. A browser entry is available when the native desktop component is unavailable.
 
 ### 2. Give it a name and connect the services
 
-Choose “工作台” (Workspace) beside the character. The overview guides you through two connections: **“QQ 连接与身份” (QQ connection and identity)** for QQ credentials and its name, then **“模型与能力” (Models and capabilities)** for the chat service, model and key. Choose a saved model from the dropdown, or select “填写其他模型” to enter another model ID. Once configured, settings show a summary until you choose to edit.
+Choose **“更多 → 打开工作台” (More → Open workspace)** from the ring. The overview guides you through two connections: **“QQ 连接与身份” (QQ connection and identity)** for QQ credentials and its name, then **“模型与能力” (Models and capabilities)** to connect your official OpenAI key at the top and use the project's chat and judgment presets. For another service, expand Chat to choose its provider and model. Existing choices are preserved; expand a row when you want to change it.
 
 ![QQ connection and identity: connection status and an edit entry (Chinese interface)](docs/readme/setup.jpg)
 
@@ -89,7 +110,7 @@ This terminal demo uses no QQ connection or model calls. It demonstrates message
 
 ## Add more things to do
 
-**“模型与能力” (Models and capabilities)** lists chat, vision, images, incoming voice and speech in editable rows. Switch off capabilities you do not need. The separate OpenAI connection at the top lets you update the shared key without switching your chat service. Capabilities using the same official service can share credentials; other addresses or services need their own credentials. Judgment is under “高级” (Advanced), can use its own model, and needs its settings saved before first use. See the [settings guide](docs/capabilities.md) (Chinese).
+**“模型与能力” (Models and capabilities)** lists chat, vision, images, incoming voice and speech in editable rows. Switch off capabilities you do not need. The separate OpenAI connection at the top lets you update the shared key without switching an existing chat service. Capabilities using the same official service can share credentials; other addresses or services need their own credentials. Official OpenAI has a default judgment model; “高级” (Advanced) lets you choose another. See the [settings guide](docs/capabilities.md) (Chinese).
 
 <details>
 <summary>Choose models by purpose, with settings folded until needed</summary>
