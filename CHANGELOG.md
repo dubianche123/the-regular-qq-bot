@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased — 2026-11-07
+## 0.5.0 — 2026-11-07
+
+### Highlights
+
+- A five-button ring beside the desktop pet brings play, chat, continuous voice,
+  activity and settings together. Small reactions, a high-five game and gentler
+  posture changes make her feel more at home on the desktop.
+- Continuous voice keeps its single mute control and spoken interruptions;
+  listening, thinking and speaking now have matching character actions, even
+  when QQ disconnects.
+- The console follows everyday tasks, with compact model and capability rows,
+  a separate shared OpenAI connection, clearer saved states and group knowledge.
+- Image feedback can be traced back to its generation. Repeated vague image
+  corrections lead to one concrete question, backed by synthetic replay and
+  independent blind judging; explicit edits still execute directly.
+
+### Details
 
 - Retire the oversized "stomp / turn away / point accusingly" reaction. It used to
   be reachable from four paths at once (repeated pokes, waking, overfeeding and a
@@ -46,9 +62,8 @@
   the app closes them too, opening one closes the other, and clicking the same
   button again toggles it shut. The console's floating helper bubble also closes
   on an outside click or Escape.
-- Grow the ring from four buttons to five (play / chat / voice / activity / more)
-  in a real radial layout. Voice, the shared OpenAI key and the state layer are
-  unchanged.
+- Use five buttons (play / chat / voice / activity / more) in a real radial
+  layout, with the continuous voice controls accessible beside the character.
 - Rework 模型与能力 so a model and its daily quota live in the same place. Every
   row now shows 模型 / 每天 / 每人 chips without opening 「设置」, and the daily
   limits move out of 「更多设置」 into the main form next to the model field
@@ -80,7 +95,7 @@
   a ~5-minute decay, and her bubble says whether it worked, is cooling down or
   has hit the cap. Overfeeding and body/feet taps never lift it.
 
-## Unreleased — 2026-11-06
+### Console and desktop foundations
 
 - Reframe the console as a status panel instead of a list of backend modules.
   The sidebar has two scenario groups and no catch-all drawer: 我的群友 / 聊两句
@@ -93,7 +108,7 @@
   section; their visible module rows are gone. Settings forms and hot switches
   are unchanged.
 - Replace the native Qt context menu and the vertical five-button toolbar with
-  one compact self-drawn ring (chat / voice / a timeline for activity / more;
+  one compact self-drawn ring (play / chat / voice / activity / more;
   "more" opens beside the ring) and a rounded
   "More" panel. The five "open workbench" submenu shortcuts are removed; size,
   quiet, motion, feed, refresh and quit now live in "More". The continuous
@@ -101,7 +116,8 @@
 - Add an event-driven state layer to the pet, with six new sprite strips:
   reply, listen, inspect, checkup, handoff and stuck. Presence heartbeats keep
   the current state alive, one-shot cues trigger handoff / checkup / stuck, and
-  a live voice session holds listen until it actually ends. Seated states use
+  local voice follows its actual listening, thinking, playback and mute stages.
+  Seated states use
   the existing posture bridges. A state ends when its heartbeat stops, not on
   a long fake "still busy" timeout.
 - Make waking up an acted sequence instead of a pose jump. Two new strips
@@ -117,13 +133,13 @@
   which `regular doctor` replaced.
 - Add `tests/test_design_state_layer.py` covering the state layer, shipped
   strips, navigation folding, and removal of the native menu.
-- Bind the whole app to one OpenAI key. The console now asks for an API key in
-  exactly one place (the chat settings); the judgment credential picker, the
-  image-generation key field and the voice key field are gone. Judgment is no
+- Share one OpenAI connection where the service endpoints match. Its independent
+  console card preserves the selected chat provider when changing the shared
+  key; other model services keep their own credentials. Judgment is no
   longer a copied credential: `decision_api.json` stores only endpoint/model
   plus `credential: "shared"`, and `capabilities.key_for_endpoint()` resolves
-  the live key per request, so changing the chat key takes effect immediately.
-  Vision, images, voice and the desktop companion share the same key. The key
+  the live key per request, so changing the shared key takes effect immediately.
+  Vision, images, voice and the desktop companion can share the same key. The key
   is handed out only when the target endpoint matches `OPENAI_BASE_URL`;
   third-party endpoints keep their dedicated-key escape hatch. Old
   `decision_api.json` files with their own key still load as dedicated.
