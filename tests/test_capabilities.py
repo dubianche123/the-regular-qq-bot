@@ -26,6 +26,10 @@ class CapabilitiesTest(TestCase):
         self.assertFalse(view['voice_output']['configured'])
         self.assertFalse(view['voice_output']['dependencies']['node'])
         self.assertEqual(view['image']['key_source'], 'none')
+        for name in ('image', 'voice_input', 'voice_output'):
+            self.assertIn('OpenAI Key', view[name]['missing'])
+            self.assertNotIn('聊天服务的 OpenAI Key', view[name]['missing'])
+        self.assertIn('还差OpenAI Key', caps.state_line('image', view['image'])[1])
         self.assertFalse(self.file.exists())
         self.assertFalse((self.root / 'data').exists())
 

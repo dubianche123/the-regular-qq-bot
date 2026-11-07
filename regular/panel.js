@@ -77,8 +77,8 @@ if (setup) {
   revealCustom();
 }
 
-// The judgment form no longer has a credential picker: it is bound at runtime
-// to the single OpenAI key saved in the chat settings.
+// Judgment and media reuse the explicit OpenAI connection; choosing another
+// chat provider does not move that credential to a different service.
 
 // Tell the desktop pet what is happening right now. A failed signal must never
 // break the action the user actually asked for, so this stays best-effort.
@@ -113,7 +113,9 @@ function applyCapabilities(data) {
     const item = document.querySelector(`[data-cap="${name}"]`);
     if (!item) continue;
     item.dataset.tone = state.tone;
-    item.querySelector("[data-cap-state]").textContent = state.text;
+    // The row now shows model/quota chips; keep the state word short so they fit.
+    const label = item.querySelector("[data-cap-state]");
+    if (label) label.textContent = ({ ok: "已开启", off: "已关闭", todo: "待补齐" })[state.tone] || state.text;
   }
   const runtime = document.querySelector("[data-cap-runtime]");
   if (runtime && data.timing) runtime.textContent = data.timing;
@@ -187,6 +189,57 @@ for (const dock of document.querySelectorAll("[data-companion-dock]")) {
   dock.addEventListener("focusin", reveal);
   dock.addEventListener("focusout", dismiss);
 }
+
+// A click anywhere else closes the floating helper bubble right away; Escape does too.
+// Hover still reveals it, but it no longer lingers after the user moved on to another page.
+document.addEventListener("pointerdown", event => {
+  for (const dock of document.querySelectorAll("[data-companion-dock][open]")) {
+    if (!dock.contains(event.target)) dock.open = false;
+  }
+}, true);
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  for (const dock of document.querySelectorAll("[data-companion-dock][open]")) dock.open = false;
+  for (const details of document.querySelectorAll("details.cap-more[open]")) details.open = false;
+});
+
+// Only one settings row stays open, and clicking outside that row closes it.
+// External row triggers are handled by the click handler below; otherwise
+// pointerdown would close the row just before click reopens it.
+document.addEventListener("pointerdown", event => {
+  if (event.target instanceof Element && event.target.closest("[data-open-cap]")) return;
+  for (const details of document.querySelectorAll("details.cap-more[open]")) {
+    const row = details.closest(".cap-item") || details;
+    if (!row.contains(event.target)) details.open = false;
+  }
+}, true);
+
+// Explicit external row triggers open settings rather than only scrolling to
+// a collapsed details element. Their ?edit=... URLs also work without JS.
+document.addEventListener("click", event => {
+  const trigger = event.target instanceof Element
+    ? event.target.closest("[data-open-cap]") : null;
+  if (!trigger) return;
+  const row = document.getElementById(trigger.dataset.openCap);
+  const details = row?.querySelector("details.cap-more");
+  if (!details) return;
+  event.preventDefault();
+  if (details.open) {
+    details.open = false;
+    trigger.setAttribute("aria-expanded", "false");
+    return;
+  }
+  for (const other of document.querySelectorAll("details.cap-more[open]")) {
+    if (other !== details) other.open = false;
+  }
+  details.open = true;
+  trigger.setAttribute("aria-expanded", "true");
+  row.classList.add("cap-row-flash");
+  setTimeout(() => row.classList.remove("cap-row-flash"), 1400);
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  const focus = details.querySelector("input[type=password], input:not([type=hidden]), select");
+  if (focus) setTimeout(() => focus.focus({ preventScroll: true }), 280);
+});
 
 // Static poses carry state. Optional click feedback never runs on a loop.
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");

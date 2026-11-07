@@ -63,8 +63,9 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
             # four capability forms + the voice service shared by hearing and speaking
             self.assertEqual(sorted(f['fields']['section']['value'] for f in settings),
                              ['image', 'vision', 'voice', 'voice_input', 'voice_output'])
-            # One OpenAI key for the whole app: only the chat form ever asks for it.
-            self.assertEqual(text.count('name="api_key"'), 1)
+            # Shared OpenAI credentials can be edited without changing chat providers.
+            self.assertIn('action="/models/openai"', text)
+            self.assertEqual(text.count('name="api_key"'), 2)
             self.assertNotIn('name="voice_api_key"', text)
             self.assertNotIn('data-decision-credential', text)
             self.assertIn('cap-key-card', text)
@@ -102,24 +103,24 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<option value="second">second</option>', text)
         self.assertIn('<option value="__custom__">填写其他模型…</option>', text)
         self.assertIn('data-custom-model-field hidden', text)
-        self.assertIn('id="chat" data-tone="ok"><details class="cap-more">', text)
+        self.assertIn('id="chat" data-tone="ok"><details class="cap-more" name="cap">', text)
         self.assertNotIn('private-chat-secret', text)
         self.assertNotIn('SDK', text)
         self.assertNotIn('/chat/completions', text)
 
     async def test_unconfigured_chat_opens_only_its_required_connection(self):
         text, _ = await self.form('image')
-        self.assertIn('id="chat" data-tone="todo"><details class="cap-more" open>', text)
-        self.assertIn('id="decision" data-tone="todo"><details class="cap-more">', text)
+        self.assertIn('id="chat" data-tone="todo"><details class="cap-more" name="cap" open>', text)
+        self.assertIn('id="decision" data-tone="todo"><details class="cap-more" name="cap">', text)
         self.assertNotIn('data-custom-model-field hidden', text)
 
-    async def test_judgment_is_bound_to_the_one_chat_key_without_a_second_input(self):
+    async def test_judgment_reuses_openai_connection_without_its_own_key_input(self):
         self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://api.openai.com/v1\n'
                              'OPENAI_MODELS=first\nOPENAI_API_KEY=private-chat-secret\n')
         text, _ = await self.form('image')
         self.assertIn('一把 OpenAI Key 已就位', text)
-        self.assertIn('共用聊天设置里那把 OpenAI Key', text)
-        self.assertEqual(text.count('name="api_key"'), 1)
+        self.assertIn('共用上方 OpenAI 连接的 Key', text)
+        self.assertEqual(text.count('name="api_key"'), 2)
         self.assertIn('name="credential_source" value="shared"', text)
         self.assertNotIn('private-chat-secret', text)
         panel.decision_settings.save_settings(
@@ -136,7 +137,7 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://other.example/v1\n'
                              'OPENAI_MODELS=first\nOPENAI_API_KEY=private-chat-secret\n')
         text, _ = await self.form('image')
-        self.assertIn('不能共用 Key', text)
+        self.assertIn('让判断接口使用同一地址', text)
         self.assertNotIn('private-chat-secret', text)
         # The credential resolver refuses to hand the key to a different host.
         self.assertEqual(capabilities.key_for_endpoint(
@@ -171,6 +172,166 @@ class CapabilitiesPageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved['VOICE_OUTPUT_ENABLED'], 'true')
         self.assertIn('# keep', self.file.read_text())
         self.runner.start.assert_not_called()
+
+    async def test_shared_key_can_be_saved_without_switching_the_chat_provider(self):
+        self.file.write_text('AI_PROVIDER=zhipu\nCHAT_PROVIDER=zhipu\nZHIPU_API_KEY=private-z-key\n'
+                             'ZHIPU_MODELS=z-chat\n# keep\n')
+        text, _ = await self.form('image')
+        self.assertNotIn('一把 OpenAI Key 已就位', text)
+        self.assertIn('连接 OpenAI', text)
+        self.assertIn('还差OpenAI Key', text)
+        self.assertNotIn('聊天服务的 OpenAI Key', text)
+        form = next(f for f in Forms(text).forms if f['action'] == '/models/openai')
+        response = await self.client.post('/models/openai', headers=self.auth(), allow_redirects=False,
+            data={'csrf': form['fields']['csrf']['value'], 'api_key': 'private-openai-key',
+                  'base_url': 'https://api.openai.com/v1', 'provider': 'openai', 'models': 'ignored'})
+        self.assertEqual(response.status, 302)
+        saved = dotenv_values(self.file)
+        self.assertEqual(saved['CHAT_PROVIDER'], 'zhipu')
+        self.assertEqual(saved['AI_PROVIDER'], 'zhipu')
+        self.assertEqual(saved['ZHIPU_MODELS'], 'z-chat')
+        self.assertNotIn('OPENAI_MODELS', saved)
+        self.assertEqual(saved['OPENAI_API_KEY'], 'private-openai-key')
+        self.assertIn('# keep', self.file.read_text())
+        text = await (await self.client.get(response.headers['Location'], headers=self.auth())).text()
+        self.assertIn('一把 OpenAI Key 已就位', text)
+        self.assertIn('id="openai" data-tone="ok" open', text)
+        self.assertNotIn('private-openai-key', text)
+        # Saving the same connection with a blank key retains it.
+        response = await self.client.post('/models/openai', headers=self.auth(), allow_redirects=False,
+            data={'csrf': form['fields']['csrf']['value'], 'api_key': '', 'base_url': 'https://api.openai.com/v1'})
+        self.assertEqual(response.status, 302)
+        self.assertEqual(dotenv_values(self.file)['OPENAI_API_KEY'], 'private-openai-key')
+        self.runner.start.assert_not_called()
+        self.runner.stop.assert_not_awaited()
+
+    async def test_switching_shared_connection_address_requires_a_fresh_key(self):
+        self.file.write_text('CHAT_PROVIDER=zhipu\nOPENAI_BASE_URL=https://api.openai.com/v1\n'
+                             'OPENAI_API_KEY=private-old-key\n')
+        text, _ = await self.form('image')
+        fields = next(f['fields'] for f in Forms(text).forms if f['action'] == '/models/openai')
+        before = self.file.read_bytes()
+        values = {'csrf': fields['csrf']['value'], 'base_url': 'https://new-service.example/v1', 'api_key': ''}
+        response = await self.client.post('/models/openai', headers=self.auth(), data=values)
+        self.assertEqual(response.status, 400)
+        self.assertIn('同时填写新服务的 Key', await response.text())
+        self.assertEqual(self.file.read_bytes(), before)
+        # Host casing and a trailing slash do not change the service.
+        response = await self.client.post('/models/openai', headers=self.auth(), allow_redirects=False,
+            data={**values, 'base_url': 'https://API.OPENAI.COM/v1/'})
+        self.assertEqual(response.status, 302)
+        self.assertEqual(dotenv_values(self.file)['OPENAI_API_KEY'], 'private-old-key')
+        response = await self.client.post('/models/openai', headers=self.auth(), allow_redirects=False,
+            data={**values, 'api_key': 'private-new-key'})
+        self.assertEqual(response.status, 302)
+        saved = dotenv_values(self.file)
+        self.assertEqual(saved['OPENAI_BASE_URL'], 'https://new-service.example/v1')
+        self.assertEqual(saved['OPENAI_API_KEY'], 'private-new-key')
+        self.assertEqual(saved['CHAT_PROVIDER'], 'zhipu')
+
+    async def test_environment_managed_base_cannot_be_silently_overwritten_but_key_can_change(self):
+        self.file.write_text('CHAT_PROVIDER=zhipu\nOPENAI_BASE_URL=https://old-file.example/v1\n'
+                             'OPENAI_API_KEY=private-old-key\n')
+        self.cfg.EXTERNAL_ENV_KEYS = frozenset({'OPENAI_BASE_URL'})
+        with patch.dict('os.environ', {'OPENAI_BASE_URL': 'https://api.openai.com/v1'}):
+            text, _ = await self.form('image')
+            fields = next(f['fields'] for f in Forms(text).forms if f['action'] == '/models/openai')
+            self.assertIn('disabled', fields['base_url'])
+            self.assertEqual(fields['base_url']['value'], 'https://api.openai.com/v1')
+            self.assertIn('地址由安装配置管理', text)
+            before = self.file.read_bytes()
+            values = {'csrf': fields['csrf']['value'], 'api_key': 'private-new-key'}
+            response = await self.client.post('/models/openai', headers=self.auth(),
+                data={**values, 'base_url': 'https://new-service.example/v1'})
+            self.assertEqual(response.status, 400)
+            self.assertIn('地址由安装配置管理', await response.text())
+            self.assertEqual(self.file.read_bytes(), before)
+            # The disabled address field is omitted by the browser; key-only saves work.
+            response = await self.client.post('/models/openai', headers=self.auth(),
+                data=values, allow_redirects=False)
+            self.assertEqual(response.status, 302)
+            saved = dotenv_values(self.file)
+            self.assertEqual(saved['OPENAI_BASE_URL'], 'https://old-file.example/v1')
+            self.assertEqual(saved['OPENAI_API_KEY'], 'private-new-key')
+
+    async def test_openai_connection_does_not_claim_a_compatible_key_can_supply_official_voice(self):
+        self.file.write_text('CHAT_PROVIDER=openai\nOPENAI_BASE_URL=https://gateway.example/v1\n'
+                             'OPENAI_API_KEY=private-gateway-key\n')
+        text, _ = await self.form('image')
+        self.assertIn('OpenAI 兼容服务已连接', text)
+        self.assertNotIn('一把 OpenAI Key 已就位', text)
+        self.assertIn('实时语音需要 OpenAI 官方连接', text)
+        self.assertNotIn('private-gateway-key', text)
+
+    async def test_openai_connection_save_checks_auth_csrf_and_atomic_validation(self):
+        text, _ = await self.form('image')
+        form = next(f for f in Forms(text).forms if f['action'] == '/models/openai')
+        values = {'csrf': form['fields']['csrf']['value'], 'api_key': 'private-key',
+                  'base_url': 'https://api.openai.com/v1'}
+        self.assertEqual((await self.client.post('/models/openai', data=values)).status, 401)
+        self.assertEqual((await self.client.post('/models/openai', headers=self.auth(),
+            data={**values, 'csrf': 'wrong'})).status, 400)
+        response = await self.client.post('/models/openai', headers=self.auth(),
+            data={**values, 'base_url': 'https://user:private-password@bad.example/v1'})
+        self.assertEqual(response.status, 400)
+        self.assertNotIn('private', await response.text())
+        self.assertFalse(self.file.exists())
+
+    async def test_shared_judgment_uses_openai_connection_when_chat_is_another_provider(self):
+        self.file.write_text('CHAT_PROVIDER=zhipu\nZHIPU_API_KEY=private-z-key\n'
+                             'OPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_API_KEY=private-openai-key\n')
+        text, _ = await self.form('image')
+        form = next(f for f in Forms(text).forms if f['action'] == '/decision/save')
+        response = await self.client.post('/decision/save', headers=self.auth(), allow_redirects=False,
+            data={'csrf': form['fields']['csrf']['value'], 'credential_source': 'shared',
+                  'endpoint': 'https://api.openai.com/v1/decisions', 'model': 'judge'})
+        self.assertEqual(response.status, 302)
+        text, _ = await self.form('image')
+        self.assertIn('id="decision" data-tone="ok"', text)
+        self.assertIn('共用 OpenAI Key', text)
+        before = (Path(self.cfg.DATA_DIR) / 'decision_api.json').read_bytes()
+        response = await self.client.post('/decision/save', headers=self.auth(),
+            data={'csrf': form['fields']['csrf']['value'], 'credential_source': 'shared',
+                  'endpoint': 'https://unrelated.example/v1/decisions', 'model': 'judge'})
+        self.assertEqual(response.status, 400)
+        self.assertEqual((Path(self.cfg.DATA_DIR) / 'decision_api.json').read_bytes(), before)
+
+    async def test_judgment_distinguishes_available_key_unsaved_connection_and_disabled(self):
+        self.file.write_text('CHAT_PROVIDER=zhipu\nZHIPU_API_KEY=private-z-key\n'
+                             'OPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_API_KEY=private-openai-key\n')
+        text, _ = await self.form('image')
+        decision = text[text.index('id="decision"'):].split('</article>')[0]
+        self.assertIn('待保存判断设置', decision)
+        self.assertIn('可共用 OpenAI Key', decision)
+        self.assertNotIn('还没连接', decision)
+        panel.decision_settings.save_settings(self.cfg.DATA_DIR,
+            endpoint='https://api.openai.com/v1/decisions', model='judge', credential='shared')
+        text, _ = await self.form('image')
+        decision = text[text.index('id="decision"'):].split('</article>')[0]
+        self.assertIn('<span class="cap-state">judge</span>', decision)
+        self.assertIn('共用 OpenAI Key', decision)
+        self.assertNotIn('待保存判断设置', decision)
+        self.file.write_text(self.file.read_text() + 'DECISION_ENABLED=false\n')
+        text, _ = await self.form('image')
+        decision = text[text.index('id="decision"'):].split('</article>')[0]
+        self.assertIn('data-tone="off"', decision)
+        self.assertIn('<span class="cap-state">已关闭</span>', decision)
+        self.assertNotIn('还没连接', decision)
+
+    async def test_model_and_daily_quota_sit_together_without_opening_settings(self):
+        text, _ = await self.form('image')
+        image = text[text.index('id="image"'):]
+        image = image[:image.index('</article>')]
+        # Both are visible on the row itself, before 「设置」 is ever clicked.
+        self.assertIn('class="cap-facts"', image)
+        for label in ('模型', '每天', '每人'):
+            self.assertIn(f'<small>{label}</small>', image)
+        # And both are editable in the main part of the form, not hidden in 更多设置.
+        main = image.split('<details class="cap-advanced">')[0]
+        for name in ('model', 'daily_limit', 'user_daily_limit'):
+            self.assertIn(f'name="{name}"', main)
+        for label in ('每天最多画几张', '每人每天最多几张'):
+            self.assertIn(label, main)
 
     async def test_service_secrets_never_appear_in_html_and_blank_preserves_them(self):
         self.file.write_text("IMAGE_GENERATION_API_KEY=private-image-secret\nVOICE_API_KEY=private-voice-secret\n")

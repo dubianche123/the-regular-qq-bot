@@ -492,6 +492,28 @@ def _cap_state(name, row):
     return capabilities.state_line(name, row)
 
 
+def _cap_chip(label, value):
+    """One at-a-glance fact: the model and the quota belong on the row, not in a fold."""
+    return f'<span class="cap-fact"><small>{_esc(label)}</small><b>{_esc(value)}</b></span>'
+
+
+def _cap_facts(name, row, state=""):
+    """Model, quota and state live in one line under the title, never beside the switch."""
+    model = row.get("effective_model") if name == "vision" else row.get("model")
+    chips = ([f'<span class="cap-fact cap-fact-state"><b data-cap-state>{_esc(state)}</b></span>']
+             if state else [])
+    if model:
+        chips.append(_cap_chip("模型", model))
+    unit = {"vision": "张", "image": "张", "voice_output": "条"}.get(name, "次")
+    if row.get("daily_limit") is not None:
+        chips.append(_cap_chip("每天", f"{row['daily_limit']} {unit}"))
+    if row.get("user_daily_limit") is not None:
+        chips.append(_cap_chip("每人", f"{row['user_daily_limit']} 张"))
+    if not chips:
+        return ""
+    return f'<span class="cap-facts" aria-label="模型与次数">{"".join(chips)}</span>'
+
+
 def _cap_snapshot(sections):
     from regular import capabilities
     return capabilities.overview(sections)
@@ -517,8 +539,14 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         chat = instance_settings.public_settings(cfg, request.query.get("provider"))
     except ValueError:
         raise web.HTTPBadRequest(text="请选择支持的模型服务。") from None
-    judgment = decision_settings.public_settings(
-        cfg.DATA_DIR, shared_ready=bool(chat["key_configured"]))
+    openai = instance_settings.public_settings(cfg, "openai")
+    judgment = decision_settings.public_settings(cfg.DATA_DIR)
+    same_service = bool(capabilities.key_for_endpoint(
+        cfg, judgment["endpoint"], suffix="/decisions"))
+    judgment = decision_settings.public_settings(cfg.DATA_DIR, shared_ready=same_service)
+    judgment_saved = decision_settings.load_settings(cfg.DATA_DIR)
+    _, effective = instance_settings._values(cfg)
+    judgment_enabled = capabilities._bool(effective.get("DECISION_ENABLED", getattr(cfg, "DECISION_ENABLED", True)))
     tone, timing, reported = _cap_runtime(cfg, runner)
     saved = str(request.query.get("saved") or "")
     editing = str(request.query.get("edit") or "")
@@ -533,11 +561,11 @@ def _capabilities_page(cfg, request, csrf, runner=None):
                 f' aria-checked="{"true" if on else "false"}" aria-label="{_esc(label)}"{title}'
                 f'{" disabled" if locked or not parent_on else ""}><span aria-hidden="true"></span></button></form>')
 
-    def field(section, row, name, label, *, secret=False, number=False, hint="", choices=None, placeholder=""):
+    def field(section, row, name, label, *, secret=False, number=False, hint="", choices=None, placeholder="", disabled=False):
         value = row.get(name, "")
         field_id = f"cap-{section}-{name}"
         if choices is not None:
-            control = f'<select id="{field_id}" name="{name}">' + "".join(
+            control = f'<select id="{field_id}" name="{name}"{" disabled" if disabled else ""}>' + "".join(
                 f'<option value="{_esc(key)}"{" selected" if str(value) == key else ""}>{_esc(text)}</option>'
                 for key, text in choices) + '</select>'
         else:
@@ -546,7 +574,7 @@ def _capabilities_page(cfg, request, csrf, runner=None):
                 placeholder = "已保存，留空不改" if row.get("key_configured") else (placeholder or "粘贴 API Key")
             attrs = (' min="0" step="1"' if number else '') + (' autocomplete="new-password"' if secret else '')
             control = (f'<input id="{field_id}" type="{kind}" name="{name}" value="{_esc("" if secret else value)}"'
-                       f'{attrs} placeholder="{_esc(placeholder)}">')
+                       f'{attrs} placeholder="{_esc(placeholder)}"{" disabled" if disabled else ""}>')
         note = f'<small>{_esc(hint)}</small>' if hint else ''
         return f'<label class="cap-field" for="{field_id}"><span>{label}</span>{control}{note}</label>'
 
@@ -564,12 +592,13 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         return (f'<div class="cap-sub" data-cap-sub="{flag}">{switch(flag, on, label, parent_on=parent_on)}'
                 f'<div><strong>{label}</strong><small>{_esc(hint)}</small></div></div>')
 
-    def model_row(name, title, description, state, form, *, configured=True, first=False):
+    def model_row(name, title, description, state, form, *, facts="", configured=True, first=False, state_tone=None):
         opened = saved == name or editing == name or (first and not configured)
-        return (f'<article class="cap-item ms-model-item" id="{name}" data-tone="{"ok" if configured else "todo"}">'
-                f'<details class="cap-more"{" open" if opened else ""}><summary class="cap-head">'
+        state_tone = state_tone or ("ok" if configured else "todo")
+        return (f'<article class="cap-item ms-model-item" id="{name}" data-tone="{state_tone}">'
+                f'<details class="cap-more" name="cap"{" open" if opened else ""}><summary class="cap-head">'
                 f'<span class="cap-icon" aria-hidden="true">{_icon("companion" if name == "chat" else "decision")}</span>'
-                f'<span class="cap-title"><strong>{title}</strong><small>{description}</small></span>'
+                f'<span class="cap-title"><strong>{title}</strong><small>{description}</small>{facts}</span>'
                 f'<span class="cap-state">{_esc(state)}</span><span class="cap-open">更换</span></summary>'
                 f'<div class="cap-body">{form}</div></details></article>')
 
@@ -599,31 +628,20 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         f'<input type="hidden" name="csrf" value="{_esc(csrf)}"><input type="hidden" name="provider" value="{_esc(chat["provider"])}">'
         f'<div class="provider-choices" role="group" aria-label="聊天服务">{"".join(provider_buttons)}</div>'
         '<span class="ms-feedback" data-provider-status aria-live="polite"></span>'
-        f'<div class="cap-fields">{picker}{field("chat", chat, "api_key", "API Key", secret=True)}</div>'
-        '<details class="cap-advanced"><summary>接口地址、备用模型与用量</summary><div class="cap-fields">'
+        f'<div class="cap-fields">{picker}{field("chat", chat, "api_key", "API Key", secret=True)}'
+        + field("chat", chat, "daily_budget", "每天最多调用几次（0 不限）", number=True)
+        + '</div>'
+        '<details class="cap-advanced"><summary>接口地址与备用模型</summary><div class="cap-fields">'
         + field("chat", chat, "base_url", "接口地址")
         + field("chat", chat, "fallback_models", "备用模型", placeholder="多个模型用逗号分隔")
-        + field("chat", chat, "daily_budget", "每天最多调用几次", number=True)
         + '</div></details>'
         f'<footer><button type="submit">保存聊天设置</button><span data-cap-form-status aria-live="polite">'
         f'{"已保存，重启后生效。" if saved == "chat" else ""}</span></footer></form>')
-    active_chat = instance_settings.public_settings(cfg)
-    same_service = False
-    if active_chat["key_configured"]:
-        try:
-            instance_settings.decision_key_from_chat(cfg, judgment["endpoint"])
-            same_service = True
-        except (ValueError, OSError):
-            same_service = False
-    if not active_chat["key_configured"]:
-        shared_note = ('<p class="cap-note cap-need">先在「聊天」里填一次 OpenAI API Key，'
-                       '判断、画图、语音都会用它。</p>')
-    elif same_service:
-        shared_note = ('<p class="cap-note cap-shared-note">连接凭据：共用聊天设置里那把 '
-                       'OpenAI Key。换 Key 只改一处，这里会跟着变。</p>')
+    if same_service:
+        shared_note = ('<p class="cap-note cap-shared-note">连接凭据：共用上方 OpenAI 连接的 Key。'
+                       '换 Key 只改一处，这里会跟着变。</p>')
     else:
-        shared_note = ('<p class="cap-note cap-need">这个判断接口和聊天服务不是同一家，'
-                       '不能共用 Key；请改回同一接口，或在 .env 里单独配置。</p>')
+        shared_note = ('<p class="cap-note cap-need">请先连接上方 OpenAI 服务，并让判断接口使用同一地址。</p>')
     judgment_form = (
         '<form method="post" action="/decision/save" class="cap-form" data-cap-form>'
         f'<input type="hidden" name="csrf" value="{_esc(csrf)}">'
@@ -635,10 +653,28 @@ def _capabilities_page(cfg, request, csrf, runner=None):
         f'<footer><button type="submit">保存判断设置</button><span data-cap-form-status aria-live="polite">'
         f'{"已保存。" if saved == "decision" else ""}</span></footer></form>')
     chat_ready = bool(chat["key_configured"] and chat["base_url"] and chat["primary_model"])
+    chat_budget = chat.get("daily_budget")
+    chat_facts = ('<span class="cap-facts" aria-label="模型与次数">'
+                  + (_cap_chip("模型", chat["primary_model"]) if chat_ready else "")
+                  + _cap_chip("每天", f"{chat_budget} 次" if chat_budget else "不限")
+                  + '</span>')
+    if judgment_saved and judgment_saved["credential"] == "dedicated":
+        judgment_connection = "单独配置"
+    elif same_service:
+        judgment_connection = "共用 OpenAI Key" if judgment_saved else "可共用 OpenAI Key"
+    else:
+        judgment_connection = "待连接"
+    judgment_state = ("已关闭" if not judgment_enabled else judgment["model"] if judgment["key_configured"]
+                      else "待保存判断设置" if same_service and not judgment_saved else "还没连接")
+    judgment_facts = ('<span class="cap-facts" aria-label="模型与次数">'
+                      + _cap_chip("模型", judgment["model"])
+                      + _cap_chip("连接", judgment_connection)
+                      + '</span>')
     model_rows = [model_row("chat", "聊天", "和群友、和你聊天", chat["primary_model"] if chat_ready else "还没连接",
-                            chat_form, configured=chat_ready, first=True),
-                  model_row("decision", "判断", "拿捏接话分寸，审核提醒", judgment["model"] if judgment["key_configured"] else "还没连接",
-                            judgment_form, configured=judgment["key_configured"])]
+                            chat_form, facts=chat_facts, configured=chat_ready, first=True),
+                  model_row("decision", "判断", "拿捏接话分寸，审核提醒", judgment_state,
+                            judgment_form, facts=judgment_facts, configured=judgment["key_configured"],
+                            state_tone="off" if not judgment_enabled else None)]
 
     vision, drawing, hearing, speech = (sections[name] for name in ("vision", "image", "voice_input", "voice_output"))
     providers = [("", "沿用聊天服务"), ("openai", "OpenAI 兼容"), ("zhipu", "智谱"), ("gemini", "Gemini")]
@@ -646,31 +682,32 @@ def _capabilities_page(cfg, request, csrf, runner=None):
     bodies = {
         "vision": settings_form(
             "vision", "读图",
-            field("vision", vision, "provider", "服务", choices=providers)
-            + field("vision", vision, "model", "模型", placeholder=vision.get("effective_model") or "跟随聊天模型"),
-            field("vision", vision, "daily_limit", "每天最多看几张", number=True)
-            + field("vision", vision, "input_mode", "图片传送方式",
+            field("vision", vision, "model", "模型", placeholder=vision.get("effective_model") or "跟随聊天模型")
+            + field("vision", vision, "daily_limit", "每天最多看几张", number=True)
+            + field("vision", vision, "provider", "服务", choices=providers),
+            field("vision", vision, "input_mode", "图片传送方式",
                   choices=[("download", "先下载到本机再发"), ("url", "直接发图片链接")])),
         "image": sub_switch("gif", drawing.get("gif_enabled", False), drawing.get("enabled", False),
                             "也画动图", "")
         + settings_form(
             "image", "画图",
-            field("image", drawing, "model", "模型"),
-            field("image", drawing, "base_url", "接口地址")
+            field("image", drawing, "model", "模型")
             + field("image", drawing, "daily_limit", "每天最多画几张", number=True)
-            + field("image", drawing, "user_daily_limit", "每人每天最多几张", number=True)
+            + field("image", drawing, "user_daily_limit", "每人每天最多几张", number=True),
+            field("image", drawing, "base_url", "接口地址")
             + field("image", drawing, "quality", "画质") + field("image", drawing, "size", "静图尺寸")
             + field("image", drawing, "gif_size", "动图尺寸"),
-            extra='<p class="cap-note cap-shared-note">连接凭据：共用聊天设置里的 OpenAI Key，不用再填一次。</p>'),
+            extra='<p class="cap-note cap-shared-note">连接凭据：共用上方 OpenAI 连接的 Key。</p>'),
         "voice_input": sub_switch("transcription", hearing.get("transcription_enabled", True), hearing.get("enabled", False),
                                   "QQ 没带文字时，交给模型转写", "")
-        + settings_form("voice_input", "听语音", field("voice_input", hearing, "model", "转写模型"))
+        + settings_form("voice_input", "听语音", field("voice_input", hearing, "model", "转写模型"),
+                        extra='<p class="cap-note cap-shared-note">群里的语音按消息触发，没有单独次数；桌宠连续对话的轮数在下面「桌宠语音」里设。</p>')
         + '<a class="ms-inline-link" href="/capabilities?edit=voice#voice">设置语音服务 →</a>',
         "voice_output": settings_form(
             "voice_output", "发语音",
-            field("voice_output", speech, "model", "模型") + field("voice_output", speech, "voice", "音色"),
-            field("voice_output", speech, "daily_limit", "每天最多发几条", number=True)
-            + field("voice_output", speech, "node", "Node 路径") + field("voice_output", speech, "silk_entry", "音频编码器路径"))
+            field("voice_output", speech, "model", "模型") + field("voice_output", speech, "voice", "音色")
+            + field("voice_output", speech, "daily_limit", "每天最多发几条", number=True),
+            field("voice_output", speech, "node", "Node 路径") + field("voice_output", speech, "silk_entry", "音频编码器路径"))
         + ('' if all(deps.values()) else '<p class="cap-note">还需要安装音频组件。</p>')
         + '<a class="ms-inline-link" href="/capabilities?edit=voice#voice">设置语音服务 →</a>',
     }
@@ -692,23 +729,25 @@ def _capabilities_page(cfg, request, csrf, runner=None):
             missing = [item for item in missing if item not in ("本机 Node", "SILK 编码器")]
         need = (f'<p class="cap-note cap-need">还需要：{"、".join(_esc(m) for m in missing)}</p>'
                 if row.get("enabled") and missing and state_tone == "todo" else '')
-        # The whole row opens the settings; the switch sits beside it, outside <summary>.
+        # Model and daily quota live on the row itself; 「设置」 only holds the editable form.
+        short_state = "已开启" if state_tone == "ok" else "已关闭" if state_tone == "off" else state
         rows.append(
             f'<article class="cap-item" id="{name}" data-cap="{name}" data-tone="{state_tone}">'
-            f'<details class="cap-more"{" open" if saved == name or editing == name else ""}><summary class="cap-head">'
+            f'<details class="cap-more" name="cap"{" open" if saved == name or editing == name else ""}><summary class="cap-head">'
             f'<span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24">{_CAP_ICONS[name]}</svg></span>'
-            f'<span class="cap-title"><strong>{title}</strong><small>{summary}</small></span>'
-            f'<span class="cap-state" data-cap-state>{_esc(state)}</span><span class="cap-open">设置</span></summary>'
+            f'<span class="cap-title"><strong>{title}</strong><small>{summary}</small>{_cap_facts(name, row, short_state)}</span>'
+            f'<span class="cap-open">设置</span></summary>'
             f'<div class="cap-body">{need}{running}{env}{bodies[name]}</div></details>'
             f'{switch(name, row.get("enabled", False), "允许" + title)}</article>')
 
     rounds = hearing.get("desktop_daily_limit")
-    voice_source = ((f"每天最多 {rounds} 轮" if rounds else "已停用") if hearing.get("key_configured")
-                    else "还没连接 OpenAI")
-    voice_form = settings_form("voice", "语音服务", "",
-                               field("voice", hearing, "base_url", "接口地址")
-                               + field("voice", hearing, "desktop_daily_limit", "桌宠每天最多聊几轮（0 停用）", number=True),
-                               extra='<p class="cap-note cap-shared-note">连接凭据：共用聊天设置里的 OpenAI Key，不用再填一次。</p>')
+    voice_model = speech.get("model") or "沿用发语音"
+    voice_source = ((f"{voice_model} · 每天 {rounds} 轮" if rounds else f"{voice_model} · 已停用")
+                    if hearing.get("key_configured") else "还没连接 OpenAI")
+    voice_form = settings_form("voice", "语音服务",
+                               field("voice", hearing, "desktop_daily_limit", "桌宠每天最多聊几轮（0 停用）", number=True),
+                               field("voice", hearing, "base_url", "接口地址"),
+                               extra='<p class="cap-note cap-shared-note">连接凭据：共用上方 OpenAI 连接的 Key。</p>')
     shared = (
         f'<details class="ms-voice-connection" id="voice"{" open" if saved == "voice" or editing == "voice" else ""}>'
         f'<summary><span>桌宠语音</span><span class="ms-voice-state">{voice_source}</span><span class="cap-open">设置</span></summary>'
@@ -717,12 +756,31 @@ def _capabilities_page(cfg, request, csrf, runner=None):
     advanced = (
         f'<details class="ms-diagnostics ms-advanced"{advanced_open}><summary>高级：判断、搜索与连接检查</summary>'
         f'{model_rows[1]}<a href="/decision">判断帮手 →</a><a href="/search">检查联网搜索 →</a></details>')
-    key_ready = bool(chat["key_configured"])
+    key_ready = bool(openai["key_configured"] and openai["base_url"])
+    official = capabilities.official(openai["base_url"])
+    key_title = ("一把 OpenAI Key 已就位" if official else "OpenAI 兼容服务已连接") if key_ready else "连接 OpenAI"
+    key_description = ("使用官方 OpenAI 的能力可共用这把 Key；其他服务分别连接。" if official or not key_ready
+                       else "同一接口的能力可共用这把 Key；实时语音需要 OpenAI 官方连接。")
+    key_managed = openai["key_source"] in ("file", "environment")
+    base_managed = "OPENAI_BASE_URL" in openai["overridden"]
+    if key_managed:
+        key_form = '<p class="cap-note">连接由安装配置管理，请让安装 Agent 修改。</p>'
+    else:
+        key_form = (
+            '<form method="post" action="/models/openai" class="cap-form" data-cap-form>'
+            f'<input type="hidden" name="csrf" value="{_esc(csrf)}">'
+            f'<div class="cap-fields">{field("openai", openai, "api_key", "OpenAI API Key", secret=True, hint="更换接口地址时，请同时填写新 Key。")}'
+            + field("openai", {**openai, "base_url": openai["base_url"] or "https://api.openai.com/v1"},
+                    "base_url", "接口地址", disabled=base_managed,
+                    hint="地址由安装配置管理；这里可以更换 Key。" if base_managed else "")
+            + '</div><footer><button type="submit">保存连接</button><span data-cap-form-status aria-live="polite">'
+            + ('已保存，聊天服务保持原来的选择。' if saved == "openai" else '') + '</span></footer></form>')
     key_card = (
-        f'<section class="cap-key-card" data-tone="{"ok" if key_ready else "todo"}">'
-        f'<div><strong>{"一把 OpenAI Key 已就位" if key_ready else "还没填 OpenAI API Key"}</strong>'
-        f'<p>{"聊天、判断、读图、画图、语音都用它；换 Key 只改这一处。" if key_ready else "在下面「聊天」里填一次，其他能力自动共用，不用再填第二遍。"}</p></div>'
-        '<a href="#chat">去设置 →</a></section>')
+        f'<details class="cap-key-card" id="openai" data-tone="{"ok" if key_ready else "todo"}"'
+        f'{" open" if saved == "openai" or editing == "openai" else ""}>'
+        f'<summary><span><strong>{key_title}</strong><span class="cap-key-description">{key_description}</span></span>'
+        '<span class="cap-open">设置</span></summary>'
+        f'<div class="cap-body">{key_form}</div></details>')
     body = (
         '<header class="cap-page-head"><h1>模型与能力</h1><p>她会什么、用哪个模型。开关点了就保存。</p></header>'
         f'<section class="cap-page" aria-label="模型与能力">{key_card}'
@@ -1034,28 +1092,110 @@ def _knowledge_tabs(active):
         f'<a href="{href}"{" aria-current=page" if key == active else ""}>{text}</a>' for href, text, key in tabs) + '</nav>'
 
 
+def _memory_date(name):
+    stem = name[:-3]
+    return stem[:10] if len(stem) >= 10 and stem[4:5] == "-" else ""
+
+
+def _memory_outline(content):
+    """Pull the summary and one or two quotable lines out of a 群史记 page for the index."""
+    title, section, summary, scenes = "", "", [], []
+    for line in content.splitlines():
+        raw = line.strip()
+        if raw.startswith("# "):
+            title, section = raw[2:].strip(), ""
+        elif raw.startswith("## "):
+            section = raw[3:].strip()
+        elif raw.startswith("- ") and section in ("名场面", "最近在聊"):
+            scenes.append(raw[2:].strip())
+        elif raw and not raw.startswith((">", "`")) and section == "摘要":
+            summary.append(raw)
+    return title, " ".join(summary), scenes[:2]
+
+
+def _memory_article(content):
+    """Render a 群史记 page as readable HTML instead of a dump of raw markdown."""
+    out, listing, quoted = [], False, False
+
+    def close():
+        nonlocal listing, quoted
+        if listing:
+            out.append("</ul>")
+            listing = False
+        if quoted:
+            out.append("</blockquote>")
+            quoted = False
+
+    for line in content.splitlines():
+        raw = line.strip()
+        if not raw:
+            close()
+        elif raw.startswith("# "):
+            close()
+            out.append(f"<h2>{_esc(raw[2:])}</h2>")
+        elif raw.startswith("## "):
+            close()
+            out.append(f"<h3>{_esc(raw[3:])}</h3>")
+        elif raw.startswith("> "):
+            if listing:
+                out.append("</ul>")
+                listing = False
+            if not quoted:
+                out.append("<blockquote>")
+                quoted = True
+            out.append(f"<p>{_esc(raw[2:])}</p>")
+        elif raw.startswith("- "):
+            if quoted:
+                out.append("</blockquote>")
+                quoted = False
+            if not listing:
+                out.append("<ul>")
+                listing = True
+            out.append(f"<li>{_esc(raw[2:])}</li>")
+        else:
+            close()
+            out.append(f"<p>{_esc(raw)}</p>")
+    close()
+    return "".join(out)
+
+
 def _memory(cfg, request):
-    files = _memory_files(cfg)
-    name = request.query.get("file") or (files[0] if files else "")
-    content = ""
+    files = sorted(_memory_files(cfg), key=lambda n: (_memory_date(n), n), reverse=True)
+    name = (request.query.get("file") or "").strip()
+    if name and (os.path.basename(name) != name or name not in files):
+        raise web.HTTPBadRequest(text="非法记忆文件名")
+    detail = ""
     if name:
-        if os.path.basename(name) != name or name not in files:
-            raise web.HTTPBadRequest(text="非法记忆文件名")
         content = _read_text(os.path.join(cfg.MEMORY_DIR, name))
-    options = "".join(
-        f'<option value="{_esc(item)}"{" selected" if item == name else ""}>{_esc(item)}</option>'
-        for item in files)
-    picker = (f'<form method="get" action="/memory" class="row"><select name="file">'
-              f'{options}</select><button type="submit">打开</button></form>') if files else ""
-    memory_content = f"<pre>{_esc(content)}</pre>" if content else _empty_state(
-        "群记忆还在慢慢攒", "有了新的相处片段，她会慢慢整理。", state="sleeping")
+        detail = (f'<section class="kb-day-full"><a class="kb-back" href="/memory">← 全部群史记</a>'
+                  f'<article>{_memory_article(content)}</article></section>')
+    cards = []
+    for item in files:
+        if item.startswith("latest"):        # latest 是最新一天的副本，索引里不重复摆一遍
+            continue
+        content = _read_text(os.path.join(cfg.MEMORY_DIR, item))
+        if not content.strip():
+            continue
+        title, summary, scenes = _memory_outline(content)
+        link = "/memory?file=" + quote(item, safe="")
+        scene_html = "".join(f"<li>{_esc(scene)}</li>" for scene in scenes)
+        cards.append(
+            f'<article class="kb-day"><div class="kb-day-head">'
+            f'<a href="{link}"><time>{_esc(_memory_date(item) or item[:-3])}</time></a>'
+            f'<span>{_esc(title)}</span></div>'
+            f'<p>{_esc(summary)}</p>'
+            f'{f"<ul>{scene_html}</ul>" if scene_html else ""}'
+            f'<a class="kb-day-more" href="{link}">读这一页 →</a></article>')
+    index = (f'<div class="kb-days">{"".join(cards)}</div>' if cards else _empty_state(
+        "群史记还在慢慢攒", "每天聊完，她会自己整理出一页。", state="sleeping"))
     body = f"""
-<header class="kb-heading"><div><h1>群知识</h1><p>她每天自己整理的群记忆。想补充或纠正，写进「你告诉她的」。</p></div></header>
+<header class="kb-heading"><div><h1>群史记</h1><p>她每天自己整理的一页：那天在聊什么、哪句话最逗。想补充或纠正，写进「你告诉她的」。</p></div><a class="button" href="/knowledge">写点你告诉她的 →</a></header>
 {_knowledge_tabs("memory")}
-{picker}
-{memory_content}
+<div class="kb-toolbar"><span>已经攒下 {len(cards)} 页</span></div>
+{detail}
+{index}
 """
-    return _page("群记忆", body, "memory", cfg=cfg)
+    return _page("群史记", body, "memory", cfg=cfg)
 
 
 async def _search(cfg, request):
@@ -1091,7 +1231,7 @@ async def _search(cfg, request):
 
 def _decision(cfg, request, csrf):
     # Keep old bookmarks pointing at the unified model settings.
-    raise web.HTTPFound("/capabilities#decision")
+    raise web.HTTPFound("/capabilities?edit=decision#decision")
 
 
 async def _decision_save(cfg, request, csrf):
@@ -1109,7 +1249,9 @@ async def _decision_save(cfg, request, csrf):
         if source == "shared":
             # Dynamic binding: no second copy of the key is ever written.
             # The endpoint must be the same service the shared key belongs to.
-            instance_settings.decision_key_from_chat(cfg, endpoint)
+            from regular import capabilities
+            if not capabilities.key_for_endpoint(cfg, endpoint, suffix="/decisions"):
+                raise ValueError("invalid credentials")
             decision_settings.save_settings(cfg.DATA_DIR, endpoint=endpoint,
                                             model=model, credential="shared")
         elif source == "chat":
@@ -1146,6 +1288,19 @@ def _checkup_dirs(cfg):
     }
 
 
+def _checkup_report_counts(dirs, days):
+    """Saved reports give cheap per-day finding counts, so the page never opens on an empty day."""
+    root = Path(dirs["checkup_dir"])
+    counts = {}
+    for day in days:
+        try:
+            data = json.loads((root / f"{day}.json").read_text(encoding="utf-8"))
+            counts[day] = len(data.get("findings") or [])
+        except (OSError, ValueError, AttributeError):
+            counts[day] = None
+    return counts
+
+
 def _checkup_days(dirs):
     from regular import checkup as checkup_mod
     days = set()
@@ -1170,13 +1325,20 @@ def _checkup(cfg, request, csrf):
     from regular import checkup as checkup_mod
     dirs = _checkup_dirs(cfg)
     days = _checkup_days(dirs)
+    report_counts = _checkup_report_counts(dirs, days)
     raw_day = (request.query.get("day") or "").strip()
+    explicit_day = bool(raw_day)
+    # Always compute the newest available day before considering older findings.
+    # A missing cached report says nothing about whether today's logs are empty.
+    if not raw_day:
+        raw_day = days[0] if days else None
     try:
-        day = checkup_mod.resolve_day(raw_day or (days[0] if days else None))
+        day = checkup_mod.resolve_day(raw_day)
     except ValueError as err:
         raise web.HTTPBadRequest(text="非法日期") from err
     if day not in days:
         days = [day, *days]
+        report_counts.setdefault(day, None)
     policy_error = False
     try:
         policy = checkup_mod.load_policy(getattr(cfg, "CHECKUP_POLICY_FILE", ""))
@@ -1184,6 +1346,14 @@ def _checkup(cfg, request, csrf):
         policy = None
         policy_error = True
     out = checkup_mod.report(day, **dirs, policy=policy)
+    report_counts[day] = len(out["findings"])
+    if not explicit_day and not any(out["inputs"].get(name) for name in
+                                    ("incoming", "delivered", "turns", "triage")):
+        previous = next((d for d in days if d < day and report_counts.get(d)), None)
+        if previous:
+            day = previous
+            out = checkup_mod.report(day, **dirs, policy=policy)
+            report_counts[day] = len(out["findings"])
     if not policy_error:
         try:
             checkup_mod.write(out, dirs["checkup_dir"])
@@ -1232,10 +1402,20 @@ def _checkup(cfg, request, csrf):
     findings_html = "".join(cards) if cards else '<div class="wx-checkup-empty"><h2>这一天没挑出明显接偏的话</h2><p>你自己觉得哪句不对，就用上面的交接说明交给 Agent。</p></div>'
     i = out["inputs"]
     pending = sum(f.get("verdict") not in ("yes", "no") for f in out["findings"])
+    recent = "".join(
+        f'<a href="/checkup?day={quote(d, safe="")}"{" aria-current=page" if d == day else ""}>'
+        f'{_esc(d[5:])}<span>{str(report_counts[d]) + " 条" if report_counts.get(d) is not None else "待体检"}</span></a>' for d in days[:7])
+    day_strip = (f'<nav class="wx-checkup-days" aria-label="最近几天">{recent}</nav>' if recent else "")
+    today = time.strftime("%Y-%m-%d")
+    note = (f'<p class="wx-checkup-note">正在查看 {_esc(day)}。'
+            f'<a href="/checkup?day={quote(today, safe="")}">查看今天 →</a></p>'
+            if day != today else "")
     body = f"""
 <header class="wx-heading"><div><h1>让她更好</h1><p>体检会挑出可能接偏的话；确认是问题，就交给编码 Agent 去改。</p></div></header>
 {warning}
 {_handoff_section(cfg)}
+{day_strip}
+{note}
 <div class="wx-checkup-summary"><p><strong>每日体检 · {pending} 句待看</strong><span>{_esc(day)} · 共 {len(out['findings'])} 条记录 · 收到 {i['incoming']} 条消息 · 回复 {i['delivered']} 条</span></p><form method="get" action="/checkup" class="wx-date"><label class="sr-only" for="checkup-day">体检日期</label><select id="checkup-day" name="day">{options}</select><button class="secondary" type="submit">换一天</button></form></div>
 <section class="wx-findings" aria-label="待看记录">{findings_html}</section>
 <details class="wx-disclosure"><summary>分类统计与查看范围</summary><p class="muted">查看 {i['turns']} 轮对话、{i['triage']} 次接话判断，参考前 {i['baseline_days']} 天的记录。</p><table><thead><tr><th>问题类型</th><th>数量</th><th>确认比例</th></tr></thead><tbody>{"".join(sig_rows)}</tbody></table></details>
@@ -1327,6 +1507,33 @@ def create_app(cfg, *, token):
         except (ValueError, OSError):
             raise web.HTTPBadRequest(text="没能保存，请检查模型和服务连接。") from None
         raise web.HTTPFound("/capabilities?saved=chat#chat")
+
+    async def openai_save(request):
+        form = await checked_form(request)
+        try:
+            current = instance_settings.public_settings(cfg, "openai")
+            if current["key_source"] in ("file", "environment"):
+                raise ValueError("managed connection")
+            from regular import capabilities
+            key = instance_settings._text(form.get("api_key"), "密钥", 4096)
+            changes = {}
+            if "base_url" in form:
+                base = instance_settings._endpoint(instance_settings._text(form["base_url"], "接口地址"))
+                changed = not capabilities.same_endpoint(base, current["base_url"])
+                if "OPENAI_BASE_URL" in current["overridden"]:
+                    if changed:
+                        raise web.HTTPBadRequest(text="接口地址由安装配置管理，请让安装 Agent 修改。")
+                else:
+                    if changed and current["key_configured"] and not key:
+                        raise web.HTTPBadRequest(text="更换接口地址时，请同时填写新服务的 Key。")
+                    changes["OPENAI_BASE_URL"] = base
+            if key:
+                changes["OPENAI_API_KEY"] = key
+            if changes:
+                instance_settings.write_values(cfg, changes)
+        except (ValueError, OSError):
+            raise web.HTTPBadRequest(text="没能保存，请检查连接；由安装配置管理的连接请交给安装 Agent 修改。") from None
+        raise web.HTTPFound("/capabilities?saved=openai#openai")
 
     async def capabilities_save(request):
         form = await checked_form(request)
@@ -1516,6 +1723,7 @@ def create_app(cfg, *, token):
     app.router.add_get("/setup", setup_page)
     app.router.add_post("/setup/save", setup_save)
     app.router.add_post("/models/save", models_save)
+    app.router.add_post("/models/openai", openai_save)
     app.router.add_get("/capabilities", capabilities_page)
     app.router.add_post("/capabilities/save", capabilities_save)
     app.router.add_post("/capabilities/toggle", capabilities_toggle)

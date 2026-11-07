@@ -41,7 +41,7 @@ const reduced = new Element(); reduced.matches = false;
 const requests = [];
 const timers = [];
 let resolveChat;
-const document = { body: {dataset: {poseStates: 'blink,thinking,celebrate,sleeping'}}, querySelector: selector => nodes[selector] || null, querySelectorAll: selector => selector === 'img[data-static-src]' ? [portrait] : selector === '[data-actions-toggle]' ? [motion] : [], createElement: () => new Element() };
+const document = { addEventListener() {}, body: {dataset: {poseStates: 'blink,thinking,celebrate,sleeping'}}, querySelector: selector => nodes[selector] || null, querySelectorAll: selector => selector === 'img[data-static-src]' ? [portrait] : selector === '[data-actions-toggle]' ? [motion] : [], createElement: () => new Element() };
 const context = { document, window: {matchMedia: () => reduced}, localStorage: { getItem: key => preference.get(key), setItem: (key, value) => preference.set(key, value) }, AbortSignal: {timeout: () => ({})}, FormData: class extends Map {}, setTimeout: callback => { timers.push(callback); return timers.length; }, clearTimeout() {}, fetch: (url, options) => { requests.push({url, options}); if (url === '/companion/status') return Promise.resolve({ok:true, json: async () => ({available:true, qq_connected:false})}); return new Promise(resolve => {resolveChat = resolve;}); } };
 vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 const drain = () => new Promise(resolve => setImmediate(resolve));
@@ -120,7 +120,7 @@ const manifest = {schema: 2, frame: [360, 360], actions: {}};
 for (const [name, [strip, seq]] of Object.entries(clips)) manifest.actions[strip] = {file: strip + '.webp', frames: Math.max(manifest.actions[strip]?.frames || 0, Math.max(...seq) + 1, strip === 'idle' ? 3 : 1)};
 let presence = {bot: 'ready', events: []};
 const respond = body => Promise.resolve({ok: true, json: async () => body});
-const document = { visibilityState: 'visible', body: {dataset: {poseStates: '', petClips: JSON.stringify(clips)}}, querySelector: s => nodes[s] || null,
+const document = { visibilityState: 'visible', addEventListener() {}, body: {dataset: {poseStates: '', petClips: JSON.stringify(clips)}}, querySelector: s => nodes[s] || null,
   querySelectorAll: s => s === '[data-pet-sprite]' ? [sprite] : [], createElement: () => new Element() };
 const context = { document, window: {matchMedia: () => ({matches: false, addEventListener() {}})}, localStorage: {getItem: () => null, setItem() {}},
   performance: {now: () => now}, requestAnimationFrame: cb => frames.push(cb), setInterval: cb => intervals.push(cb), setTimeout: () => 0, clearTimeout() {},
@@ -187,7 +187,7 @@ const providerStatus = new Element();
 const setup = new Element(); setup.elements={namedItem:name=>fields[name]};
 setup.querySelectorAll=()=>options;
 setup.querySelector=key=>({'[data-model-choice]':choice,'[data-custom-model-field]':custom,'[data-provider-status]':providerStatus})[key];
-const document={body:{dataset:{}},querySelector:key=>key==='[data-setup-form]'?setup:null,querySelectorAll:()=>[],createElement:()=>new Element()};
+const document={addEventListener(){},body:{dataset:{}},querySelector:key=>key==='[data-setup-form]'?setup:null,querySelectorAll:()=>[],createElement:()=>new Element()};
 const reduced=new Element(); reduced.matches=false;
 const context={document,window:{matchMedia:()=>reduced},localStorage:{getItem:()=>null},setTimeout(){},clearTimeout(){},fetch(){throw new Error('Choosing models must stay local');}};
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),context);
@@ -252,7 +252,7 @@ form.querySelector = selector => fields[selector];
 form.elements = { namedItem: () => ({value: 'synthetic-csrf'}) };
 const nodes = { '[data-chat-form]': form, '[data-chat-status]': status, '[data-chat-refresh]': refresh, '[data-chat-history]': history };
 const requests = [];
-const document = { body: {dataset: {}}, querySelector: selector => nodes[selector] || null, querySelectorAll: () => [], createElement: () => new Element() };
+const document = { addEventListener() {}, body: {dataset: {}}, querySelector: selector => nodes[selector] || null, querySelectorAll: () => [], createElement: () => new Element() };
 const context = { document, window: {matchMedia: () => ({matches: false, addEventListener() {}}), location: {href: ''}}, localStorage: { getItem() {}, setItem() {} },
   AbortSignal: {timeout: () => ({})}, FormData: class extends Map {}, setTimeout: () => 0, clearTimeout() {},
   fetch: (url, options) => { requests.push({url, options});

@@ -214,7 +214,7 @@ def public_settings(cfg):
         "user_daily_limit": _integer(_value(cfg, values, "IMAGE_USER_DAILY_CAP", 5), 5),
         "key_configured": image_source != "none", "key_source": image_source,
     }
-    image["missing"] = [label for ok, label in ((image_base, "生图服务地址"), (image["model"], "生图模型"), (image["key_configured"], "聊天服务的 OpenAI Key")) if not ok]
+    image["missing"] = [label for ok, label in ((image_base, "生图服务地址"), (image["model"], "生图模型"), (image["key_configured"], "OpenAI Key")) if not ok]
     audio_base = _endpoint(_value(cfg, values, "VOICE_BASE_URL", "https://api.openai.com/v1"))
     audio_dedicated = bool(str(values.get("VOICE_API_KEY") or "").strip())
     audio_inherited = okey and official(obase) and official(audio_base)
@@ -225,7 +225,7 @@ def public_settings(cfg):
                    "transcription_enabled": enabled(cfg, "transcription"),
                    "model": str(_value(cfg, values, "VOICE_TRANSCRIPTION_MODEL", "gpt-transcribe"))}
     tls = _bool(_value(cfg, values, "SSL_VERIFY", True))
-    voice_input["missing"] = [label for ok, label in ((official(audio_base), "官方 OpenAI 语音地址"), (common["key_configured"], "聊天服务的 OpenAI Key"), (voice_input["model"], "转写模型")) if not ok]
+    voice_input["missing"] = [label for ok, label in ((official(audio_base), "官方 OpenAI 语音地址"), (common["key_configured"], "OpenAI Key"), (voice_input["model"], "转写模型")) if not ok]
     voice_input["transcription_missing"] = list(voice_input["missing"])
     if not voice_input["transcription_enabled"]:
         voice_input["missing"] = []  # QQ-provided text needs no model or service credential.
@@ -237,7 +237,7 @@ def public_settings(cfg):
                     "voice": str(_value(cfg, values, "VOICE_OUTPUT_VOICE", "marin")),
                     "daily_limit": _integer(_value(cfg, values, "VOICE_OUTPUT_DAILY_LIMIT", 10), 10),
                     "node": node, "silk_entry": silk, "dependencies": deps}
-    voice_output["missing"] = [label for ok, label in ((official(audio_base), "官方 OpenAI 语音地址"), (common["key_configured"], "聊天服务的 OpenAI Key"), (voice_output["model"], "语音模型"), (deps["node"], "本机 Node"), (deps["silk"], "SILK 编码器"), (tls, "TLS 证书验证")) if not ok]
+    voice_output["missing"] = [label for ok, label in ((official(audio_base), "官方 OpenAI 语音地址"), (common["key_configured"], "OpenAI Key"), (voice_output["model"], "语音模型"), (deps["node"], "本机 Node"), (deps["silk"], "SILK 编码器"), (tls, "TLS 证书验证")) if not ok]
     sections = {"vision": vision, "image": image, "voice_input": voice_input, "voice_output": voice_output}
     for name, section in sections.items():
         section["configured"] = not section["missing"]

@@ -251,7 +251,7 @@ class PanelOnboardingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_settings_bookmarks_go_to_unified_model_settings(self):
         response = await self.client.get('/decision', headers=self.auth(), allow_redirects=False)
-        self.assertEqual(response.headers['Location'], '/capabilities#decision')
+        self.assertEqual(response.headers['Location'], '/capabilities?edit=decision#decision')
         response = await self.client.get('/setup?provider=zhipu', headers=self.auth(), allow_redirects=False)
         self.assertEqual(response.headers['Location'], '/capabilities?provider=zhipu#chat')
 

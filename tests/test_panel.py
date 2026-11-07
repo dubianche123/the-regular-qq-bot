@@ -172,6 +172,56 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
         bad = await self.client.get("/memory?file=../state.json", headers=self.auth())
         self.assertEqual(bad.status, 400)
 
+    async def test_memory_is_an_index_of_real_pages_not_a_raw_dump(self):
+        (self.memory_dir / "2026-11-06_g1.md").write_text(
+            "# 群史记 · 2026-11-06\n\n## 摘要\n今天聊了炒饭。\n\n"
+            "## 名场面\n- 「葱分三次」 —— 很认真。\n", encoding="utf-8")
+        page = await (await self.client.get("/memory", headers=self.auth())).text()
+        self.assertIn("<h1>群史记</h1>", page)
+        self.assertIn("今天聊了炒饭。", page)
+        self.assertIn("葱分三次", page)
+        self.assertIn('href="/memory?file=2026-11-06_g1.md"', page)
+        self.assertNotIn("<pre>", page)
+        detail = await (await self.client.get(
+            "/memory?file=2026-11-06_g1.md", headers=self.auth())).text()
+        self.assertIn("<h2>群史记 · 2026-11-06</h2>", detail)
+        self.assertIn("← 全部群史记", detail)
+
+    async def test_checkup_opens_on_a_day_with_something_to_read(self):
+        root = Path(self.cfg.DATA_DIR)
+        (root / "checkups").mkdir()
+        (root / "interactions").mkdir()
+        (root / "checkups" / "2026-11-06.json").write_text(json.dumps({
+            "schema": 1, "day": "2026-11-06", "findings": [{"id": "abc"}],
+            "inputs": {}, "counts": {}, "precision": {}, "policy": {},
+        }), encoding="utf-8")
+        (root / "interactions" / "2026-11-07.jsonl").write_text("", encoding="utf-8")
+        page = await (await self.client.get("/checkup", headers=self.auth())).text()
+        self.assertIn('href="/checkup?day=2026-11-06" aria-current=page', page)
+        self.assertIn('class="wx-checkup-days"', page)
+
+    async def test_checkup_computes_latest_logs_before_consulting_old_cached_findings(self):
+        root = Path(self.cfg.DATA_DIR)
+        (root / "checkups").mkdir()
+        (root / "interactions").mkdir()
+        (root / "checkups" / "2026-11-06.json").write_text(json.dumps({
+            "findings": [{"id": "old"}],
+        }), encoding="utf-8")
+        (root / "interactions" / "2026-11-07.jsonl").write_text(json.dumps({
+            "schema": "regular.interaction.v1", "kind": "incoming", "ts": 1,
+            "group": "synthetic-group", "user": "synthetic-user", "text": "早上好",
+            "message_id": "synthetic-message",
+        }) + "\n", encoding="utf-8")
+        page = await (await self.client.get("/checkup", headers=self.auth())).text()
+        self.assertIn('href="/checkup?day=2026-11-07" aria-current=page', page)
+        self.assertIn('收到 1 条消息', page)
+        self.assertNotIn('今天还没攒出可看的', page)
+        self.assertTrue((root / "checkups" / "2026-11-07.json").is_file())
+        # A day not computed yet must not be presented as a confirmed zero.
+        (root / "interactions" / "2026-11-05.jsonl").write_text("", encoding="utf-8")
+        page = await (await self.client.get("/checkup", headers=self.auth())).text()
+        self.assertIn('11-05<span>待体检</span>', page)
+
     async def test_search_debug_uses_search_module(self):
         result = [{"title": "Example", "snippet": "Snippet", "url": "https://example.com/a"}]
         with patch.object(panel.search_mod, "search_web", new=AsyncMock(return_value=result)):
@@ -191,7 +241,8 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
     async def test_decision_page_shows_form_without_secret(self):
         text, _csrf = await self._decision_page()
         self.assertIn("模型与能力", text)
-        self.assertIn('id="decision"', text)
+        self.assertIn('id="decision" data-tone="todo"><details class="cap-more" name="cap" open>', text)
+        self.assertIn('class="ms-diagnostics ms-advanced" open', text)
         self.assertIn("/v1/decisions", text)
         self.assertIn("gpt-6-luna", text)
         self.assertIn('name="api_key"', text)
