@@ -85,9 +85,12 @@ def same_endpoint(left, right):
     """A key belongs to its configured base URL, not every compatible API."""
     try:
         a, b = urlsplit(str(left)), urlsplit(str(right))
+        default_port = {"http": 80, "https": 443}
+        a_port = a.port if a.port is not None else default_port.get(a.scheme)
+        b_port = b.port if b.port is not None else default_port.get(b.scheme)
         return bool(a.scheme and a.hostname and
-                    (a.scheme, a.hostname, a.port, a.path.rstrip('/')) ==
-                    (b.scheme, b.hostname, b.port, b.path.rstrip('/')) and
+                    (a.scheme, a.hostname, a_port, a.path.rstrip('/')) ==
+                    (b.scheme, b.hostname, b_port, b.path.rstrip('/')) and
                     not any((a.username, a.password, a.query, a.fragment,
                              b.username, b.password, b.query, b.fragment)))
     except ValueError:
@@ -105,14 +108,14 @@ def audio_key(cfg, fallback=""):
 
 
 def openai_key(cfg):
-    """The single OpenAI key saved in the chat setup. One key, every job.
+    """The single key saved in the OpenAI connection. One key, every job.
 
     Reads the live .env (including real environment overrides) and the optional
     api_keys_openai.txt rotation file. Never surfaced through public_settings.
     """
     values = _values(cfg)
     preset = getattr(cfg, "PROVIDER_PRESETS", {}).get("openai", {}) or {}
-    default = str(values.get("OPENAI_API_KEY") or preset.get("api_key", "") or "").strip()
+    default = str(values.get("OPENAI_API_KEY", preset.get("api_key", "")) or "").strip()
     keys = read_api_keys(instance_settings.instance_dir(cfg) / "api_keys_openai.txt", default)
     return keys[0] if keys else ""
 
@@ -164,10 +167,10 @@ def _endpoint(value):
 
 
 def _provider(cfg, values, name):
-    preset = getattr(cfg, "PROVIDER_PRESETS", {}).get(name, {})
     prefix = name.upper()
-    base = _endpoint(values.get(f"{prefix}_BASE_URL", preset.get("base_url", "")))
-    models = str(values.get(f"{prefix}_MODELS", ",".join(preset.get("models", []))) or "")
+    view = instance_settings.public_settings(cfg, name)
+    base = view["base_url"]
+    models = view["models"]
     key_file = instance_settings.instance_dir(cfg) / f"api_keys_{name}.txt"
     keys = read_api_keys(key_file) if key_file.is_file() else []
     secret = str(values.get(f"{prefix}_API_KEY", "") or "").strip()

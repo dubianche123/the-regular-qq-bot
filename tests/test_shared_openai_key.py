@@ -88,6 +88,16 @@ class SharedOpenAIKeyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.http.post.await_args.kwargs["headers"],
                          {"Authorization": "Bearer sk-second"})
 
+    async def test_official_key_can_judge_before_a_separate_connection_is_saved(self):
+        (self.data / decision_settings.FILENAME).unlink()
+        await providers.call_decision("synthetic input", [])
+        self.http.post.assert_awaited_once()
+        args = self.http.post.await_args
+        self.assertEqual(args.args[0], decision_settings.DEFAULT_ENDPOINT)
+        self.assertEqual(args.kwargs['json']['model'], 'gpt-6-luna')
+        self.assertEqual(args.kwargs['headers'], {'Authorization': 'Bearer sk-first'})
+        self.assertFalse((self.data / decision_settings.FILENAME).exists())
+
     async def test_explicit_environment_key_overrides_file_credentials(self):
         with patch.object(config, "EXTERNAL_ENV_KEYS", frozenset({"OPENAI_API_KEY"})), \
              patch.dict(os.environ, {"OPENAI_API_KEY": "sk-external"}):

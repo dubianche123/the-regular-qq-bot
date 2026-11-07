@@ -6,9 +6,11 @@
 
 import math
 import os
+import shutil
 from pathlib import Path
 from dotenv import dotenv_values as _dotenv_values, load_dotenv as _load_dotenv
 from regular.keys import read_api_keys
+from regular import openai_defaults
 
 # CLI sets REGULAR_HOME explicitly; direct source runs keep the old project root.
 BASE_DIR = str(Path(os.environ.get("REGULAR_HOME", Path(__file__).parent)).expanduser().resolve())
@@ -82,9 +84,10 @@ BOT_NAMES = [n.strip() for n in _env_str("BOT_NAMES", "").split(",") if n.strip(
 PROVIDER_PRESETS = {
     "openai": {
         "label": "OpenAI-compatible",
-        "base_url": _env_str("OPENAI_BASE_URL"),
+        "base_url": _env_str("OPENAI_BASE_URL", openai_defaults.BASE_URL),
         "api_key": _env_str("OPENAI_API_KEY"),
-        "models": [],
+        "models": (list(openai_defaults.CHAT_MODELS)
+                   if openai_defaults.official_base(_env_str("OPENAI_BASE_URL", openai_defaults.BASE_URL)) else []),
         "extra_body": {},
     },
     "zhipu": {
@@ -240,6 +243,9 @@ MODEL_PROFILES = {
     "gpt-6-luna": {"token_param": "max_completion_tokens", "temperature": False,
                    "effort": "reasoning_effort",
                    "off": {"reasoning_effort": "none"}, "on": {}},
+    "gpt-6.1-terra": {"token_param": "max_completion_tokens", "temperature": False,
+                      "effort": "reasoning_effort",
+                      "off": {"reasoning_effort": "none"}, "on": {}},
     "gemini-3.5-flash-lite": {"off": {}},     # 不推理；传任何推理参数都 400
 }
 # 允许推理时的输出上限（是上限不是目标）。推理先花额度：审核在 400 时，难的称呼约三分之一
@@ -251,7 +257,10 @@ REASONING_MAX_TOKENS = _env_int("REASONING_MAX_TOKENS", 16000)
 REASONING_LEVELS = ("none", "low", "medium", "high", "xhigh")
 TIER_REASONING = {}
 for _tier in ("chat", "digest", "judge", "vision"):
-    _value = _env_str(f"{_tier.upper()}_REASONING", "").lower()
+    _default_reasoning = ({"chat": "low", "digest": "xhigh"}.get(_tier, "")
+                          if TIER_PROVIDERS.get(_tier, AI_PROVIDER) == "openai"
+                          and openai_defaults.official_base(PROVIDER_PRESETS["openai"]["base_url"]) else "")
+    _value = str(os.environ.get(f"{_tier.upper()}_REASONING", _default_reasoning) or "").strip().lower()
     if _value and _value not in REASONING_LEVELS:
         CONFIG_ERRORS.append(f"{_tier.upper()}_REASONING 必须是 {' / '.join(REASONING_LEVELS)} 之一，或者留空")
         _value = ""
@@ -283,7 +292,8 @@ if VISION_PROVIDER not in PROVIDER_PRESETS:
 _vision_model = _env_str("VISION_MODEL")
 VISION_MODEL_INHERITED = not _vision_model and VISION_PROVIDER == AI_PROVIDER
 VISION_MODEL = _vision_model or (CANDIDATE_MODELS[0] if VISION_MODEL_INHERITED and CANDIDATE_MODELS else "")
-VISION_INPUT_MODE = _env_str("VISION_INPUT_MODE", "url").lower()
+VISION_INPUT_MODE = _env_str("VISION_INPUT_MODE", "download" if VISION_PROVIDER == "openai"
+                            and openai_defaults.official_base(PROVIDER_PRESETS["openai"]["base_url"]) else "url").lower()
 if VISION_INPUT_MODE not in ("url", "download"):
     CONFIG_ERRORS.append("VISION_INPUT_MODE 必须是 url 或 download")
 VISION_COOLDOWN_SECONDS = _env_float("VISION_COOLDOWN_SECONDS", 60.0)
@@ -313,7 +323,7 @@ VOICE_OUTPUT_DAILY_LIMIT = min(100, max(0, _env_int("VOICE_OUTPUT_DAILY_LIMIT", 
 DESKTOP_VOICE_DAILY_LIMIT = min(100, max(0, _env_int("DESKTOP_VOICE_DAILY_LIMIT", 30)))
 # Private instance-owned codec installation beside DATA_DIR; no NODE_PATH lookup.
 VOICE_CODEC_DIR = _env_str("VOICE_CODEC_DIR", str(Path(DATA_DIR).parent / ".voice-codecs"))
-VOICE_OUTPUT_NODE = _env_str("VOICE_OUTPUT_NODE", "/opt/homebrew/bin/node")
+VOICE_OUTPUT_NODE = _env_str("VOICE_OUTPUT_NODE", shutil.which("node") or "")
 VOICE_OUTPUT_SILK_ENTRY = _env_str("VOICE_OUTPUT_SILK_ENTRY", str(
     Path(VOICE_CODEC_DIR) / "node_modules" / "silk-wasm" / "lib" / "index.cjs"))
 
@@ -476,7 +486,7 @@ EVAL_JUDGE_MODEL = _env_str("EVAL_JUDGE_MODEL", "cn:kimi-k3.1-pro")
 EVAL_CONCURRENCY = _env_int("EVAL_CONCURRENCY", 6)
 
 # ══════════════════ 判断 API（原生 GPT Decisions，见 providers.call_decision）═════════════════
-# 独立配置：端点/模型/密钥在 data/decision_api.json（面板「判断 API」页保存），
+# 官方 OpenAI 默认共用同源 Key；data/decision_api.json 可保存独立判断选择。
 # 不是 chat/completions，不改动会话模型梯队。关掉则原生请求一律不发出。
 DECISION_ENABLED = _env_bool("DECISION_ENABLED", True)
 # 单次原生请求的总时限（秒）；一次调用只发一次，不自动重试。

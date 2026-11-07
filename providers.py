@@ -383,7 +383,7 @@ async def call_model(messages, max_tokens, tier="chat", temperature=None):
 async def call_decision(input, questions):
     """One explicit native GPT Decisions POST —— 不是 chat completions。
 
-    端点/模型/密钥只读本机保存的 decision_api.json；请求体就是
+    读取已保存的判断选择，或官方 OpenAI 的同源默认连接；请求体就是
     {model, input, questions}，不加 max_tokens/temperature/stream，
     也不退回会话梯队。一次物理尝试计一份共享日预算，限时 6s 默认、
     不自动重试；失败只记错误类型/状态码，绝不落 URL/输入/密钥/正文。
@@ -391,7 +391,7 @@ async def call_decision(input, questions):
     """
     if not config.DECISION_ENABLED:
         return None
-    settings = decision_settings.load_settings(config.DATA_DIR)
+    settings = decision_settings.effective_settings(config)
     if settings is None:
         return None
     # One key for the whole app: shared mode resolves it at call time, so

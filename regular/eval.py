@@ -975,7 +975,7 @@ def describe_traffic(config, cases, *, n, day_turns=0):
     if counts["triage"] or counts["message"]:
         from regular import decision_settings
         data_dir = getattr(config, "DATA_DIR", None)
-        settings = decision_settings.public_settings(data_dir) if data_dir else None
+        settings = decision_settings.effective_public_settings(config) if data_dir else None
         if not getattr(config, "DECISION_ENABLED", True):
             destination = "已禁用，不发原生分诊请求"
         elif settings and settings["key_configured"]:

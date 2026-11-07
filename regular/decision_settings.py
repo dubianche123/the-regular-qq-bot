@@ -2,7 +2,7 @@
 
 写到 data_dir/decision_api.json（0600）。判断协议与聊天模型是两条调用链，
 endpoint / model 仍然独立；但凭据不再复制第二份：
-默认 credential="shared"，运行时从聊天设置那把 OPENAI_API_KEY 动态读取，
+默认 credential="shared"，运行时从 OpenAI 连接的 OPENAI_API_KEY 动态读取，
 换 Key 只改一处。只有判断接口指向另一家服务时才保存专用 Key。
 错误信息一律通用化 —— 任何校验/读写失败都不许回显原始输入或密钥片段。
 """
@@ -88,6 +88,42 @@ def public_settings(data_dir, *, shared_ready=False):
     ready = bool(row["api_key"]) or (row["credential"] == "shared" and shared_ready)
     return {"endpoint": row["endpoint"], "model": row["model"],
             "key_configured": ready}
+
+
+def effective_settings(cfg):
+    """Use a saved choice, or the official starter only when no file exists.
+
+    This is read-only. A damaged or explicitly configured file never disappears
+    behind a fresh default, and an arbitrary compatible key is never borrowed.
+    """
+    data_dir = getattr(cfg, "DATA_DIR", "")
+    saved = load_settings(data_dir)
+    if saved is not None:
+        return saved
+    if os.path.lexists(_file(data_dir)):
+        return None
+    from regular import capabilities, instance_settings
+    values = instance_settings._values(cfg)[1]
+    if not capabilities._bool(values.get("DECISION_ENABLED", getattr(cfg, "DECISION_ENABLED", True))):
+        return None
+    if not capabilities.key_for_endpoint(cfg, DEFAULT_ENDPOINT, suffix="/decisions"):
+        return None
+    return {"endpoint": DEFAULT_ENDPOINT, "model": DEFAULT_MODEL, "api_key": "",
+            "credential": "shared", "automatic": True}
+
+
+def effective_public_settings(cfg):
+    """The same selected/default connection the runtime will use, without keys."""
+    from regular import capabilities
+    row = effective_settings(cfg)
+    if row is None:
+        return {"endpoint": DEFAULT_ENDPOINT, "model": DEFAULT_MODEL,
+                "key_configured": False, "automatic": False}
+    ready = bool(row["api_key"]) or (
+        row["credential"] == "shared" and bool(capabilities.key_for_endpoint(
+            cfg, row["endpoint"], suffix="/decisions")))
+    return {"endpoint": row["endpoint"], "model": row["model"],
+            "key_configured": ready, "automatic": bool(row.get("automatic"))}
 
 
 def save_settings(data_dir, *, endpoint, model, api_key="", credential="dedicated"):

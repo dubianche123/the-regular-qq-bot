@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from dotenv import dotenv_values, set_key
 
 from regular.keys import read_api_keys
+from regular import openai_defaults
 import storage
 
 PROVIDERS = ("openai", "zhipu", "gemini")
@@ -69,14 +70,19 @@ def public_settings(cfg, provider=None):
     prefix = selected.upper()
     presets = getattr(cfg, "PROVIDER_PRESETS", {})
     preset = presets.get(selected, {})
-    base = str(effective.get(f"{prefix}_BASE_URL", preset.get("base_url", "")) or "").strip()
+    base = str(effective.get(f"{prefix}_BASE_URL") or preset.get("base_url", "") or "").strip()
     try:
         _endpoint(_text(base, "接口地址"))
     except ValueError:
         # Existing hand-edited files may contain URL credentials; never put
         # those into the public form, even when this panel did not save them.
         base = ""
-    models = str(effective.get(f"{prefix}_MODELS", ",".join(preset.get("models", []))) or "").strip()
+    models = str(effective.get(f"{prefix}_MODELS") or "").strip()
+    if not models:
+        if selected == "openai" and openai_defaults.official_base(base):
+            models = ",".join(preset.get("models") or openai_defaults.CHAT_MODELS)
+        elif selected != "openai" or base == preset.get("base_url"):
+            models = ",".join(preset.get("models", []))
     model_list = list(dict.fromkeys(item.strip() for item in models.split(",") if item.strip()))
     key_file = instance_dir(cfg) / f"api_keys_{selected}.txt"
     file_keys = read_api_keys(key_file) if key_file.exists() else []

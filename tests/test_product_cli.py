@@ -33,12 +33,16 @@ def config_json(directory, *fields, env=None):
 class ProductConfigTest(unittest.TestCase):
     def test_safe_defaults_and_central_data_directory(self):
         with tempfile.TemporaryDirectory() as directory:
-            data = config_json(directory, "SSL_VERIFY", "STATE_FILE", "ARCHIVE_DIR", "AI_PROVIDER", "VISION_ENABLED", "VISION_MODEL", "VISION_PROVIDER")
+            data = config_json(directory, "SSL_VERIFY", "STATE_FILE", "ARCHIVE_DIR", "AI_PROVIDER",
+                               "VISION_ENABLED", "VISION_MODEL", "VISION_PROVIDER", "VISION_MODEL_INHERITED",
+                               "CANDIDATE_MODELS")
             self.assertTrue(data["SSL_VERIFY"])
             self.assertEqual(data["AI_PROVIDER"], "openai")
             self.assertTrue(data["VISION_ENABLED"])
             self.assertEqual(data["VISION_PROVIDER"], "openai")
-            self.assertEqual(data["VISION_MODEL"], "")
+            self.assertEqual(data["CANDIDATE_MODELS"][0], "gpt-6-luna")
+            self.assertTrue(data["VISION_MODEL_INHERITED"])
+            self.assertEqual(data["VISION_MODEL"], data["CANDIDATE_MODELS"][0])
             self.assertEqual(data["STATE_FILE"], str((Path(directory) / "data/state.json").resolve()))
             self.assertEqual(data["ARCHIVE_DIR"], str((Path(directory) / "data/archive").resolve()))
             self.assertFalse((Path(directory) / "data").exists())

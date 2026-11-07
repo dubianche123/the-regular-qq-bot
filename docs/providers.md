@@ -1,6 +1,23 @@
 # 供应商配置与路由 / Provider configuration
 
-共享版直接使用现有 OpenAI Python SDK。`openai` 表示 OpenAI-compatible 协议入口；它不限定服务商，URL、模型和凭据由部署者明确提供。智谱与 Gemini 是可修改的便捷预设，预设中的模型名不代表任何账号具备额度或视觉能力。
+共享版直接使用现有 OpenAI Python SDK。`openai` 表示 OpenAI-compatible 协议入口；默认提供官方 OpenAI 的一套起步选择，兼容服务仍可自定地址和模型。智谱与 Gemini 是可修改的便捷预设，预设中的模型名不代表任何账号具备额度或权限。
+
+## 官方 OpenAI：先填一把 Key
+
+在「模型与能力」顶部填入官方 OpenAI Key，即可沿用这套模型，不用逐项抄参数：
+
+| 用途 | 默认选择 |
+| --- | --- |
+| 聊天、摘要与称呼审核 | `gpt-6-luna`，同一官方服务备用 `gpt-6.1-terra` |
+| 接话判断、提醒审核 | `gpt-6-luna`，自动共用官方 Key |
+| 读图 | 沿用首选聊天模型，默认先下载 QQ 图片再提交 |
+| 画图、短动图 | `gpt-image-2.6-flare` |
+| 听语音 | `gpt-transcribe` |
+| 发语音、桌宠连续语音 | `gpt-realtime-2.1-mini`，音色 `marin` |
+
+官方起步配置的聊天推理为 `low`，每日摘要为 `xhigh`。已有模型、推理强度、独立凭据和已关闭的能力不会被覆盖；兼容地址也不会套用这组官方模型或自动调用官方判断。
+
+默认每日聊天等调用上限 3000 次、判断 5000 次、画图 40 张且每人 5 张、桌宠语音 30 轮。QQ 发语音默认关闭，开启后最多 10 条，且需要本机 Node 与 SILK 编码器。保存 Key 不会请求模型、开麦或发 QQ 消息；实际能力仍取决于账号权限、额度和本机依赖。型号以 [OpenAI 官方模型目录](https://developers.openai.com/api/docs/models)为准；面板可调整日常模型和次数，更多参数见下文。
 
 ## 配置一个通用端点
 
@@ -67,7 +84,7 @@ VISION_MODEL=your-image-capable-model
 
 `VISION_PROVIDER` 可选任一配置端点；跨端点时须同时填写 `VISION_MODEL`，不会猜测另一端点的默认视觉模型。凭据与 URL 复用该端点的配置，不另建一套客户端或路由。`VISION_ENABLED=false` 可关闭识图。`regular doctor` 展示启用状态、有效视觉端点与模型。继承配置不能保证模型支持图片，也不能从模型名或 `/models` 列表可靠推断；需要选用自己确认支持图片输入的模型。不支持或调用失败时会明确报告未读到图片，不编造描述。
 
-默认 `VISION_INPUT_MODE=url` 将图片 URL 直接传给模型。若 QQ 图床只能由本机访问，可显式设 `VISION_INPUT_MODE=download`：先下载，再以 base64 发送一次模型请求。没有“报某段错误后换输入再提交”的自动重试。同图前后台共用在途任务与已保存描述，不重复占图片名额；前台新图在全局预算只剩一次时跳过读图，保留一次正文调用机会。
+官方 OpenAI 默认 `VISION_INPUT_MODE=download`：先下载，再以 base64 发送一次模型请求。兼容服务默认 `url`，将图片 URL 直接传给模型；两种模式都可显式调整。没有“报某段错误后换输入再提交”的自动重试。同图前后台共用在途任务与已保存描述，不重复占图片名额；前台新图在全局预算只剩一次时跳过读图，保留一次正文调用机会。
 
 ## 思考模型的输出上限
 
@@ -79,7 +96,7 @@ VISION_MODEL=your-image-capable-model
 
 ## 原生判断帮手
 
-运行 `regular --directory . panel`，打开启动时打印的本机地址，在「模型与能力」的判断行填写 Endpoint 和模型即可；**不用再填 Key**，它动态共用聊天设置里的 `OPENAI_API_KEY`。判断协议与聊天模型仍是两条独立调用链，但凭据只有一份；换 Key 只改聊天设置，下一个判断请求就跟着变。判断地址必须与聊天 `OPENAI_BASE_URL` 同一家服务，否则不会交出这把 Key。`decision_api.json` 只写本机私有配置、不发网络请求、不重启 bot；密钥不回显到页面，也不写入日志或仓库。
+官方 OpenAI 的 Key 保存后，未单独配置过判断的新实例会自动使用官方判断连接，**不用再填 Key 或另存一次判断设置**。要换判断模型或服务，可在「模型与能力 → 高级 → 判断」调整。已有专用配置优先，损坏文件不会被默认配置掩盖。自动默认不创建第二份配置或 Key；自定义选择保存在 `decision_api.json`。判断地址必须与共享 Key 所属的 `OPENAI_BASE_URL` 同源，否则需要专用凭据。保存不发网络请求、不重启 bot；密钥不回显到页面，也不写入日志或仓库。
 
 默认 Endpoint 为 `https://api.openai.com/v1/decisions`，模型为 `gpt-6-luna`。模型名属于 Luna 家族，但请求走专用的 `input + questions → answers` 协议，不是让普通聊天生成 JSON。判断请求不参加上面的聊天模型候选轮换，不回退到 `/responses` 或 `/chat/completions`。
 
@@ -167,7 +184,7 @@ VISION_MODEL=your-image-capable-model
 
 ## English configuration summary
 
-Use `AI_PROVIDER=openai` with an explicit `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and ordered `OPENAI_MODELS`. Task overrides are optional. Zhipu/Gemini are optional presets with their own endpoint, key and model variables. `FALLBACK_PROVIDER` is empty by default and only explicitly configured endpoints receive fallback prompts.
+For the official OpenAI service, fill `OPENAI_API_KEY` to use the maintained starter models and shared judgment connection. Existing choices are retained. For a compatible service, provide its `OPENAI_BASE_URL` and ordered `OPENAI_MODELS` explicitly. Zhipu/Gemini keep their own credentials and optional presets. `FALLBACK_PROVIDER` is empty by default and only explicitly configured endpoints receive fallback prompts.
 
 Image reading is enabled by default. Without overrides, it inherits `AI_PROVIDER` and its first chat model. Set `VISION_MODEL` to override the model; when choosing another endpoint with `VISION_PROVIDER`, also provide `VISION_MODEL`. Set an independent image-capable model when chat uses a text-only model, or disable image reading with `VISION_ENABLED=false`. Configuration inheritance does not guarantee image support; failures produce an explicit unavailable-image result, never a guessed caption.
 

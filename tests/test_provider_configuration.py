@@ -23,6 +23,9 @@ print(json.dumps({"provider": config.AI_PROVIDER,"vision_enabled":config.VISION_
  "gif_enabled":config.IMAGE_GENERATION_GIF_ENABLED,"gif_size":config.IMAGE_GENERATION_GIF_SIZE,
  "gif_frames":config.IMAGE_GENERATION_GIF_FRAME_COUNT,
  "gif_frame_ms":config.IMAGE_GENERATION_GIF_FRAME_DURATION_MS},
+ "base_url":config.PROVIDER_PRESETS['openai']['base_url'],
+ "models":config.PROVIDER_PRESETS['openai']['models'],
+ "reasoning":config.TIER_REASONING,"vision_input_mode":config.VISION_INPUT_MODE,
  "errors":config.validate()}))"""
         result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True,
                                 text=True, check=True)
@@ -34,14 +37,38 @@ GENERIC = {"OPENAI_BASE_URL": "https://model.invalid/v1",
 
 
 class ProviderConfigurationTest(unittest.TestCase):
-    def test_no_configuration_requires_primary_endpoint_and_model(self):
+    def test_official_starter_has_models_but_still_requires_a_key(self):
         cfg = inspect_config({})
         self.assertEqual(cfg["provider"], "openai")
         self.assertTrue(cfg["vision_enabled"])
         self.assertEqual(cfg["vision_provider"], "openai")
-        self.assertEqual(cfg["vision_model"], "")
-        self.assertTrue(any("OPENAI_BASE_URL" in error for error in cfg["errors"]))
+        self.assertEqual(cfg["base_url"], "https://api.openai.com/v1")
+        self.assertEqual(cfg["models"], ["gpt-6-luna", "gpt-6.1-terra"])
+        self.assertEqual(cfg["vision_model"], "gpt-6-luna")
+        self.assertEqual(cfg["vision_input_mode"], "download")
+        self.assertEqual((cfg["reasoning"]["chat"], cfg["reasoning"]["digest"]), ("low", "xhigh"))
+        self.assertTrue(any("API Key" in error for error in cfg["errors"]))
+        self.assertFalse(any("OPENAI_BASE_URL" in error or "OPENAI_MODELS" in error for error in cfg["errors"]))
+
+    def test_one_official_key_is_enough_for_model_configuration(self):
+        cfg = inspect_config({"OPENAI_API_KEY": "fake"})
+        self.assertEqual(cfg["errors"], [])
+        self.assertEqual(cfg["models"], ["gpt-6-luna", "gpt-6.1-terra"])
+
+    def test_compatible_url_does_not_inherit_the_official_model_choices(self):
+        cfg = inspect_config({"OPENAI_BASE_URL": "https://gateway.invalid/v1", "OPENAI_API_KEY": "fake"})
+        self.assertEqual(cfg["models"], [])
+        self.assertEqual(cfg["reasoning"]["chat"], "")
+        self.assertEqual(cfg["vision_input_mode"], "url")
         self.assertTrue(any("OPENAI_MODELS" in error for error in cfg["errors"]))
+
+    def test_explicit_official_model_and_reasoning_are_preserved(self):
+        cfg = inspect_config({"OPENAI_API_KEY": "fake", "OPENAI_MODELS": "chosen,backup",
+                              "CHAT_REASONING": "none", "DIGEST_REASONING": "",
+                              "VISION_INPUT_MODE": "url"})
+        self.assertEqual(cfg["models"], ["chosen", "backup"])
+        self.assertEqual((cfg["reasoning"]["chat"], cfg["reasoning"]["digest"]), ("none", ""))
+        self.assertEqual(cfg["vision_input_mode"], "url")
 
     def test_preset_inherits_first_chat_model(self):
         cfg = inspect_config({"AI_PROVIDER": "zhipu", "ZHIPU_API_KEY": "fake"})
