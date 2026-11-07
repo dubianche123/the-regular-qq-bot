@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add local Codex and Claude Code hook adapters for reply-completion and
+  permission cues, with a `pet-notify` command and setup examples.
+
 ## 0.5.1 — 2026-11-07
 
 - Feeding and head pats now change the same temporary local mood in the browser

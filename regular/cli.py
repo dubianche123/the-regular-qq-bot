@@ -757,6 +757,11 @@ def main(argv=None):
     pet_cue.add_argument("action", nargs="?", default="", help="e.g. cheer, wave, laptop, think, sleep; omit to only speak")
     pet_cue.add_argument("--say", default="", help="one short line shown in her speech bubble (max 120 chars)")
     pet_cue.add_argument("--port", type=int, default=8765, help="local settings service port (default: 8765)")
+    notify = sub.add_parser("pet-notify", help="receive a local Codex or Claude Code completion hook")
+    notify.add_argument("--tool", choices=("codex", "claude"), required=True)
+    notify.add_argument("--port", type=int, default=8765)
+    notify.add_argument("--status", choices=("finished", "attention"), help="send an explicit manual signal")
+    notify.add_argument("payload", nargs="?", help="notify JSON argument; hooks may use stdin")
     mg = sub.add_parser("manage", help="what she can do and what she did today, for coding agents (JSON); "
                                        "'manage set image off' flips one switch like the panel does")
     mg.add_argument("verb", nargs="?", choices=("show", "set"), default="show")
@@ -835,6 +840,14 @@ def main(argv=None):
         if args.command == "pet-cue":
             from regular import desktop
             return desktop.cue(config, action=args.action, text=args.say, port=args.port)
+        if args.command == "pet-notify":
+            from regular.pet_notifications import main as notify_main
+            options = ["--tool", args.tool, "--directory", args.directory, "--port", str(args.port)]
+            if args.status:
+                options += ["--status", args.status]
+            if args.payload is not None:
+                options.append(args.payload)
+            return notify_main(options)
         if args.command == "manage":
             return manage_command(config, args, parser)
         if args.command == "run":
