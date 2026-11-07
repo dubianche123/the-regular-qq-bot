@@ -11,9 +11,23 @@
 - Add varied walking, bounded flight and landing, reactions while held against
   the top or bottom, upward-throw collisions, and peeking from screen edges.
   Redraw peeking hands and hide the supporting guide behind the screen edge.
-- Keep character scale stable across poses using head measurements and a roomier
-  transparent canvas. Ceiling reactions no longer pause gravity. Releasing her
-  at any screen edge hides her there until a click or drag brings her back.
+- Keep character scale stable across poses using a roomier transparent canvas.
+  Ceiling reactions no longer pause gravity. Releasing her at any screen edge
+  hides her there until a click or drag brings her back.
+- Recalibrate all 279 strips to one head size. The previous skin-colour and
+  hair-width estimate left strips between 0.7x and 1.3x of the idle head, so
+  she grew about 20% when hovering or waving and shrank when landing, sitting
+  or sleeping. `tools/pet_sprites.py calibrate` and `build` now match the idle
+  head itself (multi-scale normalized cross-correlation, mirrored, rotated
+  for lying poses), and fall back to the strip's sheet family when a face is
+  hidden.
+- Keep the pet window below the macOS menu bar and draw her higher inside it.
+  macOS pins a frameless window's top edge there, so near the top she used to
+  stop about 150 pt short, hang briefly and then jump; the effects layer had
+  the same problem.
+- Paint the generated support pole out of the five edge-peek strips instead of
+  only hiding it behind the screen edge; it flashed in magenta while the frame
+  dissolved after she popped out.
 - Let quiet activities stay longer and interleave ordered stories such as
   boiling water, pouring and drinking tea. Feeding, gentle surprise reactions,
   sleep variations and occasional toy chasing use the adopted repertoire.

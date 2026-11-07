@@ -1134,53 +1134,47 @@
     -320,
     89,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "look": {
    "bounds": [
-    -95,
-    -309,
-    86,
-    -1
-   ],
-   "head_width": 136.0
+    -98,
+    -323,
+    90,
+    0
+   ]
   },
   "walk": {
    "bounds": [
-    -104,
-    -310,
-    85,
+    -100,
+    -295,
+    81,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "wave": {
    "bounds": [
-    -112,
-    -376,
-    104,
+    -92,
+    -305,
+    84,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "hop": {
    "bounds": [
-    -122,
-    -320,
-    116,
+    -99,
+    -261,
+    95,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "sit": {
    "bounds": [
-    -98,
-    -229,
-    92,
+    -99,
+    -233,
+    93,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "sleep": {
    "bounds": [
@@ -1188,512 +1182,455 @@
     -231,
     149,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dangle": {
    "bounds": [
-    -117,
-    -335,
-    134,
+    -109,
+    -311,
+    125,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "fall": {
    "bounds": [
-    -124,
-    -278,
-    123,
-    1
-   ],
-   "head_width": 136.0
+    -136,
+    -305,
+    135,
+    0
+   ]
   },
   "think": {
    "bounds": [
-    -94,
-    -310,
-    97,
-    1
-   ],
-   "head_width": 136.0
+    -88,
+    -290,
+    91,
+    0
+   ]
   },
   "phone": {
    "bounds": [
-    -98,
-    -307,
-    88,
+    -89,
+    -279,
+    80,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "talk": {
    "bounds": [
-    -108,
-    -308,
-    89,
-    1
-   ],
-   "head_width": 136.0
+    -106,
+    -300,
+    86,
+    0
+   ]
   },
   "stretch": {
    "bounds": [
-    -107,
-    -326,
-    95,
+    -97,
+    -297,
+    87,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "read": {
    "bounds": [
-    -122,
-    -267,
-    94,
+    -100,
+    -219,
+    77,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "draw": {
    "bounds": [
-    -116,
-    -337,
-    91,
-    0
-   ],
-   "head_width": 136.0
+    -101,
+    -291,
+    79,
+    1
+   ]
   },
   "sing": {
    "bounds": [
-    -101,
-    -301,
-    92,
-    0
-   ],
-   "head_width": 136.0
+    -103,
+    -309,
+    95,
+    -1
+   ]
   },
   "pout": {
    "bounds": [
-    -109,
-    -319,
-    97,
+    -93,
+    -268,
+    81,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "shy": {
    "bounds": [
-    -97,
-    -289,
-    88,
-    0
-   ],
-   "head_width": 136.0
+    -93,
+    -279,
+    86,
+    1
+   ]
   },
   "startle": {
    "bounds": [
-    -104,
-    -309,
-    98,
+    -103,
+    -306,
+    97,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "cheer": {
    "bounds": [
-    -95,
-    -294,
-    90,
+    -91,
+    -281,
+    86,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "tea": {
    "bounds": [
-    -96,
-    -246,
-    93,
-    1
-   ],
-   "head_width": 136.0
+    -94,
+    -239,
+    90,
+    0
+   ]
   },
   "lookaround": {
    "bounds": [
-    -105,
-    -364,
-    105,
+    -87,
+    -301,
+    87,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "eat": {
    "bounds": [
-    -101,
-    -315,
-    94,
+    -88,
+    -274,
+    82,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "laptop": {
    "bounds": [
-    -125,
-    -259,
-    89,
-    1
-   ],
-   "head_width": 136.0
+    -108,
+    -224,
+    77,
+    2
+   ]
   },
   "reply": {
    "bounds": [
-    -103,
-    -291,
-    99,
+    -90,
+    -256,
+    86,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "listen": {
    "bounds": [
-    -73,
-    -266,
-    105,
+    -79,
+    -288,
+    115,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "inspect": {
    "bounds": [
-    -145,
-    -396,
-    104,
-    -1
-   ],
-   "head_width": 136.0
+    -115,
+    -313,
+    82,
+    0
+   ]
   },
   "checkup": {
    "bounds": [
-    -74,
-    -229,
-    128,
-    0
-   ],
-   "head_width": 136.0
+    -84,
+    -257,
+    144,
+    1
+   ]
   },
   "handoff": {
    "bounds": [
-    -120,
-    -326,
-    92,
-    0
-   ],
-   "head_width": 136.0
+    -110,
+    -297,
+    84,
+    -1
+   ]
   },
   "stuck": {
    "bounds": [
-    -117,
-    -378,
-    111,
+    -98,
+    -316,
+    93,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "wake": {
    "bounds": [
-    -88,
-    -199,
-    119,
+    -95,
+    -214,
+    127,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "getup": {
    "bounds": [
-    -126,
-    -315,
-    96,
-    1
-   ],
-   "head_width": 136.0
+    -110,
+    -274,
+    83,
+    0
+   ]
   },
   "pat": {
    "bounds": [
-    -120,
-    -359,
-    101,
+    -97,
+    -291,
+    82,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "highfive": {
    "bounds": [
-    -106,
-    -338,
-    94,
+    -93,
+    -296,
+    82,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "peek": {
    "bounds": [
-    -107,
-    -359,
-    97,
-    0
-   ],
-   "head_width": 136.0
+    -91,
+    -307,
+    84,
+    1
+   ]
   },
   "nod": {
    "bounds": [
-    -83,
-    -290,
-    80,
+    -88,
+    -306,
+    84,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "popcorn": {
    "bounds": [
-    -97,
-    -241,
-    89,
+    -96,
+    -237,
+    87,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "headphones": {
    "bounds": [
-    -125,
-    -275,
-    97,
+    -101,
+    -222,
+    78,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "gamepad": {
    "bounds": [
-    -111,
-    -260,
-    99,
-    0
-   ],
-   "head_width": 136.0
+    -93,
+    -219,
+    83,
+    1
+   ]
   },
   "tail_care": {
    "bounds": [
-    -112,
-    -284,
-    103,
+    -92,
+    -233,
+    84,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "lie_chin": {
    "bounds": [
-    -106,
-    -209,
-    140,
+    -86,
+    -169,
+    113,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "wing_stretch": {
    "bounds": [
-    -117,
-    -335,
-    114,
+    -114,
+    -328,
+    111,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "edge_peek": {
    "bounds": [
-    -133,
-    -343,
-    92,
-    0
-   ],
-   "head_width": 136.0
+    -120,
+    -290,
+    75,
+    -2
+   ]
   },
   "dragon_fire_palm": {
    "bounds": [
-    -111,
-    -351,
-    108,
+    -101,
+    -319,
+    98,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_fire_marshmallow": {
    "bounds": [
-    -97,
-    -312,
-    90,
+    -93,
+    -300,
+    87,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_fire_candle": {
    "bounds": [
-    -99,
-    -302,
-    91,
+    -102,
+    -312,
+    94,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_fire_teacup": {
    "bounds": [
-    -107,
-    -268,
-    100,
+    -95,
+    -240,
+    91,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_fire_lantern": {
    "bounds": [
-    -98,
-    -309,
-    89,
+    -100,
+    -314,
+    90,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_fire_toast": {
    "bounds": [
-    -125,
-    -384,
-    111,
+    -106,
+    -324,
+    94,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_fire_spark": {
    "bounds": [
-    -107,
-    -335,
-    88,
+    -103,
+    -322,
+    85,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_fire_kettle": {
    "bounds": [
-    -105,
-    -250,
-    81,
+    -103,
+    -246,
+    80,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_wing_brush": {
    "bounds": [
-    -117,
-    -323,
-    89,
+    -115,
+    -317,
+    87,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_wing_stretch": {
    "bounds": [
-    -104,
-    -318,
-    92,
-    0
-   ],
-   "head_width": 136.0
+    -96,
+    -291,
+    84,
+    1
+   ]
   },
   "dragon_wing_polish": {
    "bounds": [
-    -105,
-    -324,
-    100,
-    0
-   ],
-   "head_width": 136.0
+    -104,
+    -321,
+    99,
+    -1
+   ]
   },
   "dragon_wing_ribbon": {
    "bounds": [
-    -101,
-    -307,
-    107,
-    0
-   ],
-   "head_width": 136.0
+    -105,
+    -318,
+    110,
+    1
+   ]
   },
   "dragon_tail_chase": {
    "bounds": [
-    -156,
-    -384,
-    141,
+    -131,
+    -322,
+    118,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_tail_bow": {
    "bounds": [
-    -114,
-    -326,
-    101,
+    -111,
+    -317,
+    97,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_tail_ball": {
    "bounds": [
-    -132,
-    -362,
-    116,
+    -117,
+    -319,
+    103,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_tail_brush": {
    "bounds": [
-    -112,
-    -268,
-    92,
+    -95,
+    -226,
+    78,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_magic_star": {
    "bounds": [
-    -116,
-    -366,
-    101,
+    -100,
+    -314,
+    86,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_magic_book": {
    "bounds": [
-    -106,
-    -282,
-    89,
-    1
-   ],
-   "head_width": 136.0
+    -92,
+    -244,
+    77,
+    2
+   ]
   },
   "dragon_magic_crane": {
    "bounds": [
-    -116,
-    -326,
-    127,
-    -1
-   ],
-   "head_width": 136.0
+    -113,
+    -320,
+    125,
+    0
+   ]
   },
   "dragon_magic_flower": {
    "bounds": [
-    -111,
-    -344,
-    99,
+    -100,
+    -309,
+    89,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_magic_portal": {
    "bounds": [
@@ -1701,296 +1638,263 @@
     -325,
     98,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_magic_crystal": {
    "bounds": [
-    -119,
-    -375,
-    101,
-    0
-   ],
-   "head_width": 136.0
+    -99,
+    -313,
+    84,
+    1
+   ]
   },
   "dragon_magic_wand": {
    "bounds": [
-    -131,
-    -373,
-    146,
+    -113,
+    -320,
+    125,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_magic_feather": {
    "bounds": [
-    -109,
-    -344,
-    117,
+    -101,
+    -319,
+    108,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_magic_butterfly": {
    "bounds": [
-    -108,
-    -271,
-    104,
+    -125,
+    -316,
+    121,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_magic_moon": {
    "bounds": [
-    -106,
-    -343,
-    95,
+    -98,
+    -314,
+    87,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_magic_snow": {
    "bounds": [
-    -98,
-    -319,
-    86,
-    0
-   ],
-   "head_width": 136.0
+    -99,
+    -324,
+    88,
+    1
+   ]
   },
   "dragon_magic_bubble": {
    "bounds": [
-    -111,
-    -332,
-    125,
+    -106,
+    -319,
+    120,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_count": {
    "bounds": [
-    -102,
-    -320,
-    93,
-    0
-   ],
-   "head_width": 136.0
+    -104,
+    -325,
+    95,
+    1
+   ]
   },
   "dragon_treasure_polish": {
    "bounds": [
-    -112,
-    -355,
-    96,
+    -98,
+    -311,
+    84,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_hide": {
    "bounds": [
-    -121,
-    -337,
-    95,
+    -116,
+    -321,
+    90,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_pouch": {
    "bounds": [
-    -109,
-    -353,
-    96,
+    -97,
+    -313,
+    85,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_find": {
    "bounds": [
-    -101,
-    -314,
-    89,
+    -95,
+    -298,
+    85,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_share": {
    "bounds": [
-    -111,
-    -369,
-    163,
+    -96,
+    -317,
+    141,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_sort": {
    "bounds": [
-    -126,
-    -320,
-    98,
+    -104,
+    -264,
+    80,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_open": {
    "bounds": [
-    -116,
-    -270,
-    96,
+    -96,
+    -223,
+    80,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_coin_spin": {
    "bounds": [
-    -94,
-    -304,
-    85,
+    -99,
+    -321,
+    89,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_treasure_key": {
    "bounds": [
-    -109,
-    -339,
-    91,
-    0
-   ],
-   "head_width": 136.0
+    -102,
+    -320,
+    86,
+    -1
+   ]
   },
   "dragon_toy_ball": {
    "bounds": [
-    -103,
-    -309,
-    113,
+    -105,
+    -314,
+    115,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_toy_top": {
    "bounds": [
-    -106,
-    -321,
-    97,
+    -102,
+    -309,
+    94,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_toy_plane": {
    "bounds": [
-    -115,
-    -370,
-    169,
+    -99,
+    -320,
+    147,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_toy_pinwheel": {
    "bounds": [
-    -111,
-    -331,
-    104,
+    -106,
+    -317,
+    100,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_toy_clockwork": {
    "bounds": [
-    -113,
-    -343,
-    112,
-    0
-   ],
-   "head_width": 136.0
+    -105,
+    -322,
+    105,
+    1
+   ]
   },
   "dragon_toy_bubbles": {
    "bounds": [
-    -119,
-    -356,
-    131,
+    -107,
+    -320,
+    118,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_toy_puzzle": {
    "bounds": [
-    -121,
-    -264,
-    91,
+    -105,
+    -226,
+    78,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_toy_handheld": {
    "bounds": [
-    -129,
-    -273,
-    98,
-    -1
-   ],
-   "head_width": 136.0
+    -107,
+    -225,
+    82,
+    0
+   ]
   },
   "dragon_toy_musicbox": {
    "bounds": [
-    -124,
-    -266,
-    105,
+    -102,
+    -218,
+    86,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_toy_yoyo": {
    "bounds": [
-    -108,
-    -346,
-    101,
-    0
-   ],
-   "head_width": 136.0
+    -99,
+    -319,
+    94,
+    1
+   ]
   },
   "dragon_toy_blocks": {
    "bounds": [
-    -125,
-    -264,
-    97,
+    -103,
+    -217,
+    79,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_toy_kaleidoscope": {
    "bounds": [
-    -102,
-    -328,
-    103,
+    -100,
+    -318,
+    100,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_music_ukulele": {
    "bounds": [
-    -91,
-    -289,
-    101,
-    0
-   ],
-   "head_width": 136.0
+    -98,
+    -307,
+    108,
+    1
+   ]
   },
   "dragon_music_flute": {
    "bounds": [
-    -99,
-    -294,
-    103,
+    -101,
+    -299,
+    105,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_music_bell": {
    "bounds": [
-    -112,
-    -328,
-    103,
+    -104,
+    -303,
+    95,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_music_kalimba": {
    "bounds": [
@@ -1998,956 +1902,853 @@
     -252,
     104,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_music_tambourine": {
    "bounds": [
-    -96,
-    -291,
-    85,
-    -1
-   ],
-   "head_width": 136.0
+    -100,
+    -301,
+    88,
+    0
+   ]
   },
   "dragon_music_harmonica": {
    "bounds": [
-    -95,
-    -292,
-    87,
+    -99,
+    -306,
+    92,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_craft_sketch": {
    "bounds": [
-    -120,
-    -338,
-    95,
+    -103,
+    -289,
+    81,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_craft_paint": {
    "bounds": [
-    -131,
-    -361,
-    119,
+    -108,
+    -295,
+    97,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_craft_origami": {
    "bounds": [
-    -118,
-    -334,
-    108,
+    -102,
+    -289,
+    94,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_craft_knit": {
    "bounds": [
-    -107,
-    -315,
-    85,
+    -99,
+    -292,
+    79,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_craft_stamp": {
    "bounds": [
-    -113,
-    -316,
-    103,
+    -104,
+    -291,
+    95,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_craft_clay": {
    "bounds": [
-    -110,
-    -332,
-    91,
+    -95,
+    -288,
+    79,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_garden_water": {
    "bounds": [
-    -110,
-    -345,
-    93,
+    -98,
+    -309,
+    83,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_garden_seed": {
    "bounds": [
-    -118,
-    -265,
-    94,
-    0
-   ],
-   "head_width": 136.0
+    -98,
+    -218,
+    77,
+    -1
+   ]
   },
   "dragon_garden_sprout": {
    "bounds": [
-    -103,
-    -338,
-    94,
-    0
-   ],
-   "head_width": 136.0
+    -97,
+    -319,
+    88,
+    -1
+   ]
   },
   "dragon_garden_prune": {
    "bounds": [
-    -117,
-    -340,
-    103,
+    -105,
+    -306,
+    93,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_snack_cookie": {
    "bounds": [
-    -96,
-    -243,
-    81,
+    -94,
+    -238,
+    79,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_snack_berry": {
    "bounds": [
-    -88,
-    -255,
-    78,
-    1
-   ],
-   "head_width": 136.0
+    -86,
+    -250,
+    76,
+    0
+   ]
   },
   "dragon_snack_stir": {
    "bounds": [
-    -96,
-    -287,
-    91,
+    -85,
+    -256,
+    82,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_play_bubble_catch": {
    "bounds": [
-    -101,
-    -300,
-    103,
+    -105,
+    -314,
+    108,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "dragon_play_paper_fan": {
    "bounds": [
-    -110,
-    -350,
-    113,
-    0
-   ],
-   "head_width": 136.0
+    -101,
+    -320,
+    104,
+    1
+   ]
   },
   "dragon_play_ribbon": {
    "bounds": [
-    -111,
-    -264,
-    101,
+    -133,
+    -316,
+    121,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_comic_open": {
    "bounds": [
-    -117,
-    -261,
-    91,
-    0
-   ],
-   "head_width": 136.0
+    -97,
+    -216,
+    76,
+    1
+   ]
   },
   "life_comic_turn": {
    "bounds": [
-    -100,
-    -216,
-    75,
-    0
-   ],
-   "head_width": 136.0
+    -102,
+    -219,
+    76,
+    1
+   ]
   },
   "life_comic_amused": {
    "bounds": [
-    -117,
-    -260,
-    92,
+    -98,
+    -216,
+    77,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_note_read": {
    "bounds": [
-    -117,
-    -282,
-    94,
-    0
-   ],
-   "head_width": 136.0
+    -98,
+    -234,
+    78,
+    1
+   ]
   },
   "life_map_unfold": {
    "bounds": [
-    -118,
-    -288,
-    94,
-    0
-   ],
-   "head_width": 136.0
+    -98,
+    -238,
+    78,
+    1
+   ]
   },
   "life_bookmark_place": {
    "bounds": [
-    -116,
-    -258,
-    92,
+    -100,
+    -220,
+    78,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_book_doodle": {
    "bounds": [
-    -116,
-    -256,
-    93,
-    -1
-   ],
-   "head_width": 136.0
+    -97,
+    -214,
+    77,
+    0
+   ]
   },
   "life_book_stack": {
    "bounds": [
-    -117,
-    -259,
-    104,
-    0
-   ],
-   "head_width": 136.0
+    -97,
+    -214,
+    86,
+    1
+   ]
   },
   "life_pencil_note": {
    "bounds": [
-    -110,
-    -320,
-    88,
-    0
-   ],
-   "head_width": 136.0
+    -102,
+    -296,
+    81,
+    -1
+   ]
   },
   "life_pencil_sharpen": {
    "bounds": [
-    -121,
-    -344,
-    92,
-    0
-   ],
-   "head_width": 136.0
+    -101,
+    -288,
+    77,
+    1
+   ]
   },
   "life_sticky_note": {
    "bounds": [
-    -110,
-    -320,
-    84,
+    -99,
+    -291,
+    77,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_whiteboard": {
    "bounds": [
-    -117,
-    -355,
-    96,
-    -1
-   ],
-   "head_width": 136.0
+    -97,
+    -294,
+    80,
+    0
+   ]
   },
   "life_letter_open": {
    "bounds": [
-    -118,
-    -294,
-    93,
+    -97,
+    -242,
+    76,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_letter_fold": {
    "bounds": [
-    -115,
-    -306,
-    94,
-    1
-   ],
-   "head_width": 136.0
+    -94,
+    -251,
+    77,
+    0
+   ]
   },
   "life_laptop_type": {
    "bounds": [
-    -104,
-    -218,
-    76,
+    -107,
+    -223,
+    78,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_laptop_think": {
    "bounds": [
-    -120,
-    -250,
-    89,
+    -106,
+    -221,
+    79,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_tea_pour": {
    "bounds": [
-    -119,
-    -277,
-    97,
+    -98,
+    -229,
+    81,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_tea_sip": {
    "bounds": [
-    -113,
-    -282,
-    106,
+    -94,
+    -235,
+    88,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_tea_stir": {
    "bounds": [
-    -101,
-    -282,
-    89,
+    -91,
+    -253,
+    80,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_bread_break": {
    "bounds": [
-    -96,
-    -245,
-    81,
+    -94,
+    -240,
+    80,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_riceball": {
    "bounds": [
-    -112,
-    -293,
-    96,
+    -93,
+    -244,
+    80,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_candy_unwrap": {
    "bounds": [
-    -105,
-    -261,
-    97,
-    -1
-   ],
-   "head_width": 136.0
+    -97,
+    -239,
+    89,
+    0
+   ]
   },
   "life_cookie_offer": {
    "bounds": [
-    -94,
-    -281,
-    84,
+    -96,
+    -285,
+    85,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_paper_plane": {
    "bounds": [
-    -109,
-    -323,
-    103,
+    -100,
+    -295,
+    93,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_blocks": {
    "bounds": [
-    -113,
-    -346,
-    97,
-    0
-   ],
-   "head_width": 136.0
+    -98,
+    -299,
+    84,
+    1
+   ]
   },
   "life_hair_comb": {
    "bounds": [
-    -124,
-    -307,
-    102,
+    -98,
+    -242,
+    80,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_water": {
    "bounds": [
-    -112,
-    -281,
-    95,
+    -95,
+    -235,
+    79,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_shoulder_roll": {
    "bounds": [
-    -111,
-    -351,
-    96,
-    1
-   ],
-   "head_width": 136.0
+    -100,
+    -319,
+    88,
+    0
+   ]
   },
   "life_clock_check": {
    "bounds": [
-    -113,
-    -365,
-    102,
+    -96,
+    -308,
+    86,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_hair_clip": {
    "bounds": [
-    -102,
-    -309,
-    93,
-    0
-   ],
-   "head_width": 136.0
+    -95,
+    -289,
+    86,
+    -1
+   ]
   },
   "life_phone_read": {
    "bounds": [
-    -115,
-    -291,
-    91,
+    -97,
+    -245,
+    76,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_phone_reply": {
    "bounds": [
-    -118,
-    -292,
-    100,
-    -1
-   ],
-   "head_width": 136.0
+    -99,
+    -244,
+    84,
+    0
+   ]
   },
   "life_phone_compose": {
    "bounds": [
-    -99,
-    -240,
-    77,
+    -103,
+    -248,
+    80,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_phone_greet": {
    "bounds": [
-    -95,
-    -344,
-    95,
+    -86,
+    -309,
+    85,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_chat_peek": {
    "bounds": [
-    -111,
-    -359,
-    97,
+    -100,
+    -320,
+    86,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_chat_listen": {
    "bounds": [
-    -101,
-    -327,
-    91,
-    -1
-   ],
-   "head_width": 136.0
+    -99,
+    -320,
+    90,
+    0
+   ]
   },
   "life_chat_nod": {
    "bounds": [
-    -98,
-    -279,
-    90,
-    0
-   ],
-   "head_width": 136.0
+    -88,
+    -251,
+    80,
+    1
+   ]
   },
   "life_image_photo": {
    "bounds": [
-    -111,
-    -275,
-    89,
+    -94,
+    -234,
+    76,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_image_compare": {
    "bounds": [
-    -96,
-    -250,
-    80,
-    0
-   ],
-   "head_width": 136.0
+    -93,
+    -241,
+    77,
+    1
+   ]
   },
   "life_image_tilt": {
    "bounds": [
-    -100,
-    -294,
-    92,
+    -84,
+    -245,
+    77,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_search_book": {
    "bounds": [
-    -114,
-    -283,
-    95,
+    -95,
+    -234,
+    78,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_search_lens": {
    "bounds": [
-    -106,
-    -270,
-    85,
+    -95,
+    -242,
+    77,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_search_laptop": {
    "bounds": [
-    -115,
-    -236,
-    82,
+    -107,
+    -219,
+    76,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_search_cards": {
    "bounds": [
-    -97,
-    -261,
-    78,
+    -94,
+    -254,
+    75,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_voice_headphone": {
    "bounds": [
-    -90,
-    -275,
+    -92,
+    -279,
     83,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_voice_speaker": {
    "bounds": [
-    -114,
-    -353,
-    104,
-    -1
-   ],
-   "head_width": 136.0
+    -98,
+    -304,
+    90,
+    0
+   ]
   },
   "life_voice_record": {
    "bounds": [
-    -98,
-    -298,
-    82,
+    -100,
+    -303,
+    83,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_drawing_pencil": {
    "bounds": [
-    -115,
-    -299,
-    86,
+    -103,
+    -271,
+    78,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_drawing_brush": {
    "bounds": [
-    -109,
-    -321,
-    84,
-    0
-   ],
-   "head_width": 136.0
+    -101,
+    -294,
+    77,
+    1
+   ]
   },
   "life_drawing_tablet": {
    "bounds": [
-    -117,
-    -311,
-    89,
-    -1
-   ],
-   "head_width": 136.0
+    -98,
+    -260,
+    75,
+    0
+   ]
   },
   "life_sent_confetti": {
    "bounds": [
-    -94,
-    -286,
-    87,
+    -90,
+    -272,
+    83,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sent_check": {
    "bounds": [
     -87,
-    -272,
-    85,
+    -269,
+    84,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_wait_hourglass": {
    "bounds": [
-    -108,
-    -365,
-    100,
-    0
-   ],
-   "head_width": 136.0
+    -93,
+    -316,
+    87,
+    1
+   ]
   },
   "life_wait_think": {
    "bounds": [
-    -113,
-    -366,
-    98,
+    -97,
+    -314,
+    84,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_tea_cool": {
    "bounds": [
-    -113,
-    -275,
-    100,
+    -95,
+    -233,
+    85,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_bread_bite": {
    "bounds": [
-    -102,
-    -267,
-    86,
+    -92,
+    -242,
+    78,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_fruit_slice": {
    "bounds": [
-    -110,
-    -303,
-    91,
-    0
-   ],
-   "head_width": 136.0
+    -99,
+    -270,
+    81,
+    1
+   ]
   },
   "life_paper_crane": {
    "bounds": [
-    -107,
-    -318,
-    83,
-    0
-   ],
-   "head_width": 136.0
+    -99,
+    -291,
+    76,
+    1
+   ]
   },
   "life_yarn_ball": {
    "bounds": [
-    -108,
-    -368,
-    102,
+    -93,
+    -316,
+    87,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_windup": {
    "bounds": [
-    -94,
-    -314,
-    87,
-    0
-   ],
-   "head_width": 136.0
+    -95,
+    -316,
+    88,
+    1
+   ]
   },
   "life_spinning_top": {
    "bounds": [
-    -101,
-    -268,
-    81,
-    0
-   ],
-   "head_width": 136.0
+    -99,
+    -262,
+    79,
+    1
+   ]
   },
   "life_ribbon": {
    "bounds": [
-    -97,
-    -286,
-    88,
+    -93,
+    -275,
+    85,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_puzzle": {
    "bounds": [
-    -104,
-    -301,
-    127,
+    -102,
+    -295,
+    124,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_tail_pillow": {
    "bounds": [
-    -105,
-    -279,
-    97,
-    -1
-   ],
-   "head_width": 136.0
+    -94,
+    -249,
+    87,
+    0
+   ]
   },
   "life_fan": {
    "bounds": [
-    -104,
-    -332,
-    92,
+    -99,
+    -316,
+    87,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_wrist_stretch": {
    "bounds": [
-    -93,
-    -305,
-    86,
+    -98,
+    -322,
+    91,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_phone_notice": {
    "bounds": [
-    -119,
-    -377,
-    108,
+    -100,
+    -315,
+    90,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_phone_scroll": {
    "bounds": [
-    -106,
-    -288,
-    89,
+    -89,
+    -242,
+    75,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_chat_popcorn": {
    "bounds": [
-    -116,
-    -289,
-    105,
+    -97,
+    -241,
+    88,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_image_magnify": {
    "bounds": [
-    -115,
-    -251,
-    87,
-    0
-   ],
-   "head_width": 136.0
+    -100,
+    -217,
+    75,
+    1
+   ]
   },
   "life_voice_mic_check": {
    "bounds": [
-    -90,
-    -295,
-    84,
+    -93,
+    -308,
+    88,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_drawing_palette": {
    "bounds": [
-    -112,
-    -321,
-    97,
+    -101,
+    -288,
+    87,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sleep_hug_tail": {
    "bounds": [
-    -90,
-    -208,
-    193,
+    -82,
+    -190,
+    175,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sleep_curled_tail": {
    "bounds": [
-    -74,
-    -142,
-    118,
+    -83,
+    -161,
+    134,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sleep_wing_blanket": {
    "bounds": [
-    -73,
-    -135,
-    142,
+    -85,
+    -156,
+    164,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sleep_face_down": {
    "bounds": [
-    -66,
-    -124,
-    136,
-    0
-   ],
-   "head_width": 136.0
+    -80,
+    -151,
+    167,
+    1
+   ]
   },
   "life_sleep_side_hands": {
    "bounds": [
-    -58,
-    -110,
-    109,
-    0
-   ],
-   "head_width": 136.0
+    -88,
+    -166,
+    162,
+    -1
+   ]
   },
   "life_sleep_back": {
    "bounds": [
-    -96,
-    -204,
-    149,
+    -90,
+    -190,
+    139,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sleep_tail_pillow": {
    "bounds": [
-    -78,
-    -151,
-    126,
+    -93,
+    -180,
+    150,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sleep_star_pillow": {
    "bounds": [
-    -78,
-    -160,
-    141,
-    0
-   ],
-   "head_width": 136.0
+    -87,
+    -180,
+    159,
+    1
+   ]
   },
   "life_sleep_round_pillow": {
    "bounds": [
-    -64,
-    -131,
-    118,
+    -87,
+    -179,
+    160,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sleep_book": {
    "bounds": [
-    -73,
-    -138,
-    137,
-    0
-   ],
-   "head_width": 136.0
+    -89,
+    -167,
+    166,
+    1
+   ]
   },
   "life_sleep_wing_fold": {
    "bounds": [
-    -74,
-    -140,
-    149,
+    -88,
+    -166,
+    177,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_sleep_knees": {
    "bounds": [
-    -73,
-    -139,
-    122,
+    -89,
+    -167,
+    147,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_reply_air_phone": {
    "bounds": [
-    -141,
-    -309,
-    142,
+    -135,
+    -294,
+    134,
     0
    ]
   },
   "life_reply_air_note": {
    "bounds": [
-    -138,
-    -302,
-    133,
-    0
+    -130,
+    -285,
+    125,
+    -1
    ]
   },
   "life_reply_air_wave": {
    "bounds": [
-    -139,
-    -321,
-    136,
+    -130,
+    -300,
+    127,
     0
    ]
   },
   "life_reply_air_type": {
    "bounds": [
-    -140,
-    -322,
-    139,
+    -126,
+    -290,
+    124,
     0
    ]
   },
@@ -2957,215 +2758,191 @@
     -221,
     75,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_reply_sit_sleepy": {
    "bounds": [
-    -124,
-    -251,
-    88,
+    -105,
+    -213,
+    75,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_reply_sit_note": {
    "bounds": [
-    -126,
-    -268,
-    93,
+    -104,
+    -221,
+    77,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "life_reply_sit_laptop": {
    "bounds": [
-    -116,
-    -242,
-    83,
-    0
-   ],
-   "head_width": 136.0
+    -107,
+    -221,
+    76,
+    1
+   ]
   },
   "life_reply_stand_bright": {
    "bounds": [
-    -108,
-    -328,
-    93,
-    1
-   ],
-   "head_width": 136.0
+    -99,
+    -300,
+    85,
+    2
+   ]
   },
   "life_reply_stand_quiet": {
    "bounds": [
-    -121,
-    -362,
-    99,
-    1
-   ],
-   "head_width": 136.0
+    -104,
+    -312,
+    86,
+    2
+   ]
   },
   "life_reply_stand_think": {
    "bounds": [
-    -116,
-    -343,
-    96,
-    0
-   ],
-   "head_width": 136.0
+    -104,
+    -307,
+    86,
+    1
+   ]
   },
   "life_reply_stand_wave": {
    "bounds": [
     -101,
-    -320,
-    87,
+    -317,
+    85,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_brisk": {
    "bounds": [
-    -107,
-    -326,
-    90,
-    -1
-   ],
-   "head_width": 136.0
-  },
-  "motion_walk_slow": {
-   "bounds": [
-    -114,
-    -324,
-    93,
-    0
-   ],
-   "head_width": 136.0
-  },
-  "motion_walk_tiptoe": {
-   "bounds": [
-    -108,
-    -327,
-    91,
-    0
-   ],
-   "head_width": 136.0
-  },
-  "motion_walk_backward": {
-   "bounds": [
-    -99,
+    -98,
     -299,
     83,
     0
-   ],
-   "head_width": 136.0
+   ]
+  },
+  "motion_walk_slow": {
+   "bounds": [
+    -103,
+    -294,
+    85,
+    0
+   ]
+  },
+  "motion_walk_tiptoe": {
+   "bounds": [
+    -94,
+    -283,
+    79,
+    1
+   ]
+  },
+  "motion_walk_backward": {
+   "bounds": [
+    -97,
+    -291,
+    80,
+    0
+   ]
   },
   "motion_walk_phone": {
    "bounds": [
-    -112,
-    -307,
-    83,
+    -101,
+    -276,
+    75,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_sleepy": {
    "bounds": [
-    -100,
-    -313,
-    87,
+    -90,
+    -284,
+    80,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_trip": {
    "bounds": [
-    -90,
-    -283,
-    100,
-    1
-   ],
-   "head_width": 136.0
+    -92,
+    -290,
+    102,
+    0
+   ]
   },
   "motion_walk_message_stop": {
    "bounds": [
-    -89,
-    -281,
-    79,
+    -92,
+    -293,
+    83,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_hands_behind": {
    "bounds": [
-    -101,
-    -325,
-    86,
-    -1
-   ],
-   "head_width": 136.0
+    -95,
+    -308,
+    82,
+    0
+   ]
   },
   "motion_walk_wing_balance": {
    "bounds": [
-    -104,
-    -293,
-    100,
+    -106,
+    -297,
+    101,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_look_up": {
    "bounds": [
-    -107,
-    -304,
-    87,
+    -103,
+    -293,
+    83,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_tail_sway": {
    "bounds": [
-    -110,
-    -324,
-    90,
+    -104,
+    -306,
+    86,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_march": {
    "bounds": [
-    -118,
-    -364,
-    100,
+    -97,
+    -298,
+    81,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_scuff": {
    "bounds": [
-    -109,
-    -320,
-    91,
+    -98,
+    -285,
+    81,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_walk_look_side": {
    "bounds": [
-    -104,
-    -328,
-    90,
-    0
-   ],
-   "head_width": 136.0
+    -92,
+    -289,
+    79,
+    -1
+   ]
   },
   "motion_walk_pause": {
    "bounds": [
-    -104,
-    -308,
-    85,
+    -99,
+    -293,
+    80,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_takeoff": {
    "bounds": [
@@ -3173,466 +2950,419 @@
     -316,
     88,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_takeoff_tip": {
    "bounds": [
-    -121,
-    -354,
-    102,
+    -106,
+    -310,
+    89,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_glide": {
    "bounds": [
-    -123,
-    -345,
-    118,
-    -1
-   ],
-   "head_width": 136.0
+    -103,
+    -288,
+    99,
+    0
+   ]
   },
   "motion_fly_glide_tucked": {
    "bounds": [
-    -114,
-    -324,
-    96,
+    -109,
+    -310,
+    92,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_glide_arms": {
    "bounds": [
-    -106,
-    -327,
-    101,
+    -101,
+    -313,
+    97,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_flap_slow": {
    "bounds": [
-    -127,
-    -307,
-    131,
-    0
+    -122,
+    -296,
+    126,
+    -1
    ]
   },
   "motion_fly_flap_quick": {
    "bounds": [
-    -137,
-    -348,
-    136,
+    -115,
+    -294,
+    116,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_flap_asymmetric": {
    "bounds": [
-    -153,
-    -385,
-    144,
+    -127,
+    -319,
+    120,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_hover": {
    "bounds": [
-    -114,
-    -353,
-    106,
+    -94,
+    -289,
+    86,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_hover_curious": {
    "bounds": [
-    -130,
-    -389,
-    127,
+    -110,
+    -327,
+    106,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_hover_tail": {
    "bounds": [
-    -105,
-    -331,
-    110,
-    -1
-   ],
-   "head_width": 136.0
+    -99,
+    -313,
+    105,
+    0
+   ]
   },
   "motion_fly_hover_hands": {
    "bounds": [
-    -127,
-    -406,
-    130,
+    -103,
+    -331,
+    106,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_land": {
    "bounds": [
-    -96,
-    -227,
-    113,
-    1
-   ],
-   "head_width": 136.0
+    -112,
+    -267,
+    133,
+    0
+   ]
   },
   "motion_fly_land_soft": {
    "bounds": [
-    -106,
-    -244,
-    109,
+    -123,
+    -282,
+    126,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_turn": {
    "bounds": [
-    -114,
-    -356,
-    114,
-    1
-   ],
-   "head_width": 136.0
+    -99,
+    -308,
+    99,
+    2
+   ]
   },
   "motion_fly_turn_look": {
    "bounds": [
-    -116,
-    -348,
-    105,
+    -100,
+    -298,
+    89,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_circle": {
    "bounds": [
-    -120,
-    -361,
-    119,
+    -100,
+    -302,
+    99,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fly_circle_tucked": {
    "bounds": [
-    -105,
-    -303,
-    93,
-    1
-   ],
-   "head_width": 136.0
+    -102,
+    -293,
+    90,
+    0
+   ]
   },
   "motion_drag_dangle": {
    "bounds": [
-    -103,
-    -350,
-    142,
-    -1
-   ],
-   "head_width": 136.0
+    -95,
+    -321,
+    131,
+    0
+   ]
   },
   "motion_drag_swing": {
    "bounds": [
-    -107,
-    -344,
-    137,
+    -96,
+    -309,
+    123,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_drag_turn": {
    "bounds": [
-    -99,
-    -321,
-    127,
+    -102,
+    -329,
+    130,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_drag_wriggle": {
    "bounds": [
-    -100,
-    -346,
-    100,
+    -94,
+    -327,
+    96,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_drag_hug": {
    "bounds": [
-    -112,
-    -346,
-    139,
+    -100,
+    -308,
+    124,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_drag_curl": {
    "bounds": [
-    -106,
-    -338,
-    111,
+    -101,
+    -322,
+    105,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fall_upward": {
    "bounds": [
-    -119,
-    -284,
-    118,
+    -107,
+    -254,
+    107,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fall_flutter": {
    "bounds": [
-    -123,
-    -264,
-    122,
+    -130,
+    -279,
+    129,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fall_curl": {
    "bounds": [
-    -106,
-    -269,
-    106,
+    -101,
+    -256,
+    101,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_fall_reach": {
    "bounds": [
-    -105,
-    -264,
-    102,
+    -107,
+    -268,
+    103,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_ceiling_bonk": {
    "bounds": [
-    -97,
-    -319,
-    104,
-    1
-   ],
-   "head_width": 136.0
+    -93,
+    -307,
+    100,
+    0
+   ]
   },
   "motion_ceiling_hold": {
    "bounds": [
-    -103,
-    -340,
-    131,
-    0
-   ],
-   "head_width": 136.0
+    -95,
+    -313,
+    120,
+    -1
+   ]
   },
   "motion_ceiling_rub": {
    "bounds": [
-    -105,
-    -343,
-    107,
-    1
-   ],
-   "head_width": 136.0
+    -98,
+    -318,
+    99,
+    0
+   ]
   },
   "motion_ceiling_release": {
    "bounds": [
-    -100,
-    -306,
-    132,
+    -101,
+    -311,
+    133,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_floor_squat": {
    "bounds": [
-    -112,
-    -302,
-    106,
+    -107,
+    -287,
+    101,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_floor_kneel": {
    "bounds": [
-    -119,
-    -251,
-    108,
+    -123,
+    -259,
+    112,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_floor_balance": {
    "bounds": [
-    -114,
-    -344,
-    97,
+    -98,
+    -295,
+    83,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_floor_wings": {
    "bounds": [
-    -123,
-    -318,
-    90,
+    -111,
+    -287,
+    82,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_bottom_peek": {
    "bounds": [
-    -117,
-    -263,
-    110,
+    -94,
+    -209,
+    88,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_bottom_look": {
    "bounds": [
-    -103,
-    -338,
-    107,
-    -1
-   ],
-   "head_width": 136.0
+    -86,
+    -282,
+    89,
+    0
+   ]
   },
   "motion_bottom_grip": {
    "bounds": [
-    -100,
-    -281,
-    87,
+    -104,
+    -293,
+    91,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_bottom_kick": {
    "bounds": [
-    -105,
-    -320,
-    100,
-    0
-   ],
-   "head_width": 136.0
+    -98,
+    -298,
+    93,
+    1
+   ]
   },
   "motion_edge_peek": {
    "bounds": [
-    -133,
-    -343,
-    92,
-    0
-   ],
-   "head_width": 136.0
+    -120,
+    -290,
+    75,
+    -2
+   ]
   },
   "motion_edge_look": {
    "bounds": [
-    -127,
-    -332,
-    88,
+    -118,
+    -293,
+    75,
     -1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_edge_fingers": {
    "bounds": [
-    -133,
-    -338,
-    88,
-    1
-   ],
-   "head_width": 136.0
+    -123,
+    -293,
+    72,
+    0
+   ]
   },
   "motion_edge_tilt": {
    "bounds": [
-    -153,
-    -397,
-    97,
-    1
-   ],
-   "head_width": 136.0
+    -140,
+    -344,
+    80,
+    -5
+   ]
   },
   "motion_land_soft": {
    "bounds": [
-    -119,
-    -259,
-    106,
+    -129,
+    -278,
+    114,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_land_slide": {
    "bounds": [
-    -114,
-    -298,
-    107,
+    -110,
+    -287,
+    103,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_land_one_foot": {
    "bounds": [
-    -107,
-    -268,
-    97,
+    -103,
+    -255,
+    92,
     1
-   ],
-   "head_width": 136.0
+   ]
   },
   "motion_land_wing": {
    "bounds": [
-    -124,
-    -250,
-    115,
+    -119,
+    -239,
+    110,
     0
-   ],
-   "head_width": 136.0
+   ]
   },
   "boundary_top_peek": {
    "bounds": [
-    -94,
-    -255,
-    74,
+    -100,
+    -268,
+    78,
     0
    ]
   },
   "boundary_popout": {
    "bounds": [
-    -110,
-    -303,
-    93,
+    -103,
+    -282,
+    86,
     0
    ]
   },
   "boundary_tuck": {
    "bounds": [
-    -104,
-    -284,
-    88,
+    -100,
+    -270,
+    83,
     0
    ]
   },
   "boundary_top_return": {
    "bounds": [
-    -159,
-    -300,
-    95,
-    -1
+    -156,
+    -294,
+    93,
+    0
    ]
   }
  },
  "calibration": {
-  "method": "head-width-v1",
-  "head_width": 136.0
+  "method": "head-match-v2",
+  "reference": "idle"
  }
 }

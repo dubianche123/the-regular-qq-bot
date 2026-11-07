@@ -39,7 +39,6 @@ CELL = 512
 FIGURE_HEIGHT = 320          # idle figure height in output pixels (2x of the default on-screen size)
 CANVAS = (512, 512)         # Extra transparent room for raised hands and spread wings.
 ANCHOR = (256, 492)         # head column x, feet y
-HEAD_WIDTH = 136.0          # Character scale follows the head, never the held prop.
 SEATED = 0.80                # seated close-up sheets are drawn larger than standing ones
 EYES = (212, 124, 336, 176)  # idle sheet, top-left cell: the only blink-editable pixels
 ROOT = Path(__file__).resolve().parents[1]
@@ -316,75 +315,148 @@ def _anchor(frame):
     return left + sum(i * v for i, v in enumerate(columns)) / total, bottom, (left, top, right, bottom)
 
 
-def _face_width(frame, band="upper", *, detail=False):
-    """Measure the mascot's warm face patch, excluding pale hair and green clothes.
+def _idle_reference(out):
+    """A head matcher for the idle frame already in the output folder, if there is one."""
+    from PIL import Image
 
-    Maintainer-only calibration: use a low-resolution connected component and
-    one median scale for the whole strip. Inverted peeks use the lower band.
-    Images without a detectable face retain the existing geometry fallback.
+    try:
+        spec = json.loads((out / "sprites.json").read_text(encoding="utf-8"))
+        with Image.open(out / spec["actions"]["idle"]["file"]) as strip:
+            return HeadMatcher(strip.crop((0, 0, CANVAS[0], CANVAS[1])).convert("RGBA"))
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def _drop_support(canvas, cut_x):
+    """Paint out the magenta pole edge sheets are drawn gripping. The screen edge hides it while she
+    peeks, but the frame still dissolves for a moment after she pops out, so it must not exist at all.
+    The pole crosses her hair and cardigan: each row is bridged from the colours on either side, and
+    only background rows become transparent (in a neutral colour, so lossy WebP cannot bleed it back)."""
+    import numpy as np
+    from PIL import Image
+
+    pixels = np.asarray(canvas.convert("RGBA")).astype(np.float32)
+    r, g, b, a = (pixels[..., i] for i in range(4))
+    band = np.zeros(a.shape, dtype=bool)
+    band[:, max(0, round(cut_x) - 48): round(cut_x) + 3] = True        # the pole sits at or left of the cut
+    support = band & (a > 0) & (r > 120) & (b > 120) & ((r + b) / 2 - g > 90)
+    for y in np.nonzero(support.any(axis=1))[0]:
+        xs = np.nonzero(support[y])[0]
+        runs = np.split(xs, np.nonzero(np.diff(xs) > 1)[0] + 1)
+        for run in runs:
+            x0, x1 = max(0, run[0] - 3), min(a.shape[1] - 1, run[-1] + 3)      # include the tinted fringe
+            left, right = pixels[y, max(0, x0 - 1)], pixels[y, min(a.shape[1] - 1, x1 + 1)]
+            if left[3] > 200 and right[3] > 200:
+                k = np.linspace(0, 1, x1 - x0 + 3)[1:-1, None]
+                pixels[y, x0: x1 + 1] = left * (1 - k) + right * k
+            else:
+                fill = left if left[3] >= right[3] else right
+                pixels[y, x0: x1 + 1, :3] = fill[:3] if fill[3] > 0 else (200, 200, 210)
+                pixels[y, x0: x1 + 1, 3] = 0
+    return Image.fromarray(np.clip(pixels, 0, 255).astype(np.uint8), "RGBA")
+
+
+class HeadMatcher:
+    """How large her head is in a frame, relative to the idle pose.
+
+    Skin-colour and hair-width estimates drift with hands, props, bangs and head tilt, which
+    left adopted strips anywhere from 0.7x to 1.3x the idle head. This matches the idle head
+    itself (multi-scale normalized cross-correlation, mirrored too), so a strip that agrees
+    with the idle head plays at the same size. Lying and upside-down poses fall back to
+    rotated templates; frames that still match nothing leave the strip unchanged.
     """
-    from PIL import Image, ImageFilter
+    WORK = 256                       # matching resolution (half of the 512 canvas)
+    FFT = 384
 
-    source_width = frame.width
-    small = frame.convert("RGBA")
-    small.thumbnail((160, 160))
-    width, height = small.size
-    box = small.getchannel("A").point(lambda a: 255 if a > 80 else 0).getbbox()
-    if box is None:
-        return None
-    cutoff = box[1] + (box[3] - box[1]) * (0.42 if band == "lower" else 0.58)
-    pixels = small.load()
-    mask = Image.new("L", small.size)
-    mask.putdata([255 if ((y >= cutoff) if band == "lower" else (y < cutoff))
-                  and a > 180 and r > 180 and g > 115 and b > 115
-                  and r - g > 9 and r > b and b - g > -12 else 0
-                  for y in range(height) for x in range(width)
-                  for r, g, b, a in (pixels[x, y],)])
-    mask = mask.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
-    data, seen, components = mask.load(), set(), []
-    for y in range(height):
-        for x in range(width):
-            if (x, y) in seen or not data[x, y]:
-                continue
-            pending, points = [(x, y)], []
-            seen.add((x, y))
-            while pending:
-                px, py = pending.pop()
-                points.append((px, py))
-                for nx, ny in ((px - 1, py), (px + 1, py), (px, py - 1), (px, py + 1)):
-                    if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in seen and data[nx, ny]:
-                        seen.add((nx, ny))
-                        pending.append((nx, ny))
-            if len(points) >= 12:
-                xs, ys = zip(*points)
-                span, tall = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
-                if .65 <= span / tall <= 3:
-                    components.append((len(points), span, min(xs), min(ys), max(xs), max(ys)))
-    if not components:
-        return None
-    component = max(components)
-    factor = source_width / width
-    if detail:
-        return tuple(value * factor for value in component[1:])
-    return component[1] * factor
+    def __init__(self, idle_frame):
+        import numpy as np
+        from PIL import Image
 
+        self.np, self.Image = np, Image
+        luma, alpha = self._feature(idle_frame)
+        ys, xs = np.nonzero(alpha > 0.3)
+        top, height = ys.min(), ys.max() - ys.min()
+        band = alpha[top: top + int(height * 0.36)]
+        cols = np.nonzero(band.max(0) > 0.3)[0]
+        self.template = luma[top: top + int(height * 0.36), cols.min(): cols.max() + 1]
+        self._banks = {}
 
-def _head_width(frame, band="upper"):
-    """Use the face to locate the hair silhouette, so bangs do not shrink faces."""
-    face = _face_width(frame, band, detail=True)
-    if face is None:
-        return None
-    span, left, top, right, bottom = face
-    pixels = frame.convert("RGBA").load()
-    center = (left + right) / 2
-    widths = []
-    for y in range(max(0, round(top + span * .12)), min(frame.height, round(top + span * .62))):
-        xs = [x for x in range(max(0, round(center - span * 1.6)), min(frame.width, round(center + span * 1.6)))
-              for r, g, b, a in (pixels[x, y],)
-              if a > 150 and g > 110 and b >= r - 8 and b - g >= 8]
-        if len(xs) > 8:
-            widths.append(max(xs) - min(xs) + 1)
-    return statistics.median(widths) if widths else span * 1.7
+    def _feature(self, frame):
+        np = self.np if hasattr(self, "np") else __import__("numpy")
+        from PIL import Image
+
+        rgba = np.asarray(frame.convert("RGBA").resize((self.WORK, self.WORK), Image.LANCZOS),
+                          dtype=np.float64) / 255
+        alpha = rgba[..., 3]
+        luma = rgba[..., :3] @ np.array([0.3, 0.59, 0.11])
+        return luma * alpha + 0.62 * (1 - alpha), alpha
+
+    def _bank(self, scales, angles):
+        key = (tuple(round(s, 4) for s in scales), angles)
+        if key in self._banks:
+            return self._banks[key]
+        np, Image = self.np, self.Image
+        bank = []
+        base = Image.fromarray(self.template.astype(np.float32))
+        for angle in angles:
+            rotated = base.rotate(angle, resample=Image.BILINEAR, expand=True, fillcolor=0.62)
+            for scale in scales:
+                size = (max(4, round(rotated.width * scale)), max(4, round(rotated.height * scale)))
+                if max(size) >= self.WORK:
+                    continue
+                t = np.asarray(rotated.resize(size, Image.BILINEAR), dtype=np.float64)
+                for mirror in (False, True):
+                    m = t[:, ::-1] if mirror else t
+                    m = m - m.mean()
+                    norm = float(np.sqrt((m * m).sum()))
+                    if norm:
+                        bank.append((float(scale), m.shape, np.fft.rfft2(m[::-1, ::-1], s=(self.FFT, self.FFT)), norm))
+        self._banks[key] = bank
+        return bank
+
+    def _best(self, spectrum, ii, ii2, bank):
+        np, W = self.np, self.WORK
+        best = (-1.0, 1.0)
+        for scale, (h, w), template, norm in bank:
+            corr = np.fft.irfft2(spectrum * template, s=(self.FFT, self.FFT))[h - 1: W, w - 1: W]
+            s1 = ii[h:, w:] - ii[:-h, w:] - ii[h:, :-w] + ii[:-h, :-w]
+            s2 = ii2[h:, w:] - ii2[:-h, w:] - ii2[h:, :-w] + ii2[:-h, :-w]
+            var = s2 - s1 * s1 / (h * w)
+            # Flat background windows have no texture to correlate with.
+            score = np.where(var > 0.3 * norm * norm, corr / (norm * np.sqrt(np.maximum(var, 1e-9))), -1.0)
+            value = float(score.max())
+            if value > best[0]:
+                best = (value, scale)
+        return best
+
+    def measure(self, frame):
+        """(confidence, scale): scale > 1 means her head is drawn larger than in the idle pose."""
+        np = self.np
+        luma, _ = self._feature(frame)
+        spectrum = np.fft.rfft2(luma, s=(self.FFT, self.FFT))
+        ii = np.pad(luma, ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+        ii2 = np.pad(luma * luma, ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+        coarse = np.exp(np.linspace(np.log(0.6), np.log(1.6), 22))
+        score, scale = self._best(spectrum, ii, ii2, self._bank(coarse, (0,)))
+        angles = (0,)
+        if score < 0.5:              # lying down, curled up or hanging upside down
+            angles = (0, 30, -30, 60, -60, 90, -90, 180)
+            score, scale = self._best(spectrum, ii, ii2, self._bank(coarse, angles))
+        fine = scale * np.exp(np.linspace(-0.05, 0.05, 11))
+        return self._best(spectrum, ii, ii2, self._bank(fine, angles))
+
+    def strip_scale(self, frames, *, confident=0.5, weak=0.42):
+        """Median relative scale over the frames that clearly show her face, or None.
+
+        Curled-up and tilted poses only match weakly; they still count when most frames agree.
+        """
+        rows = [self.measure(frame) for frame in frames]
+        good = [scale for score, scale in rows if score >= confident]
+        if not good:
+            agree = [scale for score, scale in rows if score >= weak]
+            if len(agree) * 2 >= len(rows) and agree and max(agree) / min(agree) <= 1.03:
+                good = agree
+        return (statistics.median(good) if good else None), rows
 
 
 def _fit_scale(geometry, scale, source_x, target_x):
@@ -449,6 +521,7 @@ def build(args):
                 "actions": {name: action for name, action in kept.items() if name not in strips or args.only}}
     manifest.setdefault("geometry", {})
     warnings = []
+    reference = None
     for name, (sheet_name, cells, multiplier) in strips.items():
         if args.only and name not in args.only:
             continue
@@ -463,19 +536,27 @@ def build(args):
         target_x = ANCHOR[0] - FIGURE_HEIGHT * .12 - 3 if grip is not None else ANCHOR[0]
         if name in ACTIONS:
             geometry = [_anchor(frame) for frame in frames]
-            bands = action_spec.get("head_bands", [action_spec.get("head_band", "upper")] * len(frames))
-            heads = [_head_width(frames[i], bands[i]) for i in action_spec.get("calibration_frames", range(len(frames)))]
-            heads = [width for width in heads if width]
-            scale = (HEAD_WIDTH / statistics.median(heads) if heads else
-                     FIGURE_HEIGHT * multiplier / statistics.median(box[3] - box[1] for _, _, box in geometry))
-            scale = _fit_scale(geometry, scale, grip, target_x)
+            scale = _fit_scale(geometry, FIGURE_HEIGHT * multiplier / statistics.median(
+                box[3] - box[1] for _, _, box in geometry), grip, target_x)
+            # Then match the shipped idle head, so a new strip plays at the size she already is.
+            reference = reference or _idle_reference(out)
+            if reference is not None:
+                frames_at = [frames[i] for i in action_spec.get("calibration_frames", range(len(frames)))]
+                relative, _ = reference.strip_scale([_place(frame, scale, source_x=grip, target_x=target_x)[0]
+                                                     for frame in frames_at])
+                if relative:
+                    scale = _fit_scale(geometry, scale / relative, grip, target_x)
         placed_bounds = []
         for index, frame in enumerate(frames):
             placed, clipped = _place(frame, scale, source_x=grip, target_x=target_x)
+            if grip is not None:
+                placed = _drop_support(placed, target_x)
             if clipped:
                 warnings.append(f"{name}[{index}]")
             strip.alpha_composite(placed, (index * CANVAS[0], 0))
             placed_bounds.append(placed.getchannel("A").point(lambda a: 255 if a > 40 else 0).getbbox())
+        if name == "idle":
+            reference = HeadMatcher(strip.crop((0, 0, CANVAS[0], CANVAS[1])))
         filename = f"{name}.webp"
         strip.save(out / filename, "WEBP", quality=86, alpha_quality=92, method=6)
         manifest["actions"][name] = {"file": filename, "frames": len(frames)}
@@ -492,7 +573,7 @@ def build(args):
 
 
 def calibrate(args):
-    """Normalize adopted character heads without rerendering the animation."""
+    """Give every adopted strip the idle head size without rerendering the animation."""
     from PIL import Image
     from regular.pet_repertoire import ACTIONS
 
@@ -504,16 +585,44 @@ def calibrate(args):
     old_x, old_y = spec["anchor"]
     out.mkdir(parents=True, exist_ok=True)
     result = dict(spec, frame=list(CANVAS), anchor=list(ANCHOR), geometry={},
-                  calibration={"method": "head-width-v1", "head_width": HEAD_WIDTH})
+                  calibration={"method": "head-match-v2", "reference": "idle"})
+
+    def frames_of(name):
+        action = spec["actions"][name]
+        with Image.open(source / action["file"]) as strip:
+            return [strip.crop((i * width, 0, (i + 1) * width, height)).convert("RGBA")
+                    for i in range(action["frames"])]
+
+    idle = frames_of("idle")
+    alpha = idle[0].getchannel("A").point(lambda a: 255 if a > 40 else 0).getbbox()
+    # The idle figure defines the size on screen; matching only needs a square canvas.
+    base = 1.0 if [width, height] == list(CANVAS) else FIGURE_HEIGHT / (alpha[3] - alpha[1])
+    padded = lambda frame: frame if frame.size == (width, width) else frame.crop((0, 0, max(width, height), max(width, height)))
+    matcher = HeadMatcher(padded(idle[0]))
+    measured = {}
+    for name in spec["actions"]:
+        if args.only and name not in args.only:
+            measured[name] = (1.0, [], "kept")
+        else:
+            relative, rows = matcher.strip_scale([padded(frame) for frame in frames_of(name)])
+            measured[name] = (relative, rows, "measured" if relative else None)
+
+    def family(name):
+        parts = name.split("_")
+        return "_".join(parts[:2]) if len(parts) > 2 else name
+
+    # A face hidden by a pillow, a wing or the screen edge: use its sheet family, drawn in one batch.
+    for name, (relative, rows, source_kind) in list(measured.items()):
+        if relative is None:
+            kin = [value for other, (value, _, kind) in measured.items()
+                   if kind == "measured" and other != name and family(other) == family(name)]
+            if kin:
+                measured[name] = (statistics.median(kin), rows, "family")
     report = {}
     for name, action in spec["actions"].items():
-        with Image.open(source / action["file"]) as strip:
-            frames = [strip.crop((i * width, 0, (i + 1) * width, height)).convert("RGBA")
-                      for i in range(action["frames"])]
-        band = ACTIONS.get(name, {}).get("head_band", "upper")
-        faces = [_head_width(frame, band) for frame in frames]
-        measured = [value for value in faces if value]
-        desired = HEAD_WIDTH / statistics.median(measured) if measured else 1.0
+        frames = frames_of(name)
+        relative, rows, source_kind = measured[name]
+        desired = base / relative if relative else base
         grip = name == "edge_peek" or ACTIONS.get(name, {}).get("grip_x") is not None
         source_x = old_x - FIGURE_HEIGHT * .12 - 3 if grip else old_x
         target_x = ANCHOR[0] - FIGURE_HEIGHT * .12 - 3 if grip else ANCHOR[0]
@@ -523,25 +632,31 @@ def calibrate(args):
         output = Image.new("RGBA", (CANVAS[0] * len(frames), CANVAS[1]))
         bounds = []
         for i, frame in enumerate(frames):
-            resized = frame.convert("RGBa").resize((round(width * scale), round(height * scale)),
-                                                    Image.Resampling.LANCZOS).convert("RGBA")
-            canvas = Image.new("RGBA", CANVAS)
-            canvas.alpha_composite(resized, (round(target_x - source_x * scale), round(ANCHOR[1] - old_y * scale)))
+            if abs(scale - 1.0) < 0.004 and frame.size == CANVAS and (source_x, old_y) == (target_x, ANCHOR[1]) and not grip:
+                canvas = frame              # already right: do not re-encode a second generation
+            else:
+                resized = frame.convert("RGBa").resize((round(width * scale), round(height * scale)),
+                                                        Image.Resampling.LANCZOS).convert("RGBA")
+                canvas = Image.new("RGBA", CANVAS)
+                canvas.alpha_composite(resized, (round(target_x - source_x * scale), round(ANCHOR[1] - old_y * scale)))
+            if grip:
+                canvas = _drop_support(canvas, target_x)
             bounds.append(canvas.getchannel("A").point(lambda a: 255 if a > 40 else 0).getbbox())
             output.alpha_composite(canvas, (i * CANVAS[0], 0))
         output.save(out / action["file"], "WEBP", quality=90, alpha_quality=95, method=6)
         union = [min(box[0] for box in bounds), min(box[1] for box in bounds),
                  max(box[2] for box in bounds), max(box[3] for box in bounds)]
         result["geometry"][name] = {"bounds": [union[0] - ANCHOR[0], union[1] - ANCHOR[1],
-                                               union[2] - ANCHOR[0], union[3] - ANCHOR[1]],
-                                    "head_width": round(statistics.median(measured) * scale, 2) if measured else None}
-        report[name] = {"scale": round(scale, 4), "limited": scale < desired * .98,
-                        "before_head": round(statistics.median(measured), 2) if measured else None,
-                        "after_head": result["geometry"][name]["head_width"]}
+                                               union[2] - ANCHOR[0], union[3] - ANCHOR[1]]}
+        report[name] = {"relative_head": round(relative, 3) if relative else None, "from": source_kind,
+                        "scale": round(scale, 4),
+                        "limited": scale < desired * .98,
+                        "frames": [[round(score, 2), round(rel, 3)] for score, rel in rows]}
+        print(json.dumps({"name": name, **{k: v for k, v in report[name].items() if k != "frames"}}), flush=True)
     (out / "sprites.json").write_text(json.dumps(result, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     (out / "calibration-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1) + "\n")
     print(json.dumps({"actions": len(report), "limited": [name for name, row in report.items() if row["limited"]],
-                      "undetected": [name for name, row in report.items() if row["before_head"] is None]}))
+                      "unmeasured": [name for name, row in report.items() if row["relative_head"] is None]}))
     return 0
 
 
@@ -594,6 +709,7 @@ def main():
     cal = sub.add_parser("calibrate", help="offline: unify adopted character scale using head measurements")
     cal.add_argument("--source", required=True)
     cal.add_argument("--out", required=True)
+    cal.add_argument("--only", nargs="+", help="measure only these strips; the others are copied at their current scale")
     rev = sub.add_parser("review", help="offline layout and transparency checks")
     rev.add_argument("--source", required=True)
     rev.add_argument("--out", required=True)

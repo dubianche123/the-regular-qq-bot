@@ -1127,13 +1127,22 @@ class PetWidget(QWidget):
                           self.sprites.anchor[1] * self.sprites.points(scale))
         width = round(canvas + 2 * self.pad_x)
         height = round(self.pad_top + canvas + self.pad_bottom)
+        self.lift = 0
         self.setFixedSize(width, height)
         self.fx.setFixedSize(width, height + round(canvas * 0.5))
         self._mask_key = self._paint_key = None
 
     def window_anchor(self):
-        """Feet anchor inside this window, in points."""
-        return QPointF(self.width() / 2, self.pad_top + self.anchor_pt[1])
+        """Feet anchor inside this window, in points (raised by `lift` while the window is held below the menu bar)."""
+        return QPointF(self.width() / 2, self.pad_top + self.anchor_pt[1] - self.lift)
+
+    def _window_top(self, top):
+        """macOS pins a frameless window's top edge below the menu bar, so a window asked to go higher
+        stops there while the brain keeps moving her up: she seemed to halt short of the top and then jump.
+        Place the window as high as allowed and draw her that much higher inside it instead."""
+        limit = round(self.brain.ceiling)
+        lift = min(max(0, limit - top), round(self.pad_top + self.anchor_pt[1]) - 1)
+        return top + lift, lift
 
     def _screen_for(self, x, y):
         screens = QApplication.screens()
@@ -1255,11 +1264,12 @@ class PetWidget(QWidget):
 
     def _sync_windows(self, force=False):
         brain = self.brain
-        anchor = self.window_anchor()
-        top_left = QPoint(round(brain.x - anchor.x()), round(brain.y - anchor.y()))
+        top, lift = self._window_top(round(brain.y - (self.pad_top + self.anchor_pt[1])))
+        top_left = QPoint(round(brain.x - self.width() / 2), top)
+        lifted, self.lift = lift != self.lift, lift
         if force or top_left != self.pos():
             self.move(top_left)
-            self.fx.move(top_left.x(), top_left.y() - (self.fx.height() - self.height()))
+            self.fx.move(top_left.x(), max(round(brain.ceiling), top_left.y() - (self.fx.height() - self.height())))
             if self.toolbar.isVisible():
                 self._place_toolbar()
             if self.chat_bar is not None and self.chat_bar.isVisible():
@@ -1273,7 +1283,9 @@ class PetWidget(QWidget):
         key = (strip, frame, mirrored, round(transform["sx"], 3), round(transform["sy"], 3),
                round(transform["rot"], 1), round(transform["dy"], 1), brain.mode,
                _screen_clip(self, brain).getRect() if _screen_clipped(brain) else None,
-               fade and (fade[0], fade[1], fade[2], round(fade[3], 2)))
+               fade and (fade[0], fade[1], fade[2], round(fade[3], 2)), self.lift)
+        if lifted:
+            self._mask_key = None
         if force or key != self._paint_key:
             self._paint_key = key
             self._update_mask(strip, frame, mirrored, transform)

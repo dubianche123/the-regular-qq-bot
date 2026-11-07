@@ -57,6 +57,23 @@ class DesktopPetTest(unittest.TestCase):
         self.pet.pool.waitForDone(1000)
         self.app.processEvents()
 
+    def test_near_the_top_the_window_stays_below_the_menu_bar_and_she_is_drawn_higher_inside_it(self):
+        # macOS pins a frameless window's top edge under the menu bar; asking for more made her
+        # stop short of the top and then jump. The window now stops there and the drawing lifts.
+        pet, brain = self.pet, self.pet.brain
+        brain.set_ground(0, 1728, 1080, 33)
+        brain.mode, brain.vy = "air", 0.0
+        for feet in (900, 400, 260, 200, 180):
+            brain.y = feet
+            pet._sync_windows(force=True)
+            self.assertGreaterEqual(pet.y(), 33)
+            self.assertGreaterEqual(pet.fx.y(), 33)
+            self.assertAlmostEqual(pet.y() + pet.window_anchor().y(), feet, delta=1)
+        self.assertGreater(pet.lift, 0)
+        brain.y = 900
+        pet._sync_windows(force=True)
+        self.assertEqual(pet.lift, 0)
+
     def test_sprite_bank_loads_strips_on_demand_and_evicts_lru(self):
         bank = SpriteBank()
         self.assertEqual(len(bank.frames.cache), 0)

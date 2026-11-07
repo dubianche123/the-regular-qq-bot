@@ -103,29 +103,39 @@ class PartialSpriteBuildTest(unittest.TestCase):
             source.mkdir()
             base = Image.new("RGBA", (512, 512))
             draw = ImageDraw.Draw(base)
-            draw.rectangle((190, 220, 310, 450), fill=(90, 140, 110, 255))
-            draw.ellipse((160, 70, 340, 245), fill=(220, 200, 240, 255))
-            draw.ellipse((205, 120, 300, 205), fill=(250, 210, 215, 255))
+            draw.rectangle((205, 300, 305, 492), fill=(90, 140, 110, 255))
+            draw.ellipse((170, 140, 340, 300), fill=(220, 200, 240, 255))       # hair
+            draw.ellipse((205, 185, 300, 280), fill=(250, 214, 200, 255))       # face
+            for x in (225, 262):
+                draw.ellipse((x, 215, x + 18, 240), fill=(120, 90, 170, 255))    # eyes
+            draw.polygon([(180, 165), (195, 105), (215, 150)], fill=(200, 190, 230, 255))   # horns
+            draw.polygon([(295, 150), (318, 105), (330, 165)], fill=(200, 190, 230, 255))
             raised = base.copy()
-            ImageDraw.Draw(raised).rectangle((150, 8, 175, 225), fill=(90, 140, 110, 255))
-            smaller = Image.new("RGBA", (512, 512))
-            smaller.alpha_composite(raised.resize((384, 384)), (64, 113))
-            for name, frame in (("standing", base), ("raised", smaller)):
+            ImageDraw.Draw(raised).rectangle((140, 60, 165, 300), fill=(90, 140, 110, 255))
+            smaller = Image.new("RGBA", (512, 512))       # same feet, head drawn at 75%
+            smaller.alpha_composite(raised.resize((384, 384)), (64, 492 - 369))
+            blank = Image.new("RGBA", (512, 512))
+            ImageDraw.Draw(blank).rectangle((250, 300, 262, 492), fill=(90, 140, 110, 255))   # a bare prop
+            for name, frame in (("idle", base), ("raised", smaller), ("faceless", blank)):
                 strip = Image.new("RGBA", (2048, 512))
                 for index in range(4):
                     strip.alpha_composite(frame, (index * 512, 0))
                 strip.save(source / f"{name}.webp", lossless=True)
             original = {"schema": 2, "frame": [512, 512], "anchor": [256, 492], "figure_height": 320,
-                        "actions": {n: {"file": f"{n}.webp", "frames": 4} for n in ("standing", "raised")}}
+                        "actions": {n: {"file": f"{n}.webp", "frames": 4} for n in ("idle", "raised", "faceless")}}
             (source / "sprites.json").write_text(json.dumps(original))
             with contextlib.redirect_stdout(io.StringIO()):
-                sprites.calibrate(SimpleNamespace(source=str(source), out=str(out)))
-            measurements = []
-            for name in original["actions"]:
-                with Image.open(out / f"{name}.webp") as strip:
-                    measurements.append(sprites._head_width(strip.crop((0, 0, 512, 512))))
-            self.assertLess(abs(measurements[0] - measurements[1]), 5)
-            self.assertTrue(all(125 < value < 145 for value in measurements))
+                sprites.calibrate(SimpleNamespace(source=str(source), out=str(out), only=None))
+            report = json.loads((out / "calibration-report.json").read_text())
+            self.assertAlmostEqual(report["raised"]["relative_head"], 0.75, delta=0.04)
+            self.assertIsNone(report["faceless"]["relative_head"])       # nothing to match: left as it was
+            self.assertEqual(report["faceless"]["scale"], 1.0)
+            with Image.open(out / "idle.webp") as strip:
+                matcher = sprites.HeadMatcher(strip.crop((0, 0, 512, 512)).convert("RGBA"))
+            with Image.open(out / "raised.webp") as strip:
+                score, scale = matcher.measure(strip.crop((0, 0, 512, 512)).convert("RGBA"))
+            self.assertGreater(score, 0.5)
+            self.assertAlmostEqual(scale, 1.0, delta=0.04)                # after calibration: the idle head size
             self.assertEqual(json.loads((source / "sprites.json").read_text()), original)
 
     def test_library_frames_share_one_scale_and_keep_edge_grip_alignment(self):
@@ -159,11 +169,10 @@ class PartialSpriteBuildTest(unittest.TestCase):
                     self.assertGreaterEqual(box[0], 5)
                     self.assertGreaterEqual(box[1], 5)
                     self.assertLessEqual(box[2], 507)
-                    # Magenta support stays behind the runtime's left-screen cut.
+                    # The magenta support pole is removed: it would flash while the frame dissolves after she pops out.
                     pole = [(x, y) for y in range(512) for x in range(512)
                             if (lambda p: p[3] > 100 and p[0] > 170 and p[2] > 170 and p[1] < 80)(frame.getpixel((x, y)))]
-                    self.assertTrue(pole)
-                    self.assertLessEqual(max(x for x, _ in pole), 216)
+                    self.assertEqual(pole, [])
                 self.assertLessEqual(max(widths) - min(widths), 1)
 
     def test_new_strips_keep_existing_files_and_manifest_entries(self):
