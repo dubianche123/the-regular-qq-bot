@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "the-regular"
-description = "A QQ group companion you can improve with your coding agent and group feedback"
+description = "An AI dragon-girl desktop pet & Coding Agent companion with a real social life in your QQ group — powered by Decisions API (Jev) triage and self-iteration"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
