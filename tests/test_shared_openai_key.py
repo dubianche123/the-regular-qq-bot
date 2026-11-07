@@ -1,5 +1,6 @@
 """一把 OpenAI Key：动态绑定，不复制第二份，也不会送到别家接口。"""
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,9 @@ class SharedOpenAIKeyTest(unittest.IsolatedAsyncioTestCase):
         for target, name, value in (
                 (config, "BASE_DIR", str(self.root)),
                 (config, "DATA_DIR", str(self.data)),
+                # This fixture models file-managed credentials. The offline
+                # runner's intentionally blank key is not this instance's override.
+                (config, "EXTERNAL_ENV_KEYS", frozenset()),
                 (config, "DECISION_ENABLED", True),
                 (providers, "_llm_http", self.http),
                 (providers, "_initialized", True),
@@ -83,6 +87,27 @@ class SharedOpenAIKeyTest(unittest.IsolatedAsyncioTestCase):
         await providers.call_decision("i", [])
         self.assertEqual(self.http.post.await_args.kwargs["headers"],
                          {"Authorization": "Bearer sk-second"})
+
+    async def test_explicit_environment_key_overrides_file_credentials(self):
+        with patch.object(config, "EXTERNAL_ENV_KEYS", frozenset({"OPENAI_API_KEY"})), \
+             patch.dict(os.environ, {"OPENAI_API_KEY": "sk-external"}):
+            await providers.call_decision("i", [])
+            self.assertEqual(self.http.post.await_args.kwargs["headers"],
+                             {"Authorization": "Bearer sk-external"})
+            self.set_key("sk-second")
+            self.http.post.reset_mock()
+            await providers.call_decision("i", [])
+            self.assertEqual(self.http.post.await_args.kwargs["headers"],
+                             {"Authorization": "Bearer sk-external"})
+
+    def test_environment_service_binding_does_not_leak_key_to_file_endpoint(self):
+        with patch.object(config, "EXTERNAL_ENV_KEYS",
+                          frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL"})), \
+             patch.dict(os.environ, {"OPENAI_API_KEY": "sk-external",
+                                     "OPENAI_BASE_URL": "https://gateway.example/v1"}):
+            self.assertEqual(capabilities.key_for_endpoint(config, "https://api.openai.com/v1"), "")
+            self.assertEqual(capabilities.key_for_endpoint(config, "https://gateway.example/v1"),
+                             "sk-external")
 
     async def test_non_matching_endpoint_never_sends_the_key(self):
         decision_settings.save_settings(
