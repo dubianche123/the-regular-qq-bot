@@ -109,6 +109,91 @@ class CheckupSignalsTest(unittest.TestCase):
         self.assertEqual(f["turn_ids"], ["t1"])
         self.assertIn("车刚打火", f["detail"])
 
+    def test_corrected_recovers_legacy_image_turn_with_scoped_source(self):
+        self.write([
+            _incoming(0, "A", "画只戴眼镜的蛙", "m1"),
+            _delivery(20, "", source="m1", user="A", out="image1", route="image"),
+            # 评价者可以是另一位群友；投递的 user 仍对应原请求人。
+            _incoming(30, "B", "眼镜画错了", "feedback1"),
+            _row("natural_feedback", 31, user="B", source_message_id="feedback1",
+                 target="bot_response", action="repair_briefly", source_reply_id="image1"),
+        ], turns=[
+            {"turn_id": "correct", "kind": "reply", "group": G, "user": "A",
+             "message_id": "m1", "ts": T0 + 5, "raw": "〔动图〕戴眼镜的蛙点头\n画好了"},
+            {"turn_id": "other_group", "kind": "reply", "group": "OTHER", "user": "A",
+             "message_id": "m1", "ts": T0 + 10, "raw": "〔画〕错误群的猫"},
+            {"turn_id": "other_user", "kind": "reply", "group": G, "user": "B",
+             "message_id": "m1", "ts": T0 + 15, "raw": "〔画〕错误请求人的狗"},
+            {"turn_id": "future", "kind": "reply", "group": G, "user": "A",
+             "message_id": "m1", "ts": T0 + 25, "raw": "〔画〕尚未生成的鸟"},
+        ])
+        (finding,) = [f for f in self.run_report()["findings"] if f["signal"] == "corrected"]
+        self.assertEqual(finding["turn_ids"], ["correct"])
+        self.assertIn("[动图：戴眼镜的蛙点头]", finding["detail"])
+        self.assertTrue(any("[动图：戴眼镜的蛙点头]" in line for line in finding["context"]))
+        self.assertIn("--turn correct", checkup.case_add_commands(DAY, finding)[0])
+
+    def test_corrected_preserves_new_image_delivery_without_turn_log(self):
+        description = "[图：拿着‘我去查’牌子的青蛙]"
+        self.write([
+            _delivery(10, description, source="draw1", user="A", out="image1",
+                      route="image", turn="recorded"),
+            _incoming(20, "A", "牌子写错了", "feedback1"),
+            _row("natural_feedback", 21, user="A", source_message_id="feedback1",
+                 target="bot_response", action="repair_briefly", source_reply_id="image1"),
+        ])
+        out = self.run_report()
+        self.assertEqual(self.signals(out), ["corrected"])
+        self.assertEqual(out["findings"][0]["turn_ids"], ["recorded"])
+        self.assertIn(description, out["findings"][0]["detail"])
+        # 图片描述是追溯证据，不作为她说出口的话参与承诺、口头禅等信号。
+        self.assertEqual(out["inputs"]["delivered"], 0)
+
+    def test_corrected_image_explicit_turn_is_not_replaced_by_latest_guess(self):
+        self.write([
+            _delivery(20, "", source="m1", user="A", out="image1", route="image", turn="first"),
+            _incoming(30, "A", "颜色错了", "feedback1"),
+            _row("natural_feedback", 31, user="A", source_message_id="feedback1",
+                 target="bot_response", action="repair_briefly", source_reply_id="image1"),
+        ], turns=[
+            {"turn_id": "first", "kind": "reply", "group": G, "user": "A",
+             "message_id": "m1", "ts": T0 + 5, "raw": "〔画〕蓝色的蛙"},
+            {"turn_id": "later", "kind": "reply", "group": G, "user": "A",
+             "message_id": "m1", "ts": T0 + 10, "raw": "〔画〕红色的蛙"},
+        ])
+        (finding,) = [f for f in self.run_report()["findings"] if f["signal"] == "corrected"]
+        self.assertEqual(finding["turn_ids"], ["first"])
+        self.assertIn("蓝色的蛙", finding["detail"])
+        self.assertNotIn("红色的蛙", finding["detail"])
+
+    def test_corrected_does_not_guess_missing_or_mismatched_image_sources(self):
+        cases = [
+            ("different_group", {"group": "OTHER", "user": "A"}),
+            ("different_user", {"group": G, "user": "B"}),
+            ("missing_identity", {}),
+            ("future", {"group": G, "user": "A", "ts": T0 + 25}),
+        ]
+        for index, (case, identity) in enumerate(cases):
+            self.write([
+                _delivery(20, "", source=case, user="A", out=case, route="image"),
+                _incoming(30, "A", "颜色不对", f"feedback{index}"),
+                _row("natural_feedback", 31, user="A", source_message_id=f"feedback{index}",
+                     target="bot_response", action="repair_briefly", source_reply_id=case),
+            ], turns=[{"turn_id": f"wrong{index}", "kind": "reply", "message_id": case,
+                       "raw": "〔画〕不该关联的蛙", **identity}])
+        # 同一 outgoing_id 在别群存在，也不能成为本群的反馈目标。
+        self.write([
+            _delivery(20, "别群图", source="elsewhere", user="A", out="collision",
+                      route="image", turn="other-group-turn", group="OTHER"),
+            _incoming(30, "A", "不对", "feedback_other"),
+            _row("natural_feedback", 31, user="A", source_message_id="feedback_other",
+                 target="bot_response", action="repair_briefly", source_reply_id="collision"),
+        ])
+        findings = [f for f in self.run_report()["findings"] if f["signal"] == "corrected"]
+        self.assertEqual(len(findings), len(cases) + 1)
+        self.assertTrue(all(not f["turn_ids"] for f in findings))
+        self.assertTrue(all(f["detail"] == "repair_briefly：对「」" for f in findings))
+
     def test_bad_reaction_only_right_after_bot(self):
         self.write([
             _delivery(0, "にまますら", turn="t1"),
@@ -270,11 +355,11 @@ class CheckupSignalsTest(unittest.TestCase):
             _delivery(30, "", source="m9", user="U1", route="image"),
             _delivery(60, "我这边只看到图片标记，图本体没显示出来", turn="t2", user="U1"),
         ], turns=[
-            {"turn_id": "t0", "kind": "reply", "message_id": "m1", "ts": T0 + 5,
+            {"turn_id": "t0", "kind": "reply", "message_id": "m1", "group": G, "user": "U1", "ts": T0 + 5,
              "raw": "〔画〕一只青蛙\n安排"},
-            {"turn_id": "t1", "kind": "reply", "message_id": "m1", "ts": T0 + 10,
+            {"turn_id": "t1", "kind": "reply", "message_id": "m1", "group": G, "user": "U1", "ts": T0 + 10,
              "raw": "〔画〕一只戴黑框眼镜的青蛙\n安排"},
-            {"turn_id": "t3", "kind": "reply", "message_id": "m1", "ts": T0 + 40,
+            {"turn_id": "t3", "kind": "reply", "message_id": "m1", "group": G, "user": "U1", "ts": T0 + 40,
              "raw": "〔画〕一只戴墨镜的青蛙"},
         ])
         (f,) = [f for f in self.run_report()["findings"] if f["signal"] == "blind"]
@@ -288,7 +373,7 @@ class CheckupSignalsTest(unittest.TestCase):
             _delivery(20, "", source="m1", user="U1", route="image"),
             _delivery(60, "我这边只看到图片标记", turn="t2", user="U1"),
         ], turns=[
-            {"turn_id": "t1", "kind": "reply", "message_id": "m1", "ts": T0 + 10,
+            {"turn_id": "t1", "kind": "reply", "message_id": "m1", "group": G, "user": "U1", "ts": T0 + 10,
              "raw": f"〔动图〕{spec}\n安排"},
         ])
         (finding,) = [f for f in self.run_report()["findings"] if f["signal"] == "blind"]

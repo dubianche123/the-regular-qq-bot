@@ -1109,7 +1109,7 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
     """Serialize generation and send; queued delivery commits through the same callback.
 
     prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
-    media=MediaTurn：这一轮认不认小王写的〔画〕〔动图〕〔语音〕（见 media_turn）；None 时标记一律当文字。
+    media=MediaTurn：这一轮认不认小王写的〔画〕〔动图〕〔语音〕（见 media_turn）；None 时不执行媒介动作。
     is_stale：写好以后、发出去之前再问一次「时机过没过」，过了就不发（见 reply_unprompted）。
     reply_filter：本地文字渠道可在执行和送达前整理候选，历史只记录整理后的实际正文。
     raw_reply_filter：可选本地渠道清理，在通用标签清理之前移除完整内部块。
@@ -1121,8 +1121,19 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
         # 从这里摘走，别漏进 get_ai_reply 的关键字里。
         history = context.pop("history", ())
-        if media is not None and media.note:
-            context["media_note"] = media.note
+        media_notes = [context.get("media_note"), getattr(media, "note", "")]
+        unavailable = []
+        if not getattr(media, "draw", False):
+            unavailable.extend(("画图〔画〕", "动图〔动图〕"))
+        elif not getattr(media, "animate", False):
+            unavailable.append("动图〔动图〕")
+        if not getattr(media, "voice", False):
+            unavailable.append("发语音〔语音〕")
+        if unavailable:
+            media_notes.append("【本轮能力限制】这轮不执行" + "、".join(unavailable)
+                               + "；不要写这些动作标记，也不要承诺开始或正在做这些事。"
+                                 "仍可照常接话；具体原因以本轮提示为准。")
+        context["media_note"] = "\n".join(filter(None, media_notes))
         reminder_intent = getattr(media, "reminder_intent", None)
         if getattr(media, "remind", False) and reminder_intent in ("clarify", "decline"):
             context["media_note"] = "\n".join(filter(None, (
@@ -1167,8 +1178,10 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             return "", delta, None
         if said.kind == "image" and not (media is not None and media.draw
                 and (not said.animated or getattr(media, "animate", False))):
-            logger.info("🎨 这一轮不认作图标记，只发文字（%s）", session_id[-12:])
-            said = expression.Said(None, "", said.text, said.remind)
+            logger.info("🎨 这一轮不执行作图标记，交代未执行（%s）", session_id[-12:])
+            # 动作和承诺是一起生成的，不能只摘掉动作、把「我这就画」照发出去。
+            reason = "animation_unavailable" if getattr(media, "draw", False) else "unavailable"
+            said = expression.Said(None, "", expression.image_failed_line(reason), said.remind)
         declined = said.kind == "image" and await _drawing_declined(message, media, said, history)
         if declined:
             # 这张不画（见 _drawing_declined）：带着 PROMPT_DRAW_DECLINED 重写一遍，让它用自己的话推掉；
@@ -1618,7 +1631,9 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
         runtime.INTERACTIONS.append(
             "delivery", media.group, user=media.user, actor="assistant",
             outgoing_id=outgoing_id, source_message_id=getattr(message, "id", None),
-            status="delivered", route="image", generation="model")
+            status="delivered", route="image", generation="model",
+            turn_id=interaction.get("turn_id"),
+            text=f"{delivered_text}\n{image_note}".strip())
     else:
         detail = "QQ 送达回执不明" if outcome is None else expression.image_failed_line(outcome)
         _note_own_line(media.group, f"{said.spec}；{detail}", medium=medium,

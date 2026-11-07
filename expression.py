@@ -135,4 +135,6 @@ def image_failed_line(outcome):
         "upload_error": "图画好了，但没发进群，等会儿再试试",
         "quota": "今天画不动了，明天再画",
         "busy": "手上那张还没画完，等会儿再叫我",
+        "unavailable": "这次先不画了",
+        "animation_unavailable": "这次先不画动图了",
     }.get(outcome, "这张没画出来，等会儿再试试") if outcome is not None else ""

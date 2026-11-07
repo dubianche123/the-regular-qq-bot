@@ -184,7 +184,9 @@ class ImageReplyTest(_Reply):
                 await bot.reply_in_session(self.message, "group_member", "画个动图", media=media)
                 draw.assert_not_awaited()
                 self.check_drawing.assert_not_awaited()
-                self.assertEqual(self.sent(), ["来了"])
+                expected = ("这次先不画动图了" if getattr(media, "draw", False)
+                            else "这次先不画了")
+                self.assertEqual(self.sent(), [expected])
 
     async def test_line_goes_first_then_image_and_record_says_what_was_drawn(self):
         order = []
@@ -226,15 +228,53 @@ class ImageReplyTest(_Reply):
             await bot.reply_in_session(self.message, "group_member", "画只猫", media=self.media())
         self.assertEqual(self.sent(), ["我试试"])
 
-    async def test_marker_is_ignored_when_this_turn_cannot_draw(self):
-        """插嘴、额度用完这些轮次：标记当文字处理，不花钱，标记本身也不发进群。"""
+    async def test_unavailable_image_does_not_leave_an_unexecuted_promise(self):
+        """动作没执行就不能保留模型的「这就画」；不额外生成、不花画图额度。"""
         for media in (None, self.media(draw=False)):
-            with self.subTest(media=media), self.said("〔画〕橘猫\n来一张"), \
+            with self.subTest(media=media), self.said("〔画〕橘猫\n我这就画，给你换一版"), \
                  patch.object(bot.image_generation, "generate_and_send", AsyncMock()) as draw:
                 self.message.reply.reset_mock()
                 await bot.reply_in_session(self.message, "group_member", "画只猫", media=media)
                 draw.assert_not_awaited()
-                self.assertEqual(self.sent(), ["来一张"])
+                self.assertEqual(self.sent(), ["这次先不画了"])
+                self.assertEqual(self.last_record(), "这次先不画了")
+                bot.get_ai_reply.assert_awaited_once()
+
+    async def test_generation_knows_this_turn_permissions_and_keeps_existing_notes(self):
+        with self.said("我先接句话") as generate:
+            await bot.reply_in_session(
+                self.message, "group_member", "还是不对", quip=True,
+                media=self.media(draw=False, animate=False, note="已有任务还在画"),
+                media_note="保留调用方说明")
+        note = generate.await_args.kwargs["media_note"]
+        self.assertIn("保留调用方说明", note)
+        self.assertIn("已有任务还在画", note)
+        self.assertIn("这轮不执行画图〔画〕、动图〔动图〕", note)
+        self.assertNotIn("发语音〔语音〕", note)
+        self.assertIn("不要承诺", note)
+
+    async def test_static_image_permission_does_not_disable_drawing_when_animation_is_off(self):
+        with self.said("先说清楚动作") as generate:
+            await bot.reply_in_session(self.message, "group_member", "画只猫",
+                                       media=self.media(animate=False, voice=False))
+        note = generate.await_args.kwargs["media_note"]
+        self.assertIn("动图〔动图〕", note)
+        self.assertIn("发语音〔语音〕", note)
+        self.assertNotIn("画图〔画〕", note)
+
+    async def test_image_delivery_carries_generation_and_description_for_feedback(self):
+        async def generated(*args, **kwargs):
+            bot._reply_trace.get()["turn_id"] = "synthetic-drawing-turn"
+            return "〔画〕橘猫趴在键盘上\n给你整一只", None
+
+        with patch.object(bot, "get_ai_reply", side_effect=generated), \
+             patch.object(bot.image_generation, "generate_and_send", AsyncMock(return_value=True)):
+            await bot.reply_in_session(self.message, "group_member", "画只猫", media=self.media())
+        row = bot.runtime.INTERACTIONS.append.call_args.kwargs
+        self.assertEqual(row["route"], "image")
+        self.assertEqual(row["turn_id"], "synthetic-drawing-turn")
+        self.assertEqual(row["source_message_id"], "incoming")
+        self.assertEqual(row["text"], "给你整一只\n[图：橘猫趴在键盘上]")
 
 
 class DrawGuardTest(_Reply):

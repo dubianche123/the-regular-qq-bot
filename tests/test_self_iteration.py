@@ -34,7 +34,7 @@ from regular import rules as rules_mod
 
 class CasesAndChecksTest(unittest.TestCase):
     def test_seed_cases_cover_all_documented_batches(self):
-        self.assertEqual(len(cases_mod.SEED_CASES), 80)
+        self.assertEqual(len(cases_mod.SEED_CASES), 88)
         for case in cases_mod.SEED_CASES:
             cases_mod.validate_case(case)
         deflect = [c for c in cases_mod.SEED_CASES if "deflect" in c.get("tags", ())]
@@ -72,6 +72,41 @@ class CasesAndChecksTest(unittest.TestCase):
                 self.assertTrue(cases_mod.check_reply(reply, case["checks"])["passed"])
         # 沉默是模型的有效选择；生成失败仍然不是合格回复。
         self.assertFalse(cases_mod.check_reply(None, case["checks"])["passed"])
+
+    def test_draw_feedback_seeds_load_with_clarification_and_action_controls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            selected = cases_mod.load_cases(tmp, selector="draw-feedback-synthetic")
+            by_id = {case["id"]: case for case in selected}
+            self.assertEqual(len(by_id), 8)
+            self.assertEqual({case["id"] for case in cases_mod.load_cases(tmp, selector="draw-feedback-*")},
+                             set(by_id))
+        for case in selected:
+            self.assertIn("synthetic", case["tags"])
+            self.assertNotIn("source_turn_id", case)
+            self.assertNotIn("source_message_id", case)
+            self.assertTrue(cases_mod.judge_prompts(case["checks"]))
+        # 精确匹配内置种子的内容才按公共合成资料预览，不因标签就相信本地文件。
+        self.assertEqual(eval_mod._possibly_live_cases(selected), [])
+        self.assertIn("holdout", by_id["draw-feedback-08-holdout"]["tags"])
+        for cid in ("draw-feedback-01-frog", "draw-feedback-02-astronaut",
+                    "draw-feedback-03-poster", "draw-feedback-08-holdout"):
+            checks = by_id[cid]["checks"]
+            self.assertTrue(cases_mod.check_reply("我还没对准，是画风还是构图不对？", checks)["passed"])
+            self.assertFalse(cases_mod.check_reply("〔画〕换成新的水彩构图\n这次对了", checks)["passed"])
+        for cid, description in (("draw-feedback-04-clear-glasses", "黑色圆框眼镜的蛙"),
+                                 ("draw-feedback-05-clear-scarf", "戴蓝围巾的猫")):
+            checks = by_id[cid]["checks"]
+            self.assertTrue(cases_mod.check_reply(f"〔画〕{description}\n这次只改这一处", checks)["passed"])
+            self.assertFalse(cases_mod.check_reply("具体是哪儿不对？", checks)["passed"])
+        stop = by_id["draw-feedback-06-stop"]
+        self.assertTrue(stop["turn"]["kwargs"]["back_off"])
+        self.assertFalse(stop["turn"]["media"]["draw"])
+        for reply in ("好，停了", "〔不接〕"):
+            self.assertTrue(cases_mod.check_reply(reply, stop["checks"])["passed"])
+        self.assertFalse(cases_mod.check_reply("〔画〕再换个构图\n最后一张", stop["checks"])["passed"])
+        arithmetic = by_id["draw-feedback-07-non-image"]
+        self.assertTrue(cases_mod.check_reply("对，是30，刚才算错了", arithmetic["checks"])["passed"])
+        self.assertFalse(cases_mod.check_reply("你觉得画风还是构图不对？", arithmetic["checks"])["passed"])
 
     def test_deterministic_checks_all_kinds(self):
         checks = [

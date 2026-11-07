@@ -217,7 +217,7 @@ def load_day(day, *, interaction_dir, turn_dir, archive_dir=None):
         "day": day,
         "incoming": [],
         "delivery": [],
-        "images": [],   # 它发的图：没有文字，不进各信号，只进时间线（见 _timeline）
+        "images": [],   # 它发的图：描述只作追溯证据，不当成说出口的话跑文字信号
         "next_delivery": [],
         "feedback": [],
         "decision": [],
@@ -230,11 +230,11 @@ def load_day(day, *, interaction_dir, turn_dir, archive_dir=None):
             if row.get("group") and row.get("user"):
                 data["speakers"][row["group"]].add(row["user"])
         elif (kind == "delivery" and row.get("status") == "delivered"
+              and row.get("actor") == "assistant" and row.get("route") == "image"):
+            data["images"].append(row)
+        elif (kind == "delivery" and row.get("status") == "delivered"
               and row.get("actor") == "assistant" and row.get("text")):
             data["delivery"].append(row)
-        elif (kind == "delivery" and row.get("status") == "delivered"
-              and row.get("route") == "image"):
-            data["images"].append(row)
         elif kind == "natural_feedback":
             data["feedback"].append(row)
         elif kind == "decision":
@@ -244,7 +244,8 @@ def load_day(day, *, interaction_dir, turn_dir, archive_dir=None):
     next_rows = _read_jsonl(Path(interaction_dir) / f"{_shift(day, 1)}.jsonl", INTERACTION_SCHEMA)
     for row in next_rows:
         if (row.get("kind") == "delivery" and row.get("status") == "delivered"
-                and row.get("actor") == "assistant" and row.get("text")):
+                and row.get("actor") == "assistant" and row.get("route") != "image"
+                and row.get("text")):
             data["next_delivery"].append(row)
 
     if archive_dir:
@@ -300,7 +301,8 @@ def load_baseline(day, *, interaction_dir, days=CATCHPHRASE_BASELINE_DAYS):
         texts = [r.get("text") for r in _read_jsonl(Path(interaction_dir) / f"{d}.jsonl",
                                                     INTERACTION_SCHEMA)
                  if r.get("kind") == "delivery" and r.get("status") == "delivered"
-                 and r.get("actor") == "assistant" and r.get("text")]
+                 and r.get("actor") == "assistant" and r.get("route") != "image"
+                 and r.get("text")]
         if texts:
             out[d] = texts
     return out
@@ -311,7 +313,7 @@ def load_baseline(day, *, interaction_dir, days=CATCHPHRASE_BASELINE_DAYS):
 def _timeline(data):
     """按群把人和它的话排成一条时间线；每个元素 (ts, who, text, ref)。
 
-    它发的图在交互日志里没有文字，按来源消息找回那一轮写的画面描述，记成「[图：…]」或
+    旧图片投递在交互日志里没有文字，按来源消息找回那一轮写的画面描述，记成「[图：…]」或
     「[动图：…]」（跟线上它自己会话里那行一样）；找不到就记「[图]」。
     不补的话，看前后文的人不知道群里那张图是它画的。
     """
@@ -331,32 +333,37 @@ def _timeline(data):
         label = "动图" if drawn and drawn[3] else "图"
         lines[row.get("group")].append({"ts": row.get("ts") or 0.0, "bot": True,
                                         "user": row.get("user"),
-                                        "text": f"[{label}：{drawn[2]}]" if drawn else "[图]",
+                                        "text": row.get("text") or (
+                                            f"[{label}：{drawn[2]}]" if drawn else "[图]"),
                                         "outgoing_id": row.get("outgoing_id"),
-                                        "turn_id": drawn[1] if drawn else None})
+                                        "turn_id": row.get("turn_id") or (drawn[1] if drawn else None)})
     for items in lines.values():
         items.sort(key=lambda r: r["ts"])
     return lines
 
 
 def _drawings(turns):
-    """写了〔画〕/〔动图〕的轮次：{message_id: [(ts, turn_id, 画面描述, animated)]}，按时间排。"""
+    """写了〔画〕/〔动图〕的轮次，按群、请求人、来源消息建索引，再按时间排。"""
     out = defaultdict(list)
     for t in turns:
-        if t.get("kind") == "reply" and t.get("message_id"):
+        if (t.get("kind") == "reply" and t.get("message_id")
+                and t.get("group") and t.get("user")):
             said = expression.parse(t.get("raw") or "")
             if said.kind == "image":
-                out[t["message_id"]].append((t.get("ts") or 0.0, t.get("turn_id"),
-                                             said.spec, said.animated))
+                out[(t["group"], t["user"], t["message_id"])].append(
+                    (t.get("ts") or 0.0, t.get("turn_id"), said.spec, said.animated))
     for items in out.values():
         items.sort(key=lambda d: d[0])
     return out
 
 
 def _drawn(drawings, row):
-    """这张图是哪一轮画的：同一条来源消息上、图送达之前最后一次写作图标记的那轮。"""
+    """优先认显式 turn_id；旧投递只回溯同群同人的来源消息，不猜别人的轮次。"""
     ts = row.get("ts") or 0.0
-    before = [d for d in drawings.get(row.get("source_message_id")) or () if d[0] <= ts]
+    key = (row.get("group"), row.get("user"), row.get("source_message_id"))
+    before = [d for d in drawings.get(key) or () if d[0] <= ts]
+    if row.get("turn_id"):
+        before = [d for d in before if d[1] == row["turn_id"]]
     return before[-1] if before else None
 
 
@@ -501,19 +508,28 @@ def find_repeated(data, timeline, names, turn_by_message=None, policy=None):
 
 
 def find_corrected(data, timeline, names):
-    by_outgoing = {r.get("outgoing_id"): r for r in data["delivery"]}
-    incoming = {r.get("message_id"): r for r in data["incoming"]}
+    by_outgoing = {(r.get("group"), r["outgoing_id"]): r
+                   for r in [*data["delivery"], *(data.get("images") or ())]
+                   if r.get("outgoing_id")}
+    incoming = {(r.get("group"), r["message_id"]): r for r in data["incoming"]
+                if r.get("message_id")}
+    drawings = _drawings(data.get("turns") or ())
     out = []
     for row in data["feedback"]:
         if row.get("target") != "bot_response" or row.get("action") not in CORRECTION_ACTIONS:
             continue
-        reply = by_outgoing.get(row.get("source_reply_id")) or {}
-        said = incoming.get(row.get("source_message_id")) or {}
+        group = row.get("group")
+        reply = by_outgoing.get((group, row.get("source_reply_id"))) or {}
+        drawn = _drawn(drawings, reply) if reply.get("route") == "image" else None
+        target = reply.get("text") or (
+            f"[{'动图' if drawn[3] else '图'}：{drawn[2]}]" if drawn else "")
+        turn_id = reply.get("turn_id") or (drawn[1] if drawn else None)
+        said = incoming.get((group, row.get("source_message_id"))) or {}
         ts = said.get("ts") or row.get("ts") or 0.0
         out.append(_finding("corrected", row.get("group"), ts, user=row.get("user"),
-                            detail=f"{row.get('action')}：对「{(reply.get('text') or '')[:40]}」",
+                            detail=f"{row.get('action')}：对「{target[:40]}」",
                             message_id=row.get("source_message_id"),
-                            turn_ids=[reply.get("turn_id")],
+                            turn_ids=[turn_id],
                             context=_context(timeline, row.get("group"), ts, names),
                             key=row.get("source_message_id") or row.get("event_id")))
     return out

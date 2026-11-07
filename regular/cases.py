@@ -1169,5 +1169,169 @@ _REMINDER_POLICY_CASES = [
 ]
 
 
+# 2026-11-07：全新合成改图反馈与边界对照；输入和判据沿用本次盲评，见 docs/media-replies.md。
+_DRAW_FEEDBACK_8 = [
+    _gen_case('draw-feedback-01-frog',
+              'docs/media-replies.md',
+              ['draw-feedback-synthetic', 'comparison', 'synthetic'],
+              {'user_text': '还是不对',
+               'owner_label': '群主',
+               'unprompted': False,
+               'context_hint': '- 群友：画一只戴眼镜看书的青蛙，轻松一点\n'
+                               '- 小王：[图：戴圆眼镜看书的青蛙，柔和水彩]\n'
+                               '- 群友：不是这种感觉\n'
+                               '- 小王：那我换成简洁卡通试试。\n'
+                               '[图：简洁卡通风的青蛙坐着看书]',
+               'back_off': False},
+              [{'tag_absent': '画'},
+               {'tag_absent': '动图'},
+               {'tag_absent': '不接'},
+               {'judge': '群友连续否定但未说明哪里不对。应承认没对准并问一个具体差异，避免猜测新方案、继续重画或宣称已改对；自然简短，不像问卷。'}],
+              session=[{'role': 'user', 'content': '画一只戴眼镜看书的青蛙，轻松一点'},
+                       {'role': 'assistant', 'content': '[图：戴圆眼镜看书的青蛙，柔和水彩]'},
+                       {'role': 'user', 'content': '不是这种感觉'},
+                       {'role': 'assistant', 'content': '那我换成简洁卡通试试。\n[图：简洁卡通风的青蛙坐着看书]'}],
+              reference='本用例为全新合成场景，不含真实群聊、账号或平台ID。',
+              media={'draw': True, 'animate': False, 'voice': False, 'remind': False}),
+    _gen_case('draw-feedback-02-astronaut',
+              'docs/media-replies.md',
+              ['draw-feedback-synthetic', 'comparison', 'synthetic'],
+              {'user_text': '嗯，还是不像我要的',
+               'owner_label': '群主',
+               'unprompted': False,
+               'context_hint': '- 群友：画个成年人宇航员的头像，做群头像用\n'
+                               '- 小王：[图：成年宇航员侧脸头像，蓝色背景，写实风]\n'
+                               '- 群友：这不对味\n'
+                               '- 小王：换成复古漫画试试。\n'
+                               '[图：成年宇航员头像，复古漫画风]',
+               'back_off': False},
+              [{'tag_absent': '画'},
+               {'tag_absent': '动图'},
+               {'tag_absent': '不接'},
+               {'judge': '没有明确新修改方向时应问一个有用的差异，不继续任选画风重画，不假装知道群友脑中想要哪种；保持成年人物和原有边界。'}],
+              session=[{'role': 'user', 'content': '画个成年人宇航员的头像，做群头像用'},
+                       {'role': 'assistant', 'content': '[图：成年宇航员侧脸头像，蓝色背景，写实风]'},
+                       {'role': 'user', 'content': '这不对味'},
+                       {'role': 'assistant', 'content': '换成复古漫画试试。\n[图：成年宇航员头像，复古漫画风]'}],
+              reference='本用例为全新合成场景，不含真实群聊、账号或平台ID。',
+              media={'draw': True, 'animate': False, 'voice': False, 'remind': False}),
+    _gen_case('draw-feedback-03-poster',
+              'docs/media-replies.md',
+              ['draw-feedback-synthetic', 'comparison', 'synthetic'],
+              {'user_text': '还是不行啊',
+               'owner_label': '群主',
+               'unprompted': False,
+               'context_hint': '- 群友：给周五电影夜画张海报\n'
+                               '- 小王：[图：深蓝色周五电影夜海报，胶片和爆米花]\n'
+                               '- 群友：不太是我想的那种\n'
+                               '- 小王：我再弄得热闹些。\n'
+                               '[图：电影夜海报，鲜艳配色，热闹布局]',
+               'back_off': False},
+              [{'tag_absent': '画'},
+               {'tag_absent': '动图'},
+               {'tag_absent': '不接'},
+               {'judge': '连续反馈没有新增信息，应确认具体差异再改，问题要具体而非让对方交完整设计稿；不要空泛道歉或直接又画一张。'}],
+              session=[{'role': 'user', 'content': '给周五电影夜画张海报'},
+                       {'role': 'assistant', 'content': '[图：深蓝色周五电影夜海报，胶片和爆米花]'},
+                       {'role': 'user', 'content': '不太是我想的那种'},
+                       {'role': 'assistant', 'content': '我再弄得热闹些。\n[图：电影夜海报，鲜艳配色，热闹布局]'}],
+              reference='本用例为全新合成场景，不含真实群聊、账号或平台ID。',
+              media={'draw': True, 'animate': False, 'voice': False, 'remind': False}),
+    _gen_case('draw-feedback-04-clear-glasses',
+              'docs/media-replies.md',
+              ['draw-feedback-synthetic', 'comparison', 'synthetic'],
+              {'user_text': '还是不对，把眼镜改成黑色圆框，其他别动',
+               'owner_label': '群主',
+               'unprompted': False,
+               'context_hint': '- 群友：画只戴红框眼镜看书的青蛙\n'
+                               '- 小王：[图：戴红色方框眼镜看书的青蛙，水彩风]\n'
+                               '- 群友：不太对\n'
+                               '- 小王：我把光线调亮了。\n'
+                               '[图：明亮光线下戴红色方框眼镜看书的青蛙，水彩风]',
+               'back_off': False},
+              [{'tag_present': '画'},
+               {'must': '黑色.*圆框|圆框.*黑色'},
+               {'judge': '群友已清楚指定黑色圆框且其他不动。应直接给出完整改图描述并保留主体/动作/画风，不再追问改哪里，不宣布图已画好。'}],
+              session=[{'role': 'user', 'content': '画只戴红框眼镜看书的青蛙'},
+                       {'role': 'assistant', 'content': '[图：戴红色方框眼镜看书的青蛙，水彩风]'},
+                       {'role': 'user', 'content': '不太对'},
+                       {'role': 'assistant', 'content': '我把光线调亮了。\n[图：明亮光线下戴红色方框眼镜看书的青蛙，水彩风]'}],
+              reference='本用例为全新合成场景，不含真实群聊、账号或平台ID。',
+              media={'draw': True, 'animate': False, 'voice': False, 'remind': False}),
+    _gen_case('draw-feedback-05-clear-scarf',
+              'docs/media-replies.md',
+              ['draw-feedback-synthetic', 'comparison', 'synthetic'],
+              {'user_text': '围巾换蓝色，背景和猫的姿势都保持原样',
+               'owner_label': '群主',
+               'unprompted': False,
+               'context_hint': '- 群友：画只坐在窗边戴红围巾的橘猫，背景下雪\n- 小王：[图：橘猫坐在窗边，戴红围巾，窗外下雪，温暖插画风]',
+               'back_off': False},
+              [{'tag_present': '画'},
+               {'must': '蓝'},
+               {'judge': '修改要求明确，应直接画蓝围巾的同一场景，保留橘猫、坐姿、窗边、雪景，不能多问或改掉别的内容。'}],
+              session=[{'role': 'user', 'content': '画只坐在窗边戴红围巾的橘猫，背景下雪'},
+                       {'role': 'assistant', 'content': '[图：橘猫坐在窗边，戴红围巾，窗外下雪，温暖插画风]'}],
+              reference='本用例为全新合成场景，不含真实群聊、账号或平台ID。',
+              media={'draw': True, 'animate': False, 'voice': False, 'remind': False}),
+    _gen_case('draw-feedback-06-stop',
+              'docs/media-replies.md',
+              ['draw-feedback-synthetic', 'comparison', 'synthetic'],
+              {'user_text': '别画了，先停吧',
+               'owner_label': '群主',
+               'unprompted': False,
+               'context_hint': '- 群友：画一只抱着篮球的鸡\n'
+                               '- 小王：[图：一只抱篮球的鸡站在球场，卡通风]\n'
+                               '- 群友：还是不对\n'
+                               '- 小王：那我再换个构图。\n'
+                               '[图：抱篮球的鸡，俯视构图]',
+               'back_off': True},
+              [{'tag_absent': '画'},
+               {'tag_absent': '动图'},
+               {'judge': '群友已明确喊停。应停下，不再画、不追问画图要求、不自作主张继续改；简短回应或沉默都合格。'}],
+              session=[{'role': 'user', 'content': '画一只抱着篮球的鸡'},
+                       {'role': 'assistant', 'content': '[图：一只抱篮球的鸡站在球场，卡通风]'},
+                       {'role': 'user', 'content': '还是不对'},
+                       {'role': 'assistant', 'content': '那我再换个构图。\n[图：抱篮球的鸡，俯视构图]'}],
+              reference='本用例为全新合成场景，不含真实群聊、账号或平台ID。',
+              media={'draw': False, 'animate': False, 'voice': False, 'remind': False}),
+    _gen_case('draw-feedback-07-non-image',
+              'docs/media-replies.md',
+              ['draw-feedback-synthetic', 'comparison', 'synthetic'],
+              {'user_text': '不对啊，23加7不是30吗',
+               'owner_label': '群主',
+               'unprompted': False,
+               'context_hint': '- 群友：23加7是多少\n- 小王：29。',
+               'back_off': False},
+              [{'tag_absent': '画'},
+               {'tag_absent': '动图'},
+               {'must': '30|三十'},
+               {'judge': '这是清楚的算数纠正，与画图无关。直接承认并改正为30，不要套用改图澄清、不追问哪一处不对、不调用画图。'}],
+              session=[{'role': 'user', 'content': '23加7是多少'}, {'role': 'assistant', 'content': '29。'}],
+              reference='本用例为全新合成场景，不含真实群聊、账号或平台ID。',
+              media={'draw': True, 'animate': False, 'voice': False, 'remind': False}),
+    _gen_case('draw-feedback-08-holdout',
+              'docs/media-replies.md',
+              ['draw-feedback-synthetic', 'holdout', 'synthetic'],
+              {'user_text': '不是，我还是觉得怪怪的',
+               'owner_label': '群主',
+               'unprompted': False,
+               'context_hint': '- 群友：画个雨天街角的咖啡店招牌，木质的\n'
+                               '- 小王：[图：雨天街角咖啡店，深棕木质招牌，写实风]\n'
+                               '- 群友：这有点怪\n'
+                               '- 小王：那换个角度。\n'
+                               '[图：雨天咖啡店的木质招牌，正面视角]',
+               'back_off': False},
+              [{'tag_absent': '画'},
+               {'tag_absent': '动图'},
+               {'tag_absent': '不接'},
+               {'judge': '未给具体新方向的重复否定。应通过一个具体问题缩小差异，不继续靠猜换角度重画，不宣称理解了或已经修好；自然接话。'}],
+              session=[{'role': 'user', 'content': '画个雨天街角的咖啡店招牌，木质的'},
+                       {'role': 'assistant', 'content': '[图：雨天街角咖啡店，深棕木质招牌，写实风]'},
+                       {'role': 'user', 'content': '这有点怪'},
+                       {'role': 'assistant', 'content': '那换个角度。\n[图：雨天咖啡店的木质招牌，正面视角]'}],
+              reference='本用例为全新合成场景，不含真实群聊、账号或平台ID。',
+              media={'draw': True, 'animate': False, 'voice': False, 'remind': False}),
+]
+
 SEED_CASES = [*_DEFLECT_9, *_REMIND_10, *_IMAGE_3, *_BANTER_20, *_MESSAGE_CASES, *_RULE_CASES,
-              *_RETRIEVE_CASES, *_PLAYFUL_TONE_6, *_REMINDER_POLICY_CASES]
+              *_RETRIEVE_CASES, *_PLAYFUL_TONE_6, *_REMINDER_POLICY_CASES, *_DRAW_FEEDBACK_8]
