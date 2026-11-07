@@ -10,7 +10,7 @@ Let your Coding Agent install her in one step—and evolve her over time around 
 
 **Let Codex / Claude Code install it. Enter one OpenAI key and your QQ bot credentials, then start chatting.** [Copy the install prompt ↓](#quick-start)
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-2100%2B-3A9F82)](.github/workflows/ci.yml) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Agent-First](https://img.shields.io/badge/Agent--First-Codex%20%C2%B7%20Claude%20Code-7A5AF8)](docs/agent-setup.md) [![Triage](https://img.shields.io/badge/Triage-Decisions%20API%20(Jev)-E07A3F)](docs/judgment-layer.md) [![Desktop Pet](https://img.shields.io/badge/Desktop%20Pet-Live%20QQ%20Sync-2E90FA)](docs/companion.md) [![Self-Iteration](https://img.shields.io/badge/Self--Iteration-Replay%20%2B%20A%2FB-3A9F82)](docs/self-iteration.md) [![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![Tests](https://img.shields.io/badge/offline%20tests-2100%2B-3A9F82)](.github/workflows/ci.yml) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 [中文](README.md) · **English** · [Download Latest](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) · [Desktop Pet Sync](#meet-at-your-desktop-too) · [Group Self-Iteration](#make-it-your-groups-own) · [Quick Start](#quick-start) · [Under the Hood](#architecture-and-design)
 

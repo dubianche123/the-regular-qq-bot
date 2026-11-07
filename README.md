@@ -10,7 +10,7 @@
 
 **安装交给 Codex / Claude Code，填好一把 OpenAI Key 和 QQ 机器人凭据就能开聊。** [复制安装 Prompt ↓](#开始使用)
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![QQ](https://img.shields.io/badge/QQ-Group%20%2B%20C2C-B48543)](bot.py) [![Tests](https://img.shields.io/badge/offline%20tests-2100%2B-3A9F82)](.github/workflows/ci.yml) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
+[![Agent-First](https://img.shields.io/badge/Agent--First-Codex%20%C2%B7%20Claude%20Code-7A5AF8)](docs/agent-setup.md) [![Triage](https://img.shields.io/badge/Triage-Decisions%20API%20(Jev)-E07A3F)](docs/judgment-layer.md) [![Desktop Pet](https://img.shields.io/badge/Desktop%20Pet-Live%20QQ%20Sync-2E90FA)](docs/companion.md) [![Self-Iteration](https://img.shields.io/badge/Self--Iteration-Replay%20%2B%20A%2FB-3A9F82)](docs/self-iteration.md) [![Python](https://img.shields.io/badge/Python-3.10%2B-5375B5)](requirements.txt) [![Tests](https://img.shields.io/badge/offline%20tests-2100%2B-3A9F82)](.github/workflows/ci.yml) [![License](https://img.shields.io/badge/License-MIT-3A9F82)](LICENSE)
 
 **中文** · [English](README_EN.md) · [下载最新版](https://github.com/dubianche123/the-regular-qq-bot/releases/latest) · [桌宠联动](#桌边也可以见到它) · [按群自迭代](#让它更懂你们) · [极简开始](#开始使用) · [技术亮点](#架构与设计)
 
