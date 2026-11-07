@@ -2,6 +2,8 @@
 import tempfile
 import asyncio
 import logging
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,6 +13,7 @@ import config
 import runtime
 from archive import MessageArchive
 from voice_input import VoiceAttachment, VoiceResult
+from interactions import InteractionLog
 
 
 class ReachedRouting(Exception):
@@ -134,6 +137,55 @@ def test_multiple_voices_are_bounded_ordered_and_partials_marked():
             assert processor.process.await_count == 3
             assert await bot._recognize_voices(voices + (voices[0],), "other") is None
             assert processor.process.await_count == 3
+    asyncio.run(check())
+
+
+def test_voice_activity_finishes_after_cancellation_and_never_contains_the_audio_or_transcript():
+    async def check():
+        with tempfile.TemporaryDirectory() as tmp:
+            log = InteractionLog(tmp)
+            started = asyncio.Event()
+            async def process(*args, **kwargs):
+                started.set()
+                await asyncio.Event().wait()
+            processor = SimpleNamespace(process=AsyncMock(side_effect=process))
+            try:
+                with patch.object(bot, "VOICE", SimpleNamespace(processor=processor)), \
+                     patch.object(runtime, "INTERACTIONS", log):
+                    task = asyncio.create_task(bot._recognize_voices(
+                        (VoiceAttachment(reference_text="synthetic-secret-transcript"),),
+                        "synthetic-private-source", group="synthetic-group"))
+                    await started.wait()
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                rows = [json.loads(line) for path in Path(tmp).glob("*.jsonl")
+                        for line in path.read_text().splitlines()]
+                assert [row["status"] for row in rows] == ["started", "finished"]
+                assert all(row["kind"] == "perception" and row["medium"] == "voice" for row in rows)
+                assert rows[1]["activity"] == rows[0]["event_id"]
+                assert "synthetic-secret-transcript" not in json.dumps(rows)
+                assert "synthetic-private-source" not in json.dumps(rows)
+            finally:
+                log.close()
+    asyncio.run(check())
+
+
+def test_private_and_disabled_voice_do_not_publish_group_activity():
+    async def check():
+        with tempfile.TemporaryDirectory() as tmp:
+            log = InteractionLog(tmp)
+            processor = SimpleNamespace(process=AsyncMock(return_value=VoiceResult("ok", "你好", "qq_reference")))
+            voice = (VoiceAttachment(reference_text="你好"),)
+            try:
+                with patch.object(bot, "VOICE", SimpleNamespace(processor=processor)), \
+                     patch.object(runtime, "INTERACTIONS", log):
+                    assert await bot._recognize_voices(voice, "private") == "你好"
+                    with patch.object(bot.capabilities, "enabled", return_value=False):
+                        assert await bot._recognize_voices(voice, "disabled", group="synthetic-group") is None
+                assert list(Path(tmp).glob("*.jsonl")) == []
+            finally:
+                log.close()
     asyncio.run(check())
 
 

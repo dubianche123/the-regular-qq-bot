@@ -17,6 +17,9 @@
 - Let quiet activities stay longer and interleave ordered stories such as
   boiling water, pouring and drinking tea. Feeding, gentle surprise reactions,
   sleep variations and occasional toy chasing use the adopted repertoire.
+- Reflect actual image inspection and voice recognition alongside existing
+  search, drawing and voice-generation activity. Finished work releases its
+  matching state, including overlapping tasks.
 - Replace the ring's high-five entry with “next activity”. Keep ordinary taps
   as small reactions, with rare surprises rather than frequent flower tricks.
 - Limit persistent toys to two. Balls, coins and diamond-shaped gems support

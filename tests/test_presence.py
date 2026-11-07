@@ -192,6 +192,39 @@ class PresenceTest(unittest.TestCase):
         snap = presence.snapshot(self.cfg, since=self.now - 10, now=self.now, cues=cues)
         self.assertEqual([e["id"] for e in snap["events"]], ["b"])
 
+    def test_perception_is_content_free_and_older_completion_keeps_other_work_active(self):
+        n = self.now
+        self.rows({"kind": "perception", "event_id": "image-a", "ts": n - 80,
+                   "medium": "image", "status": "started"},
+                  {"kind": "perception", "event_id": "image-b", "ts": n - 60,
+                   "medium": "image", "status": "started"},
+                  {"kind": "perception", "event_id": "voice-a", "ts": n - 40,
+                   "medium": "voice", "status": "started"},
+                  {"kind": "perception", "activity": "image-a", "ts": n - 35,
+                   "medium": "image", "status": "finished"})
+        snap = presence.snapshot(self.cfg, since=0, now=n)
+        self.assertEqual(snap["state"], "listen")
+        self.assertEqual([event["kind"] for event in snap["events"]],
+                         ["inspecting", "inspecting", "listening"])
+        self.assertNotIn(SECRET, json.dumps(snap))
+        for event in snap["events"]:
+            self.assertEqual(set(event), {"kind", "ts"})
+        self.rows({"kind": "perception", "activity": "voice-a", "ts": n - 20,
+                   "medium": "voice", "status": "finished"},
+                  {"kind": "delivery", "ts": n - 10, "status": "delivered", "route": "reply"})
+        self.assertEqual(presence.snapshot(self.cfg, since=n - 15, now=n)["state"], "inspect")
+        self.rows({"kind": "perception", "activity": "image-b", "ts": n - 1,
+                   "medium": "image", "status": "finished"})
+        self.assertIsNone(presence.snapshot(self.cfg, now=n)["state"])
+
+    def test_unfinished_perception_expires_and_unknown_media_do_not_create_a_state(self):
+        n = self.now
+        self.rows({"kind": "perception", "event_id": "old", "ts": n - presence.PERCEPTION_WINDOW - 1,
+                   "medium": "image", "status": "started"},
+                  {"kind": "perception", "event_id": "unknown", "ts": n - 1,
+                   "medium": "unknown", "status": "started"})
+        self.assertIsNone(presence.snapshot(self.cfg, now=n)["state"])
+
 
 if __name__ == "__main__":
     unittest.main()

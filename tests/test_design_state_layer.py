@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import random
 import unittest
+from unittest.mock import patch
 
 import panel
 from regular import presence
@@ -112,19 +113,14 @@ class StateLayerTest(unittest.TestCase):
 
 class PresenceStateTest(unittest.TestCase):
     def test_recent_state_follows_the_last_decisive_event(self):
-        original = presence._activity
-        try:
-            presence._activity = lambda cfg, now, since: (
-                [{"kind": "mention", "ts": now - 9}, {"kind": "replying", "ts": now - 5}], 0)
+        rows = [{"kind": "incoming", "ts": 991.0, "at": True, "call": "at"},
+                {"kind": "decision", "ts": 995.0, "selected": True}]
+        with patch.object(presence, "_recent_rows", return_value=rows):
             self.assertEqual(presence._recent_state(None, 1000.0), "reply")
-            presence._activity = lambda cfg, now, since: (
-                [{"kind": "replying", "ts": now - 5}, {"kind": "said", "ts": now - 2}], 0)
+            rows.append({"kind": "delivery", "ts": 998.0, "status": "delivered", "route": "reply"})
             self.assertIsNone(presence._recent_state(None, 1000.0))
-            presence._activity = lambda cfg, now, since: (
-                [{"kind": "singing", "ts": now - 3}], 0)
+            rows[:] = [{"kind": "media", "ts": 997.0, "medium": "voice", "status": "started"}]
             self.assertEqual(presence._recent_state(None, 1000.0), "listen")
-        finally:
-            presence._activity = original
 
 
 class ConsoleNavigationTest(unittest.TestCase):

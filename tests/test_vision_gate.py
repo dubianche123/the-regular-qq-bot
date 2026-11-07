@@ -88,6 +88,45 @@ class CaptionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(self.state.data["vision_usage"]["count"], 1)
 
+    async def test_activity_tracks_one_real_producer_not_waiters_cache_or_blocked_reads(self):
+        self.add("m1")
+        self.add("m2")
+        started, release = asyncio.Event(), asyncio.Event()
+        events = []
+        def activity(group, status, handle=None):
+            events.append((group, status, handle))
+            return "synthetic-perception" if status == "started" else None
+        async def describe(url):
+            started.set()
+            await release.wait()
+            return "一只猫"
+        self.service = self.build(describe=describe, on_activity=activity)
+        first = asyncio.create_task(self.caption())
+        await started.wait()
+        second = asyncio.create_task(self.caption("m2", foreground=True))
+        await asyncio.sleep(0)
+        self.assertEqual(events, [("g", "started", None)])
+        release.set()
+        await asyncio.gather(first, second)
+        self.assertEqual(events, [("g", "started", None), ("g", "finished", "synthetic-perception")])
+        await self.caption("m2")
+        self.budget.limit = 0
+        self.add("m3")
+        self.assertIsNone(await self.caption("m3", url="https://image.invalid/blocked", foreground=True))
+        self.assertEqual(len(events), 2)
+
+    async def test_failed_read_finishes_its_activity(self):
+        self.add("m1")
+        events = []
+        def activity(group, status, handle=None):
+            events.append((group, status, handle))
+            return "failed-read"
+        async def describe(url):
+            raise RuntimeError("synthetic failure")
+        self.service = self.build(describe=describe, on_activity=activity)
+        self.assertIsNone(await self.caption())
+        self.assertEqual(events, [("g", "started", None), ("g", "finished", "failed-read")])
+
     async def test_repeated_message_caption_is_idempotent(self):
         self.add("m1")
         await self.caption()
@@ -287,10 +326,14 @@ class CaptionServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_close_cancel_stops_the_actual_shielded_producer(self):
         self.add("m1")
         started = asyncio.Event()
+        events = []
+        def activity(group, status, handle=None):
+            events.append((group, status, handle))
+            return "cancelled-read"
         async def describe(url):
             started.set()
             await asyncio.Event().wait()
-        self.service = self.build(describe=describe)
+        self.service = self.build(describe=describe, on_activity=activity)
         waiter = asyncio.create_task(self.caption())
         await started.wait()
         await self.service.close(cancel=True)
@@ -298,6 +341,7 @@ class CaptionServiceTest(unittest.IsolatedAsyncioTestCase):
             await waiter
         self.assertEqual(self.service.inflight, {})
         self.assertEqual(self.service.cache, {})
+        self.assertEqual(events, [("g", "started", None), ("g", "finished", "cancelled-read")])
 
     # ── settle：回话前把背景里欠着的图读掉（docs/image-before-reply.md） ──
 

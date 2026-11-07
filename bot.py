@@ -240,12 +240,16 @@ _VOICE_OUT = voice_output_runtime.VoiceOutputRuntime(
     config, capabilities.audio_key(config, next(iter(config.load_api_keys("openai")), "")))
 
 
-async def _recognize_voices(voices, event_prefix):
+async def _recognize_voices(voices, event_prefix, *, group=None):
     """Recognize at most three distinct current attachments in arrival order."""
     if not capabilities.enabled(config, "voice_input") or not event_prefix or not 0 < len(voices) <= 3:
         return None
-    results = await asyncio.gather(*(VOICE.processor.process(
-        voice, event_key=f"{event_prefix}:{index}") for index, voice in enumerate(voices)))
+    activity = _note_perception(group, "voice", "started")
+    try:
+        results = await asyncio.gather(*(VOICE.processor.process(
+            voice, event_key=f"{event_prefix}:{index}") for index, voice in enumerate(voices)))
+    finally:
+        _note_perception(group, "voice", "finished", activity)
     texts = []
     recognized = False
     for result in results:
@@ -342,6 +346,16 @@ def _note_media(message, user, medium, status):
                                     medium=medium, status=status)
 
 
+def _note_perception(group, medium, status, activity=None):
+    """桌宠的读图/听语音生命周期；配对句柄只留本机日志，不带附件或原文。"""
+    if not group:
+        return None
+    row = runtime.INTERACTIONS.append(
+        "perception", group, actor="assistant", medium=medium, status=status,
+        activity=activity)
+    return row.get("event_id") if status == "started" and isinstance(row, dict) else None
+
+
 # ── 认出「这是在跟小王说话」：引用它的话、@ 它（2026-11-03，见 quotes.py）──
 _recent_at_ids = collections.OrderedDict()   # 消息 ID -> 正文里的 @（@ 事件晚到时拿来比）
 _sent_ref_missing = []
@@ -426,7 +440,9 @@ def _vision_context(group_id):
 
 media.initialize(state=runtime.STATE, archive=runtime.ARCHIVE,
                  buffers=group_buffers, budget=runtime.BUDGET,
-                 context_fn=_vision_context)
+                 context_fn=_vision_context,
+                 on_activity=lambda group, status, activity=None:
+                     _note_perception(group, "image", status, activity))
 
 
 # 主动发言（催债）需要拿到 client 实例，这里存个引用
@@ -3148,7 +3164,8 @@ class GroupBot(botpy.Client):
 
         if voices:
             transcript = await _recognize_voices(
-                voices, f"group:{group_id}:{message.id}" if message.id else None)
+                voices, f"group:{group_id}:{message.id}" if message.id else None,
+                group=group_id)
             row = None
             if transcript:
                 row = runtime.ARCHIVE.attach_voice_transcript(

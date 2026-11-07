@@ -17,7 +17,7 @@ CAPTION_CACHE_SIZE = 300
 class CaptionService:
     def __init__(self, state, archive, buffers, budget, *, describe=None,
                  available=None, clock=time.time, cache_size=CAPTION_CACHE_SIZE,
-                 context_fn=None):
+                 context_fn=None, on_activity=None):
         self.state = state
         self.archive = archive
         self.buffers = buffers
@@ -29,6 +29,7 @@ class CaptionService:
         # context_fn(group_id) -> str：读图时带上群聊上下文（2026-10-20 群主定调，
         # 多模态看图带着对话看才准）。与 describe/available 同风格的依赖注入。
         self.context_fn = context_fn
+        self.on_activity = on_activity
         self.inflight = {}
         self._closing = False
         self._foreground = {}
@@ -72,13 +73,14 @@ class CaptionService:
     async def _produce(self, image_url):
         if not self._claim_slot(self._foreground.get(image_url, False)):
             return None
+        group_id = next((g for g, _mid, _sender
+                         in self._targets.get(image_url, ())), None)
+        activity = self.on_activity(group_id, "started") if self.on_activity else None
         try:
             describe = self.describe or providers.describe_image
             # 上下文按「第一个引用这张图的群」取（QQ 图床 URL 实际不会跨群）；
             # 缓存命中的旧描述不重读，也就不需要上下文。没配 context_fn 时
             # 保持旧调用形态——describe 的旧签名调用方零感知。
-            group_id = next((g for g, _mid, _sender
-                             in self._targets.get(image_url, ())), None)
             if self.context_fn and group_id:
                 caption = await describe(image_url, context_text=self.context_fn(group_id))
             else:
@@ -99,6 +101,8 @@ class CaptionService:
             logger.warning("🖼 图片描述失败: %s", str(exc)[:100])
             return None
         finally:
+            if self.on_activity:
+                self.on_activity(group_id, "finished", activity)
             # 占了名额就是真读过：读成了已回填，读失败也不该每轮回话都再烧一个名额。
             # 读完才划掉而不是占名额时划——在途的图 settle 还得能找到、能等。
             for group_id, message_id, _sender in self._targets.get(image_url, ()):
@@ -201,10 +205,11 @@ class CaptionService:
 _service = None
 
 
-def initialize(*, state, archive, buffers, budget, context_fn=None):
+def initialize(*, state, archive, buffers, budget, context_fn=None, on_activity=None):
     """由 bot 绑定现有 runtime 单例；不创建额外状态文件。"""
     global _service
-    _service = CaptionService(state, archive, buffers, budget, context_fn=context_fn)
+    _service = CaptionService(state, archive, buffers, budget, context_fn=context_fn,
+                              on_activity=on_activity)
     return _service
 
 

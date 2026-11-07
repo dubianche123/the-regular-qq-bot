@@ -20,6 +20,7 @@ from regular.panel_runtime import _pid_alive
 EVENT_WINDOW = 600.0      # 只看最近 10 分钟发生的事
 CHATTER_WINDOW = 300.0    # 群里热闹程度：最近 5 分钟收到的消息数
 STATE_WINDOW = 25.0       # 「此刻在干嘛」只看最近这么久，状态停了她就自己回到日常
+PERCEPTION_WINDOW = 120.0 # 读图与语音按开始/结束配对；中断的进程不留下永久忙碌状态
 STATUS_MAX_AGE = 120.0
 TAIL_BYTES = 128 * 1024
 STATE_MAX_BYTES = 8 * 1024 * 1024
@@ -86,6 +87,8 @@ def _event(row):
         return "replying"
     if kind == "lookup":
         return "searching"         # 当场没查完，先回了一句「我去查查」，转后台在查
+    if kind == "perception" and row.get("status") == "started":
+        return {"image": "inspecting", "voice": "listening"}.get(row.get("medium"))
     if kind == "media":
         # 开始画 / 开始录：过程中就拿起速写本或麦克风；没发成（failed / unconfirmed）就放下。
         if row.get("status") == "started":
@@ -101,20 +104,28 @@ def _event(row):
     return None
 
 
-def _activity(cfg, now, since):
+def _recent_rows(cfg, now):
     folder = Path(cfg.INTERACTION_LOG_DIR)
     days = {day_key(now - EVENT_WINDOW), day_key(now)}
-    events, chatter = [], 0
+    rows = []
     for day in sorted(days):
         for row in _tail_rows(folder / f"{day}.jsonl"):
             ts = row.get("ts")
             if type(ts) not in (int, float) or not math.isfinite(ts) or not now - EVENT_WINDOW <= ts <= now + 5:
                 continue
-            if row.get("kind") == "incoming" and ts >= now - CHATTER_WINDOW:
-                chatter += 1
-            signal = _event(row)
-            if signal and ts > since:
-                events.append({"kind": signal, "ts": round(float(ts), 3)})
+            rows.append(row)
+    return sorted(rows, key=lambda row: row["ts"])
+
+
+def _activity(cfg, now, since):
+    events, chatter = [], 0
+    for row in _recent_rows(cfg, now):
+        ts = row["ts"]
+        if row.get("kind") == "incoming" and ts >= now - CHATTER_WINDOW:
+            chatter += 1
+        signal = _event(row)
+        if signal and ts > since:
+            events.append({"kind": signal, "ts": round(float(ts), 3)})
     events.sort(key=lambda e: e["ts"])
     return events[-40:], chatter
 
@@ -127,15 +138,29 @@ _STATE_ENDS = frozenset({"said", "chimed", "proactive", "drew", "media_end"})
 
 def _recent_state(cfg, now):
     """最近一段活动里，最后一个还在持续的状态；回完话/画完图就当作结束。"""
-    recent, _ = _activity(cfg, now, now - STATE_WINDOW)
     state = None
-    for event in recent:
-        kind = event.get("kind")
+    active = {}
+    for row in _recent_rows(cfg, now):
+        if row.get("kind") == "perception":
+            medium = row.get("medium")
+            if medium not in ("image", "voice"):
+                continue
+            key = row.get("event_id") if row.get("status") == "started" else row.get("activity")
+            if not isinstance(key, str) or not key:
+                continue
+            if row.get("status") == "started" and row["ts"] >= now - PERCEPTION_WINDOW:
+                active[key] = (row["ts"], "inspect" if medium == "image" else "listen")
+            elif row.get("status") == "finished":
+                active.pop(key, None)
+            continue
+        if row["ts"] < now - STATE_WINDOW:
+            continue
+        kind = _event(row)
         if kind in _STATE_ENDS:
             state = None
         elif kind in _STATE_SIGNALS:
             state = _STATE_SIGNALS[kind]
-    return state
+    return max(active.values(), default=(0.0, state), key=lambda value: value[0])[1]
 
 
 def day_summary(cfg, *, now=None):
