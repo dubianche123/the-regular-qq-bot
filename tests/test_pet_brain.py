@@ -167,20 +167,27 @@ class MotionRepertoireTest(unittest.TestCase):
         self.assertEqual(b.state_name, "reply")
         self.assertIsNone(b._chasing_prop)
 
-    def test_magic_surprises_have_a_cooldown_and_do_not_drop_props(self):
+    def test_poke_tricks_have_a_cooldown_and_do_not_drop_props(self):
         b = PetBrain(rng=random.Random(7), now=0)
         b.set_ground(0, 1440, 860, 0)
         b.place(700)
+        if not b._can_warp():
+            self.skipTest("spell sheets not adopted")
         with patch.object(b.rng, "random", return_value=0):
             b.poke(1)
-            self.assertIn(b._role(b.clip), ("magic", "fire"))
-            self.assertFalse(b.props.items)
-            b._queue(Step("idle", 30), now=2, interrupt=True)
-            b.poke(3)
-            self.assertNotIn(b._role(b.clip), ("magic", "fire"))
-            b._queue(Step("idle", 30), now=122, interrupt=True)
-            b.poke(123)
-            self.assertIn(b._role(b.clip), ("magic", "fire"))
+        self.assertEqual(b.clip, "warp_cast")              # 被戳烦了：开阵溜走
+        self.assertFalse(b.props.items)
+        t, clips = run(b, 1, 9)
+        self.assertEqual(b.mode, "ground")
+        self.assertIn("warp_land", clips)
+        b._queue(Step("idle", 30), now=t, interrupt=True)
+        with patch.object(b.rng, "random", return_value=0):
+            b.poke(t + 1)
+        self.assertNotIn(b.clip, ("warp_cast", "sneeze"))
+        b._queue(Step("idle", 30), now=t + 125, interrupt=True)
+        with patch.object(b.rng, "random", return_value=0):
+            b.poke(t + 126)
+        self.assertIn(b.clip, ("warp_cast", "walk"))       # walks clear of the edge first if she landed there
 
     def test_fall_and_landing_keep_fixed_character_scale(self):
         b = brain()
@@ -301,7 +308,10 @@ class MotionRepertoireTest(unittest.TestCase):
         for i in range(36000):
             b.tick((i + 1) * 0.1)
             counts[b.clip] += 1
-        self.assertGreater(sum(n for clip, n in counts.items() if clip in b.repertoire.actions), 18000)
+        # The prop library is still a large part of the day, but no longer the whole of it:
+        # whole-body spells (circles, sneezes) and walks take a real share.
+        self.assertGreater(sum(n for clip, n in counts.items() if clip in b.repertoire.actions), 12000)
+        self.assertTrue(any(clip.startswith("warp_") for clip in counts))
         self.assertGreaterEqual(sum(clip in b.repertoire.actions for clip in counts), 30)
         self.assertLess(sum(n for clip, n in counts.items() if clip in ASLEEP), 1800)
 
@@ -313,10 +323,11 @@ class MotionRepertoireTest(unittest.TestCase):
             self.skipTest("no adopted drawing assets")
         b.observe(1, ready(events=[{"kind": "drawing", "ts": 10}]))
         t, _ = run(b, 1, 4)
-        self.assertEqual(b._role(b.clip), "drawing")
+        expected = "paint" if b._has("spell_paint") else None
+        self.assertEqual(b.clip if expected else b._role(b.clip), expected or "drawing")
         self.assertEqual(b.media, "drawing")
         t, _ = run(b, t, 25)
-        self.assertEqual(b._role(b.clip), "drawing")
+        self.assertEqual(b.clip if expected else b._role(b.clip), expected or "drawing")
         b.observe(t, ready(events=[{"kind": "media_end", "ts": 11}]))
         self.assertIsNone(b.media)
 
@@ -622,15 +633,18 @@ class ScreenEdgeTest(unittest.TestCase):
 
 
 class InteractionTest(unittest.TestCase):
-    def test_body_poke_can_show_magic_but_head_keeps_pat(self):
+    def test_body_poke_can_sneeze_but_head_keeps_pat(self):
         b = PetBrain(rng=random.Random(7), now=0)
         b.set_ground(0, 1440, 860, 0)
         b.place(700)
-        with patch.object(b.rng, "random", return_value=0), patch.object(b, "_pick", return_value="dragon_magic_star"):
+        if not b._has("spell_sneeze"):
+            self.skipTest("spell sheets not adopted")
+        with patch.object(b.rng, "random", side_effect=[0.0, 0.9, 0.9]):
             b.poke(1)
-        self.assertEqual(b.clip, "dragon_magic_star")
+        self.assertEqual(b.clip, "sneeze")
+        t, _ = run(b, 1, 4)
         left, top, right, bottom = b.body_rect()
-        b.poke(2, (left + right) / 2, top + (bottom - top) * 0.2)
+        b.poke(t + 1, (left + right) / 2, top + (bottom - top) * 0.2)
         self.assertEqual(b.clip, "pat")
 
     def test_head_clearance_uses_optional_normalized_geometry(self):
@@ -1412,3 +1426,192 @@ class CareMoodTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def spelled(seed=7):
+    """A brain with the adopted repertoire (spell sheets included) on a wide screen."""
+    b = PetBrain(rng=random.Random(seed), now=0.0)
+    b.set_ground(0, 1440, 860, 30)
+    b.place(300)
+    return b
+
+
+class SpellTest(unittest.TestCase):
+    def setUp(self):
+        if not spelled()._can_warp():
+            self.skipTest("spell sheets not adopted")
+
+    def warp(self, via, x=1100):
+        b = spelled()
+        b._warp_request = {"x": x, "via": via, "cause": "spell"}
+        b._queue(Step("warp_cast"), Step("idle", 2), now=0.0, interrupt=True)
+        self.assertEqual((b.mode, b.warp["phase"]), ("ground", "cast"))
+        seen = {"clips": [], "clip_sides": set(), "below": False, "xs": set(), "portals": 0}
+
+        def each(t):
+            seen["portals"] = max(seen["portals"], len(b.portals))
+            if b.portal_clip:
+                seen["clip_sides"].add(b.portal_clip[1])
+            seen["below"] |= b.y - b._head_clearance("spell_dive") > b.floor     # even her raised hands
+            seen["xs"].add(round(b.x))
+        t, clips = run(b, 0.0, 9, fps=60, each=each)
+        return b, t, clips, seen
+
+    def test_a_floor_circle_swallows_her_and_another_one_lets_her_out_far_away(self):
+        b, t, clips, seen = self.warp("floor")
+        for beat in ("warp_cast", "warp_crouch", "warp_leap", "warp_sink", "warp_rise", "warp_tada", "warp_land"):
+            self.assertIn(beat, clips)
+        self.assertEqual(seen["portals"], 2)
+        self.assertEqual(seen["clip_sides"], {"below"})
+        self.assertTrue(seen["below"])                       # fully through the plane, hidden
+        self.assertEqual(seen["xs"], {300, 1100})            # no walking in between: a real jump cut
+        self.assertEqual((b.mode, b.x, b.y), ("ground", 1100, b.floor))
+        self.assertIsNone(b.portal_clip)
+        run(b, t, 1)
+        self.assertEqual(b.portals, [])                      # both circles closed and released
+
+    def test_a_ceiling_circle_drops_her_from_just_under_the_menu_bar(self):
+        b, _, clips, seen = self.warp("ceiling")
+        self.assertEqual(seen["clip_sides"], {"below", "above"})
+        self.assertIn("warp_tada", clips)
+        self.assertEqual((b.mode, b.y), ("ground", b.floor))
+
+    def test_the_ceiling_is_only_used_when_the_screen_is_tall_enough(self):
+        b = spelled()
+        b.set_ground(0, 1440, 860, 500)
+        b._warp_request = {"x": 1100, "via": "ceiling", "cause": "spell"}
+        b._queue(Step("warp_cast"), now=0.0, interrupt=True)
+        self.assertEqual(b.warp["via"], "floor")
+
+    def test_she_cannot_be_grabbed_mid_spell_and_new_steps_wait_for_the_landing(self):
+        b = spelled()
+        b._warp_request = {"x": 1100, "via": "floor", "cause": "spell"}
+        b._queue(Step("warp_cast"), now=0.0, interrupt=True)
+        run(b, 0.0, 2.6, fps=60)
+        b.press(2.7, b.x, b.y - 40)
+        b.drag(2.8, b.x + 200, b.y - 200)
+        self.assertEqual(b.mode, "warp")
+        b._queue(Step("wave"), now=2.9, interrupt=True)       # e.g. a cue from the panel
+        self.assertEqual(b.mode, "warp")
+        _, clips = run(b, 2.9, 7, fps=60)
+        self.assertLess(clips.index("warp_land"), clips.index("wave"))
+
+    def test_a_cue_while_she_is_still_casting_closes_the_circles(self):
+        b = spelled()
+        b._warp_request = {"x": 1100, "via": "floor", "cause": "spell"}
+        b._queue(Step("warp_cast"), now=0.0, interrupt=True)
+        run(b, 0.0, 1.0, fps=60)
+        self.assertEqual(len(b.portals), 2)
+        b.observe(1.0, ready(events=[{"kind": "cue", "id": "c", "ts": 5.0, "action": "cheer"}]))
+        self.assertEqual((b.clip, b.x), ("cheer", 300))
+        self.assertIsNone(b.warp)
+        run(b, 1.0, 1.0, fps=60)
+        self.assertEqual(b.portals, [])
+
+    def test_a_narrow_screen_turns_the_spell_into_a_flourish(self):
+        b = spelled()
+        b.set_ground(0, 500, 860, 30)
+        b._warp_request = {"x": None, "via": None, "cause": "spell"}
+        b._queue(Step("warp_cast"), now=0.0, interrupt=True)
+        self.assertEqual((b.mode, b.clip), ("ground", "conjure"))
+
+    def test_an_at_brings_her_to_the_cursor_only_when_it_is_known_and_far(self):
+        b = spelled()
+        b.observe(1.0, ready(events=[{"kind": "mention", "ts": 10.0}]))
+        self.assertIsNone(b.warp)                            # the cursor was never reported
+        b = spelled()
+        b.hover(0.5, 1200, 500, near=False)
+        with patch.object(b.rng, "random", return_value=0.0):
+            b.observe(1.0, ready(events=[{"kind": "mention", "ts": 10.0}]))
+        self.assertEqual(b.clip, "warp_cast")
+        self.assertIn(b.bubble.text, LINES["warp_called"])
+        _, clips = run(b, 1.0, 10, fps=60)
+        self.assertAlmostEqual(b.x, 1200, delta=1)
+        self.assertTrue(any(b._role(clip) == "greet" or clip == "phone" for clip in clips))
+
+    def test_drawing_conjures_a_canvas_paints_and_turns_it_round_when_it_lands(self):
+        b = spelled()
+        b.observe(1.0, ready(events=[{"kind": "drawing", "ts": 10.0}]))
+        self.assertEqual(b.clip, "conjure")
+        t, clips = run(b, 1.0, 20)
+        self.assertEqual(b.clip, "paint")
+        self.assertTrue(any(p.kind == "paint" for p in b.particles))
+        b.observe(t, ready(events=[{"kind": "drew", "ts": 11.0}]))
+        self.assertEqual(b.clip, "paint_reveal")
+        self.assertIn(b.bubble.text, LINES["drew"])
+
+    def test_a_search_opens_the_tome_even_when_the_heartbeat_said_inspect_first(self):
+        b = spelled()
+        b.observe(1.0, {**ready(events=[{"kind": "searching", "ts": 10.0}]), "state": "inspect"})
+        t, _ = run(b, 1.0, 6)
+        self.assertEqual(b.clip, "tome")
+        self.assertTrue(any(p.kind == "glyph" for p in b.particles))
+        b.observe(t, {**ready(events=[{"kind": "said", "ts": 11.0}]), "state": None})
+        self.assertEqual(b.clip, "tome_found")
+        self.assertIn(b.bubble.text, LINES["found"])
+
+    def wiggle(self, b, start, x, y, steps=24):
+        t = start
+        for i in range(steps):
+            t += 1 / 30
+            b.hover(t, x + (12 if (i // 3) % 2 else -12), y, near=False)
+            b.tick(t)
+        return t
+
+    def test_wiggling_the_cursor_in_front_of_her_ends_in_a_pounce(self):
+        b = spelled()
+        target = b.x + b.figure * 1.4
+        t = self.wiggle(b, 5.0, target, b.floor - b.figure * 0.6)
+        self.assertEqual(b.clip, "pounce_crouch")
+        self.assertEqual(b.facing, 1)
+        said = []
+
+        def each(now):
+            b.hover(now, target, b.floor - b.figure * 0.6, near=False)
+            said.append(b.bubble.text if b.bubble else None)
+        t, clips = run(b, t, 3, fps=60, each=each)
+        self.assertIn("pounce_leap", clips)
+        self.assertIn("pounce_catch", clips)
+        self.assertGreater(b.x, 300 + b.figure * 0.6)          # she actually leapt forward
+        self.assertEqual(b.y, b.floor)
+        self.assertTrue(set(said) & set(LINES["pounce_caught"]))
+        t = self.wiggle(b, t + 1, b.x + b.figure * 1.4, b.floor - b.figure * 0.6)
+        self.assertNotEqual(b.clip, "pounce_crouch")         # cooldown
+
+    def test_a_still_or_distant_cursor_is_not_prey(self):
+        b = spelled()
+        t = 5.0
+        for i in range(40):
+            t += 1 / 30
+            b.hover(t, b.x + b.figure * 1.4, b.floor - b.figure * 0.6, near=False)
+            b.tick(t)
+        self.assertNotIn("pounce", b.clip)
+        self.wiggle(b, t, b.x + b.figure * 4, b.floor - b.figure * 0.6)
+        self.assertNotIn("pounce", b.clip)
+
+    def test_a_sneeze_breathes_a_little_fire_and_sometimes_teleports_her(self):
+        b = spelled()
+        b._sneeze_warp = True
+        b._queue(Step("sneeze"), Step("idle", 2), now=0.0, interrupt=True)
+        kinds = set()
+        t, clips = run(b, 0.0, 1.2, fps=60, each=lambda now: kinds.update(p.kind for p in b.particles))
+        self.assertIn("ember", kinds)
+        self.assertEqual(b.clip, "sneeze")                    # the CHOO frame plays before anything else
+        said = set()
+        t, clips = run(b, t, 9, fps=60, each=lambda now: said.add(b.bubble.text if b.bubble else None))
+        self.assertEqual(b.mode, "ground")
+        self.assertNotEqual(round(b.x), 300)
+        self.assertIn("startle", clips)
+        self.assertTrue(said & set(LINES["sneeze_warp"]))
+
+    def test_reduced_motion_and_the_legacy_repertoire_never_cast(self):
+        b = brain()
+        self.assertFalse(b._can_warp())
+        b.magic(1.0)
+        self.assertEqual(b.clip, "wave")
+        still = PetBrain(rng=random.Random(3), now=0.0, motion=False)
+        still.set_ground(0, 1440, 860, 30)
+        still.place(300)
+        self.assertFalse(still.magic(1.0))
+        with patch.object(still, "_weighted", side_effect=lambda w: max(w, key=w.get)):
+            self.assertEqual(still._choose(10.0)[0].clip != "warp_cast", True)

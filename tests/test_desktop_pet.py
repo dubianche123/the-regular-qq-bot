@@ -74,6 +74,63 @@ class DesktopPetTest(unittest.TestCase):
         pet._sync_windows(force=True)
         self.assertEqual(pet.lift, 0)
 
+    def test_magic_circles_open_two_click_through_windows_each_and_close_with_the_spell(self):
+        pet, brain = self.pet, self.pet.brain
+        if not brain._can_warp():
+            self.skipTest("spell sheets not adopted")
+        pet.show()
+        brain.set_ground(0, 1440, 860, 30)
+        brain.place(300)
+        brain._warp_request = {"x": 1100, "via": "floor", "cause": "spell"}
+        brain._queue(Step("warp_cast"), now=self.t[0], interrupt=True)
+        layers = set()
+        for _ in range(60 * 9):
+            self.t[0] += 1 / 60
+            pet.step()
+            layers.add(len(pet.portal_layer.windows))
+            for back, front in pet.portal_layer.windows.values():
+                for window in (back, front):
+                    self.assertTrue(window.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                                    or bool(window.windowFlags() & Qt.WindowType.WindowTransparentForInput))
+                    self.assertGreaterEqual(window.y(), 30)       # never asks to sit above the menu bar
+                    window.grab()                                  # both halves paint without errors
+        self.assertIn(2, layers)
+        self.assertEqual(brain.mode, "ground")
+        self.assertEqual(pet.portal_layer.windows, {})
+
+    def test_sinking_into_a_circle_hides_what_is_already_through_the_plane(self):
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        brain.set_ground(0, 1440, 860, 30)
+        brain.place(600)
+        brain.mode = "warp"
+        brain.y = brain.floor + brain.figure * 0.5
+        brain.portal_clip = (brain.floor, "below")
+        pet._sync_windows(force=True)
+        image = pet.grab().toImage()
+        plane = round(pet.window_anchor().y() - brain.figure * 0.5)
+        column = image.width() // 2
+        below = [image.pixelColor(column, y).alpha() for y in range(plane + 2, image.height())]
+        above = [image.pixelColor(column, y).alpha() for y in range(0, plane - 1)]
+        self.assertEqual(max(below), 0)
+        self.assertGreater(max(above), 0)                 # her upper body is still drawn
+        brain.portal_clip, brain.mode = None, "ground"
+
+    def test_more_menu_offers_magic_and_new_particles_paint(self):
+        pet = self.pet
+        pet.show()
+        pet.show_menu()
+        buttons = {button.text(): button for button in pet._menu.findChildren(QPushButton)}
+        self.assertIn("变个魔法", buttons)
+        with patch.object(pet.brain, "magic") as magic:
+            buttons["变个魔法"].click()
+        magic.assert_called_once()
+        self.assertFalse(pet._menu.isVisible())
+        for kind in ("ember", "smoke", "paint", "glyph"):
+            pet.brain._burst(self.t[0], kind, 0.3, -0.6, 2)
+        pet.fx.show()
+        pet.fx.grab()
+
     def test_sprite_bank_loads_strips_on_demand_and_evicts_lru(self):
         bank = SpriteBank()
         self.assertEqual(len(bank.frames.cache), 0)

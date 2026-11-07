@@ -315,6 +315,38 @@ def _anchor(frame):
     return left + sum(i * v for i, v in enumerate(columns)) / total, bottom, (left, top, right, bottom)
 
 
+def _drop_strays(frame, keep=0.03):
+    """Erase small islands touching the cell border: slivers of the neighbouring frame's hand or tail."""
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFilter
+
+    alpha = np.array(frame.getchannel("A"))
+    work = Image.fromarray(((alpha > 40) * 255).astype("uint8")).copy()   # writable, not a view
+    parts = []
+    while True:
+        ys, xs = np.nonzero(np.array(work) == 255)
+        if not len(ys):
+            break
+        ImageDraw.floodfill(work, (int(xs[0]), int(ys[0])), 100)
+        region = np.array(work) == 100
+        rows, cols = np.nonzero(region)
+        parts.append((int(region.sum()), region, rows.min(), rows.max(), cols.min(), cols.max()))
+        work = Image.fromarray(np.where(region, 0, np.array(work)).astype("uint8")).copy()
+    if len(parts) < 2:
+        return frame
+    largest = max(part[0] for part in parts)
+    h, w = alpha.shape
+    stray = np.zeros_like(alpha, dtype=bool)
+    for area, region, top, bottom, left, right in parts:
+        if area < keep * largest and (top <= 1 or left <= 1 or bottom >= h - 2 or right >= w - 2):
+            stray |= region
+    if not stray.any():
+        return frame
+    grown = np.array(Image.fromarray((stray * 255).astype("uint8")).filter(ImageFilter.MaxFilter(7))) > 0
+    frame.putalpha(Image.fromarray(np.where(grown, 0, alpha).astype("uint8")))
+    return frame
+
+
 def _idle_reference(out):
     """A head matcher for the idle frame already in the output folder, if there is one."""
     from PIL import Image
@@ -527,6 +559,8 @@ def build(args):
             continue
         action_spec = ACTIONS.get(name, {})
         frames = [clean(_cell(sheet(sheet_name), index), action_spec.get("alpha_cutoff", 12)) for index in cells]
+        if action_spec.get("drop_strays"):
+            frames = [_drop_strays(frame) for frame in frames]
         if name == "idle":
             frames += [clean(Image.composite(_cell(sheet(face), 0), frames[0], eyes)) for face in FACES]
         strip = Image.new("RGBA", (CANVAS[0] * len(frames), CANVAS[1]), (0, 0, 0, 0))
@@ -695,7 +729,7 @@ def main():
     gen.add_argument("--directory", required=True, help="private instance directory holding .env")
     gen.add_argument("--output", required=True, help="directory outside the repository for raw sheets")
     gen.add_argument("--stage", choices=("base", "anchor", "sheets", "faces", "library"), required=True)
-    gen.add_argument("--group", choices=("motion", "dragon", "life", "boundary"), help="select one library director's group")
+    gen.add_argument("--group", choices=("motion", "dragon", "life", "boundary", "spell"), help="select one library director's group")
     gen.add_argument("--prompt-file", help="replacement action prompt for one selected sheet")
     gen.add_argument("--style-reference", help="override the style-reference PNG")
     gen.add_argument("--only", nargs="+", help="limit to these sheet names")
@@ -713,7 +747,7 @@ def main():
     rev = sub.add_parser("review", help="offline layout and transparency checks")
     rev.add_argument("--source", required=True)
     rev.add_argument("--out", required=True)
-    rev.add_argument("--group", choices=("motion", "dragon", "life", "boundary"), required=True)
+    rev.add_argument("--group", choices=("motion", "dragon", "life", "boundary", "spell"), required=True)
     args = parser.parse_args()
     if args.command == "build":
         return build(args)

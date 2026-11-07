@@ -95,6 +95,38 @@ CLIPS = {
 }
 CLIPS.update(repertoire_clips())
 
+# 法术与特技：一整段表演拆成拍子，位移、法阵和「沉进阵里」的裁切由 _warp / 扑跃物理逐拍调度。
+SPELL_CLIPS = {
+    "warp_cast": ("spell_cast", [0, 1, 2, 2, 2, 3, 3], 4.5, False, "stand"),   # 抬手 → 划弧 → 按向地面 → 眨眼
+    "warp_crouch": ("spell_dive", [0], 1, True, "stand"),
+    "warp_leap": ("spell_dive", [1], 1, True, "air"),
+    "warp_sink": ("spell_dive", [2, 3], 5, False, "air"),                      # 捏鼻子「冰棍跳」沉下去
+    "warp_rise": ("spell_rise", [0], 1, True, "air"),
+    "warp_tada": ("spell_rise", [1], 1, True, "air"),
+    "warp_land": ("spell_rise", [2, 2, 3, 3, 3, 3], 4, False, "stand"),
+    "conjure": ("spell_cast", [0, 1, 1], 4, False, "stand"),
+    "paint": ("spell_paint", [0, 1, 0, 1, 2, 2, 3, 1], 2.2, True, "stand"),
+    "paint_reveal": ("spell_reveal", [0, 0, 1, 2, 2, 2, 3, 3, 3], 2.6, False, "stand"),
+    "tome": ("spell_tome", [0, 1, 1, 1, 2, 1, 1], 1.6, True, "stand"),
+    "tome_found": ("spell_tome", [3], 1, False, "stand"),
+    "pounce_crouch": ("spell_pounce", [0, 1], 4.5, True, "stand"),
+    "pounce_leap": ("spell_pounce", [2], 1, True, "air"),
+    "pounce_catch": ("spell_pounce", [3], 1, False, "stand"),
+    "sneeze": ("spell_sneeze", [0, 0, 1, 1, 2, 2, 3, 3, 3], 4, False, "stand"),
+}
+# Without the spell sheets (an older asset folder) the same beats borrow existing strips.
+SPELL_FALLBACK = {
+    "spell_cast": ("wave", {0: 0, 1: 1, 2: 2, 3: 3}), "spell_dive": ("hop", {0: 0, 1: 1, 2: 2, 3: 2}),
+    "spell_rise": ("hop", {0: 2, 1: 2, 2: 3, 3: 3}), "spell_paint": ("draw", {0: 0, 1: 1, 2: 2, 3: 1}),
+    "spell_reveal": ("draw", {0: 2, 1: 3, 2: 3, 3: 3}), "spell_tome": ("think", {0: 0, 1: 1, 2: 0, 3: 1}),
+    "spell_pounce": ("hop", {0: 0, 1: 0, 2: 2, 3: 3}), "spell_sneeze": ("startle", {0: 0, 1: 1, 2: 0, 3: 1}),
+}
+for _name, (_strip, _seq, _fps, _loop, _posture) in SPELL_CLIPS.items():
+    if _strip not in CLIPS:
+        _strip, _frames = SPELL_FALLBACK[_strip]
+        _seq = [_frames[i] for i in _seq]
+    CLIPS[_name] = (_strip, _seq, _fps, _loop, _posture)
+
 # Transition clips start from another posture than the one they end in.
 STARTS_FROM = {"sit_down": "stand", "stand_up": "sit", "doze": "sit", "lie_down": "sit", "wake": "lie",
                "get_up": "sit", "sit_up": "lie", "lie_chin": "sit",
@@ -175,6 +207,10 @@ CALLS = ("mention", "named", "quoted", "called")
 # 她就是小团团：群里刚有她的动静（被@、在回、刚说完、在画……），这几分钟里不会挑打盹。
 ENGAGED_SECONDS = 180.0
 BUSY_CLIP = {"searching": "laptop", "drawing": "drawing", "singing": "sing"}
+PORTAL_RADIUS = 0.5       # 法阵半径（人物高度的倍数）；地上的阵按透视压扁成椭圆
+PORTAL_TILT = 0.3         # 椭圆短轴 / 长轴
+WARP_COOLDOWN = 75.0      # 日常里两次传送至少隔这么久；被 @ 时的「这就过去」另算
+POUNCE_COOLDOWN = 20.0
 
 LINES = {
     "mention": ("有人@我！", "群里有人@我，我去看看。", "被@了，来了来了——"),
@@ -211,6 +247,15 @@ LINES = {
     "checkup": ("翻翻今天接的话，看看有没有接偏。", "体检一下～"),
     "handoff": ("这段交给 Agent 看看吧。", "我记下来了，给你。"),
     "stuck": ("这项好像还没配好……", "咦，没连上？"),
+    "warp": ("看我的——", "走，换个地方。", "嘿咻——"),
+    "warp_in": ("噔噔！", "到啦～", "我在这儿！"),
+    "warp_sky": ("从天而降！", "哇——接住我！"),
+    "warp_called": ("有人@我？这就过去——", "叫我？传送过去！"),
+    "sneeze": ("哈啾！", "阿嚏——", "（揉鼻子）"),
+    "sneeze_warp": ("……咦？我怎么在这儿。", "打个喷嚏就传送了？？"),
+    "pounce_caught": ("抓到啦！", "嘿，逮住了！", "（捧着手偷看）"),
+    "pounce_missed": ("诶，跑了……", "差一点！", "再晃一下试试？"),
+    "found": ("找到了！", "查到啦。"),
 }
 
 
@@ -234,6 +279,28 @@ class Particle:
     vy: float
     born: float
     life: float
+
+
+@dataclass
+class Portal:
+    """A magic circle on the floor or just under the menu bar; the shell paints it in its own window."""
+    id: int
+    x: float           # centre, screen points
+    y: float           # the plane she sinks through
+    side: str          # "floor": she sinks below y / rises from below; "ceiling": she drops out below y
+    radius: float      # half the long axis, points
+    born: float
+    closing: float | None = None
+    flare: float = -10.0      # last time she passed through (bright pulse and light column)
+
+    def openness(self, now):
+        opened = max(0.0, min(1.0, (now - self.born) / 0.45))
+        if self.closing is None:
+            return opened
+        return opened * max(0.0, 1.0 - (now - self.closing) / 0.5)
+
+    def gone(self, now):
+        return self.closing is not None and now - self.closing >= 0.5
 
 
 @dataclass
@@ -263,6 +330,7 @@ class _Pointer:
     since: float = 0.0
     reversals: deque = field(default_factory=lambda: deque(maxlen=8))
     last_dx: float = 0.0
+    seen: bool = False             # the shell has reported a real cursor position at least once
 
 
 class PetBrain:
@@ -352,6 +420,22 @@ class PetBrain:
         self._grab = None
         self._press = None
         self._now = now
+        # 法阵与传送：portals 由显示端各开一个透明窗口画；portal_clip 是「沉进阵里」时要藏起来的那一侧。
+        self.portals: list[Portal] = []
+        self._portal_serial = 0
+        self.warp: dict | None = None
+        self._warp_request: dict | None = None
+        self.portal_clip: tuple[float, str] | None = None
+        self._warp_at = now - 600.0
+        self._pounce_at = now - POUNCE_COOLDOWN
+        self._pounce_target: tuple[float, float] | None = None
+        self._landing: str | None = None
+        self._jiggles: deque = deque(maxlen=8)
+        self._jiggle_dir = (0.0, 0.0)
+        self._sneezed_at = -1000.0
+        self._sneeze_warp = False
+        self._sneeze_slip = False
+        self._spark_at = 0.0
 
     # ── geometry ──
     @property
@@ -362,6 +446,8 @@ class PetBrain:
         self.left, self.right, self.floor = float(left), float(right), float(floor)
         if ceiling is not None:
             self.ceiling = float(ceiling)
+        if self.mode == "warp":
+            return                       # mid-spell she may be under the floor plane on purpose
         self.x = self._clamp_x(self.x)
         if self.mode == "hidden" and self.hidden_edge:
             self.x, self.y = self._hidden_target()
@@ -519,6 +605,12 @@ class PetBrain:
 
     def _queue(self, *steps, now, interrupt=False):
         """Append steps, inserting sit/stand/lie transitions so poses never jump."""
+        if interrupt and self.mode == "ground" and self.warp is not None:
+            self._cancel_warp(now)
+        if interrupt and self.mode == "warp":
+            # A spell in flight finishes first (she may be under the floor); the new steps follow it.
+            self.plan.clear()
+            interrupt = False
         if interrupt:
             self._chasing_prop = None
             if not any(step.hold == "sleep" for step in steps):
@@ -572,6 +664,12 @@ class PetBrain:
         elif self.step.edge_side and (self.step.clip == "edge_peek" or self._role(self.step.clip) == "edge"):
             self.facing = -self.step.edge_side
         self._set_clip(self.step.clip, now, restart=True)
+        if self.step.clip == "warp_cast":
+            self._begin_warp(now)
+        elif self.step.clip == "pounce_leap":
+            self._launch_pounce(now)
+        elif self.step.clip == "conjure":
+            self._burst(now, "sparkle", 0.42, -0.62, 5)
         if self.step.line and not self.chat_pending and (self.bubble is None or self.bubble.kind != "say"):
             self.say(self.step.line, now=now, seconds=2.4, kind="status")
         props = {"dragon_toy_ball": "ball", "dragon_treasure_find": "coin", "dragon_treasure_polish": "gem"}
@@ -639,6 +737,10 @@ class PetBrain:
                 posture, family = self.rng.choice((("sit", "calm"), ("stand", "bright"),
                                                    ("stand", "quiet"), ("stand", "message")))
                 clip = self._pick("reply", fallback, posture=posture, family=family)
+        elif name == "inspect" and self.media == "laptop" and self._has("spell_tome"):
+            clip = "tome"                 # 群里在查资料：翻魔法书，而不是举着照片端详
+        elif name == "listen" and self.media == "sing":
+            clip = "sing"
         elif role:
             clip = self._pick(role, fallback)
         self.state_clip = clip
@@ -668,9 +770,8 @@ class PetBrain:
         self.state_clip, self.state_name, self.state_source = None, None, None
         if self.media and now < self.agent_busy_until:
             # Back from a poke, a drag or a local chat: the drawing in QQ is still going.
-            role = {"laptop": "search", "drawing": "drawing", "sing": "voice"}.get(self.media)
             self._state_switch_at = now + self.rng.uniform(10, 16)
-            return [Step(self._pick(role, self.media), hold="agent"), Step("idle", 1)]
+            return [Step(self._busy_clip(), hold="agent"), Step("idle", 1)]
         self.media = None
         if now < self._sleep_cue_until:
             return [Step(self._pick("sleep", "sleep"), hold="sleep")]
@@ -688,7 +789,11 @@ class PetBrain:
             "tea_time": 1.1 + max(0.0, mood), "book": 1.2, "laptop": 0.65,
             "phone": 0.45 + min(1.4, p.chatter * 0.18),
             "nap": 0.0 if engaged or now - self._nap_at < 480 else (0.08 if sleepy or drowsy else 0.015),
-            "library": 4.5 if self.repertoire.actions else 0.0,
+            # 静态道具库只做穿插：整段动起来的法术、扑跃、散步才是主角。
+            "library": 1.8 if self.repertoire.actions else 0.0,
+            "warp": 0.55 if (self._can_warp() and not self.quiet and now - self._warp_at >= WARP_COOLDOWN
+                             and self._warp_target() is not None) else 0.0,
+            "sneeze": (0.08 + (0.3 if p.circadian == "刚睡醒" else 0.0)) if self.motion and self._has("spell_sneeze") else 0.0,
             "flight": 0.35 if self.motion and not self.quiet and any(
                 a["role"] == "fly" for a in self.repertoire.actions.values()) else 0.0,
             "bottom": 0.15 if self.motion and any(a["role"] == "bottom" for a in self.repertoire.actions.values()) else 0.0,
@@ -707,6 +812,7 @@ class PetBrain:
                 weights[name] *= 0.45
         if self.quiet or self.pointer.near:
             weights["wander"] = weights["patrol"] = weights["edge"] = weights["flight"] = weights["bottom"] = 0.0
+            weights["warp"] = 0.0
             if self.quiet:
                 weights["hop"] = weights["cheer"] = 0.0
         if not self.motion:
@@ -724,6 +830,11 @@ class PetBrain:
             self._ambient_recent.append(choice)
         if choice == "library":
             return self._routine_steps(now)
+        if choice == "warp":
+            self._warp_request = {"x": None, "via": None, "cause": "spell"}
+            return [Step("warp_cast", line=self.rng.choice(LINES["warp"])), Step("idle", 1.5)]
+        if choice == "sneeze":
+            return [Step("sneeze"), Step("idle", 1.5)]
         if choice == "flight":
             height = max(self.ceiling + self.figure, self.floor - self.figure * self.rng.uniform(1.2, 2.5))
             direction = 1 if self.x < (self.left + self.right) / 2 else -1
@@ -766,6 +877,9 @@ class PetBrain:
         if choice == "laptop":
             return [Step(self._pick("study", "laptop"), r(8, 15)), Step("sit_swing", r(4, 7))]
         if choice == "sketch":
+            if self._has("spell_paint"):
+                return [Step("lookaround"), Step("conjure"), Step("paint", r(9, 16)),
+                        Step("paint_reveal"), Step("nod")]
             return [Step("lookaround"), Step("think", r(4, 7)), Step("drawing", r(9, 16)),
                     Step("show_drawing", r(3, 5)), Step("nod")]
         if choice == "observe":
@@ -834,7 +948,7 @@ class PetBrain:
 
     def next_activity(self, now):
         if (self.chat_pending or self.game_active or self.media or now < self.agent_busy_until
-                or (self.state_clip and now < self.state_until) or self.mode in ("drag", "air", "fly", "bottom", "top_exit")):
+                or (self.state_clip and now < self.state_until) or self.mode in ("drag", "air", "fly", "bottom", "top_exit", "warp")):
             return False
         if self.mode in ("hidden", "hiding") and self.hidden_edge:
             self._next_pending = True
@@ -912,6 +1026,8 @@ class PetBrain:
             self._top_exit_motion(now, dt)
         elif self.mode == "hidden":
             pass
+        elif self.mode == "warp":
+            self._warp(now, dt)
         elif self.mode in ("fly", "bottom"):
             self._fly(now, dt)
         else:
@@ -920,6 +1036,7 @@ class PetBrain:
             self.blink_started = now
             self.blink_at = now + (0.3 if self.rng.random() < 0.15 else self.rng.uniform(2.4, 6.0))
         self._particles(now, dt)
+        self.portals = [portal for portal in self.portals if not portal.gone(now)]
         self._track_frame(now)
         if self.game_active and self.game_next_at and now >= self.game_next_at:
             self.game_next_at = 0.0
@@ -938,6 +1055,12 @@ class PetBrain:
 
     def _ground(self, now, dt):
         self.y = self.floor
+        if self.warp is not None:
+            if self.warp["phase"] == "cast" and self.clip == "warp_cast" and self._cast(now):
+                return
+            if self.warp is not None and self.warp["phase"] == "cast" and self.clip == "warp_cast":
+                self._look(now)
+                return
         # Long accompaniment can outlast a toy. Notice settled toys while resting,
         # rather than waiting for the current 45–90s activity to finish.
         if (self.props.items and not self._chasing_prop and now >= self._prop_check_at
@@ -1051,6 +1174,9 @@ class PetBrain:
             self.swing = self.swing_v = 0.0
             self.plan.clear()
             self.step = None
+            if self._landing:
+                self._land_trick(now)
+                return
             land = self._pick("land", "land")
             self._set_clip(land, now, restart=True)
             steps = [Step(land)]
@@ -1137,6 +1263,317 @@ class PetBrain:
             self.mode = "ground"
             self._queue(*self._popout_steps(), now=now, interrupt=True)
 
+    # ── spells: magic circles, teleport, pounce, sneeze ──
+    def _has(self, strip):
+        """Spells only play with their own adopted sheets; the legacy fallback keeps the old staging."""
+        return strip in self.repertoire.actions
+
+    def _can_warp(self):
+        return self.motion and self._has("spell_cast") and self._has("spell_dive") and self._has("spell_rise")
+
+    def _busy_clip(self):
+        """What she acts out while 小团团 is busy in QQ: a magic canvas, a floating tome, a song."""
+        if self.media == "drawing" and self._has("spell_paint"):
+            return "paint"
+        if self.media == "laptop" and self._has("spell_tome"):
+            return "tome"
+        role = {"laptop": "search", "drawing": "drawing", "sing": "voice"}.get(self.media)
+        return self._pick(role, self.media)
+
+    def _open_portal(self, x, y, side, now):
+        self._portal_serial += 1
+        portal = Portal(self._portal_serial, x, y, side, self.figure * PORTAL_RADIUS, now)
+        self.portals.append(portal)
+        return portal
+
+    def _ceiling_plane(self):
+        return self.ceiling + self.figure * PORTAL_RADIUS * PORTAL_TILT + 6
+
+    def _warp_target(self, x=None):
+        """A landing spot well away from her, or None when the screen is too narrow for a trip."""
+        lo, hi = self._clamp_x(self.left, edge_side=0), self._clamp_x(self.right, edge_side=0)
+        if x is not None:
+            x = max(lo, min(hi, x))
+            return x if abs(x - self.x) >= self.figure * 1.5 else None
+        span = hi - lo
+        if span < self.figure * 4:
+            return None
+        far = max(self.figure * 2.5, span * 0.35)
+        options = [c for c in (self.rng.uniform(lo, hi) for _ in range(8)) if abs(c - self.x) >= far]
+        if options:
+            return options[0]
+        return lo if self.x - lo > hi - self.x else hi
+
+    def magic(self, now):
+        """The menu's 变个魔法: open a circle under her feet and come out somewhere else."""
+        self.last_interaction = now
+        if self.chat_pending or self.mode != "ground" or not self.motion or self.game_active:
+            return False
+        if self.clip in ASLEEP or self.clip in WAKING:
+            self.poke(now)
+            return False
+        if not self._can_warp():
+            self._queue(Step("wave"), Step("idle", 1.5), now=now, interrupt=True)
+            return True
+        if self._warp_target() is None:
+            self._queue(Step("sneeze"), Step("idle", 1.5), now=now, interrupt=True)
+            return True
+        self._warp_request = {"x": None, "via": None, "cause": "spell"}
+        self._queue(Step("warp_cast", line=self.rng.choice(LINES["warp"])), Step("idle", 1.5),
+                    now=now, interrupt=True)
+        return True
+
+    def _begin_warp(self, now, *, slip=False):
+        request = self._warp_request or {"x": None, "via": None, "cause": "spell"}
+        self._warp_request = None
+        target = self._warp_target(request.get("x"))
+        if target is None or not self.motion:
+            if not slip:
+                self.step = Step("conjure")          # nowhere to go: a little flourish instead
+                self._set_clip("conjure", now, restart=True)
+            return False
+        via = request.get("via")
+        if via not in ("floor", "ceiling"):
+            via = "ceiling" if self.floor - self.ceiling > self.figure * 3.2 and self.rng.random() < 0.35 else "floor"
+        if via == "ceiling" and self.floor - self.ceiling <= self.figure * 3.2:
+            via = "floor"
+        self._warp_at = now
+        self.vx = self.vy = 0.0
+        self.warp = {"phase": "slip" if slip else "cast", "since": now, "x": target, "via": via,
+                     "cause": request.get("cause", "spell"), "src": None, "dst": None}
+        # Casting is an ordinary ground beat: a cue, a poke or a drag can still stop it and the
+        # circles just close. Only the jump commits her to the spell.
+        if slip:
+            self.mode = "warp"
+            self.warp["src"] = self._open_portal(self.x, self.floor, "floor", now)
+            self.warp["dst"] = self._open_portal(target, self._ceiling_plane() if via == "ceiling" else self.floor,
+                                                 via, now + 0.15)
+            self._set_clip(self._pick("fall", "fall"), now, restart=True)
+        return True
+
+    def _cast(self, now):
+        """The ground beat of a spell: draw the circle under her feet, then the one she will come out of."""
+        w, t = self.warp, now - self.warp["since"]
+        if w["src"] is None and t >= 0.45:
+            w["src"] = self._open_portal(self.x, self.floor, "floor", now)
+            self._burst(now, "sparkle", 0.0, -0.05, 4, spread=0.5)
+        if w["dst"] is None and t >= 0.8:
+            plane = self._ceiling_plane() if w["via"] == "ceiling" else self.floor
+            w["dst"] = self._open_portal(w["x"], plane, w["via"], now)
+        if w["dst"] is not None and self._clip_done(now):
+            self.mode = "warp"
+            self._warp_phase("crouch", "warp_crouch", now)
+            return True
+        return False
+
+    def _warp_phase(self, phase, clip, now):
+        self.warp["phase"], self.warp["since"] = phase, now
+        if clip:
+            self._set_clip(clip, now, restart=True)
+
+    def _warp(self, now, dt):
+        """Cast → crouch → leap → sink through the floor circle → (gone) → rise / drop → land."""
+        w = self.warp
+        if w is None:
+            self.mode = "ground"
+            return
+        f, t = self.figure, now - w["since"]
+        g = GRAVITY * self.scale * 0.8
+        phase = w["phase"]
+        sunk = self.floor + self._head_clearance("spell_dive") + 6
+        if phase == "crouch":
+            if t >= 0.2:
+                self.vy = -math.sqrt(2 * g * f * 0.42)
+                self._warp_phase("leap", "warp_leap", now)
+        elif phase in ("leap", "slip"):
+            self.vy += g * dt
+            if self.y > self.floor:
+                self.vy = min(self.vy, 620.0 * self.scale)     # the circle slows her like water
+            self.y += self.vy * dt
+            if phase == "leap" and self.vy > 0 and self.clip == "warp_leap":
+                self._set_clip("warp_sink", now, restart=True)
+            if self.portal_clip is None and self.y > self.floor - 1:
+                self.portal_clip = (self.floor, "below")
+                w["src"].flare = now
+                self._burst(now, "sparkle", 0.0, -0.05, 5, spread=0.6)
+            if self.y >= sunk:
+                w["src"].closing = now
+                self._warp_phase("gone", None, now)
+        elif phase == "gone":
+            if t >= 0.32:
+                dst = w["dst"]
+                self.x, self.vy = w["x"], 0.0
+                self.facing = 1 if self.x < (self.left + self.right) / 2 else -1
+                dst.flare = now
+                if w["via"] == "floor":
+                    self.y = sunk
+                    self.portal_clip = (dst.y, "below")
+                    self._warp_phase("rise", "warp_rise" if w["cause"] != "sneeze" else self._pick("fall", "fall"), now)
+                else:
+                    self.y = dst.y
+                    self.portal_clip = (dst.y, "above")
+                    self._warp_phase("drop", "warp_rise" if w["cause"] != "sneeze" else self._pick("fall", "fall"), now)
+        elif phase == "rise":
+            p = min(1.0, t / 0.5)
+            top = self.floor - f * 0.45
+            self.y = sunk + (top - sunk) * (1 - (1 - p) ** 3)
+            if self.portal_clip and self.y < self.floor - 1:
+                self.portal_clip = None
+            if p >= 1:
+                self.vy = 0.0
+                self._warp_phase("fall", "warp_tada" if w["cause"] != "sneeze" else None, now)
+                self._burst(now, "sparkle", 0.0, -0.6, 6, spread=0.7)
+                w["dst"].closing = now
+        elif phase in ("drop", "fall"):
+            self.vy += g * dt
+            self.y += self.vy * dt
+            if self.portal_clip and self.portal_clip[1] == "above":
+                if self.y - self._head_clearance(CLIPS[self.clip][0]) > self.portal_clip[0] + 2:
+                    self.portal_clip = None
+                    w["dst"].closing = now
+                    if w["cause"] != "sneeze":
+                        self._set_clip("warp_tada", now, restart=True)
+            if self.y >= self.floor:
+                self.y, self.vy = self.floor, 0.0
+                self.portal_clip = None
+                if w["dst"].closing is None:
+                    w["dst"].closing = now
+                self._burst(now, "sparkle", 0.0, -0.05, 4, spread=0.5)
+                self._warp_phase("land", "warp_land" if w["cause"] != "sneeze" else self._pick("land", "land"), now)
+        elif phase == "land" and self._clip_done(now):
+            self._finish_warp(now)
+
+    def _finish_warp(self, now):
+        w, self.warp = self.warp, None
+        self.mode, self.portal_clip = "ground", None
+        self.y, self.vx, self.vy = self.floor, 0.0, 0.0
+        for portal in self.portals:
+            if portal.closing is None:
+                portal.closing = now
+        if w and not self.chat_pending:
+            key = {"sneeze": "sneeze_warp", "called": "warp_called"}.get(w["cause"])
+            line = (self.rng.choice(LINES["sneeze_warp"]) if w["cause"] == "sneeze"
+                    else self.rng.choice(LINES["warp_sky" if w["via"] == "ceiling" else "warp_in"]))
+            if key != "warp_called":
+                self.say(line, now=now, seconds=2.2, kind="status")
+        if w and w["cause"] == "sneeze":
+            self.plan.appendleft(Step("startle"))
+        self._advance(now)
+        if self.step is None:
+            self._queue(Step("idle", 1.5), now=now)
+            self._advance(now)
+
+    def _cancel_warp(self, now):
+        if self.warp is None:
+            return
+        self.warp, self.portal_clip = None, None
+        for portal in self.portals:
+            if portal.closing is None:
+                portal.closing = now
+
+    def _pounce_check(self, now, x, y):
+        """Wiggle the cursor just in front of her and she crouches, wiggles back and pounces."""
+        if (not self.motion or self.quiet or self.attention or self.chat_pending or self.game_active
+                or not self._has("spell_pounce") or not self.pointer.seen
+                or self.mode != "ground" or self.posture() != "stand" or self.clip in ASLEEP
+                or now - self._pounce_at < POUNCE_COOLDOWN or self.media or now < self.agent_busy_until
+                or (self.state_clip and now < self.state_until) or self.clip.startswith("pounce")):
+            self._jiggles.clear()
+            return
+        f = self.figure
+        dx, dy = x - self.x, self.floor - y
+        if not (f * 0.55 <= abs(dx) <= f * 2.4 and -f * 0.1 <= dy <= f * 1.6):
+            self._jiggles.clear()
+            return
+        px, py = self._jiggle_dir
+        mx, my = x - self.pointer.x, y - self.pointer.y
+        if abs(mx) + abs(my) < 2:
+            return
+        if (px and mx and (px > 0) != (mx > 0)) or (py and my and (py > 0) != (my > 0)):
+            self._jiggles.append(now)
+        self._jiggle_dir = (mx or px, my or py)
+        if sum(1 for t in self._jiggles if now - t < 1.0) >= 3:
+            self._jiggles.clear()
+            self._pounce_at = now
+            self._pounce_target = (x, y)
+            self.facing = 1 if dx > 0 else -1
+            self._queue(Step("pounce_crouch", self.rng.uniform(0.7, 1.2)), Step("pounce_leap"),
+                        now=now, interrupt=True)
+            self.facing = 1 if dx > 0 else -1
+
+    def _launch_pounce(self, now):
+        tx, ty = self._pounce_target or (self.pointer.x, self.pointer.y)
+        f = self.figure
+        target = self._clamp_x(self.x + max(-f * 1.8, min(f * 1.8, tx - self.x - self.facing * f * 0.2)))
+        height = max(f * 0.25, min(f * 0.9, self.floor - ty - f * 0.55))
+        g = GRAVITY * self.scale
+        self.vy = -math.sqrt(2 * g * height)
+        self.vx = (target - self.x) / max(0.2, 2 * -self.vy / g)
+        self.facing = 1 if self.vx >= 0 else -1
+        self.mode, self._landing = "air", "pounce_catch"
+        self.plan.clear()
+        self._emit("!", now)
+
+    def _land_trick(self, now):
+        clip, self._landing = self._landing, None
+        self.plan.clear()
+        self.step = None
+        self._set_clip(clip, now, restart=True)
+        if clip == "pounce_catch":
+            hands = (self.x + self.facing * self.figure * 0.25, self.floor - self.figure * 0.45)
+            caught = math.hypot(self.pointer.x - hands[0], self.pointer.y - hands[1]) < self.figure * 0.75
+            self.say(self.rng.choice(LINES["pounce_caught" if caught else "pounce_missed"]), now=now, seconds=2)
+            self._burst(now, "heart" if caught else "sweat", 0.25, -0.55, 3 if caught else 1)
+        self._queue(Step(clip, 1.1), Step("idle", 1.5), now=now, interrupt=True)
+
+    def _burst(self, now, kind, x, y, count=1, *, spread=0.12):
+        """Particles at a point given in figure heights from her feet (x points the way she faces)."""
+        if not self.motion:
+            return
+        for _ in range(count):
+            vx = self.rng.uniform(-0.12, 0.12) * (spread / 0.12) ** 0.5
+            vy = -self.rng.uniform(0.15, 0.35)
+            if kind == "ember":
+                vx, vy = self.facing * self.rng.uniform(0.25, 0.55), self.rng.uniform(-0.3, 0.05)
+            elif kind == "smoke":
+                vx, vy = self.facing * self.rng.uniform(0.05, 0.15), -self.rng.uniform(0.12, 0.22)
+            self.particles.append(Particle(
+                kind, x * self.facing + self.rng.uniform(-spread, spread) * 0.25, y + self.rng.uniform(-0.03, 0.03),
+                vx, vy, now, {"ember": 0.7, "smoke": 1.4, "paint": 1.1, "glyph": 1.6}.get(kind, 1.2)))
+
+    def _spell_particles(self, now):
+        """Beat-timed effects: the sneeze's flame, paint flecks off the brush, glyphs off the tome."""
+        if not self.motion:
+            return
+        elapsed = now - self.clip_started
+        if self.clip == "sneeze" and elapsed >= 1.0 and self._sneezed_at < self.clip_started:
+            self._sneezed_at = now
+            self._burst(now, "ember", 0.32, -0.66, 7)
+            self._burst(now, "smoke", 0.3, -0.7, 3)
+            self.say(self.rng.choice(LINES["sneeze"][:2]), now=now, seconds=1.4)
+            self._sneeze_slip = self._sneeze_warp or self.rng.random() < 0.18
+            self._sneeze_warp = False
+            return
+        if self.clip == "sneeze" and elapsed >= 1.45 and self._sneeze_slip and self.mode == "ground":
+            # The sneeze itself plays out first; then a circle pops open under her by accident.
+            self._sneeze_slip = False
+            self._warp_request = {"x": None, "via": "ceiling", "cause": "sneeze"}
+            self.plan.clear()
+            self._begin_warp(now, slip=True)
+            return
+        if now < self._spark_at:
+            return
+        strip, frame, _ = self._frame(now)
+        if self.clip == "paint" and frame in (1, 3):
+            self._spark_at = now + 0.4
+            self._burst(now, "paint", 0.4, -0.5, 2, spread=0.08)
+        elif self.clip == "tome":
+            self._spark_at = now + 0.55
+            self._burst(now, "glyph", 0.3, -0.72, 1, spread=0.35)
+        elif self.clip == "paint_reveal" and frame in (2, 3):
+            self._spark_at = now + 0.3
+            self._burst(now, "sparkle", 0.05, -1.05, 1, spread=0.5)
+
     # ── particles and speech ──
     def _emit(self, kind, now, count=1):
         if not self.motion:
@@ -1149,6 +1586,7 @@ class PetBrain:
                 -self.rng.uniform(0.16, 0.3), now, 1.0 if kind in ("!", "puff") else 1.7))
 
     def _particles(self, now, dt):
+        self._spell_particles(now)
         kind = {"sleep": "z", "sing": "note", "shy": "heart", "cheer": "sparkle",
                 "hop": "sparkle", "eat": "crumb"}.get(self.clip)
         if kind and self.motion and now >= self._emit_at:
@@ -1160,7 +1598,7 @@ class PetBrain:
                 p.x += p.vx * dt
                 p.y += p.vy * dt
                 alive.append(p)
-        self.particles = alive[-24:]
+        self.particles = alive[-36:]
 
     def say(self, text, *, now, seconds=None, kind="say"):
         text = str(text).strip()
@@ -1189,6 +1627,8 @@ class PetBrain:
         if near and not p.near:
             p.since = now
         p.near = near
+        if not near:
+            self._pounce_check(now, x, y)
         left, top, right, bottom = self.body_rect()
         over_head = near and left <= x <= right and top <= y <= top + (bottom - top) * 0.42
         dx = x - p.x
@@ -1199,7 +1639,7 @@ class PetBrain:
             if sum(1 for t in p.reversals if now - t < 1.4) >= 4 and self.mode == "ground":
                 p.reversals.clear()
                 self._petted(now)
-        p.x, p.y = x, y
+        p.x, p.y, p.seen = x, y, True
 
     def _petted(self, now):
         """Hovering back and forth over her head is a head pat; clicking the head does the same."""
@@ -1239,13 +1679,15 @@ class PetBrain:
         return kind
 
     def drag(self, now, x, y):
-        if self._press is None:
-            return
+        if self._press is None or self.mode == "warp":
+            return                       # mid-spell she cannot be picked up out of the circle
         _, px, py = self._press
         if self.mode != "drag":
             if math.hypot(x - px, y - py) < 4:
                 return
+            self._cancel_warp(now)
             self.mode = "drag"
+            self._landing = None
             self.hidden_edge = None
             self.top_peek = False
             self.bottom_peek = False
@@ -1439,13 +1881,14 @@ class PetBrain:
             return
         if self.posture() in ("sit", "lie"):
             # 坐着看书喝茶、趴着托腮时应一声，不为了一个小动作站起来。
-            if (self._tap_zone(x, y) == "body" and self.motion and not self.quiet
+            if (self._tap_zone(x, y) == "body" and self.motion and not self.quiet and self._has("spell_sneeze")
                     and now - self._last_trick_at >= 120 and self.rng.random() < 0.08):
-                clip = self._pick(self.rng.choice(("magic", "fire")), None, posture=self.posture())
-                if clip:
-                    self._last_trick_at = now
-                    self._react(now, clip, LINES["poke"])
-                    return
+                self._last_trick_at = now
+                self.jolt_started = now        # 坐着就地打个小喷嚏，不为一个小动作站起来
+                self._burst(now, "ember", 0.2, -0.62, 4)
+                self._burst(now, "smoke", 0.2, -0.64, 2)
+                self.say(LINES["sneeze"][0], now=now, seconds=1.6)
+                return
             self.jolt_started = now
             self.say(self.rng.choice(LINES["poke"]), now=now, seconds=2)
             return
@@ -1462,11 +1905,16 @@ class PetBrain:
         else:
             clip = self._next_tap_clip()
             lines = PLAY[clip][1]
-            if self.motion and not self.quiet and now - self._last_trick_at >= 120 and self.rng.random() < 0.08:
-                trick = self._pick(self.rng.choice(("magic", "fire")), None, posture=self.posture())
-                if trick:
-                    clip = trick
-                    self._last_trick_at = now
+            if (self.motion and not self.quiet and self._has("spell_sneeze")
+                    and now - self._last_trick_at >= 120 and self.rng.random() < 0.08):
+                self._last_trick_at = now
+                if self.rng.random() < 0.5 and self._can_warp() and self._warp_target() is not None:
+                    # 被戳烦了就开个阵溜到别处，再回头冲你眨眼。
+                    self._warp_request = {"x": None, "via": None, "cause": "spell"}
+                    self._queue(Step("warp_cast", line="抓不到我～"), Step("idle", 1.5), now=now, interrupt=True)
+                else:
+                    self._queue(Step("sneeze"), Step("idle", 1.5), now=now, interrupt=True)
+                return
             self._react(now, clip, lines,
                         "heart" if clip in ("shy", "peek") else "sparkle")
             if recent >= 3 and self.rng.random() < 0.35:
@@ -1710,6 +2158,10 @@ class PetBrain:
         if kind in MEDIA_HOLD:
             self.media = BUSY_CLIP[kind]
             self.agent_busy_until = now + MEDIA_HOLD[kind]
+            restage = {"searching": "inspect", "singing": "listen"}.get(kind)
+            if (restage and self.state_name == restage and self.state_clip not in ("tome", "sing")
+                    and now < self.state_until and self.mode == "ground" and not self.chat_pending):
+                self._queue(*self._state_steps(self.state_name, STATE_CLIPS[restage], now), now=now, interrupt=True)
         elif kind in ("drew", "voice", "media_end") or (kind in ("said", "chimed", "proactive")
                                                          and self.media == "laptop"):
             self.media, self.agent_busy_until = None, 0.0    # the answer after a search ends it
@@ -1739,9 +2191,18 @@ class PetBrain:
         if kind in CALLS:
             self._emit("!", now)
             if not busy:      # mid-drawing she only glances up
+                greet = Step(self._pick("greet", "phone"), 4)
+                target = self.pointer.x if self.pointer.seen and self.left <= self.pointer.x <= self.right else None
+                if (kind == "mention" and target is not None and self._can_warp() and not self.quiet
+                        and self.clip not in ASLEEP and now - self._warp_at >= 90 and self.rng.random() < 0.7
+                        and abs(target - self.x) >= self.figure * 3 and self._warp_target(target) is not None):
+                    # 被 @ 了、你又离得远：开个阵传送到你手边再看消息。
+                    self._warp_request = {"x": target, "via": "floor", "cause": "called"}
+                    self._queue(Step("warp_cast", line=self.rng.choice(LINES["warp_called"])), greet,
+                                Step("idle", 1), now=now, interrupt=True)
+                    return
                 stop = "motion_walk_message_stop" if self.clip.startswith("motion_walk_") and "motion_walk_message_stop" in self.repertoire.actions else None
-                self._queue(*([Step(stop)] if stop else []), Step(self._pick("greet", "phone"), 4),
-                            Step("idle", 1), now=now, interrupt=True)
+                self._queue(*([Step(stop)] if stop else []), greet, Step("idle", 1), now=now, interrupt=True)
                 self._status_line(kind, now, gap=40)
         elif kind == "replying" and not busy:
             self.agent_busy_until = now + 40
@@ -1749,9 +2210,10 @@ class PetBrain:
             self._queue(Step(clip, hold="agent"), Step("idle", 1), now=now, interrupt=True)
         elif kind in MEDIA_HOLD:
             # Wakes her if she dozed off: someone asked her to look something up, draw or sing.
-            role = {"searching": "search", "drawing": "drawing", "singing": "voice"}[kind]
             self._state_switch_at = now + self.rng.uniform(10, 16)
-            self._queue(Step(self._pick(role, self.media), hold="agent"), Step("idle", 1), now=now, interrupt=True)
+            busy_clip = self._busy_clip()
+            opening = [Step("conjure")] if busy_clip in ("paint", "tome") else []
+            self._queue(*opening, Step(busy_clip, hold="agent"), Step("idle", 1), now=now, interrupt=True)
             self._status_line(kind, now, gap=20, starts=True)
         elif kind == "media_end":
             if finished and self.step is not None and self.step.hold == "agent":
@@ -1761,8 +2223,20 @@ class PetBrain:
         elif kind in ("said", "chimed", "proactive", "drew", "voice"):
             self.agent_busy_until = 0.0
             if kind == "drew" and finished == "drawing":
-                self._queue(Step("show_drawing", 2.6), Step("idle", 1.5), now=now, interrupt=True)
-                self._emit("sparkle", now, 3)
+                if self._has("spell_reveal"):
+                    # 画布转过来给你看，举高，抱在怀里眨眼。
+                    self._queue(Step("paint_reveal"), Step("idle", 1.5), now=now, interrupt=True)
+                    self._burst(now, "sparkle", 0.1, -0.9, 5, spread=0.6)
+                else:
+                    self._queue(Step("show_drawing", 2.6), Step("idle", 1.5), now=now, interrupt=True)
+                    self._emit("sparkle", now, 3)
+            elif finished == "laptop" and kind in ("said", "chimed", "proactive") and self._has("spell_tome"):
+                self._queue(Step("tome_found", 1.4), Step("idle", 1.5), now=now, interrupt=True)
+                self._burst(now, "sparkle", 0.3, -0.8, 3, spread=0.3)
+                if not self.chat_pending:
+                    self._last_status_line = now
+                    self.say(self.rng.choice(LINES["found"]), now=now, seconds=2.4, kind="status")
+                return
             else:
                 clip = self._pick({"drew": "drawing", "voice": "voice"}.get(kind, "celebrate"),
                                   {"drew": "draw", "voice": "sing"}.get(kind, "talk"))

@@ -1125,6 +1125,38 @@
   "boundary_top_return": {
    "file": "boundary_top_return.webp",
    "frames": 4
+  },
+  "spell_cast": {
+   "file": "spell_cast.webp",
+   "frames": 4
+  },
+  "spell_dive": {
+   "file": "spell_dive.webp",
+   "frames": 4
+  },
+  "spell_rise": {
+   "file": "spell_rise.webp",
+   "frames": 4
+  },
+  "spell_paint": {
+   "file": "spell_paint.webp",
+   "frames": 4
+  },
+  "spell_reveal": {
+   "file": "spell_reveal.webp",
+   "frames": 4
+  },
+  "spell_tome": {
+   "file": "spell_tome.webp",
+   "frames": 4
+  },
+  "spell_pounce": {
+   "file": "spell_pounce.webp",
+   "frames": 4
+  },
+  "spell_sneeze": {
+   "file": "spell_sneeze.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -3357,6 +3389,70 @@
     -156,
     -294,
     93,
+    0
+   ]
+  },
+  "spell_cast": {
+   "bounds": [
+    -120,
+    -320,
+    111,
+    0
+   ]
+  },
+  "spell_dive": {
+   "bounds": [
+    -131,
+    -294,
+    103,
+    0
+   ]
+  },
+  "spell_rise": {
+   "bounds": [
+    -114,
+    -274,
+    109,
+    0
+   ]
+  },
+  "spell_paint": {
+   "bounds": [
+    -109,
+    -277,
+    114,
+    0
+   ]
+  },
+  "spell_reveal": {
+   "bounds": [
+    -99,
+    -285,
+    92,
+    1
+   ]
+  },
+  "spell_tome": {
+   "bounds": [
+    -108,
+    -302,
+    114,
+    0
+   ]
+  },
+  "spell_pounce": {
+   "bounds": [
+    -148,
+    -226,
+    110,
+    1
+   ]
+  },
+  "spell_sneeze": {
+   "bounds": [
+    -166,
+    -303,
+    119,
     0
    ]
   }

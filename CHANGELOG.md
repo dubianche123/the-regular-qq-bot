@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Give the desktop pet real magic. She draws a turning rune circle under her
+  feet, a second one opens elsewhere, and she jumps in and pops out of the far
+  circle; sometimes it opens just under the menu bar and she drops from there.
+  The circles are two click-through windows (far half behind her, near half in
+  front) and she is clipped at the plane as she sinks and rises. Ask for it from
+  More → 变个魔法; she also casts now and then, slips away when poked a lot, and
+  teleports to the cursor when someone @-mentions her and the pointer is far.
+  Casting stays interruptible until she jumps; nothing about it needs a model call.
+- Stage group work as three-part performances: while 小团团 draws in QQ she
+  conjures a floating canvas and paints, then turns the finished canvas round when
+  the picture is delivered; a QQ search opens a floating tome and ends on “找到了”.
+- Add a fire sneeze (sometimes it accidentally teleports her) and a cat-like
+  pounce when the cursor wiggles in front of her. Eight new performance sheets,
+  head-calibrated like the rest; the prop library now fills about a third to a
+  half of the day instead of most of it, and pokes no longer trigger palm flames.
 - Expand the desktop pet to 279 shipped animation strips, including 236 new
   four-frame actions for everyday life, dragon magic, treasure, toys and movement.
   Shuffled action pools and short routines reduce repetition during long sessions.

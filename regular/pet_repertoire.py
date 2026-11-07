@@ -9,8 +9,9 @@ from regular.pet_actions_motion import ACTIONS as MOTION
 from regular.pet_actions_dragon import ACTIONS as DRAGON
 from regular.pet_actions_life import ACTIONS as LIFE
 from regular.pet_actions_boundary import ACTIONS as BOUNDARY
+from regular.pet_actions_spell import ACTIONS as SPELL
 
-ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY}
+ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL}
 
 
 def available():

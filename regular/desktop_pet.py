@@ -19,13 +19,13 @@ import time
 import webbrowser
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
-from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetricsF, QIcon, QImageReader, QPainter,
-                           QPainterPath, QPen, QPixmap, QPolygonF, QRegion, QTransform)
+from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetricsF, QIcon, QImageReader, QLinearGradient, QPainter,
+                           QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient, QRegion, QTransform)
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from regular.desktop import CompanionError, PanelClient
 from regular.desktop_voice import NativeVoiceSession, request_microphone_permission
-from regular.pet_brain import CLIPS, PetBrain
+from regular.pet_brain import CLIPS, PORTAL_TILT, PetBrain
 from storage import atomic_write_json
 
 INK = QColor("#173b32")
@@ -344,6 +344,179 @@ class PropLayer:
         self.windows.clear()
 
 
+class PortalWindow(QWidget):
+    """Half of one magic circle in a click-through window.
+
+    The far half and the floor glow sit under her window, the near half, the light column
+    and the rising motes over it, so she visibly stands in the circle and sinks into it.
+    """
+    def __init__(self, layer, portal, front):
+        super().__init__(None, FLOATING)
+        _floating(self, input=False)
+        self.layer, self.front = layer, front
+        self.setWindowTitle("老群友 · 法阵")
+        self.sync(portal)
+
+    def sync(self, portal):
+        self.portal = portal
+        brain = self.layer.pet.brain
+        r = portal.radius
+        pad = r * 0.45
+        column = brain.figure * 1.35
+        width = round(2 * (r + pad))
+        above = column if portal.side == "floor" else r * PORTAL_TILT + pad
+        below = r * PORTAL_TILT + pad if portal.side == "floor" else column
+        # Never ask for a top above the menu bar: macOS would push the window down under the drawing.
+        top = max(round(brain.ceiling), round(portal.y - above))
+        self.plane = portal.y - top
+        geometry = QRect(round(portal.x - width / 2), top, width, max(4, round(portal.y + below) - top))
+        if geometry != self.geometry():
+            self.setGeometry(geometry)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        _clear(painter, self.rect())
+        _paint_portal(painter, self.portal, self.layer.pet.now(), self.layer.pet.brain.figure,
+                      QPointF(self.width() / 2, self.plane), front=self.front)
+        painter.end()
+
+
+class PortalLayer:
+    def __init__(self, pet):
+        self.pet, self.windows = pet, {}
+
+    def sync(self):
+        brain = self.pet.brain
+        portals = {portal.id: portal for portal in brain.portals} if brain.motion else {}
+        for portal_id in set(self.windows) - portals.keys():
+            for window in self.windows.pop(portal_id):
+                window.close()
+        for portal_id, portal in portals.items():
+            if portal_id not in self.windows:
+                back, front = PortalWindow(self, portal, False), PortalWindow(self, portal, True)
+                self.windows[portal_id] = (back, front)
+                if self.pet.isVisible():
+                    back.show()
+                    # Restack her (and her particles) above the far half, then the near half above her.
+                    self.pet.raise_()
+                    if self.pet.fx.isVisible():
+                        self.pet.fx.raise_()
+                    front.show()
+                    front.raise_()
+                continue
+            for window in self.windows[portal_id]:
+                window.sync(portal)
+
+    def close(self):
+        for windows in self.windows.values():
+            for window in windows:
+                window.close()
+        self.windows.clear()
+
+
+def _paint_portal(painter, portal, now, figure, center, *, front):
+    """A turning rune circle seen in perspective; it draws itself open and shrinks away when closing."""
+    openness = portal.openness(now)
+    if openness <= 0.01:
+        return
+    grown = 1 - (1 - openness) ** 3
+    r = portal.radius * (0.35 + 0.65 * grown)
+    flare = max(0.0, 1.0 - (now - portal.flare) / 0.8) if now >= portal.flare else 0.0
+    spin = (now - portal.born) * 36.0
+    drawn = 1.0 if portal.closing is not None else max(0.0, min(1.0, (now - portal.born) / 0.45))
+    ink = QColor(246, 238, 255)
+    gold = QColor(226, 169, 59)
+    edge = QColor(125, 95, 196)            # keeps the circle readable on a pale wallpaper
+    up = -1 if portal.side == "floor" else 1
+    column = figure * 1.3
+    painter.save()
+    painter.translate(center)
+    if not front:
+        beam = 0.12 * openness + 0.7 * flare
+        if beam > 0.02:                     # the light column stands behind her, never tints her
+            light = QLinearGradient(QPointF(0, 0), QPointF(0, up * column))
+            light.setColorAt(0.0, QColor(214, 196, 255, round(190 * beam)))
+            light.setColorAt(1.0, QColor(214, 196, 255, 0))
+            painter.fillRect(QRectF(-r * 0.72, min(0.0, up * column), r * 1.44, column), light)
+        painter.save()
+        painter.scale(1, PORTAL_TILT)
+        glow = QRadialGradient(QPointF(0, 0), r * 1.35)
+        strength = min(1.0, 0.75 * openness + 0.6 * flare)
+        glow.setColorAt(0.0, QColor(214, 196, 255, round(170 * strength)))
+        glow.setColorAt(0.55, QColor(185, 163, 227, round(95 * strength)))
+        glow.setColorAt(1.0, QColor(185, 163, 227, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(glow)
+        painter.drawEllipse(QPointF(0, 0), r * 1.35, r * 1.35)
+        painter.restore()
+    # Far half under her, near half over her: the split is the plane she stands on.
+    painter.setClipRect(QRectF(-r * 2, 0 if front else -r * 2, r * 4, r * 2))
+    painter.scale(1, PORTAL_TILT)
+
+    def pen(color, width, alpha):
+        color = QColor(color)
+        color.setAlpha(max(0, min(255, round(alpha))))
+        stroke = QPen(color, width)
+        stroke.setCosmetic(True)
+        stroke.setCapStyle(Qt.PenCapStyle.RoundCap)
+        return stroke
+
+    alpha = 235 * openness
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(pen(edge, 4.6 + 1.6 * flare, alpha * 0.75))
+    painter.drawArc(QRectF(-r, -r, 2 * r, 2 * r), 90 * 16, round(-360 * 16 * drawn))
+    painter.setPen(pen(ink, 2.2 + 1.6 * flare, alpha))
+    painter.drawArc(QRectF(-r, -r, 2 * r, 2 * r), 90 * 16, round(-360 * 16 * drawn))
+    painter.setPen(pen(gold, 1.3, alpha * drawn))
+    painter.drawEllipse(QPointF(0, 0), r * 0.82, r * 0.82)
+    painter.drawEllipse(QPointF(0, 0), r * 0.3, r * 0.3)
+    painter.save()
+    painter.rotate(spin)
+    painter.setPen(pen(ink, 1.5, alpha * drawn))
+    for i in range(18):                         # rune ring between the two outer circles
+        painter.save()
+        painter.rotate(i * 20)
+        painter.translate(0, -r * 0.91)
+        if i % 3 == 0:
+            painter.drawLine(QPointF(-r * 0.03, 0), QPointF(r * 0.03, 0))
+            painter.drawLine(QPointF(0, -r * 0.04), QPointF(0, r * 0.04))
+        elif i % 3 == 1:
+            painter.drawEllipse(QPointF(0, 0), r * 0.018, r * 0.018)
+        else:
+            painter.drawLine(QPointF(-r * 0.025, r * 0.03), QPointF(0, -r * 0.035))
+            painter.drawLine(QPointF(0, -r * 0.035), QPointF(r * 0.025, r * 0.03))
+        painter.restore()
+    painter.restore()
+    painter.save()
+    painter.rotate(-spin * 1.4)
+    painter.setPen(pen(gold, 1.4, alpha * drawn))
+    for offset in (0, 60):                      # a hexagram turning the other way
+        points = [QPointF(r * 0.8 * math.sin(math.radians(offset + k * 120)),
+                          -r * 0.8 * math.cos(math.radians(offset + k * 120))) for k in range(3)]
+        painter.drawPolygon(QPolygonF(points))
+    painter.restore()
+    painter.restore()
+    if not front:
+        return
+    painter.save()
+    painter.translate(center)
+    painter.setPen(Qt.PenStyle.NoPen)
+    for k in range(14):                         # motes rising off the circle
+        seed = math.sin(k * 12.9898 + portal.id * 78.233) * 43758.5453
+        seed -= math.floor(seed)
+        phase = (now * (0.45 + 0.25 * seed) + seed) % 1.0
+        x = (seed * 2 - 1) * r * 0.85
+        y = up * phase * column * (0.55 + 0.4 * flare) + r * PORTAL_TILT * 0.6 * math.sin(seed * 9)
+        size = 1.6 + 2.2 * seed
+        painter.setBrush(QColor(255, 236, 170, round(220 * math.sin(phase * math.pi) * openness))
+                         if k % 3 == 0 else
+                         QColor(236, 224, 255, round(230 * math.sin(phase * math.pi) * openness)))
+        painter.drawEllipse(QPointF(x, y), size, size)
+    painter.restore()
+
+
 # ── painting helpers ──
 def _clear(painter, rect):
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
@@ -410,13 +583,45 @@ class FxLayer(QWidget):
             painter.save()
             painter.translate(x, y)
             painter.setOpacity(alpha)
-            _particle(painter, p.kind, f, age)
+            _particle(painter, p.kind, f, age, p.born)
             painter.restore()
         painter.end()
 
 
-def _particle(painter, kind, figure, age):
+PAINT_FLECKS = ("#f08aa8", "#8cc8f0", "#f2c94c", "#9bd59a", "#b9a3e3")
+
+
+def _particle(painter, kind, figure, age, seed=0.0):
     size = figure * 0.11
+    if kind == "ember":
+        painter.setPen(Qt.PenStyle.NoPen)
+        s = size * 0.28 * (1.0 - 0.6 * age)
+        painter.setBrush(QColor(255, 214, 120, 200))
+        painter.drawEllipse(QPointF(0, 0), s * 1.8, s * 1.8)
+        painter.setBrush(QColor("#ff8a3d"))
+        painter.drawEllipse(QPointF(0, 0), s, s)
+        return
+    if kind == "smoke":
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(150, 150, 160, round(150 * (1 - age))))
+        painter.drawEllipse(QPointF(0, 0), size * (0.25 + 0.5 * age), size * (0.22 + 0.45 * age))
+        return
+    if kind == "paint":
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(PAINT_FLECKS[int(seed * 1000) % len(PAINT_FLECKS)]))
+        painter.drawEllipse(QPointF(0, 0), size * 0.16, size * 0.16)
+        return
+    if kind == "glyph":
+        pen = QPen(QColor(139, 111, 208, 230), max(1.2, size * 0.09))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        s = size * 0.38
+        painter.rotate(age * 90)
+        painter.drawEllipse(QPointF(0, 0), s, s)
+        painter.drawLine(QPointF(0, -s * 1.5), QPointF(0, s * 1.5))
+        painter.drawLine(QPointF(-s * 0.7, -s * 0.4), QPointF(s * 0.7, -s * 0.4))
+        return
     if kind in ("z", "note", "!"):
         font = QFont()
         font.setBold(True)
@@ -683,7 +888,7 @@ class PetMoreMenu(QWidget):
         self.pet = pet
         self.setWindowTitle("老群友 · 更多")
         self.setAccessibleName("老群友更多设置")
-        self.setFixedSize(216, 320)
+        self.setFixedSize(216, 356)
         self.setStyleSheet("""
             QLabel { color:#173b32; font-size:14px; font-weight:600; background:transparent; }
             QPushButton { color:#173b32; background:transparent; border:0; border-radius:11px;
@@ -701,6 +906,7 @@ class PetMoreMenu(QWidget):
         self.motion = self._button("动作和特效", None, checkable=True)
         self.quiet.toggled.connect(pet.set_quiet)
         self.motion.toggled.connect(pet.set_motion)
+        self._button("变个魔法", pet.magic)
         self._button("投喂一块小饼干", pet.feed)
         self._button("刷新状态", pet.refresh_connection)
         self._button("打开工作台", lambda: pet.open_panel("/"))
@@ -1092,6 +1298,7 @@ class PetWidget(QWidget):
         self._pending_toggle = None
         self.fx = FxLayer(self)
         self.props = PropLayer(self)
+        self.portal_layer = PortalLayer(self)
         self.bubble = SpeechBubble(self)
         self.toolbar = PetToolbar(self)
         self._apply_size()
@@ -1190,12 +1397,14 @@ class PetWidget(QWidget):
         brain.set_attention(self._attention(), now)
         brain.tick(now)
         self.props.sync()
+        self.portal_layer.sync()
         if brain.care_requests:
             kind = brain.care_requests.pop()
             brain.care_requests.clear()
             self._request_care(kind)
         # Smooth 60 fps while moving; stationary animation frames use 30 fps.
-        moving = brain.mode != "ground" or brain.clip in ("walk", "hop", "land") or brain.fading(now)
+        moving = (brain.mode != "ground" or brain.clip in ("walk", "hop", "land") or brain.fading(now)
+                  or bool(brain.portals))
         self.animation.setInterval(16 if moving else 33)
         self._sync_windows()
         self._update_toolbar(cursor, now)
@@ -1283,7 +1492,8 @@ class PetWidget(QWidget):
         key = (strip, frame, mirrored, round(transform["sx"], 3), round(transform["sy"], 3),
                round(transform["rot"], 1), round(transform["dy"], 1), brain.mode,
                _screen_clip(self, brain).getRect() if _screen_clipped(brain) else None,
-               fade and (fade[0], fade[1], fade[2], round(fade[3], 2)), self.lift)
+               fade and (fade[0], fade[1], fade[2], round(fade[3], 2)), self.lift,
+               brain.portal_clip and (brain.portal_clip[1], round(brain.portal_clip[0] - brain.y)))
         if lifted:
             self._mask_key = None
         if force or key != self._paint_key:
@@ -1341,6 +1551,14 @@ class PetWidget(QWidget):
         brain = self.brain
         if _screen_clipped(brain):
             painter.setClipRect(_screen_clip(self, brain))
+        if brain.portal_clip is not None:
+            # Sinking into (or dropping out of) a circle: the plane hides the part already through it.
+            plane, hidden = brain.portal_clip
+            local = round(self.window_anchor().y() + plane - brain.y)
+            keep = (QRect(0, 0, self.width(), max(0, local)) if hidden == "below"
+                    else QRect(0, local, self.width(), max(0, self.height() - local)))
+            painter.setClipRect(keep, Qt.ClipOperation.IntersectClip if painter.hasClipping()
+                                else Qt.ClipOperation.ReplaceClip)
         strip, frame, mirrored, transform = brain.pose()
         anchor = self.window_anchor()
         figure = brain.figure
@@ -1740,6 +1958,10 @@ class PetWidget(QWidget):
         if not still_open:
             self.brain.set_attention(False, self.now())
 
+    def magic(self):
+        self._dismiss_transients()               # 收起面板，好看她开阵传送
+        self.brain.magic(self.now())
+
     def feed(self):
         self._dismiss_transients()               # 投喂完收起面板，好看她吃
         self.brain.feed(self.now())
@@ -1927,6 +2149,7 @@ class PetWidget(QWidget):
             timer.stop()
         self.end_voice()
         self.props.close()
+        self.portal_layer.close()
         for surface in (self.toolbar, self.bubble, self.fx, self.chat_bar, self.activity_card,
                         self.proposal_card, self.voice_card, self._menu):
             if surface is not None:
