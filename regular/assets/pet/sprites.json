@@ -137,6 +137,22 @@
   "getup": {
    "file": "getup.webp",
    "frames": 4
+  },
+  "pat": {
+   "file": "pat.webp",
+   "frames": 4
+  },
+  "highfive": {
+   "file": "highfive.webp",
+   "frames": 4
+  },
+  "peek": {
+   "file": "peek.webp",
+   "frames": 4
+  },
+  "nod": {
+   "file": "nod.webp",
+   "frames": 4
   }
  }
 }

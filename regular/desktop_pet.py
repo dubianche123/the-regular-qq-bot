@@ -398,6 +398,12 @@ class _RoundButton(QPushButton):
                 painter.drawEllipse(QPointF(-5, y), 1.6, 1.6)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawLine(QPointF(-1, y), QPointF(7 if y != 0 else 4, y))
+        elif kind == "play":
+            # a four-point sparkle: the "play with me" button
+            painter.drawLine(QPointF(0, -8), QPointF(0, 8))
+            painter.drawLine(QPointF(-8, 0), QPointF(8, 0))
+            painter.drawLine(QPointF(-5, -5), QPointF(5, 5))
+            painter.drawLine(QPointF(-5, 5), QPointF(5, -5))
         else:
             for x, y in ((-5, -3), (0, 3), (5, -1)):
                 painter.drawLine(QPointF(x, -7), QPointF(x, 7))
@@ -411,28 +417,43 @@ class _RoundButton(QPushButton):
         painter.end()
 
 
-class PetToolbar(QWidget):
-    """四个按钮绕成一圈贴在她旁边；不再是一条竖着的长方形。
+class _OutsideClick(QObject):
+    """点任意别处就收起通知卡 / 设置面板，补回原生菜单本来就有的交互直觉。"""
+    def __init__(self, pet):
+        super().__init__(pet)
+        self.pet = pet
 
-    只留日常真正会点的四件事：聊 / 听 / 她在忙啥 / 更多。投喂、大小、
-    不乱跑这些设置全部收进「更多」，右键原生菜单也不再存在。
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.MouseButtonPress:
+            self.pet.dismiss_on_outside_click(QCursor.pos())
+        return False
+
+
+class PetToolbar(QWidget):
+    """五个按钮真的绕成一圈贴在她旁边；不再是一条竖着的长方形。
+
+    玩 / 聊 / 听 / 她在忙啥 / 更多。投喂、大小、不乱跑这些设置收进「更多」，
+    右键原生菜单也不再存在。「玩一下」是一局击掌接龙：她反复抬手，你一直点，停手结算。
+    双击不再弹聊天——那会抢走连点；聊天走这个圆盘的「聊两句」按钮。
     """
-    SIZE = 108
+    SIZE = 140
 
     def __init__(self, pet):
         super().__init__(None, FLOATING)
         _floating(self)
         self.setWindowTitle("老群友 · 快捷操作")
-        self.setAccessibleName("老群友快捷操作：聊天、语音、她在忙啥、更多")
+        self.setAccessibleName("老群友快捷操作：玩一下、聊天、语音、她在忙啥、更多")
         self.setFixedSize(self.SIZE, self.SIZE)
+        self.play = _RoundButton("play", "来玩击掌接龙：她反复抬手，一直点，停手就结算")
         self.chat = _RoundButton("chat", "和老群友聊两句")
         self.voice = _RoundButton("voice", "和老群友语音聊聊")
         self.activity = _RoundButton("activity", "她最近在忙什么")
         self.more = _RoundButton("settings", "更多设置")
-        # 顺时针：聊 → 听 → 她在忙啥 → 更多，四个按钮挨着排，圆盘只比它们大一圈。
-        spots = ((13, 13), (57, 13), (57, 57), (13, 57))
-        callbacks = (pet.show_chat, pet.show_voice, pet.show_activity, lambda: pet.show_menu())
-        for button, callback, (x, y) in zip((self.chat, self.voice, self.activity, self.more),
+        # 半径 42 的真环形：从正上方顺时针排开，五个按钮互不重叠。
+        spots = ((51, 9), (91, 38), (76, 85), (26, 85), (11, 38))
+        callbacks = (lambda: pet.play(), pet.show_chat, pet.show_voice, pet.show_activity,
+                     lambda: pet.show_menu())
+        for button, callback, (x, y) in zip((self.play, self.chat, self.voice, self.activity, self.more),
                                             callbacks, spots):
             button.setParent(self)
             button.move(x, y)
@@ -848,6 +869,7 @@ class PetWidget(QWidget):
         self._menu = None
         self._menu_leave_at = None
         self._toolbar_leave_at = None
+        self._outside_click = None
         self._mask_key = None
         self._paint_key = None
         self._fx_dirty = False
@@ -881,6 +903,12 @@ class PetWidget(QWidget):
         self.presence_poll.setInterval(3000)
         self.presence_poll.timeout.connect(self.refresh_presence)
         self.presence_poll.start()
+        app = QApplication.instance()
+        if app is not None:
+            # 全局监听：点别的窗口 / 面板立即收起通知与设置；切到别的应用也收起。
+            self._outside_click = _OutsideClick(self)
+            app.installEventFilter(self._outside_click)
+            app.applicationStateChanged.connect(self._app_state_changed)
 
     # ── clock & geometry ──
     def now(self):
@@ -968,6 +996,39 @@ class PetWidget(QWidget):
             zone = zone.united(self.toolbar.geometry().adjusted(-14, -14, 14, 14))
         return zone.contains(cursor)
 
+    def transient_surfaces(self):
+        """通知卡与设置面板是「点开看一下就走」的浮层，不是常驻窗口。"""
+        return [s for s in (self._menu, self.activity_card)
+                if s is not None and s.isVisible()]
+
+    def _dismiss_transients(self, keep=None):
+        for surface in self.transient_surfaces():
+            if surface is keep:
+                continue
+            surface.hide()
+            self.surface_closed(surface)
+        self._menu_leave_at = None
+
+    def dismiss_on_outside_click(self, pos):
+        # 点环形按钮时由按钮自己决定开合，别在这里抢先关掉刚要打开的面板。
+        if self.toolbar.isVisible() and self.toolbar.geometry().adjusted(-8, -8, 8, 8).contains(pos):
+            return
+        for surface in self.transient_surfaces():
+            if surface.geometry().adjusted(-8, -8, 8, 8).contains(pos):
+                continue
+            surface.hide()
+            self.surface_closed(surface)
+        self._menu_leave_at = None
+
+    def _app_state_changed(self, state):
+        if state == Qt.ApplicationState.ApplicationInactive:
+            self._dismiss_transients()
+
+    def play(self, kind=None):
+        """「玩一下」：开一局击掌接龙，同时收起还开着的通知 / 设置。"""
+        self._dismiss_transients()
+        self.brain.play(self.now(), kind)
+
     def _attention(self):
         return bool(self.toolbar.isVisible()
                     or any(card is not None and card.isVisible()
@@ -1047,14 +1108,14 @@ class PetWidget(QWidget):
         painter.scale(transform["sx"], transform["sy"])
         fade = transform["fade"]
         if fade is not None:
-            # The outgoing frame fades while the new one comes up a little faster, so the
-            # figure never turns see-through halfway.
+            # The outgoing pose stays fully opaque underneath; only the incoming one
+            # fades in. Drawing both at partial opacity made the entire figure
+            # translucent (and doubled) for the length of every dissolve.
             old_strip, old_frame, old_mirrored, opacity = fade
-            painter.setOpacity(opacity)
             painter.drawPixmap(QPointF(-self.anchor_pt[0], -self.anchor_pt[1]),
                                self.sprites.pixmap(old_strip, old_frame, old_mirrored, brain.scale,
                                                    self.devicePixelRatioF()))
-            painter.setOpacity(1 - opacity * opacity)
+            painter.setOpacity(1 - opacity)
         painter.drawPixmap(QPointF(-self.anchor_pt[0], -self.anchor_pt[1]), pixmap)
         painter.end()
 
@@ -1081,16 +1142,16 @@ class PetWidget(QWidget):
         result = self.brain.release(self.now(), point.x(), point.y())
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         if result == "click":
-            # React on release; waiting out the double-click interval felt laggy.
-            self.brain.poke(self.now())
+            # React on release; where you clicked picks which small gesture she does.
+            self.brain.poke(self.now(), point.x(), point.y())
         elif result == "drop":
             self._save_preferences()
         event.accept()
 
     def mouseDoubleClickEvent(self, event):
-        self.brain.release(self.now(), event.globalPosition().x(), event.globalPosition().y())
-        self.show_chat()
-        event.accept()
+        # Qt 用 double-click 替代第二次 press，随后才发 release。
+        # 登记这次按下，反应仍由 release 触发，既不漏掉也不重复一次。
+        self.mousePressEvent(event)
 
     def contextMenuEvent(self, event):
         self.show_menu(event.globalPosition().toPoint())
@@ -1098,6 +1159,15 @@ class PetWidget(QWidget):
 
     def show_menu(self, position=None):
         """右键和环形菜单的「更多」是同一个自绘面板，不再有 Qt 原生 QMenu。"""
+        explicit = isinstance(position, QPoint)     # 右键总是就地打开 / 挪位置
+        if self._menu is not None and self._menu.isVisible() and not explicit:
+            self._menu.hide()                        # 再点一次「更多」就收起
+            self._menu_leave_at = None
+            self.surface_closed(self._menu)
+            return
+        if self.activity_card is not None and self.activity_card.isVisible():
+            self.activity_card.hide()                # 通知与设置互斥
+            self.surface_closed(self.activity_card)
         if self._menu is None:
             self._menu = PetMoreMenu(self)
         self._menu.sync()
@@ -1233,6 +1303,8 @@ class PetWidget(QWidget):
                 self.toolbar.hide()
 
     def show_chat(self):
+        self.brain.cancel_game(self.now())
+        self._dismiss_transients()
         if self.chat_bar is None:
             self.chat_bar = ChatBar(self)
         self.chat_bar.update_status()
@@ -1243,6 +1315,8 @@ class PetWidget(QWidget):
         self.chat_bar.entry.setFocus()
 
     def show_voice(self):
+        self.brain.cancel_game(self.now())
+        self._dismiss_transients()
         if self.voice_card is None:
             self.voice_card = VoiceCard(self)
         self.voice_card.update_status()
@@ -1253,11 +1327,20 @@ class PetWidget(QWidget):
         self.start_voice()
 
     def _voice_status(self, state, message):
+        if state == "listening" and self._voice_muted:
+            state, message = "muted", "麦克风已静音。"
         self.voice_state, self.voice_message = state, message
-        if state in ("idle", "closed", "listening", "muted") and not self.chat_busy:
+        if state != "thinking" and not self.chat_busy:
             self.brain.chat_pending = False
             if self.brain.bubble is not None and self.brain.bubble.kind == "think":
                 self.brain.bubble = None
+        if self._voice_started:
+            clip = {"permission": "idle", "connecting": "think", "listening": "listen",
+                    "thinking": "think", "speaking": "talk", "muted": "idle", "idle": "idle"}.get(state)
+            if clip is not None:
+                self.brain.set_state(clip, self.now(), source="local")
+        elif state == "closed":
+            self.brain.clear_state(self.now(), source="local")
         if self.voice_card is not None:
             self.voice_card.update_status()
         if self.chat_bar is not None:
@@ -1277,8 +1360,6 @@ class PetWidget(QWidget):
         self._voice_problem = ""
         self._voice_generation += 1
         generation = self._voice_generation
-        # 语音会话真的在持续，状态一直演到结束，不是靠长超时「假装在忙」。
-        self.brain.set_state("listen", self.now(), seconds=3600.0)
         self._voice_status("permission", "请允许麦克风，连好后就能直接说话。")
         self.permission_request(lambda granted, message:
                                 self.voice_signals.permission.emit(generation, granted, message))
@@ -1289,7 +1370,6 @@ class PetWidget(QWidget):
             return
         if not granted:
             self._voice_started = False
-            self.brain.clear_state(self.now())
             self._voice_status("closed", message)
             return
         self._voice_status("connecting", "正在连接语音…")
@@ -1300,7 +1380,6 @@ class PetWidget(QWidget):
     def end_voice(self):
         self._voice_generation += 1
         self._voice_started = False
-        self.brain.clear_state(self.now())
         if self.voice_session is not None:
             self.voice_session.close()
             self.voice_session = None
@@ -1350,13 +1429,12 @@ class PetWidget(QWidget):
         elif kind == "error":
             message = str(event.get("message") or "这次语音没接上；没有自动重试。")
             self._voice_problem = message
-            self._voice_status("idle", message)
             if not self.chat_busy:
                 self.brain.chat_failed(self.now(), message)
+            self._voice_status("idle", message)
         elif kind == "closed":
             self._voice_started = False
             self.voice_session = None
-            self.brain.clear_state(self.now())
             self._voice_status("closed", self._voice_problem or "语音已结束，麦克风已关闭。")
 
     def _show_voice_transcript(self, text, *, final):
@@ -1365,7 +1443,8 @@ class PetWidget(QWidget):
         bubble = self.brain.bubble
         if (self._voice_transcript_serial is None
                 or (bubble is not None and bubble.serial != self._voice_transcript_serial)):
-            self.brain.chat_reply(now, text)
+            # 动作只跟真实收音/播放阶段走，字幕先到不等于已经开口。
+            self.brain.chat_reply(now, text, animate=False)
             bubble = self.brain.bubble
             self._voice_transcript_serial = bubble.serial
         elif bubble is None:
@@ -1375,6 +1454,13 @@ class PetWidget(QWidget):
         self.bubble.streaming_serial = bubble.serial
 
     def show_activity(self):
+        if self.activity_card is not None and self.activity_card.isVisible():
+            self._dismiss_transients()               # 再点一次通知就收起
+            return
+        if self._menu is not None and self._menu.isVisible():
+            self._menu.hide()                        # 通知与设置互斥
+            self._menu_leave_at = None
+            self.surface_closed(self._menu)
         if self.activity_card is None:
             self.activity_card = ActivityCard(self)
         left, top, right, bottom = self.brain.body_rect()
@@ -1390,10 +1476,17 @@ class PetWidget(QWidget):
         self.toolbar.activity.set_badge(0)
 
     def surface_closed(self, surface):
-        if not self._closing:
+        if self._closing:
+            return
+        # 还有别的窗口开着时别急着松手，否则聊天框开着她也会跑去乱走。
+        still_open = any(card is not None and card is not surface and card.isVisible()
+                         for card in (self.chat_bar, self.activity_card,
+                                      self.proposal_card, self.voice_card))
+        if not still_open:
             self.brain.set_attention(False, self.now())
 
     def feed(self):
+        self._dismiss_transients()               # 投喂完收起面板，好看她吃
         self.brain.feed(self.now())
 
     def propose(self, action):
@@ -1511,9 +1604,6 @@ class PetWidget(QWidget):
                 data = result["value"]
                 events = [e for e in (data.get("events") or []) if isinstance(e, dict)]
                 fresh = [e for e in events if not self.brain.has_seen(e)]
-                # 本机语音会话是真实且持续的状态：面板里的群活动别把它覆盖掉。
-                if self._voice_started and isinstance(data, dict) and "state" in data:
-                    data = {k: v for k, v in data.items() if k != "state"}
                 self.brain.observe(now, data)
                 for event in fresh:
                     line = _ACTIVITY.get(event.get("kind"))
@@ -1555,6 +1645,13 @@ class PetWidget(QWidget):
     def closeEvent(self, event):
         self._save_preferences()
         self._closing = True
+        app = QApplication.instance()
+        if app is not None and self._outside_click is not None:
+            app.removeEventFilter(self._outside_click)
+            try:
+                app.applicationStateChanged.disconnect(self._app_state_changed)
+            except (RuntimeError, TypeError):
+                pass
         for timer in (self.poll, self.presence_poll, self.animation):
             timer.stop()
         self.end_voice()

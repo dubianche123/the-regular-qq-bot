@@ -57,7 +57,8 @@ class ShippedStateSpritesTest(unittest.TestCase):
                 self.assertTrue(root.joinpath(spec["actions"][strip]["file"]).is_file())
                 self.assertIn(clip, CUE_ACTIONS)
         total = sum(len(root.joinpath(a["file"]).read_bytes()) for a in spec["actions"].values())
-        self.assertLess(total, 3_000_000)
+        # 与 test_pet_brain 同一个预算：新增四张小幅互动素材后上调到 3.5 MB。
+        self.assertLess(total, 3_500_000)
 
 
 class StateLayerTest(unittest.TestCase):
@@ -158,9 +159,16 @@ class PetMenuTest(unittest.TestCase):
         self.assertIn("class PetToolbar", source)
 
     def test_voice_session_drives_the_listen_state(self):
-        source = ROOT.joinpath("regular", "desktop_pet.py").read_text(encoding="utf-8")
-        self.assertIn('self.brain.set_state("listen"', source)
-        self.assertIn("self.brain.clear_state(self.now())", source)
+        b = brain()
+        b.set_state("listen", 1.0, source="local")
+        b.observe(2.0, ready(state="inspect", events=[
+            {"kind": "state", "id": "a", "ts": 2.0, "state": "checkup"}]))
+        self.assertEqual(b.state_name, "listen")
+        _, clips = run(b, 2.0, STATE_HEARTBEAT + 10)
+        self.assertEqual(b.clip, "listen")
+        b.clear_state(30.0, source="local")
+        b.observe(31.0, ready(state="inspect"))
+        self.assertEqual(b.state_name, "inspect")
 
 
 if __name__ == "__main__":

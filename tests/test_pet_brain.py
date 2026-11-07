@@ -5,7 +5,10 @@ import json
 import random
 import unittest
 
-from regular.pet_brain import ASLEEP, CLIPS, CUE_ACTIONS, FIGURE, LINES, PetBrain, Step
+from regular.pet_brain import (ASLEEP, CARE_COOL_LINES, CARE_FULL_LINES, CARE_GAIN,
+                               CARE_LINES, CARE_MAX, CLIPS, CUE_ACTIONS, FIGURE, LINES, PLAY,
+                               PLAY_CANCEL, PLAY_GAP, PLAY_MAX_STREAK, PLAY_START, PLAY_WINDOW,
+                               TAP_POOL, PetBrain, Step)
 
 LEGAL = {("stand", "stand"), ("sit", "sit"), ("lie", "lie"), ("air", "air"),
          ("stand", "sit"), ("sit", "stand"), ("sit", "lie"), ("lie", "sit"),
@@ -55,7 +58,8 @@ class ShippedSpritesTest(unittest.TestCase):
                 self.assertIn(posture, ("stand", "sit", "lie", "air"))
         self.assertTrue(set(CUE_ACTIONS) <= set(CLIPS))
         total = sum(len(root.joinpath(a["file"]).read_bytes()) for a in spec["actions"].values())
-        self.assertLess(total, 3_000_000)
+        # 四个新增的小幅互动动作各占约 100 KB；预算随素材一起上调，仍卡住失控增长。
+        self.assertLess(total, 3_500_000)
         self.assertEqual((width, height), tuple(spec["frame"]))
 
 
@@ -159,22 +163,101 @@ class InteractionTest(unittest.TestCase):
         b.vy = 2200
         b.y = 200
         _, clips = run(b, 1.06, 2.0, fps=60)
-        self.assertIn("pout", clips)
+        self.assertIn("startle", clips)                       # 摔狠了只哆嗦一下
+        self.assertNotIn("pout", clips)
         self.assertIn(b.bubble.text if b.bubble else "", LINES["thrown"] + ("",))
 
-    def test_click_is_reported_for_the_shell_and_pokes_escalate(self):
+    def test_clicks_rotate_small_reactions_and_never_escalate_to_a_sulk(self):
         b = brain()
         b.press(1.0, 700, 760)
         self.assertEqual(b.release(1.05, 700, 760), "click")
+        seen = []
+        for t in (1.3, 1.9, 2.5, 3.1, 3.7, 4.3):
+            b.poke(t)
+            seen.append(b.clip)
+            self.assertIn(b.clip, TAP_POOL)
+            self.assertNotIn(b.clip, ("pout", "point"))
+        self.assertEqual(len(set(seen)), len(seen))           # 连点不重样
+        self.assertNotIn("!", [p.kind for p in b.particles])
+        self.assertNotIn("puff", [p.kind for p in b.particles])
+
+    def test_clicking_head_body_and_feet_gives_three_different_small_reactions(self):
+        def tap(y):
+            b = brain()
+            left, top, right, bottom = b.body_rect()
+            b.poke(1.0, (left + right) / 2, top + (bottom - top) * y)
+            return b.clip
+        self.assertEqual(tap(0.20), "pat")                    # 摸头
+        self.assertEqual(tap(0.92), "peek")                   # 戳脚边
+        self.assertIn(tap(0.60), TAP_POOL)                    # 身上：轮换的小动作
+
+    def test_play_is_a_multi_tap_rally_not_another_random_gesture(self):
+        b = brain()
+        b.play(1.0)
+        self.assertEqual(b.clip, "highfive")           # 她把手举起来了
+        self.assertTrue(b.game_active)
+        self.assertGreater(b.game_until, 1.0)
+        self.assertIn(b.bubble.text, PLAY_START)
+        b.poke(1.4)                                    # 赶在收手前点到她
+        self.assertEqual(b.game_until, 0.0)
+        self.assertEqual(b.game_streak, 1)
+        self.assertEqual(b.game_best, 1)
+        self.assertGreater(b.game_next_at, 1.4)        # 自动抬下一手，不用再点圆盘
+        self.assertIn(b.clip, ("nod", "cheer"))
+        run(b, 1.4, PLAY_GAP + 0.1)
+        self.assertEqual(b.clip, "highfive")
+        self.assertLess(b.game_until - 2.0, PLAY_WINDOW)   # 连击之后窗口变短
+        b.poke(2.3)
+        self.assertEqual(b.game_streak, 2)
+        lines = []
+        run(b, 2.3, 4.0,                              # 停手：结算这一轮
+            each=lambda t: lines.append(b.bubble.text if b.bubble else ""))
+        self.assertFalse(b.game_active)
+        self.assertEqual(b.game_until, 0.0)
+        self.assertEqual(b.game_streak, 0)
+        self.assertEqual(b.game_best, 2)               # 纪录留着
+        self.assertTrue(any("连了 2 下" in line or "2 连" in line for line in lines))
+
+    def test_chat_cancels_a_rally_without_counting_it_as_a_loss(self):
+        b = brain()
+        b.play(1.0)
         b.poke(1.3)
-        self.assertEqual(b.clip, "startle")
-        self.assertTrue(any(p.kind == "!" for p in b.particles))
-        b.poke(1.8)
-        self.assertEqual(b.clip, "point")
-        self.assertIn(b.bubble.text, LINES["poke_again"])
-        b.poke(2.2)
-        self.assertEqual(b.clip, "pout")
-        self.assertIn(b.bubble.text, LINES["poked_more"])
+        self.assertEqual(b.game_best, 1)
+        b.chat_sent(1.5)
+        self.assertFalse(b.game_active)
+        self.assertEqual(b.game_until, 0.0)
+        self.assertEqual(b.game_next_at, 0.0)
+        self.assertEqual(b.game_best, 1)               # 不算失手，纪录留着
+        self.assertTrue(b.chat_pending)
+
+    def test_cancelling_a_rally_says_so_and_keeps_the_record(self):
+        b = brain()
+        b.play(1.0)
+        b.poke(1.2)
+        b.cancel_game(1.3)
+        self.assertEqual(b.bubble.text, PLAY_CANCEL)
+        self.assertFalse(b.game_active)
+        self.assertEqual(b.game_best, 1)
+
+    def test_a_full_rally_wraps_up_instead_of_holding_her_hand_forever(self):
+        b = brain()
+        b.play(1.0)
+        t = 1.0
+        for _ in range(PLAY_MAX_STREAK):
+            t += 0.2
+            b.poke(t)
+            t = run(b, t, PLAY_GAP + 0.1)[0]
+        self.assertFalse(b.game_active)
+        self.assertEqual(b.game_best, PLAY_MAX_STREAK)
+
+    def test_plain_gestures_never_dissolve_into_a_ghost(self):
+        b = brain()
+        b._queue(Step("pat"), Step("idle", 2), now=0.0, interrupt=True)
+        t = 0.0
+        for _ in range(30 * 3):
+            t += 1 / 30
+            b.tick(t)
+            self.assertIsNone(b.pose(t)[3]["fade"])
 
     def test_a_seated_poke_flinches_in_place(self):
         b = brain()
@@ -182,7 +265,7 @@ class InteractionTest(unittest.TestCase):
         run(b, 0.0, 2)
         self.assertEqual(b.clip, "tea")
         b.poke(3.0)
-        self.assertEqual(b.clip, "tea")
+        self.assertEqual(b.clip, "tea")                       # 坐着不为小动作站起来
         self.assertLess(b.transform(3.1)["dy"], 0)
         self.assertIn(b.bubble.text, LINES["poke"])
 
@@ -246,7 +329,7 @@ class InteractionTest(unittest.TestCase):
             still.tick(t)
             self.assertIsNone(still.pose(t)[3]["fade"])
 
-    def test_rubbing_her_head_makes_her_shy(self):
+    def test_rubbing_her_head_makes_her_happy(self):
         b = brain()
         b._queue(Step("idle", 30), now=0.0, interrupt=True)
         left, top, right, bottom = b.body_rect()
@@ -255,7 +338,7 @@ class InteractionTest(unittest.TestCase):
         for i in range(10):
             t += 0.1
             b.hover(t, b.x + (18 if i % 2 else -18), y, near=True)
-        self.assertEqual(b.clip, "shy")
+        self.assertEqual(b.clip, "pat")
         self.assertTrue(any(p.kind == "heart" for p in b.particles))
 
     def test_a_nearby_cursor_stops_her_walk_and_she_looks_at_it(self):
@@ -274,7 +357,7 @@ class InteractionTest(unittest.TestCase):
             b.feed(1.0 + i * 5)
             self.assertEqual(b.clip, "eat")
         b.feed(30.0)
-        self.assertEqual(b.clip, "pout")
+        self.assertEqual(b.clip, "peek")                      # 吃不下只歪头，不跺脚
         self.assertIn(b.bubble.text, LINES["full"])
 
 
@@ -323,7 +406,7 @@ class AgentPresenceTest(unittest.TestCase):
         t, clips = run(b, 20.0, 60)
         self.assertEqual(clips, ["drawing"])
         b.poke(t)
-        self.assertEqual(b.clip, "startle")
+        self.assertIn(b.clip, TAP_POOL)                                    # only a small glance up
         t, _ = run(b, t, 5)
         self.assertEqual(b.clip, "drawing")                                # back to the sketchbook
         b.observe(t, ready(events=[{"kind": "drew", "ts": 16.0}]))
@@ -447,6 +530,22 @@ class AgentPresenceTest(unittest.TestCase):
         self.assertEqual(b.clip, "wake")
         self.assertIn(b.bubble.text, LINES["online"])
 
+    def test_qq_offline_does_not_interrupt_a_local_chat_or_its_reply(self):
+        b = brain()
+        b.observe(0.0, ready())
+        b.chat_sent(1.0)
+        b.observe(2.0, {**ready(bot="offline"), "state": "inspect"})
+        self.assertEqual(b.clip, "think")
+        self.assertEqual(b.state_source, "local")
+        self.assertTrue(b.chat_pending)
+        b.chat_reply(3.0, "我在这里和你聊。")
+        b.observe(3.1, ready())
+        b.observe(3.2, ready(bot="offline"))
+        self.assertEqual(b.clip, "talk")
+        self.assertNotIn("sleep", [s.clip for s in b.plan])
+        b.chat_failed(4.0, "这次没接上。")
+        self.assertIsNone(b.state_source)
+
     def test_mood_and_night_shift_what_she_chooses(self):
         def tally(**presence):
             b = brain(seed=11)
@@ -455,7 +554,8 @@ class AgentPresenceTest(unittest.TestCase):
             return Counter(clips)
         happy = tally(mood=0.9)
         grumpy_night = tally(mood=-0.9, circadian="熬到半夜")
-        self.assertGreater(grumpy_night["pout"] + grumpy_night["sleep"], happy["pout"] + happy["sleep"])
+        self.assertGreater(grumpy_night["lookaround"] + grumpy_night["sleep"],
+                           happy["lookaround"] + happy["sleep"])
         self.assertGreater(happy["hop"] + happy["sing"] + happy["cheer"],
                            grumpy_night["hop"] + grumpy_night["sing"] + grumpy_night["cheer"])
 
@@ -477,6 +577,97 @@ class AgentPresenceTest(unittest.TestCase):
         self.assertEqual(b.presence.mood, 0.0)
         self.assertIn(b.presence.bot, ("unknown", "ready", "offline"))
         self.assertNotIn(b.clip, ASLEEP)
+
+
+class CareMoodTest(unittest.TestCase):
+    """摸头 / 喂饼干真的会改心情，但刷不出满心情、也不能一直刷。"""
+
+    @staticmethod
+    def head(b):
+        left, top, right, bottom = b.body_rect()
+        return (left + right) / 2, top + (bottom - top) * 0.2
+
+    def test_petting_and_feeding_really_lift_mood_without_touching_read_only_presence(self):
+        b = brain()
+        b.observe(0.0, ready(mood=-0.4))
+        x, y = self.head(b)
+        self.assertEqual(b.effective_mood, -0.4)
+        b.poke(1.0, x, y)
+        self.assertAlmostEqual(b.warmth, CARE_GAIN["pat"])
+        self.assertGreater(b.effective_mood, -0.4)
+        self.assertIn(b.bubble.text, CARE_LINES["pat"])
+        b.feed(2.0)
+        self.assertGreater(b.warmth, CARE_GAIN["pat"])
+        self.assertIn(b.bubble.text, CARE_LINES["feed"])
+        self.assertEqual(b.presence.mood, -0.4)      # 群聊统计始终是只读的
+
+    def test_repeating_the_same_care_within_cooldown_does_not_stack(self):
+        b = brain()
+        x, y = self.head(b)
+        b.poke(1.0, x, y)
+        first = b.warmth
+        b.poke(3.0, x, y)
+        self.assertLessEqual(b.warmth, first)     # 只会自然衰减，不会叠加
+        self.assertGreater(b.warmth, 0.0)
+        self.assertIn(b.bubble.text, (*CARE_COOL_LINES["pat"], *PLAY["pat"][1]))
+        b.poke(46.0, x, y)                            # 45 秒冷却过了
+        self.assertGreater(b.warmth, first)
+
+    def test_hover_and_click_head_pats_share_the_same_gain_and_cooldown(self):
+        b = brain()
+        x, y = self.head(b)
+        for i in range(10):
+            b.hover(1.0 + i * .1, x + (18 if i % 2 else -18), y, near=True)
+        self.assertEqual(b.clip, "pat")
+        self.assertAlmostEqual(b.warmth, CARE_GAIN["pat"])
+        self.assertIn(b.bubble.text, CARE_LINES["pat"])
+        first = b.warmth
+        b.poke(3.0, x, y)
+        self.assertLessEqual(b.warmth, first)
+        self.assertGreater(b.warmth, 0.0)
+        b._queue(Step("idle", 30), now=4.0, interrupt=True)
+        for i in range(10):
+            b.hover(4.0 + i * .1, x + (18 if i % 2 else -18), y, near=True)
+        self.assertLessEqual(b.warmth, first)
+
+    def test_warmth_has_a_cap_and_says_so(self):
+        b = brain()
+        x, y = self.head(b)
+        for i in range(12):
+            b.poke(1.0 + i * 60.0, x, y)             # 每次都跳过冷却
+            self.assertLessEqual(b.warmth, CARE_MAX + 1e-6)
+        self.assertEqual(b.warmth, CARE_MAX)
+        self.assertIn(b.bubble.text, CARE_FULL_LINES)
+
+    def test_warmth_fades_back_and_never_rewrites_the_group_mood(self):
+        b = brain()
+        b.observe(0.0, ready(mood=-0.4))
+        x, y = self.head(b)
+        b.poke(1.0, x, y)
+        b.tick(301.0)
+        self.assertEqual(b.warmth, 0.0)
+        self.assertEqual(b.effective_mood, -0.4)
+        self.assertEqual(b.presence.mood, -0.4)
+
+    def test_overfeeding_does_not_lift_mood(self):
+        b = brain()
+        for i in range(5):
+            b.feed(1.0 + i * 0.5)
+        self.assertLessEqual(b.warmth, CARE_GAIN["feed"] + 1e-6)
+        self.assertIn(b.bubble.text, LINES["full"])
+
+    def test_a_lifted_mood_really_changes_what_she_chooses_to_do(self):
+        def tally(warmth):
+            b = brain(seed=11)
+            b.observe(0.0, ready(mood=0.0))
+            b.warmth = warmth
+            counts = Counter()
+            for _ in range(400):
+                counts[b._choose(0.0)[0].clip] += 1
+            return counts
+        calm, happy = tally(0.0), tally(CARE_MAX)
+        lively = ("hop", "sing", "cheer")
+        self.assertGreater(sum(happy[k] for k in lively), sum(calm[k] for k in lively))
 
 
 if __name__ == "__main__":

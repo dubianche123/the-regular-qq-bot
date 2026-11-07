@@ -2,7 +2,9 @@
 
 外壳（regular/desktop_pet.py）每帧调用 tick()，把鼠标、聊天和面板给的 presence 喂进来，
 再读 pose() / particles / bubble 画出来。这里不保存、不改写机器人的任何状态：
-心情、作息、群里发生了什么都只读，桌宠只是把小王「此刻在干嘛」演出来。
+群聊心情、作息、群里发生了什么都只读，桌宠只是把小王「此刻在干嘛」演出来。
+唯一的例外是桌宠自己的 warmth —— 摸头、喂饼干带来的短暂好心情，有上限、
+有独立冷却、会随时间消退；它只叠加在只读心情之上，从不写回 presence。
 
 坐标单位是屏幕逻辑像素（点），(x, y) 是脚底锚点；scale 是人物大小倍率。
 """
@@ -48,10 +50,13 @@ CLIPS = {
     "drawing": ("draw", [0, 1, 0, 1, 0, 1, 2, 2], 2.6, True, "stand"),   # 小王正在给群里画：一直画
     "show_drawing": ("draw", [3], 1, False, "stand"),                    # 画好了，举起来给你看
     "sing": ("sing", [0, 1, 2, 3], 2.2, True, "stand"),
-    "pout": ("pout", [0, 1, 0, 3, 2, 3], 2.4, False, "stand"),
-    "shy": ("shy", [0, 1, 2, 3], 2.8, False, "stand"),
-    "startle": ("startle", [0, 0, 1, 3, 3], 5, False, "stand"),
+    # 退役的大幅动作：抬脚跺地 → 抱臂背身 → 转回来瞪人。素材留着兼容旧存档，
+    # 但任何点击、起床、投喂、落地、日常动作都不再触发（见 poke/feed/_physics/_choose）。
+    "pout": ("pout", [0], 1.0, False, "stand"),
     "point": ("startle", [2], 1, False, "stand"),
+    "shy": ("shy", [0, 1, 2, 3], 2.8, False, "stand"),
+    # 只留「吓一跳 + 抬手挡一下」两帧，砍掉转身笑 / 指人的大幅度帧。
+    "startle": ("startle", [0, 1, 0, 1], 4.0, False, "stand"),
     "cheer": ("cheer", [0, 1, 2, 3], 3.5, False, "stand"),
     "tea": ("tea", [0, 1, 2, 0, 3, 0], 0.8, True, "sit"),
     "lookaround": ("lookaround", [0, 1, 2, 3], 1.3, False, "stand"),
@@ -65,6 +70,11 @@ CLIPS = {
     "checkup": ("checkup", [0, 1, 2, 3], 1.6, True, "sit"),          # 蹲下举放大镜做体检
     "handoff": ("handoff", [0, 1, 2, 3], 2.0, True, "stand"),        # 迈步递便签给 Agent
     "stuck": ("stuck", [0, 1, 2, 3], 1.6, True, "stand"),            # 挠头摊手：这项没配好
+    # 互动层：只动头、一只手和眼皮，脚不动、不转身、不指人、不生气。
+    "pat": ("pat", [0, 1, 2, 3], 1.6, False, "stand"),                # 被摸头，眯眼笑
+    "highfive": ("highfive", [0, 1, 2, 3], 1.6, False, "stand"),      # 举着等你击掌
+    "peek": ("peek", [0, 1, 2, 3], 1.6, False, "stand"),              # 手背后歪头看你
+    "nod": ("nod", [0, 1, 2, 3], 1.6, False, "stand"),                # 轻轻点个头
 }
 # Transition clips start from another posture than the one they end in.
 STARTS_FROM = {"sit_down": "stand", "stand_up": "sit", "doze": "sit", "lie_down": "sit", "wake": "lie",
@@ -74,15 +84,61 @@ BRIDGES = {("stand", "sit"): ["sit_down"], ("stand", "lie"): ["sit_down", "doze"
            ("lie", "sit"): ["wake"], ("lie", "stand"): ["wake", "get_up"]}
 ASLEEP = frozenset({"sleep", "doze", "lie_down"})
 WAKING = frozenset({"wake", "grumble", "get_up"})
+SLOW_BLEND = ASLEEP | WAKING          # 起床 / 入睡演出允许在换动作时叠画，普通动作不叠
 # Seconds a new frame dissolves in from the previous one. Only slow and posture-changing clips blend:
 # blinks, walking, hops and a startled flinch stay crisp. Between two clips the longer blend wins.
 BLEND = {"wake": 0.22, "grumble": 0.2, "get_up": 0.16, "lie_down": 0.25, "doze": 0.3, "sleep": 0.5,
          "sit_down": 0.1, "stand_up": 0.1, "sit_swing": 0.25, "read": 0.2, "tea": 0.25, "laptop": 0.12,
-         "stretch": 0.12, "reply": 0.15, "checkup": 0.15}
+         "stretch": 0.12, "reply": 0.15, "checkup": 0.15,
+         "pat": 0.18, "highfive": 0.16, "peek": 0.18, "nod": 0.18}
 # Clips a coding agent may request through the panel; physics/transition clips stay internal.
+# pout / point 已从可请求列表移除：那套「跺脚 + 背身 + 指人」不再出现在任何交互里。
 CUE_ACTIONS = ("wave", "hop", "cheer", "talk", "think", "phone", "laptop", "draw", "sing", "read", "tea",
-               "stretch", "lookaround", "shy", "pout", "startle", "eat", "sleep",
-               "reply", "listen", "inspect", "checkup", "handoff", "stuck")
+               "stretch", "lookaround", "shy", "startle", "eat", "sleep",
+               "reply", "listen", "inspect", "checkup", "handoff", "stuck",
+               "pat", "highfive", "peek", "nod")
+# 主动互动池：每一下都只换一个小幅姿势，且不与上一次重复。
+PLAY = {
+    "pat": ("摸摸头", ("嘿嘿，舒服。", "再摸一下也行。", "（眯起眼睛）")),
+    "highfive": ("击个掌", ("击掌！", "来，啪～", "手给我！")),
+    "peek": ("歪头看你", ("在看什么呀？", "嗯？", "我在呢。")),
+    "nod": ("点个头", ("好呀。", "收到～", "嗯嗯。")),
+    "shy": ("害羞一下", ("嘿嘿。", "别看啦～", "有点不好意思。")),
+    "think": ("想一想", ("让我想想……", "嗯……", "有主意了！")),
+    "wave": ("挥挥手", ("嗨～", "在这儿呢！", "你来啦。")),
+    "lookaround": ("看看四周", ("刚刚有动静？", "东张西望一下。", "没谁呀。")),
+}
+TAP_POOL = tuple(PLAY)
+# 「玩一下」是一局击掌接龙，不是再抽一个小动作：她举手，你得在她收手前点到她。
+PLAY_WINDOW = 2.4                  # 第一下的反应时间
+PLAY_MIN_WINDOW = 1.05            # 连击越快，窗口越短，但不会短到没法玩
+PLAY_SPEEDUP = 0.16
+PLAY_GAP = 0.55                   # 接住之后她重新抬手前的空档
+PLAY_MAX_STREAK = 8               # 一口气接满就收工，别让她一直举着手
+PLAY_START = ("来，击个掌！", "手举着呢，快点～", "接住这一下！")
+PLAY_AGAIN = ("又来了！", "还有！", "接着～")
+PLAY_HIT = ("啪！接住了。", "手挺快啊。", "嘿，接得漂亮。")
+PLAY_STREAK = ("连着 {n} 下！", "{n} 连了，再来？", "越来越快了，{n} 下！")
+PLAY_BEST = ("新纪录：{n} 连！", "破纪录啦，{n} 下！")
+PLAY_MISS = ("慢了半拍～", "手缩回来啦。", "这下没接着，再来？")
+PLAY_OVER = ("这一轮连了 {n} 下，最高 {m}。", "收工！{n} 连，纪录 {m}。")
+PLAY_WAIT = ("别急，手还没举起来呢～", "等一下下～")
+PLAY_CANCEL = "先聊，回头接着玩。"
+# 被照顾的心情：摸头和喂饼干真的会让她高兴一阵，但刷不出满心情，也会自己消退。
+# presence.mood 仍是面板给的只读统计；这里只叠一层桌宠自己的加成，不改写它。
+CARE_GAIN = {"pat": 0.18, "feed": 0.26}
+CARE_COOLDOWN = {"pat": 45.0, "feed": 90.0}   # 两种互动各自冷却，短时间重复不叠加
+CARE_MAX = 0.6
+CARE_DECAY = CARE_MAX / 300.0                 # 约五分钟回落到 0
+CARE_LINES = {
+    "pat": ("今天心情很好。", "嘿嘿，被你摸得开心了。", "（往你手心里蹭了蹭）"),
+    "feed": ("吃饱了，心情也好了。", "这一块最香。", "（眯着眼嚼完）"),
+}
+CARE_COOL_LINES = {
+    "pat": ("刚摸过啦～", "还痒着呢。"),
+    "feed": ("刚吃过一块啦。", "留着下回再吃～"),
+}
+CARE_FULL_LINES = ("今天开心够啦～", "够啦够啦，先歇会儿。")
 # 状态层：面板每次心跳带来的是「现在」的状态，不是一件事发生过。
 # STATE_HEARTBEAT 是心跳丢失后还能撑多久；状态一停她就会自己回到日常，不用长超时假装忙。
 STATE_CLIPS = {"reply": "reply", "listen": "listen", "inspect": "inspect",
@@ -113,12 +169,13 @@ LINES = {
     "voice": ("（在群里发了条语音）", "唱完啦～"),
     "offline": ("机器人没在运行，我先眯一会儿。",),
     "online": ("连上 QQ 啦。", "我回来了。"),
-    "poke": ("嗯？", "哇！", "吓我一跳。"),
-    "poke_again": ("干嘛呀。", "又戳！", "你是不是很闲？"),
-    "poked_more": ("别戳啦！", "再戳要生气了哦。", "哼。"),
-    "woken": ("唔……谁呀。", "刚睡着……", "（起床气）"),
+    "poke": ("嗯？", "在呢。", "怎么啦？"),
+    "poke_again": ("又戳～", "我还在这儿呢。", "嘿嘿。"),
+    "poked_more": ("连着戳呀。", "好好好，我在。", "陪你玩会儿？"),
+    "woken": ("唔……谁呀。", "刚睡着……", "醒啦。"),
     "waking": ("醒了醒了……", "在起了在起了。"),
     "petted": ("嘿嘿。", "再摸一下也行。", "舒服——"),
+    "tapped_feet": ("痒！", "脚脚不许戳～", "嘿嘿。"),
     "lifted": ("哇哇——", "放我下来！", "要去哪儿？"),
     "thrown": ("晕……", "轻点嘛！"),
     "bonk": ("哎哟！", "撞到头了……", "咚！"),
@@ -211,16 +268,29 @@ class PetBrain:
         self.agent_busy_until = 0.0
         self.last_agent_event = -1000.0
         self.media: str | None = None    # laptop / drawing / sing while 小王 searches, draws or records in QQ
-        # 状态层：面板心跳带来的「此刻在干嘛」，优先级高于事件层与随机 ambient。
+        # 状态层：本地对话优先，其余跟面板心跳；都高于日志事件与随机 ambient。
         self.state_clip: str | None = None
         self.state_name: str | None = None
         self.state_until = 0.0
+        self.state_source: str | None = None  # panel heartbeat / local conversation
         self.energy = 1.0
         self.last_interaction = now
         self.pokes: deque = deque(maxlen=6)
         self._shown = (None, None, None, None)   # strip, frame, mirrored, clip on screen
         self._fade = None                        # (strip, frame, mirrored, started, seconds) dissolving out
         self.feeds: deque = deque(maxlen=6)
+        self.warmth = 0.0                # 被照顾出来的短暂好心情，独立于只读的群聊心情
+        self._warmth_at = now
+        self._care_at = {"pat": -1000.0, "feed": -1000.0}
+        self._last_tap_clip: str | None = None     # 连点不重样
+        self._tap_bag: list[str] = []             # 洗牌袋：一轮里不重复
+        self._last_tap_at = -1000.0
+        self._last_play_at = -1000.0
+        self.game_active = False           # 一整局连点是否还在进行
+        self.game_until = 0.0              # 当前这一下的截止时刻，0 = 手没举着
+        self.game_next_at = 0.0            # 接住之后自动抬下一手的时刻
+        self.game_streak = 0
+        self.game_best = 0
         self.pointer = _Pointer()
         self.attention = False
         self._greeted_at = -1000.0
@@ -307,16 +377,30 @@ class PetBrain:
         return strip, frame, mirrored
 
     def _track_frame(self, now):
-        """Start a dissolve when the drawn frame changes inside or between slow clips."""
+        """Dissolve only when the CLIP changes; frames inside one strip stay crisp.
+
+        Blending every frame change used to draw two half-transparent copies of her
+        on top of each other, so the whole figure visibly dimmed and grew a ghost
+        outline several times per gesture. A dissolve is for posture changes, not
+        for the ordinary frames of an animation.
+        """
         shown = self._frame(now) + (self.clip,)
         old = self._shown
         if shown[:3] == old[:3]:
             return
         self._shown = shown
-        seconds = 0.0
-        if self.motion and self.mode == "ground" and old[0] is not None:
-            seconds = BLEND.get(self.clip, 0.0) if old[3] == self.clip else max(
-                BLEND.get(old[3], 0.0), BLEND.get(self.clip, 0.0))
+        changed_clip = old[3] is not None and old[3] != self.clip
+        if not changed_clip:
+            return                         # let a dissolve already in flight finish
+        # Only posture changes and the deliberately slow waking / falling-asleep
+        # clips dissolve. Two standing poses on top of each other just make a
+        # double outline; that was the source of the visible image flicker.
+        needs_dissolve = (CLIPS[old[3]][4] != CLIPS[self.clip][4]
+                          or old[3] in SLOW_BLEND or self.clip in SLOW_BLEND)
+        if not self.motion or self.mode != "ground" or not needs_dissolve:
+            self._fade = None
+            return
+        seconds = max(BLEND.get(old[3], 0.0), BLEND.get(self.clip, 0.0))
         self._fade = (old[0], old[1], old[2], now, seconds) if seconds else None
 
     def _fading(self, now):
@@ -433,13 +517,13 @@ class PetBrain:
         drowsy = p.circadian == "午后有点困"     # an afternoon nap now and then, not all afternoon
         offline = p.known and p.bot != "ready"
         engaged = not offline and now - self.last_agent_event < ENGAGED_SECONDS
-        mood = p.mood if p.known else 0.0
+        mood = self.effective_mood
         r = self.rng.uniform
         # 状态层最优先：系统此刻在做的事，比「刚才发生过什么」和随机卖萌都准。
         # 被打断（戳一下、拖一下、聊一句）之后还能回到这个动作，直到心跳停掉。
         if self.state_clip and now < self.state_until:
             return [Step(self.state_clip, hold="state"), Step("idle", 1)]
-        self.state_clip, self.state_name = None, None
+        self.state_clip, self.state_name, self.state_source = None, None, None
         if self.media and now < self.agent_busy_until:
             # Back from a poke, a drag or a local chat: the drawing in QQ is still going.
             return [Step(self.media, hold="agent"), Step("idle", 1)]
@@ -447,7 +531,7 @@ class PetBrain:
         if self.attention:
             return [Step("idle", 1.5)]
         weights = {
-            "idle": 3.0, "wander": 0.0 if self.quiet or self.pointer.near else 2.6, "lookaround": 0.7,
+            "idle": 3.0, "wander": 0.0 if self.quiet or self.pointer.near else 2.6,
             "stretch": 0.4 + (1.6 if sleepy or drowsy or p.circadian == "刚睡醒" else 0.0),
             "tea": 0.8 + max(0.0, mood), "read": 0.8, "laptop": 0.4,
             "phone": 0.5 + min(2.5, p.chatter * 0.4),
@@ -455,7 +539,8 @@ class PetBrain:
                    + (5.0 if offline else 0.0) + (2.0 if self.energy < 0.4 else 0.0),
             "hop": 0.2 + max(0.0, mood) * 1.6, "sing": 0.2 + max(0.0, mood) * 1.2,
             "cheer": max(0.0, mood - 0.3) * 1.5, "draw": 0.3,
-            "pout": max(0.0, -mood - 0.2) * 3.0, "sit": 0.5,
+            # 心情差也只多张望两下，不再随机演一套跺脚背身。
+            "lookaround": 0.7 + max(0.0, -mood - 0.2) * 2.0, "sit": 0.5,
         }
         if not self.motion:
             weights = {"idle": 5.0, "read": 1.0, "tea": 1.0, "nap": weights["nap"], "phone": weights["phone"]}
@@ -481,8 +566,6 @@ class PetBrain:
             return [Step("sleep", 900.0 if offline else r(40, 120)), Step("wake"), Step("get_up")]
         if choice == "phone":
             return [Step("phone", r(5, 12)), Step("idle", 1.5)]
-        if choice == "pout":
-            return [Step("pout"), Step("idle", r(2, 4))]
         return [Step(choice)]
 
     def _weighted(self, weights):
@@ -498,6 +581,7 @@ class PetBrain:
     def tick(self, now):
         dt = max(0.0, min(0.1, now - self._now))
         self._now = now
+        self._decay_warmth(now)
         asleep = self.clip in ASLEEP
         self.energy = max(0.0, min(1.0, self.energy + (dt / 240 if asleep else -dt / 2400)))
         if self.mode == "air":
@@ -511,6 +595,18 @@ class PetBrain:
             self.blink_at = now + (0.3 if self.rng.random() < 0.15 else self.rng.uniform(2.4, 6.0))
         self._particles(now, dt)
         self._track_frame(now)
+        if self.game_active and self.game_next_at and now >= self.game_next_at:
+            self.game_next_at = 0.0
+            if self.mode == "ground" and not self.chat_pending:
+                self._game_round(now)
+            else:
+                self.cancel_game(now)
+        if self.game_until and now >= self.game_until:
+            self.game_until = 0.0
+            if self.chat_pending:
+                self.cancel_game(now)      # 聊天抢走了点击，不算你失误
+            else:
+                self._game_miss(now)       # 停手了：结算这一轮
         if self.bubble is not None and now >= self.bubble.until:
             self.bubble = None
 
@@ -518,8 +614,9 @@ class PetBrain:
         self.y = self.floor
         step = self.step
         if step is not None and step.target_x is not None and self.clip == "walk":
-            speed = WALK_SPEED * self.scale * (1.15 if self.presence.mood > 0.3
-                                               else 0.85 if self.presence.mood < -0.3 else 1.0)
+            mood = self.effective_mood
+            speed = WALK_SPEED * self.scale * (1.15 if mood > 0.3
+                                               else 0.85 if mood < -0.3 else 1.0)
             delta = step.target_x - self.x
             self.x += max(-speed * dt, min(speed * dt, delta))
             self.facing = 1 if delta >= 0 else -1
@@ -580,7 +677,7 @@ class PetBrain:
             self._set_clip("land", now, restart=True)
             steps = [Step("land")]
             if impact > 1900 * self.scale:
-                steps.append(Step("pout"))
+                steps.append(Step("startle"))       # 摔狠了只哆嗦一下，不再跺脚瞪人
                 self.say(self.rng.choice(LINES["thrown"]), now=now, seconds=3.0)
                 self._emit("sweat", now)
             self._queue(*steps, Step("idle", 1.5), now=now, interrupt=True)
@@ -663,16 +760,16 @@ class PetBrain:
         p.x, p.y = x, y
 
     def _petted(self, now):
+        """Hovering back and forth over her head is a head pat; clicking the head does the same."""
         self.last_interaction = now
         if self.clip in ASLEEP:
             self.say("（翻了个身）", now=now, seconds=2, kind="status")
             return
-        if self.clip == "shy" or self.chat_pending:
+        if self.clip == "pat" or self.chat_pending:
             return
-        self._queue(Step("shy"), Step("idle", 2.0), now=now, interrupt=True)
-        self._emit("heart", now, 2)
-        if self.rng.random() < 0.5:
-            self.say(self.rng.choice(LINES["petted"]), now=now, seconds=2.6)
+        state = self._care(now, "pat")
+        self._react(now, "pat", self._care_lines("pat", state), "heart",
+                    seconds=2.4, emit=4 if state == "gain" else 1)
 
     def press(self, now, x, y):
         self._press = (now, x, y)
@@ -716,58 +813,214 @@ class PetBrain:
             return "drop"
         return "click" if pressed is not None else None
 
-    def poke(self, now):
-        """A click reacts at once and escalates: flinch, then "干嘛呀", then a pout."""
+    @property
+    def effective_mood(self):
+        """只读的群聊心情 + 被照顾出来的加成；presence 本身永远不改。"""
+        base = self.presence.mood if self.presence.known else 0.0
+        return max(-1.0, min(1.0, base + self.warmth))
+
+    def _decay_warmth(self, now):
+        """按真实经过的时间回落，而不是按帧数——时间跳跃也不会留下假心情。"""
+        elapsed = max(0.0, now - self._warmth_at)
+        self._warmth_at = now
+        if elapsed and self.warmth > 0:
+            self.warmth = max(0.0, self.warmth - elapsed * CARE_DECAY)
+
+    def _care(self, now, kind):
+        """一次有意的照顾真的抬高心情，但有上限和各自独立的冷却。
+
+        「到顶」看的是这次还能加多少，而不是 warmth 是否正好等于上限——
+        它会一直衰减，照等号判断的话这句提醒永远不会出现。
+        """
+        self._decay_warmth(now)
+        room = CARE_MAX - self.warmth
+        if room <= 1e-6:
+            return "full"
+        if now - self._care_at[kind] < CARE_COOLDOWN[kind]:
+            return "cooldown"
+        self._care_at[kind] = now
+        gain = min(CARE_GAIN[kind], room)
+        self.warmth += gain
+        return "gain" if gain >= CARE_GAIN[kind] - 1e-6 else "full"
+
+    def _care_lines(self, kind, state):
+        if state == "gain":
+            return CARE_LINES[kind]
+        if state == "full":
+            return CARE_FULL_LINES
+        plain = PLAY["pat"][1] if kind == "pat" else LINES["fed"]
+        return (*CARE_COOL_LINES[kind], *plain)
+
+    def _tap_zone(self, x, y):
+        """Head / body / feet of the figure in screen points; unknown coordinates count as the body."""
+        if x is None or y is None:
+            return "body"
+        left, top, right, bottom = self.body_rect()
+        if not (left <= x <= right and top <= y <= bottom):
+            return "body"
+        frac = (y - top) / max(1.0, bottom - top)
+        return "head" if frac < 0.42 else "feet" if frac > 0.82 else "body"
+
+    def _next_tap_clip(self):
+        """洗牌袋：一轮里每个小幅动作都轮到一次，且不与上一次重复。"""
+        if not self._tap_bag:
+            self._tap_bag = list(TAP_POOL)
+            self.rng.shuffle(self._tap_bag)
+        index = len(self._tap_bag) - 1
+        if self._tap_bag[index] == self._last_tap_clip and len(self._tap_bag) > 1:
+            index = 0
+        clip = self._tap_bag.pop(index)
+        self._last_tap_clip = clip
+        return clip
+
+    def _react(self, now, clip, line, particle="sparkle", seconds=2.2, emit=1):
+        self._queue(Step(clip), Step("idle", 1.5), now=now, interrupt=True)
+        self._emit(particle, now, emit)
+        self.say(self.rng.choice(line), now=now, seconds=seconds)
+
+    def poke(self, now, x=None, y=None):
+        """A click is a small greeting. Where you click picks the reaction.
+
+        No foot stomping, no turning away, no accusing finger, no escalation into a sulk:
+        consecutive taps simply rotate through a pool of near-static gestures.
+        """
         self.pokes.append(now)
         self.last_interaction = now
-        if self.chat_pending or self.mode != "ground":
+        if self.game_active:
+            # 一局进行中，所有点击都归游戏：既不会被双击聊天抢走，也不会
+            # 顺手再放一个小动作盖掉命中演出。
+            self._last_tap_at = now
+            if self.game_until and now <= self.game_until and self.mode == "ground" and not self.chat_pending:
+                self.game_until = 0.0
+                self._game_hit(now)
+            elif not self.chat_pending:
+                self.say(self.rng.choice(PLAY_WAIT), now=now, seconds=1.2)
             return
+        if self.chat_pending or self.mode != "ground" or now - self._last_tap_at < 0.30:
+            return
+        self._last_tap_at = now
         if self.clip in ASLEEP:
-            # A twitch, then she wakes the slow way: stir, sit up rubbing an eye, a heavy-lidded look, get up.
-            # Nodding off while still seated skips the lying frames instead of lying down first.
+            # Waking stays a slow, seated stretch: stir, sit up, heavy-lidded look, stand.
+            # Nodding off while still seated skips the lying frames.
             self.jolt_started = now
             lying = [Step("wake")] if self.posture() == "lie" else []
-            self._queue(*lying, Step("grumble", 1.2), Step("get_up"), Step("idle", 2), now=now, interrupt=True)
+            self._queue(*lying, Step("grumble", 1.2), Step("get_up"), Step("idle", 2),
+                        now=now, interrupt=True)
             self.say(self.rng.choice(LINES["woken"]), now=now, seconds=3.2)
             return
         if self.clip in WAKING:
-            # Already getting up: restarting the sequence would make her jump back to lying down.
             if self.bubble is None:
                 self.say(self.rng.choice(LINES["waking"]), now=now, seconds=2)
             return
-        recent = sum(1 for t in self.pokes if now - t < 6)
-        self.jolt_started = now
-        if recent >= 3:
-            self.pokes.clear()
-            self._queue(Step("pout"), Step("idle", 2), now=now, interrupt=True)
-            self._emit("puff", now)
-            self.say(self.rng.choice(LINES["poked_more"]), now=now, seconds=2.6)
-            return
-        self._emit("!", now)
         if self.posture() == "sit":
-            # Seated: flinch in place instead of standing up just to be startled.
-            self.say(self.rng.choice(LINES["poke" if recent == 1 else "poke_again"]), now=now, seconds=2)
-            return
-        if recent == 2:
-            self._queue(Step("point", 1.4), Step("idle", 1.5), now=now, interrupt=True)
-            self.say(self.rng.choice(LINES["poke_again"]), now=now, seconds=2)
-            return
-        self._queue(Step("startle"), Step("idle", 1.5), now=now, interrupt=True)
-        if self.rng.random() < 0.6:
+            # 坐着看书喝茶时只哆嗦一下、应一声，不为了一个小动作站起来。
+            self.jolt_started = now
             self.say(self.rng.choice(LINES["poke"]), now=now, seconds=2)
+            return
+        recent = sum(1 for t in self.pokes if now - t < 6)
+        zone = self._tap_zone(x, y)
+        if zone == "head":
+            self._last_tap_clip = "pat"
+            state = self._care(now, "pat")
+            self._react(now, "pat", self._care_lines("pat", state), "heart",
+                        seconds=2.4, emit=4 if state == "gain" else 1)
+        elif zone == "feet":
+            self._last_tap_clip = "peek"
+            self._react(now, "peek", LINES["tapped_feet"], "sparkle")
+        else:
+            clip = self._next_tap_clip()
+            self._react(now, clip, PLAY[clip][1],
+                        "heart" if clip in ("shy", "peek") else "sparkle")
+            if recent >= 3 and self.rng.random() < 0.35:
+                self.say(self.rng.choice(LINES["poked_more"]), now=now, seconds=2.2)
+
+    def _game_round(self, now):
+        """抬一次手，等你在窗口里点到她。"""
+        window = max(PLAY_MIN_WINDOW, PLAY_WINDOW - PLAY_SPEEDUP * self.game_streak)
+        self.game_until = now + window
+        self._queue(Step("highfive", window), Step("idle", 1.5), now=now, interrupt=True)
+        self._emit("sparkle", now, 2)
+        prompt = PLAY_START if self.game_streak == 0 else PLAY_AGAIN
+        self.say(self.rng.choice(prompt), now=now, seconds=window)
+
+    def _game_hit(self, now):
+        self.game_streak += 1
+        record = self.game_streak > self.game_best
+        self.game_best = max(self.game_best, self.game_streak)
+        milestone = self.game_streak >= 3 and self.game_streak % 3 == 0
+        if record and self.game_streak >= 3:
+            text = self.rng.choice(PLAY_BEST).format(n=self.game_streak)
+        elif self.game_streak >= 2:
+            text = self.rng.choice(PLAY_STREAK).format(n=self.game_streak)
+        else:
+            text = self.rng.choice(PLAY_HIT)
+        self._queue(Step("cheer" if milestone else "nod"), Step("idle", 2.0),
+                    now=now, interrupt=True)
+        self._emit("heart" if milestone else "sparkle", now, 5 if milestone else 2)
+        self.say(text, now=now, seconds=2.6)
+        if self.game_streak >= PLAY_MAX_STREAK:
+            self._game_miss(now, done=True)       # 一口气接满，收工
+        else:
+            self.game_next_at = now + PLAY_GAP    # 自动抬下一手，不用再点圆盘
+
+    def _game_miss(self, now, *, done=False):
+        """停手 / 超时就结算这一轮；done=True 是接满收工，不算失手。"""
+        streak, best = self.game_streak, self.game_best
+        self.game_active = False
+        self.game_until = self.game_next_at = 0.0
+        self.game_streak = 0
+        if streak >= 2:
+            text = self.rng.choice(PLAY_OVER).format(n=streak, m=best)
+        else:
+            text = "手真快，收工啦。" if done else self.rng.choice(PLAY_MISS)
+        if not done:
+            self._queue(Step("peek"), Step("idle", 1.8), now=now, interrupt=True)
+        self.say(text, now=now, seconds=2.8)
+
+    def cancel_game(self, now):
+        """聊天 / 语音 / 投喂抢走了点击：本局作废，但不算失手、不扣纪录。"""
+        if not self.game_active:
+            return
+        self.game_active = False
+        self.game_until = self.game_next_at = 0.0
+        self.say(PLAY_CANCEL, now=now, seconds=2.0)
+
+    def play(self, now, kind=None):
+        """「玩一下」开一局击掌接龙：她反复抬手，你一直点，停手就结算。
+
+        一局里所有点击都归游戏，所以双击弹聊天这个入口必须让开。聊天只走
+        圆盘的「聊两句」和网页工作台；它们打开时会取消本局，但不算失手。
+        """
+        self.last_interaction = now
+        if self.chat_pending or self.mode != "ground" or now - self._last_play_at < 0.35:
+            return
+        self._last_play_at = now
+        if self.clip in ASLEEP or self.clip in WAKING:
+            self.poke(now)
+            return
+        if self.game_active:
+            return
+        self.game_active = True
+        self.game_streak = 0
+        self._game_round(now)
 
     def feed(self, now):
         self.feeds.append(now)
         self.last_interaction = now
         if self.chat_pending or self.mode != "ground":
             return
+        self.cancel_game(now)               # 投喂是有意切换，别让她一直举着手
         if sum(1 for t in self.feeds if now - t < 600) > 4:
-            self._queue(Step("pout"), Step("idle", 2), now=now, interrupt=True)
+            # 吃不下也只是歪头看你，不再跺脚生气。
+            self._queue(Step("peek"), Step("idle", 2), now=now, interrupt=True)
             self.say(self.rng.choice(LINES["full"]), now=now, seconds=2.6)
             return
         self.energy = min(1.0, self.energy + 0.15)
+        state = self._care(now, "feed")
         self._queue(Step("eat"), Step("idle", 1.5), now=now, interrupt=True)
-        self.say(self.rng.choice(LINES["fed"]), now=now, seconds=2.4)
+        self.say(self.rng.choice(self._care_lines("feed", state)), now=now, seconds=2.4)
+        if state == "gain":
+            self._emit("heart", now, 3)
 
     def enter(self, now, height):
         """Drop in from above the floor (startup entrance)."""
@@ -789,21 +1042,24 @@ class PetBrain:
 
     # ── local chat ──
     def chat_sent(self, now):
+        self.cancel_game(now)
         self.chat_pending = True
+        self.set_state("think", now, source="local")
         self.last_interaction = now
         if self.mode == "ground":
             busy = "laptop" if self.posture() == "sit" else "think"
             self._queue(Step(busy, hold="chat"), now=now, interrupt=True)
         self.say("…", now=now, seconds=80, kind="think")
 
-    def chat_reply(self, now, text):
+    def chat_reply(self, now, text, *, animate=True):
         self.chat_pending = False
-        if self.mode == "ground":
-            self._queue(Step("talk", max(2.5, min(8.0, len(text) * 0.09))), Step("idle", 2), now=now, interrupt=True)
+        if animate:
+            self.set_state("talk", now, source="local", seconds=max(2.5, min(8.0, len(text) * 0.09)))
         self.say(text, now=now, seconds=max(6.0, min(30.0, 4 + len(text) * 0.16)))
 
     def chat_failed(self, now, message):
         self.chat_pending = False
+        self.clear_state(now, source="local")
         if self.mode == "ground":
             self._queue(Step("lookaround"), Step("idle", 2), now=now, interrupt=True)
         self.say(message, now=now, seconds=6, kind="status")
@@ -826,8 +1082,9 @@ class PetBrain:
         state = data.get("state")
         if isinstance(state, str) and state in STATE_CLIPS:
             self.set_state(state, now)
-        if old.known and old.bot == "ready" and new.bot == "offline":
-            self.state_clip, self.state_name, self.state_until = None, None, 0.0
+        local_active = self.state_source == "local" and now < self.state_until
+        if old.known and old.bot == "ready" and new.bot == "offline" and not local_active:
+            self.clear_state(now)
             self._status_line("offline", now, gap=0)
             if self.mode == "ground" and not self.chat_pending and self.clip not in ASLEEP:
                 self._queue(Step("stretch"), Step("sleep", 900.0), Step("wake"), now=now, interrupt=True)
@@ -848,25 +1105,32 @@ class PetBrain:
     def has_seen(self, event):
         return self._event_key(event) in self._seen_events
 
-    def set_state(self, name, now, *, seconds=None):
-        """面板说「她此刻在做这件事」。同名状态只续心跳，不重排队、不打断演出。"""
-        clip = STATE_CLIPS.get(name)
+    def set_state(self, name, now, *, seconds=None, source="panel"):
+        """本地对话优先于群聊心跳；同名状态只续期，不重排动作。"""
+        if source != "local" and self.state_source == "local" and now < self.state_until:
+            return False
+        clip = name if source == "local" and name in CLIPS else STATE_CLIPS.get(name)
         if clip is None:
             return False
-        self.state_until = now + (STATE_HEARTBEAT if seconds is None else max(0.0, seconds))
-        if self.state_name == name and self.state_clip == clip:
+        duration = math.inf if source == "local" else STATE_HEARTBEAT
+        self.state_until = now + (duration if seconds is None else max(0.0, seconds))
+        if self.state_name == name and self.state_clip == clip and self.state_source == source:
             return True
-        self.state_name, self.state_clip = name, clip
+        self.state_name, self.state_clip, self.state_source = name, clip, source
         self.last_agent_event = now
         if self.mode == "ground" and not self.chat_pending:
             self._queue(Step(clip, hold="state"), Step("idle", 1.5), now=now, interrupt=True)
-            self._status_line(name, now, gap=0)
+            if source != "local":
+                self._status_line(name, now, gap=0)
         return True
 
-    def clear_state(self, now):
+    def clear_state(self, now, *, source=None):
         """状态结束：立刻回到日常，不要等一个假装还在忙的长超时。"""
+        if source is not None and self.state_source != source:
+            return
         was_active = self.step is not None and self.step.hold == "state"
         self.state_clip, self.state_name, self.state_until = None, None, 0.0
+        self.state_source = None
         if was_active and self.mode == "ground":
             self._queue(Step("idle", 1), now=now, interrupt=True)
 

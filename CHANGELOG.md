@@ -1,5 +1,85 @@
 # Changelog
 
+## Unreleased — 2026-11-07
+
+- Retire the oversized "stomp / turn away / point accusingly" reaction. It used to
+  be reachable from four paths at once (repeated pokes, waking, overfeeding and a
+  hard landing). `pout` and `point` are no longer triggered by any interaction,
+  ambient choice or panel cue, and `startle` keeps only its two small flinch
+  frames. Waking still plays its acted wake/getup sequence; overfeeding, a hard
+  landing and a bad mood now use a curious tilt or a small flinch instead.
+- Add four new near-static interaction strips (pat, highfive, peek, nod) generated
+  with the repo's GPT Image 2.6 chain. Clicking her head, body or feet now gives
+  three different small reactions drawn from an eight-gesture shuffled bag, so a
+  round never repeats. Seated pets answer in place instead of standing up for a
+  small gesture. The shipped-sprite budget follows the four new strips from 3.0 MB
+  to 3.5 MB. The ring's "play" button is **not** another gesture draw: it starts a
+  multi-tap high-five rally — she keeps raising her hand, the reaction window
+  shrinks with the streak, milestones and records are called out, stopping wraps
+  up the round, and eight in a row ends it. While a rally runs every click belongs
+  to the game.
+- Remove the double-click chat shortcut. A double-click used to open the chat bar
+  while the rally and ordinary tapping need those same clicks, so the two were
+  inherently in conflict. Text chat now has one explicit entry point: the ring's
+  "chat" button (plus the browser companion page). Opening chat, voice or feeding
+  cancels a running rally without counting it as a loss, and the best streak is
+  kept.
+- Fix the image flicker: a dissolve used to start on *every* frame change and drew
+  both frames at partial opacity, which made the whole figure turn translucent
+  (opaque pixels dropped from ~79% to 0% four times during one gesture). Dissolves
+  now happen only on posture changes and the slow waking/sleeping performance;
+  ordinary animation frames cut crisply. During a dissolve the outgoing frame
+  stays opaque underneath and only the incoming one fades in, so overall opacity
+  no longer dips.
+- Make two console pages show the data the bot has actually collected. 让她更好
+  checks the latest available logs before choosing a day; an active day stays
+  selected even with zero findings, while a genuinely empty day can fall back to
+  an earlier report. Uncomputed dates are marked pending. It also adds a
+  recent-days strip and a link back to today. 群史记
+  replaces a raw markdown dump and a file dropdown with an index of dated pages
+  (summary, topics, best lines) plus a formatted full-page view.
+- Repair the browser-script test harness: its `document` stubs lacked
+  `addEventListener`, so the outside-click handlers added earlier made four Node
+  smoke tests fail.
+- Make the activity ("notifications") card and the "More" settings panel transient:
+  an app-wide click filter closes them on any outside click, switching away from
+  the app closes them too, opening one closes the other, and clicking the same
+  button again toggles it shut. The console's floating helper bubble also closes
+  on an outside click or Escape.
+- Grow the ring from four buttons to five (play / chat / voice / activity / more)
+  in a real radial layout. Voice, the shared OpenAI key and the state layer are
+  unchanged.
+- Rework 模型与能力 so a model and its daily quota live in the same place. Every
+  row now shows 模型 / 每天 / 每人 chips without opening 「设置」, and the daily
+  limits move out of 「更多设置」 into the main form next to the model field
+  (chat's daily call budget and the desktop voice round limit included). The
+  shared OpenAI connection has its own folding card: saving a key or address
+  preserves the selected chat service and model. Its status reflects OpenAI
+  credentials rather than any chat key, and explains compatible-service limits.
+  Judgment settings distinguish a usable shared key from a saved connection;
+  old `/decision` links open the settings directly.
+- Fix the capability row layout: the switch stays in the header when settings
+  expand, and 状态 joins the model/quota chips under the title. Folding controls
+  remain usable on a second click instead of replaying their open animation.
+- Keep local pet conversations independent of QQ connection state. Voice
+  animations follow listening, thinking, playback and mute; QQ heartbeats cannot
+  send an active local conversation to sleep. Real Qt double-click sequences
+  count both taps, and hovering pats share the existing warmth cooldown.
+- Tell the reply model which media actions this turn can execute. A blocked
+  drawing marker produces an honest non-execution message instead of retaining
+  its drawing promise. Image deliveries carry generation IDs and descriptions;
+  checkups can also trace older image feedback through the original request.
+- Clarify a concrete difference after repeated vague image dissatisfaction,
+  while executing explicit edits and respecting stop requests. Eight synthetic
+  scenarios passed the paired comparison with independent Kimi blind judging;
+  the cases are retained as regression seeds.
+- Make petting and feeding actually matter. `presence.mood` stays read-only
+  (it is the group's statistics); a separate `warmth` layer lifts
+  `effective_mood`, which drives ambient choices and walking speed. Head pats
+  and biscuits have independent cooldowns (45 s / 90 s), a shared +0.6 cap and
+  a ~5-minute decay, and her bubble says whether it worked, is cooling down or
+  has hit the cap. Overfeeding and body/feet taps never lift it.
+
 ## Unreleased — 2026-11-06
 
 - Reframe the console as a status panel instead of a list of backend modules.

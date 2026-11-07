@@ -380,6 +380,61 @@ class NativeVoiceCardTest(unittest.TestCase):
         self.session.close.assert_called_once()
         self.assertFalse(pet.voice_card.isVisible())
 
+    def test_real_voice_stages_own_the_pose_and_qq_offline_cannot_put_her_to_sleep(self):
+        pet = self.pet
+        pet.brain.place(600)
+        pet._finished("presence", {"ok": True, "value": {"bot": "ready", "events": []}})
+        pet.start_voice()
+        generation = pet._voice_generation
+        self.assertEqual(pet.brain.state_name, "think")  # connecting, not listening yet
+        pet._voice_event(generation, {"type": "ready"})
+        self.assertEqual(pet.brain.clip, "listen")
+        for stage, clip in (("thinking", "think"), ("speaking", "talk"),
+                            ("muted", "idle"), ("listening", "listen")):
+            with self.subTest(stage=stage):
+                pet._voice_event(generation, {"type": "state", "state": stage})
+                self.assertEqual(pet.brain.clip, clip)
+                self.assertEqual(pet.brain.state_source, "local")
+                self.assertEqual(pet.brain.chat_pending, stage == "thinking")
+                pet._finished("presence", {"ok": True, "value": {
+                    "bot": "offline", "state": "inspect", "events": [
+                        {"kind": "state", "id": stage, "ts": 1.0, "state": "checkup"}]}})
+                self.assertEqual(pet.brain.state_name, clip)
+                self.assertNotIn("sleep", [s.clip for s in pet.brain.plan])
+                pet._finished("presence", {"ok": True, "value": {"bot": "ready", "events": []}})
+        pet.end_voice()
+        self.assertIsNone(pet.brain.state_source)
+        pet._finished("presence", {"ok": True, "value": {"bot": "ready", "state": "inspect", "events": []}})
+        self.assertEqual(pet.brain.state_name, "inspect")
+
+    def test_muting_stops_the_listen_pose_and_a_queued_listening_event_cannot_restore_it(self):
+        pet = self.pet
+        pet.brain.place(600)
+        pet.start_voice()
+        generation = pet._voice_generation
+        pet._voice_event(generation, {"type": "ready"})
+        pet.toggle_voice_mute()
+        self.assertEqual(pet.brain.clip, "idle")
+        pet._voice_event(generation, {"type": "state", "state": "listening"})
+        self.assertEqual(pet.voice_state, "muted")
+        self.assertEqual(pet.brain.clip, "idle")
+        pet.toggle_voice_mute()
+        self.assertEqual(pet.brain.clip, "listen")
+        pet._voice_event(generation, {"type": "closed"})
+        self.assertIsNone(pet.brain.state_name)
+
+    def test_subtitles_do_not_replace_the_actual_voice_stage(self):
+        pet = self.pet
+        pet.brain.place(600)
+        pet.start_voice()
+        generation = pet._voice_generation
+        pet._voice_event(generation, {"type": "state", "state": "thinking"})
+        pet._voice_event(generation, {"type": "transcript", "role": "assistant", "text": "你好", "final": False})
+        self.assertEqual(pet.brain.state_name, "think")
+        pet._voice_event(generation, {"type": "state", "state": "speaking"})
+        pet._voice_event(generation, {"type": "transcript", "role": "assistant", "text": "你好呀。", "final": True})
+        self.assertEqual(pet.brain.clip, "talk")
+
     def test_voice_subtitles_extend_one_bubble_without_restarting_the_text_or_pose(self):
         pet = self.pet
         tick = [pet.now()]

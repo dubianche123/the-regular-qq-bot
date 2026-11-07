@@ -16,12 +16,13 @@ from unittest.mock import Mock, patch
 HAS_QT = importlib.util.find_spec("PySide6") is not None
 if HAS_QT:
     from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtGui import QImage, QMouseEvent
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
     from PySide6.QtWidgets import QPushButton
     from regular import desktop_pet
     from regular.desktop_pet import PetWidget, SpriteBank
+    from regular.pet_brain import Step, TAP_POOL
 
 CSRF = "synthetic-csrf-0123456789"
 
@@ -131,7 +132,7 @@ class DesktopPetTest(unittest.TestCase):
         self.assertFalse(pet.mask().isEmpty())
         self.assertFalse(pet.mask().contains(QPoint(0, 0)))
 
-    def test_press_squishes_at_once_click_reacts_on_release_and_double_click_opens_chat(self):
+    def test_press_squishes_at_once_click_reacts_and_double_click_stays_with_the_pet(self):
         self.settle()
         pet = self.pet
         where = (pet.brain.x, pet.brain.y - 80)
@@ -139,14 +140,48 @@ class DesktopPetTest(unittest.TestCase):
         self.advance(0.1)
         self.assertLess(pet.brain.transform(self.t[0])["sy"], 0.97)      # immediate feedback
         pet.mouseReleaseEvent(self.mouse(QEvent.Type.MouseButtonRelease, where, buttons=Qt.MouseButton.NoButton))
-        self.assertEqual(pet.brain.clip, "startle")                       # no double-click wait
-        self.assertLess(pet.brain.transform(self.t[0] + 0.1)["dy"], 0)    # a little jolt upward
+        self.assertIn(pet.brain.clip, TAP_POOL)                           # 点击立刻有小幅反应
+        self.assertNotIn(pet.brain.clip, ("pout", "point"))               # 不再跺脚 / 指人
+        self.assertLess(abs(pet.brain.transform(self.t[0] + 0.1)["dy"]), 1.0)  # 点击不弹跳
         self.advance(0.5)
-        pet.mousePressEvent(self.mouse(QEvent.Type.MouseButtonPress, where))
-        pet.mouseReleaseEvent(self.mouse(QEvent.Type.MouseButtonRelease, where, buttons=Qt.MouseButton.NoButton))
-        self.assertEqual(pet.brain.clip, "point")                         # second poke escalates
-        pet.mouseDoubleClickEvent(self.mouse(QEvent.Type.MouseButtonDblClick, where))
+        # Qt replaces the second press with MouseButtonDblClick.
+        self.app.sendEvent(pet, self.mouse(QEvent.Type.MouseButtonDblClick, where))
+        self.app.sendEvent(pet, self.mouse(QEvent.Type.MouseButtonRelease, where, buttons=Qt.MouseButton.NoButton))
+        self.assertEqual(len(pet.brain.pokes), 2)
+        self.assertIsNone(pet.chat_bar)                                    # 双击不再抢点击弹对话框
+        pet.toolbar.chat.click()                                           # 聊天只走圆盘的「聊两句」
         self.assertTrue(pet.chat_bar.isVisible())
+
+    def test_double_click_during_a_rally_never_opens_chat(self):
+        self.settle()
+        pet = self.pet
+        pet.play()
+        where = (pet.brain.x, pet.brain.y - 80)
+        self.app.sendEvent(pet, self.mouse(QEvent.Type.MouseButtonPress, where))
+        self.app.sendEvent(pet, self.mouse(QEvent.Type.MouseButtonRelease, where, buttons=Qt.MouseButton.NoButton))
+        self.advance(.6)       # she raises her hand for the next round
+        self.app.sendEvent(pet, self.mouse(QEvent.Type.MouseButtonDblClick, where))
+        self.app.sendEvent(pet, self.mouse(QEvent.Type.MouseButtonRelease, where, buttons=Qt.MouseButton.NoButton))
+        self.assertIsNone(pet.chat_bar)
+        self.assertEqual(pet.brain.game_streak, 2)                       # 点击全归游戏
+        self.assertEqual(len(pet.brain.pokes), 2)
+        pet.toolbar.chat.click()
+        self.assertTrue(pet.chat_bar.isVisible())
+        self.assertFalse(pet.brain.game_active)                           # 聊天打开，本局取消但不算输
+        self.assertEqual(pet.brain.game_best, 2)
+
+    def test_four_fast_clicks_are_four_interactions_with_qt_double_click_events(self):
+        self.settle()
+        pet = self.pet
+        where = (pet.brain.x, pet.brain.y - 80)
+        for kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick,
+                     QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+            self.app.sendEvent(pet, self.mouse(kind, where))
+            self.t[0] += .05
+            self.app.sendEvent(pet, self.mouse(QEvent.Type.MouseButtonRelease, where,
+                                              buttons=Qt.MouseButton.NoButton))
+        self.assertEqual(len(pet.brain.pokes), 4)
+        self.assertIsNone(pet.chat_bar)
 
     def test_nearby_cursor_reveals_the_side_palette_and_leaving_hides_it_later(self):
         self.settle()
@@ -184,6 +219,82 @@ class DesktopPetTest(unittest.TestCase):
             pet._record(f"合成动态 {i}")
         self.assertGreater(pet.activity_card.height(), empty)
         self.assertLessEqual(pet.activity_card.height(), 420)
+
+    def test_notifications_and_settings_dismiss_on_an_outside_click(self):
+        self.settle()
+        pet = self.pet
+        pet.show()
+        far = QPoint(4000, 3000)
+        pet.show_activity()
+        self.assertTrue(pet.activity_card.isVisible())
+        pet.toolbar.hide()
+        pet.dismiss_on_outside_click(far)
+        self.assertFalse(pet.activity_card.isVisible())
+        pet.show_menu()
+        self.assertTrue(pet._menu.isVisible())
+        pet.dismiss_on_outside_click(far)
+        self.assertFalse(pet._menu.isVisible())
+
+    def test_notifications_and_settings_are_mutually_exclusive_and_toggle(self):
+        self.settle()
+        pet = self.pet
+        pet.show()
+        pet.toolbar.show()
+        pet._place_toolbar()
+        pet.show_menu()
+        self.assertTrue(pet._menu.isVisible())
+        pet.show_activity()
+        self.assertFalse(pet._menu.isVisible())
+        self.assertTrue(pet.activity_card.isVisible())
+        pet.show_menu()
+        self.assertFalse(pet.activity_card.isVisible())
+        self.assertTrue(pet._menu.isVisible())
+        pet.show_menu()                                  # 再点一次「更多」就收起
+        self.assertFalse(pet._menu.isVisible())
+        pet.show_activity()
+        self.assertTrue(pet.activity_card.isVisible())
+        pet.show_activity()                              # 再点一次通知就收起
+        self.assertFalse(pet.activity_card.isVisible())
+
+    def test_ring_has_five_separate_buttons_and_play_reacts(self):
+        self.settle()
+        pet = self.pet
+        buttons = (pet.toolbar.play, pet.toolbar.chat, pet.toolbar.voice,
+                   pet.toolbar.activity, pet.toolbar.more)
+        self.assertEqual(len({(b.x(), b.y()) for b in buttons}), 5)
+        for i, first in enumerate(buttons):
+            for second in buttons[i + 1:]:
+                self.assertFalse(first.geometry().intersects(second.geometry()))
+        pet.play()
+        self.assertEqual(pet.brain.clip, "highfive")       # 击掌接龙，不再是随机小动作
+        self.assertTrue(pet.brain.game_active)
+        self.assertGreater(pet.brain.game_until, self.t[0])
+        self.assertNotIn(pet.brain.clip, ("pout", "point"))
+
+    def test_a_gesture_never_makes_the_whole_figure_translucent(self):
+        """交叉淡入曾经把整个人画成半透明，每换一帧就闪一下。"""
+        self.settle()
+        pet = self.pet
+        pet.brain._queue(Step("pat"), now=self.t[0], interrupt=True)
+
+        def opaque_ratio():
+            img = pet.grab().toImage().convertToFormat(QImage.Format_ARGB32)
+            solid = opaque = 0
+            for y in range(0, img.height(), 4):
+                for x in range(0, img.width(), 4):
+                    alpha = (img.pixel(x, y) >> 24) & 255
+                    if alpha > 8:
+                        solid += 1
+                        opaque += alpha > 245
+            return opaque / max(1, solid)
+
+        ratios = []
+        for _ in range(24):
+            self.t[0] += 1 / 30
+            pet.step(self.t[0])
+            self.app.processEvents()
+            ratios.append(opaque_ratio())
+        self.assertGreater(min(ratios), 0.6)
 
     def test_toolbar_actions_are_explicit(self):
         self.settle()
