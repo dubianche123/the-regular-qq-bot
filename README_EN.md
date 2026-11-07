@@ -111,7 +111,9 @@ Text conversation, requested images and voice replies are implemented. **Choosin
 
 ## Meet at your desktop, too
 
-<p align="center"><img src="docs/readme/pet-demo.webp" width="720" alt="Desktop pet demo: she lands, wanders, has tea, checks her phone when mentioned, talks when she replies in the group, sketches when she sends a picture, dangles when picked up, answers local chat in a bubble and naps at night"></p>
+<p align="center"><img src="docs/readme/pet-demo.webp" width="720" alt="Ring-menu pet demo: hover to reveal five actions, play a high-five rally, pick her up and chat locally using preset dialogue"></p>
+
+Ring-menu and local-interaction demo; chat uses preset dialogue.
 
 The desktop character is the default entry: **a chibi dragon who lives on the bottom edge of your screen** — she walks, sits down for tea or a book, naps when sleepy, dangles when you pick her up and falls back when you let go. More importantly, she acts out what the bot is really doing: she checks her phone when someone @-mentions her in the group, talks when she replies, sketches when she sends a picture, and dozes off when the bot stops. Hover to make her look at you and reveal a five-button ring (play, chat, voice, activity and more). Click her head, body or feet for different small reactions; "play" is a multi-tap high-five rally — she keeps raising her hand, you keep tapping, and stopping wraps up the streak. Text chat lives on the ring's "chat" button: double-clicking her no longer steals the clicks. Poking her repeatedly never turns into an angry routine. Notifications and settings close as soon as you click elsewhere. Motion can be reduced.
 
