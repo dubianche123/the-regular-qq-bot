@@ -1,6 +1,8 @@
 """Curated playback keeps state coverage without making the archive a playlist."""
 import random
 import unittest
+import json
+from importlib.resources import files
 
 from regular.pet_repertoire import ACTIONS, CURATED_POOLS, Repertoire, available, clips, curated_actions
 
@@ -60,10 +62,13 @@ class RepertoireTest(unittest.TestCase):
 
     def test_only_adopted_art_becomes_a_playable_clip(self):
         actions = available()
-        self.assertEqual(set(actions), set(ACTIONS))
+        manifest = json.loads(files("regular").joinpath("assets", "pet", "sprites.json").read_text())
+        adopted = set(ACTIONS) & set(manifest["actions"])
+        self.assertEqual(set(actions) & set(ACTIONS), adopted)
         for name, clip in clips(actions).items():
             with self.subTest(action=name):
-                self.assertEqual(clip[0], name)
+                self.assertEqual(clip[0], actions[name].get("strip", name))
+                self.assertIn(clip[0], manifest["actions"])
                 self.assertTrue(all(0 <= frame < 4 for frame in clip[1]))
                 self.assertGreater(clip[2], 0)
 

@@ -528,7 +528,7 @@ def build(args):
 
     source, out = Path(args.source), Path(args.out)
     from regular.pet_repertoire import ACTIONS
-    strips = STRIPS | {name: (name, [0, 1, 2, 3], spec["scale"]) for name, spec in ACTIONS.items()
+    strips = STRIPS | {name: (name, spec.get("cells", [0, 1, 2, 3]), spec["scale"]) for name, spec in ACTIONS.items()
                        if (source / (name + ".png")).is_file() or args.only and name in args.only}
     out.mkdir(parents=True, exist_ok=True)
     sheets = {}
@@ -565,6 +565,9 @@ def build(args):
         if args.only and name not in args.only:
             continue
         action_spec = ACTIONS.get(name, {})
+        if "cells" in action_spec and (not isinstance(cells, (list, tuple)) or len(cells) != 4
+                or any(type(i) is not int or not 0 <= i < 4 for i in cells)):
+            raise ValueError(f"{name}: cells must select four source cells with indices 0..3")
         reuse = action_spec.get("reuse_strip_frames")
         if reuse:
             ref_name, indices = reuse["strip"], reuse["frames"]

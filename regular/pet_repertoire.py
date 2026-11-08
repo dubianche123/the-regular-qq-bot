@@ -12,8 +12,10 @@ from regular.pet_actions_boundary import ACTIONS as BOUNDARY
 from regular.pet_actions_spell import ACTIONS as SPELL
 from regular.pet_actions_scenes import ACTIONS as SCENES
 from regular.pet_actions_dragon_form import ACTIONS as FORM
+from regular.pet_actions_daily import ACTIONS as DAILY, PLAYBACK_ALIASES
+from regular.pet_actions_edge_daily import ACTIONS as EDGE_DAILY
 
-ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL, **SCENES, **FORM}
+ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL, **SCENES, **FORM, **DAILY, **EDGE_DAILY}
 
 # The archive is not a playlist. Pick performances, not a quota per prop family.
 # Scripted endings still use the full catalog.
@@ -56,19 +58,23 @@ def curated_actions(actions):
     New catalogs are not silently excluded by a filename-prefix filter.
     """
     return {name: spec for name, spec in actions.items()
-            if name not in _LEGACY or name in _CURATED}
+            if spec.get("automatic", True) and (name not in _LEGACY or name in _CURATED)}
 
 
 def available():
     """Only adopted strips take part in runtime selection."""
     manifest = json.loads(files("regular").joinpath("assets", "pet", "sprites.json").read_text(encoding="utf-8"))
-    return {name: dict(spec, geometry=manifest.get("geometry", {}).get(name))
-            for name, spec in ACTIONS.items() if name in manifest["actions"]}
+    actions = {name: dict(spec, geometry=manifest.get("geometry", {}).get(name))
+               for name, spec in ACTIONS.items() if name in manifest["actions"]}
+    for name, spec in PLAYBACK_ALIASES.items():
+        if spec["strip"] in actions:
+            actions[name] = dict(spec, geometry=actions[spec["strip"]].get("geometry"))
+    return actions
 
 
 def clips(actions=None):
     actions = available() if actions is None else actions
-    return {name: (name, spec.get("sequence", [0, 1, 2, 3]), spec["fps"], spec["loop"], spec["posture"])
+    return {name: (spec.get("strip", name), spec.get("sequence", [0, 1, 2, 3]), spec["fps"], spec["loop"], spec["posture"])
             for name, spec in actions.items()}
 
 

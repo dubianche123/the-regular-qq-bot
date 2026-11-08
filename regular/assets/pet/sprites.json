@@ -1357,6 +1357,98 @@
   "form_dragon_tail_chase": {
    "file": "form_dragon_tail_chase.webp",
    "frames": 4
+  },
+  "daily_cookie_receive": {
+   "file": "daily_cookie_receive.webp",
+   "frames": 4
+  },
+  "daily_book_hug_sleep": {
+   "file": "daily_book_hug_sleep.webp",
+   "frames": 4
+  },
+  "daily_lamp_shelter": {
+   "file": "daily_lamp_shelter.webp",
+   "frames": 4
+  },
+  "daily_old_keepsake": {
+   "file": "daily_old_keepsake.webp",
+   "frames": 4
+  },
+  "daily_quiet_space": {
+   "file": "daily_quiet_space.webp",
+   "frames": 4
+  },
+  "daily_gem_release": {
+   "file": "daily_gem_release.webp",
+   "frames": 4
+  },
+  "daily_audience_prepare": {
+   "file": "daily_audience_prepare.webp",
+   "frames": 4
+  },
+  "daily_game_set_down": {
+   "file": "daily_game_set_down.webp",
+   "frames": 4
+  },
+  "daily_joy_tail_catch": {
+   "file": "daily_joy_tail_catch.webp",
+   "frames": 4
+  },
+  "daily_low_tail_comfort": {
+   "file": "daily_low_tail_comfort.webp",
+   "frames": 4
+  },
+  "daily_curious_feather": {
+   "file": "daily_curious_feather.webp",
+   "frames": 4
+  },
+  "daily_quiet_tail_rest": {
+   "file": "daily_quiet_tail_rest.webp",
+   "frames": 4
+  },
+  "daily_last_cookie": {
+   "file": "daily_last_cookie.webp",
+   "frames": 4
+  },
+  "daily_second_cup": {
+   "file": "daily_second_cup.webp",
+   "frames": 4
+  },
+  "daily_painting_gift": {
+   "file": "daily_painting_gift.webp",
+   "frames": 4
+  },
+  "edge_daily_bottom_watch": {
+   "file": "edge_daily_bottom_watch.webp",
+   "frames": 4
+  },
+  "edge_daily_bottom_yawn": {
+   "file": "edge_daily_bottom_yawn.webp",
+   "frames": 4
+  },
+  "edge_daily_warp_stumble": {
+   "file": "edge_daily_warp_stumble.webp",
+   "frames": 4
+  },
+  "edge_daily_side_listen": {
+   "file": "edge_daily_side_listen.webp",
+   "frames": 4
+  },
+  "edge_daily_top_release": {
+   "file": "edge_daily_top_release.webp",
+   "frames": 4
+  },
+  "edge_daily_side_tail_greet": {
+   "file": "edge_daily_side_tail_greet.webp",
+   "frames": 4
+  },
+  "edge_daily_top_cast": {
+   "file": "edge_daily_top_cast.webp",
+   "frames": 4
+  },
+  "edge_daily_top_wonder": {
+   "file": "edge_daily_top_wonder.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -3722,7 +3814,8 @@
     -265,
     77,
     -1
-   ]
+   ],
+   "rest_y": -265
   },
   "boundary_side_slip": {
    "bounds": [
@@ -4060,6 +4153,197 @@
     89,
     0
    ]
+  },
+  "daily_cookie_receive": {
+   "bounds": [
+    -99,
+    -308,
+    100,
+    0
+   ]
+  },
+  "daily_book_hug_sleep": {
+   "bounds": [
+    -103,
+    -228,
+    78,
+    0
+   ]
+  },
+  "daily_lamp_shelter": {
+   "bounds": [
+    -120,
+    -314,
+    105,
+    0
+   ]
+  },
+  "daily_old_keepsake": {
+   "bounds": [
+    -114,
+    -322,
+    126,
+    0
+   ]
+  },
+  "daily_quiet_space": {
+   "bounds": [
+    -107,
+    -318,
+    129,
+    0
+   ]
+  },
+  "daily_gem_release": {
+   "bounds": [
+    -137,
+    -329,
+    92,
+    0
+   ]
+  },
+  "daily_audience_prepare": {
+   "bounds": [
+    -110,
+    -324,
+    99,
+    0
+   ]
+  },
+  "daily_game_set_down": {
+   "bounds": [
+    -106,
+    -233,
+    106,
+    0
+   ]
+  },
+  "daily_joy_tail_catch": {
+   "bounds": [
+    -123,
+    -335,
+    114,
+    0
+   ]
+  },
+  "daily_low_tail_comfort": {
+   "bounds": [
+    -96,
+    -326,
+    98,
+    0
+   ]
+  },
+  "daily_curious_feather": {
+   "bounds": [
+    -146,
+    -315,
+    118,
+    0
+   ]
+  },
+  "daily_quiet_tail_rest": {
+   "bounds": [
+    -98,
+    -259,
+    88,
+    0
+   ]
+  },
+  "daily_last_cookie": {
+   "bounds": [
+    -117,
+    -321,
+    88,
+    0
+   ]
+  },
+  "daily_second_cup": {
+   "bounds": [
+    -120,
+    -255,
+    90,
+    0
+   ]
+  },
+  "daily_painting_gift": {
+   "bounds": [
+    -130,
+    -310,
+    137,
+    0
+   ]
+  },
+  "edge_daily_bottom_watch": {
+   "bounds": [
+    -108,
+    -214,
+    91,
+    0
+   ],
+   "rest_y": -55.142
+  },
+  "edge_daily_bottom_yawn": {
+   "bounds": [
+    -87,
+    -212,
+    85,
+    0
+   ],
+   "rest_y": -59.289
+  },
+  "edge_daily_warp_stumble": {
+   "bounds": [
+    -107,
+    -299,
+    113,
+    0
+   ]
+  },
+  "edge_daily_side_listen": {
+   "bounds": [
+    -123,
+    -316,
+    68,
+    0
+   ],
+   "rest_x": -41.4
+  },
+  "edge_daily_top_release": {
+   "bounds": [
+    -124,
+    -290,
+    144,
+    0
+   ],
+   "rest_y": -288.151
+  },
+  "edge_daily_side_tail_greet": {
+   "bounds": [
+    -115,
+    -295,
+    119,
+    1
+   ],
+   "rest_x": -41.4
+  },
+  "edge_daily_top_cast": {
+   "bounds": [
+    -95,
+    -260,
+    75,
+    0
+   ],
+   "rest_y": -260.8
+  },
+  "edge_daily_top_wonder": {
+   "bounds": [
+    -90,
+    -263,
+    135,
+    0
+   ],
+   "rest_y": -262.745
   }
  },
  "calibration": {

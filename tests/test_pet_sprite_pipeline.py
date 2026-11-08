@@ -323,6 +323,40 @@ class PartialSpriteBuildTest(unittest.TestCase):
                     self.assertTrue(rows)
                     self.assertAlmostEqual(min(rows), expected, delta=2)
 
+    def test_source_cell_selection_excludes_rejected_art_from_the_built_strip(self):
+        from PIL import Image, ImageDraw
+        from regular.pet_repertoire import ACTIONS
+
+        with tempfile.TemporaryDirectory() as folder:
+            source, out = Path(folder) / "source", Path(folder) / "built"
+            source.mkdir()
+            sheet = Image.new("RGBA", (1024, 1024))
+            colors = [(240, 20, 20, 255), (20, 240, 20, 255),
+                      (20, 20, 240, 255), (240, 240, 20, 255)]
+            for i, color in enumerate(colors):
+                x, y = i % 2 * 512, i // 2 * 512
+                ImageDraw.Draw(sheet).rectangle((x + 180, y + 60, x + 330, y + 450), fill=color)
+            sheet.save(source / "idle.png")
+            sheet.save(source / "reviewed_cast.png")
+            args = SimpleNamespace(source=str(source), out=str(out), only=["reviewed_cast"])
+            action = {"scale": 1.0, "head_calibration": False, "cells": [0, 1, 3, 3]}
+            with patch.dict(ACTIONS, {"reviewed_cast": action}), contextlib.redirect_stdout(io.StringIO()):
+                sprites.build(args)
+            manifest = json.loads((out / "sprites.json").read_text())
+            self.assertEqual(manifest["actions"]["reviewed_cast"]["frames"], 4)
+            with Image.open(out / "reviewed_cast.webp") as strip:
+                frames = [strip.crop((i * 512, 0, (i + 1) * 512, 512)).convert("RGBA") for i in range(4)]
+                for frame, expected in zip(frames, (colors[0], colors[1], colors[3], colors[3])):
+                    sample = frame.getpixel((256, 300))
+                    self.assertEqual(sample[3], 255)
+                    for actual, channel in zip(sample[:3], expected[:3]):
+                        self.assertAlmostEqual(actual, channel, delta=6)
+                self.assertEqual(frames[2].tobytes(), frames[3].tobytes())
+            for invalid in ([], [0, 1, 3], [0, 1, 2, 4], [0, 1, 2, -1], [0, 1, 2, True], "0123"):
+                with self.subTest(cells=invalid), patch.dict(ACTIONS, {"reviewed_cast": dict(action, cells=invalid)}):
+                    with self.assertRaisesRegex(ValueError, "four source cells"):
+                        sprites.build(args)
+
     def test_new_strips_keep_existing_files_and_manifest_entries(self):
         from PIL import Image, ImageDraw
 
