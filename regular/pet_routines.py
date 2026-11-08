@@ -18,6 +18,8 @@ AMBIENT_ROLES = frozenset({"play", "toy", "study", "curious", "magic", "fire", "
 # Quiet accompaniment excludes animated play, flames, magic and performance.
 QUIET_ROLES = frozenset({"study", "craft", "garden", "eat", "snack", "tea", "rest", "care"})
 QUIET_STORIES = frozenset({"tea", "comic", "sketch", "stretch"})
+DAILY_MAGIC = ("magic_daily_cola", "magic_daily_roast", "magic_daily_scarf",
+               "magic_daily_brush", "magic_daily_mend")
 
 # Each branch includes its result and cleanup. Tuple durations are long stays.
 EPISODES = {
@@ -62,6 +64,7 @@ EPISODES = {
     "tired_game": ((("daily_game_set_down", None),),),
     "joy": ((("daily_joy_tail_catch", None),),),
     "low": ((("daily_low_tail_comfort", None),),),
+    "daily_magic": tuple(((name, None),) for name in DAILY_MAGIC),
 }
 QUIET_EPISODES = frozenset({"viewer", "sweet", "chair", "sofa", "sleepy_read", "tea_kindness",
                             "keepsake", "collection", "gift", "tired_game", "low"})

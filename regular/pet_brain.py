@@ -19,7 +19,7 @@ import random
 from regular.pet_care import CARE_GAIN, CARE_COOLDOWN, CARE_MAX, CARE_DECAY, change, decay
 from regular.pet_repertoire import Repertoire, clips as repertoire_clips
 from regular.pet_props import PropPlay
-from regular.pet_routines import ACTIVITY_ENDINGS, EPISODES, activity_sequence, choose_routine
+from regular.pet_routines import ACTIVITY_ENDINGS, DAILY_MAGIC, EPISODES, activity_sequence, choose_routine
 
 FIGURE = 160.0          # 100% 时人物站立高度（点）
 WALK_SPEED = 46.0       # 点/秒，随 scale 缩放
@@ -424,6 +424,8 @@ class PetBrain:
         self._poof_at = -10.0
         self._dragon_at = now - DRAGON_COOLDOWN + 600.0   # 刚启动的十分钟里不变身
         self._dragon_recent: deque = deque(maxlen=2)
+        self._magic_used = set()
+        self._magic_dragon_shown = False
         self._show_off_at = now - SHOW_OFF_COOLDOWN
         self._sleep_cue_until = 0.0
         self._prop_chase_at = now - 120.0
@@ -743,12 +745,17 @@ class PetBrain:
         """Append steps, inserting sit/stand/lie transitions so poses never jump."""
         interrupted_air_play = interrupt and self.air_play_active
         if interrupt and self.mode == "ground" and self.warp is not None:
+            request = self._warp_request if any(s.clip == "warp_cast" for s in steps) else None
             self._cancel_warp(now)
+            self._warp_request = request  # Cancel the old cast, not a newly requested destination.
         if interrupt and self.mode == "warp":
             # A spell in flight finishes first (she may be under the floor); the new steps follow it.
+            self._chasing_prop = None
             self.plan.clear()
             interrupt = False
         if interrupt:
+            if self._warp_request and self._warp_request.get("cause") == "prop" and not any(s.clip == "warp_cast" for s in steps):
+                self._warp_request = None
             self._air_chase = None
             self._air_returning = interrupted_air_play and self.mode == "fly"
             self._chasing_prop = None
@@ -953,8 +960,7 @@ class PetBrain:
             # 静态道具库只做穿插：整段动起来的法术、扑跃、散步才是主角。
             "library": 2.6 if self.repertoire.actions else 0.0,
             "dragon": 0.45 if self._can_dragon(now) and self.energy >= 0.45 else 0.0,
-            "warp": 0.55 if (self._can_warp() and not self.quiet and now - self._warp_at >= WARP_COOLDOWN
-                             and self._warp_target() is not None) else 0.0,
+            "warp": 0.0,                 # A trip needs a toy, a caller or another concrete cause.
             "sneeze": (0.08 + (0.3 if p.circadian == "刚睡醒" else 0.0)) if self.motion and self._has("spell_sneeze") else 0.0,
             "flight": 0.35 if self.motion and not self.quiet and any(
                 a["role"] == "fly" for a in self.repertoire.actions.values()) else 0.0,
@@ -993,8 +999,7 @@ class PetBrain:
         if choice == "library":
             return self._routine_steps(now)
         if choice == "warp":
-            self._warp_request = {"x": None, "via": None, "cause": "spell"}
-            return [Step("warp_cast", line=self.rng.choice(LINES["warp"])), Step("idle", 1.5)]
+            return self._prop_routine(now) or [Step("idle", 1.5)]
         if choice == "sneeze":
             return [Step("sneeze"), Step("idle", 1.5)]
         if choice == "dragon":
@@ -1170,6 +1175,8 @@ class PetBrain:
         return None
 
     def _queue_manual(self, steps, now):
+        if self._warp_request and self._warp_request.get("cause") == "prop" and not any(s.clip == "warp_cast" for s in steps):
+            self._warp_request, self._chasing_prop = None, None
         # Only these local activities own a prop-matched put-away. Real work
         # holds remain controlled by their actual chat/agent/state result.
         if self.step is None or self.step.hold is None:
@@ -1208,36 +1215,63 @@ class PetBrain:
         self.say("换一个～", now=now, seconds=1.6, kind="status")
         return True
 
-    def _prop_routine(self, now):
-        if (not self.motion or self.quiet or self.pointer.near or self.attention or self.chat_pending
-                or self.game_active or self.mode != "ground" or now < self.agent_busy_until
-                or (self.state_clip and now < self.state_until) or self.clip in ASLEEP
-                or self._role(self.clip) == "scene_furniture" or self.clip.startswith("form_")
-                or now - self._prop_chase_at < 120):
-            return None
-        candidates = self.props.candidates(now)
-        if not candidates or self.rng.random() >= 0.15:
-            return None
-        item = self.rng.choice(candidates)
+    def _prop_destination(self, item):
         direction = 1 if item.x >= self.x else -1
         target = self._clamp_x(item.x - direction * (self.figure * 0.18 + item.radius))
-        if abs(item.x - target) > self.figure * 0.3 + item.radius:
+        return (target, direction) if abs(item.x - target) <= self.figure * 0.3 + item.radius else None
+
+    def _far_prop_candidates(self, now):
+        return tuple(item for item in self.props.candidates(now)
+                     if (destination := self._prop_destination(item)) is not None
+                     and abs(destination[0] - self.x) >= self.figure * 3)
+
+    def _prop_routine(self, now, *, manual=False):
+        if (not self.motion or self.chat_pending or self.game_active or self.mode != "ground"
+                or self.media or now < self.agent_busy_until or (self.state_clip and now < self.state_until)
+                or self.clip in ASLEEP or (not manual and (self.quiet or self.pointer.near or self.attention
+                or self._role(self.clip) == "scene_furniture" or self.clip.startswith("form_")
+                or now - self._prop_chase_at < 120))):
+            return None
+        candidates = self._far_prop_candidates(now) if manual else self.props.candidates(now)
+        if not candidates or (not manual and self.rng.random() >= 0.15):
+            return None
+        item = self.rng.choice(candidates)
+        destination = self._prop_destination(item)
+        if destination is None:
+            return None
+        target, direction = destination
+        teleport = (self._can_warp() and abs(target - self.x) >= self.figure * 3
+                    and (manual or now - self._warp_at >= WARP_COOLDOWN))
+        if manual and not teleport:
             return None
         self._prop_chase_at = now
         self._chasing_prop = (item.id, item.kind, target, direction)
+        if teleport:
+            self._warp_request = {"x": target, "via": "floor", "cause": "prop", "prop": self._chasing_prop}
+            return [Step("warp_cast", line="去够那边的球。" if item.kind == "ball" else "去拿那边的宝贝。"), Step("idle", 1.5)]
         return [Step(self._pick("walk", "walk", family="gait"), target_x=target)]
+
+    def _chased_prop(self, now):
+        if self._chasing_prop is None:
+            return None
+        prop_id, kind, target, _ = self._chasing_prop
+        return next((item for item in self.props.candidates(now) if item.id == prop_id and item.kind == kind
+                     and abs(item.x - target) <= self.figure * 0.3 + item.radius), None)
 
     def _finish_prop_routine(self, now):
         prop_id, kind, target, direction = self._chasing_prop
+        item = self._chased_prop(now)
         self._chasing_prop = None
-        item = next((p for p in self.props.candidates(now) if p.id == prop_id and p.kind == kind), None)
-        if item is None or abs(self.x - target) > self.figure * 0.12 or abs(item.x - target) > self.figure * 0.3 + item.radius:
+        if item is None or abs(self.x - target) > self.figure * 0.12:
             return False
         success = self.props.kick(prop_id, now, direction) if kind == "ball" else self.props.collect(prop_id, now)
         if success:
+            self._prop_at = now           # A reaction must not immediately emit the collected object again.
             self.plan.clear()
             self.step = None
-            self._queue(Step(self._pick("play" if kind == "ball" else "treasure", "peek")),
+            # The object has already moved or been collected. Stay empty-handed
+            # instead of pulling a different toy or treasure out for the reaction.
+            self._queue(Step("cheer" if kind == "ball" else "nod"),
                         Step("idle", 1.5), now=now)
             self.say("踢一下～" if kind == "ball" else "找到了。", now=now, seconds=1.8, kind="status")
         return success
@@ -1806,33 +1840,66 @@ class PetBrain:
             return options[0]
         return lo if self.x - lo > hi - self.x else hi
 
-    def magic(self, now):
-        """The menu's 变个魔法: open a circle under her feet and come out somewhere else."""
+    def magic(self, now, kind=None):
+        """A requested trick has a purpose; QA may select an exact available kind."""
         self.last_interaction = now
-        if self.chat_pending or self.mode != "ground" or not self.motion or self.game_active:
+        if (self.chat_pending or self.mode != "ground" or not self.motion or self.game_active
+                or self.media or now < self.agent_busy_until or (self.state_clip and now < self.state_until)):
             return False
         if self.clip in ASLEEP or self.clip in WAKING:
             self.poke(now)
             return False
-        if not self._can_warp():
-            self._queue(Step("wave"), Step("idle", 1.5), now=now, interrupt=True)
-            return True
-        if self._warp_target() is None:
-            self._queue(Step("sneeze"), Step("idle", 1.5), now=now, interrupt=True)
-            return True
-        self._warp_request = {"x": None, "via": None, "cause": "spell"}
-        self._queue(Step("warp_cast", line=self.rng.choice(LINES["warp"])), Step("idle", 1.5),
-                    now=now, interrupt=True)
+        available = [name for name in DAILY_MAGIC if self._has(name)]
+        if self._can_dragon(now, manual=True):
+            available.insert(0, "dragon")
+        if self._can_warp() and self._far_prop_candidates(now):
+            available.append("prop")
+        if not any(name in DAILY_MAGIC for name in available) and self._has("scene_fire_controlled"):
+            available.append("scene_fire_controlled")
+        if kind is not None:
+            if kind not in available:
+                return False
+            chosen = kind
+        elif "dragon" in available and not self._magic_dragon_shown:
+            chosen = "dragon"
+        else:
+            fresh = [name for name in available if name not in self._magic_used]
+            if not fresh:
+                self._magic_used.clear()
+                fresh = available
+            if not fresh:
+                return False
+            chosen = self.rng.choice(fresh)
+        if chosen == "dragon":
+            steps = self._dragon_steps(now)
+            self._magic_dragon_shown = True
+        elif chosen == "prop":
+            steps = self._prop_routine(now, manual=True)
+            if not steps:
+                return False
+        else:
+            steps = [Step(chosen), Step("idle", 1.5)]
+        self._magic_used.add(chosen)
+        self._queue_manual(steps, now)
         return True
 
     def _begin_warp(self, now, *, slip=False):
         request = self._warp_request or {"x": None, "via": None, "cause": "spell"}
         self._warp_request = None
+        if request.get("cause") == "prop":
+            self._chasing_prop = request.get("prop")
+            if self._chased_prop(now) is None:
+                self._chasing_prop = None
+                self.step = Step("idle", 1)
+                self._set_clip("idle", now, restart=True)
+                return False
         target = self._warp_target(request.get("x"))
         if target is None or not self.motion:
             if not slip:
-                self.step = Step("conjure")          # nowhere to go: a little flourish instead
-                self._set_clip("conjure", now, restart=True)
+                clip = "idle" if request.get("cause") == "prop" else "conjure"
+                self._chasing_prop = None
+                self.step = Step(clip)
+                self._set_clip(clip, now, restart=True)
             return False
         via = request.get("via")
         if via not in ("floor", "ceiling"):
@@ -1856,6 +1923,10 @@ class PetBrain:
     def _cast(self, now):
         """The ground beat of a spell: draw the circle under her feet, then the one she will come out of."""
         w, t = self.warp, now - self.warp["since"]
+        if w["cause"] == "prop" and self._chased_prop(now) is None:
+            self._cancel_warp(now)
+            self._queue(Step("idle", 1.5), now=now, interrupt=True)
+            return True
         if w["src"] is None and t >= 0.45:
             w["src"] = self._open_portal(self.x, self.floor, "floor", now)
             self._burst(now, "sparkle", 0.0, -0.05, 4, spread=0.5)
@@ -1975,7 +2046,14 @@ class PetBrain:
         for portal in self.portals:
             if portal.closing is None:
                 portal.closing = now
-        if w and not self.chat_pending:
+        if w and w["cause"] == "prop" and self._chasing_prop is not None:
+            busy = (self.chat_pending or self.media or now < self.agent_busy_until
+                    or (self.state_clip and now < self.state_until))
+            if busy:
+                self._chasing_prop = None
+            else:
+                self._finish_prop_routine(now)
+        if w and w["cause"] != "prop" and not self.chat_pending:
             key = {"sneeze": "sneeze_warp", "called": "warp_called"}.get(w["cause"])
             line = (self.rng.choice(LINES["sneeze_warp"]) if w["cause"] == "sneeze"
                     else self.rng.choice(LINES["warp_sky" if w["via"] == "ceiling" else "warp_in"]))
@@ -1989,6 +2067,9 @@ class PetBrain:
             self._advance(now)
 
     def _cancel_warp(self, now):
+        if ((self.warp and self.warp.get("cause") == "prop")
+                or (self._warp_request and self._warp_request.get("cause") == "prop")):
+            self._chasing_prop, self._warp_request = None, None
         if self.warp is None and not (self._edge_exit and "src" in self._edge_exit):
             return
         self.warp, self.portal_clip = None, None
@@ -2175,8 +2256,8 @@ class PetBrain:
                 kind, x * self.facing + self.rng.uniform(-spread, spread) * 0.25, y + self.rng.uniform(-0.03, 0.03),
                 vx, vy, now, {"ember": 0.7, "smoke": 1.4, "paint": 1.1, "glyph": 1.6}.get(kind, 1.2)))
 
-    def _can_dragon(self, now):
-        return (self.motion and not self.quiet and now - self._dragon_at >= DRAGON_COOLDOWN
+    def _can_dragon(self, now, *, manual=False):
+        return (self.motion and (manual or not self.quiet and now - self._dragon_at >= DRAGON_COOLDOWN)
                 and self._has("form_dragon") and self._has("form_recover")
                 and any(self._has(name) for name in DRAGON_TRICKS))
 

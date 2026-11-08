@@ -1497,6 +1497,26 @@
   "ending_kalimba_put_away": {
    "file": "ending_kalimba_put_away.webp",
    "frames": 4
+  },
+  "magic_daily_cola": {
+   "file": "magic_daily_cola.webp",
+   "frames": 4
+  },
+  "magic_daily_roast": {
+   "file": "magic_daily_roast.webp",
+   "frames": 4
+  },
+  "magic_daily_scarf": {
+   "file": "magic_daily_scarf.webp",
+   "frames": 4
+  },
+  "magic_daily_brush": {
+   "file": "magic_daily_brush.webp",
+   "frames": 4
+  },
+  "magic_daily_mend": {
+   "file": "magic_daily_mend.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -4486,6 +4506,46 @@
     -101,
     -262,
     87,
+    0
+   ]
+  },
+  "magic_daily_cola": {
+   "bounds": [
+    -107,
+    -342,
+    94,
+    -1
+   ]
+  },
+  "magic_daily_roast": {
+   "bounds": [
+    -108,
+    -337,
+    106,
+    -1
+   ]
+  },
+  "magic_daily_scarf": {
+   "bounds": [
+    -106,
+    -316,
+    98,
+    -1
+   ]
+  },
+  "magic_daily_brush": {
+   "bounds": [
+    -140,
+    -325,
+    88,
+    -1
+   ]
+  },
+  "magic_daily_mend": {
+   "bounds": [
+    -108,
+    -311,
+    80,
     0
    ]
   }

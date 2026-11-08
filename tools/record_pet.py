@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import ctypes
+from dataclasses import asdict
 import json
 import math
 import os
@@ -18,7 +20,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--scenes', default='feed,left,right,top,bottom')
+    parser.add_argument('--scenes', default='feed,left,right,top,bottom',
+                        help='comma-separated scenes; includes magic-dragon, magic-prop, magic_daily_*, '
+                             'flight-interrupt, inspect-dragon_snack_berry and inspect-life_comic_turn')
+    parser.add_argument('--seed', type=int, default=7, help='reproducible optional action variants')
     parser.add_argument('--seconds', type=float, default=16.0,
                         help='real-time duration per scene, for example 8, 10 or 16 seconds')
     parser.add_argument('--edge-micro', action='store_true',
@@ -42,11 +47,17 @@ def main():
     from regular.desktop_pet import PetWidget, SpriteBank
     from regular.pet_brain import Step
     from regular.pet_repertoire import available
-    from regular.pet_routines import ACTIVITY_ENDINGS
+    from regular.pet_routines import ACTIVITY_ENDINGS, DAILY_MAGIC
 
     adopted = available()
     daily = {name for name in adopted if name.startswith('daily_')}
-    air_scenes = {'air-fire', 'air-catch', 'air-miss'}
+    air_scenes = {'air-fire', 'air-flight', 'air-catch', 'air-miss'}
+    throw_scenes = {'throw', 'drop'}
+    magic_scenes = {'magic-dragon': None, 'magic-prop': 'prop',
+                    **{name: name for name in DAILY_MAGIC if name in adopted}}
+    inspect_scenes = {f'inspect-{name}': name for name in ('dragon_snack_berry', 'life_comic_turn')
+                      if name in adopted}
+    focused_scenes = set(magic_scenes) | set(inspect_scenes) | {'flight-interrupt'}
     activity_scenes = {result: (source, result)
                        for source, endings in reversed(tuple(ACTIVITY_ENDINGS.items()))
                        for result in endings[:-1]}
@@ -62,7 +73,7 @@ def main():
                        if source in adopted and (result is None or result in adopted)
                        and ACTIVITY_ENDINGS[source][-1] in adopted}
     unknown = (set(scenes) - {'feed', 'left', 'right', 'top', 'bottom', 'natural', 'next'}
-               - daily - air_scenes - activity_scenes.keys())
+               - daily - air_scenes - throw_scenes - activity_scenes.keys() - focused_scenes)
     if unknown:
         parser.error('unknown or unadopted scene: ' + ', '.join(sorted(unknown)))
 
@@ -95,7 +106,7 @@ def main():
         output = args.out / scene
         output.mkdir(parents=True, exist_ok=True)
         clock = time.monotonic
-        pet = PetWidget(BlockedClient(), quit_on_close=False, rng=random.Random(7), clock=clock,
+        pet = PetWidget(BlockedClient(), quit_on_close=False, rng=random.Random(args.seed), clock=clock,
                         sprites=SpriteBank(args.source / 'regular/assets/pet'))
         for timer in (pet.animation, pet.poll, pet.presence_poll):
             timer.stop()
@@ -120,6 +131,7 @@ def main():
         crop = (round(cx - 300), round(cy - 260), 600, 440)
         pointer = [QPoint(center.x(), center.y())]
         frames, records, events, errors, programmes = [], [], set(), [], []
+        scene_metadata, kick_calls = {}, []
         started, next_capture = clock(), 0.0
         finished_feed = False
         drag_target = {'left': (area.left() - 40, center.y() - 80),
@@ -133,11 +145,81 @@ def main():
         if scene in ('left', 'right'):
             brain.place(cx)
             pet._sync_windows(force=True)
-        if scene in air_scenes:
+        if scene in air_scenes or scene == 'flight-interrupt':
             brain.place(center.x() - 150)
             pet._sync_windows(force=True)
+            crop = (area.left() - 30, max(area.top(), area.bottom() - 620), area.width() + 60, 640)
+        if scene == 'magic-dragon':
             crop = (center.x() - 400, max(area.top(), area.bottom() - 620), 800, 640)
         air_target = (brain.x + brain.figure * 0.9, brain.floor - brain.figure * 2.1)
+        if scene in throw_scenes:
+            brain.place(center.x() - 150)
+            pet._sync_windows(force=True)
+            crop = (area.left() - 30, area.top() - 30, area.width() + 60, area.height() + 60)
+        throw_origin = (brain.x, brain.floor - 100)
+        if scene == 'magic-prop':
+            brain.place(brain.left + brain.figure * 0.9)
+            pet._sync_windows(force=True)
+            crop = (area.left() - 30, max(area.top(), area.bottom() - 620), area.width() + 60, 640)
+
+        def record_programme():
+            return [asdict(step) for step in (brain.step, *brain.plan) if step is not None]
+
+        def prop_state(item):
+            return {key: getattr(item, key) for key in
+                    ('id', 'kind', 'x', 'y', 'radius', 'vx', 'vy', 'grounded', 'dragging', 'born', 'ttl')}
+
+        real_kick = brain.props.kick
+
+        def observe_kick(prop_id, now, direction):
+            before = next((prop_state(p) for p in brain.props.items if p.id == prop_id), None)
+            result = real_kick(prop_id, now, direction)
+            kick_calls.append({'t': now - started, 'prop_id': prop_id, 'direction': direction,
+                               'result': result, 'before': before,
+                               'after': next((prop_state(p) for p in brain.props.items if p.id == prop_id), None)})
+            return result
+
+        def start_magic(now):
+            kind = magic_scenes[scene]
+            if scene == 'magic-prop':
+                # A real persistent toy, settled on the floor well beyond walking range.
+                prop_id = brain.props.emit('ball', brain.right - brain.figure * 0.9,
+                                           brain.floor, now, brain.scale)
+                item = next(p for p in brain.props.items if p.id == prop_id)
+                item.y, item.vx, item.vy, item.grounded = brain.floor - item.radius, 0.0, 0.0, True
+                item.ttl = max(item.ttl, args.seconds + 10)
+                scene_metadata['initial_prop'] = prop_state(item)
+                if item not in brain._far_prop_candidates(now):
+                    raise AssertionError('screen is too narrow for a genuine far-prop magic trip')
+            scene_metadata.update({'entrypoint': 'brain.magic', 'requested_kind': kind,
+                                   'dragon_shown_before': brain._magic_dragon_shown})
+            accepted = brain.magic(now, kind=kind)
+            scene_metadata.update({'accepted': accepted, 'initial_programme': record_programme(),
+                                   'magic_used': sorted(brain._magic_used)})
+            programmes.extend(record_programme())
+            if not accepted:
+                raise AssertionError('real magic entry rejected the requested scene: ' + scene)
+            if scene == 'magic-dragon' and (scene_metadata['dragon_shown_before']
+                                            or 'dragon' not in brain._magic_used):
+                raise AssertionError('first default magic did not choose dragon form')
+
+        def start_inspect(now):
+            clip = inspect_scenes[scene]
+            duration = 6.0 if adopted[clip]['loop'] else None
+            brain._queue(Step(clip, duration), Step('idle', 60), now=now, interrupt=True)
+            programmes.extend(record_programme())
+            scene_metadata.update({'entrypoint': 'brain._queue', 'inspected_clip': clip,
+                                   'main_seconds': duration, 'initial_programme': record_programme()})
+
+        def interrupt_flight(now):
+            # Expose the real toolbar for one frame. PetWidget.step reads it through
+            # _attention and invokes set_attention; the normal air toolbar rule then
+            # hides it. Do not replace the return clip or force the mode ourselves.
+            scene_metadata.update({'interrupt_at': now - started, 'before_interrupt': {
+                'clip': brain.clip, 'mode': brain.mode, 'x': brain.x, 'y': brain.y,
+                'altitude': brain.floor - brain.y}, 'entrypoint': 'PetWidget toolbar attention'})
+            pet._place_toolbar()
+            pet.toolbar.show()
 
         def start_daily(now):
             duration = max(1.0, args.seconds - 2.5) if adopted[scene]['loop'] else None
@@ -161,10 +243,10 @@ def main():
             programmes.extend({'clip': step.clip, 'duration': step.duration}
                               for step in (brain.step, *brain.plan) if step is not None)
 
-        def start_air_fire(now):
+        def start_flight(now):
             # Force only the rare branch, preserving its real authored speed,
             # movement, preparation and landing.
-            with patch.object(brain.rng, 'random', return_value=0.0):
+            with patch.object(brain.rng, 'random', return_value=0.0 if scene == 'air-fire' else 1.0):
                 steps = brain._flight_steps(now)
             brain._queue(*steps, Step('idle', 60), now=now, interrupt=True)
             programmes.extend({'clip': step.clip, 'duration': step.duration}
@@ -242,12 +324,24 @@ def main():
                             'air_caught': (brain._air_chase or {}).get('caught'),
                             'edge_phase': (brain._edge_exit or {}).get('phase'),
                             'warp_phase': (brain.warp or {}).get('phase'),
+                            'warp_cause': (brain.warp or {}).get('cause'),
+                            'props': [prop_state(item) for item in brain.props.items],
+                            'chasing_prop': brain._chasing_prop,
+                            'attention': brain.attention,
+                            'step_hold': brain.step.hold if brain.step else None,
+                            'step_target': ([brain.step.target_x, brain.step.target_y] if brain.step else None),
+                            'clip_family': adopted.get(brain.clip, {}).get('family'),
                             'portals': [{'id': p.id, 'x': p.x, 'y': p.y, 'open': p.openness(now)}
                                         for p in brain.portals],
                             'input_passthrough': bool(native_window(pet).ignoresMouseEvents()),
                             'bubble_passthrough': (bool(native_window(pet.bubble).ignoresMouseEvents())
                                                    if pet.bubble.isVisible() else None),
                             'scale': [transform['sx'], transform['sy']], 'lift': pet.lift})
+            mask = pet.mask()
+            records[-1].update({'rotation': transform['rot'], 'offset_y': transform['dy'],
+                               'configured_scale': brain.scale,
+                               'mask_unrestricted': mask.isEmpty(),
+                               'mask_bounds': list(mask.boundingRect().getRect())})
 
         def tick():
             nonlocal next_capture, finished_feed
@@ -262,6 +356,10 @@ def main():
                                        'result': 'gain', 'text': '吃饱了，心情也好了。'}}}))
                 elif scene in daily:
                     once('scene', elapsed, 1.0, lambda: start_daily(now))
+                elif scene in magic_scenes:
+                    once('scene', elapsed, 1.0, lambda: start_magic(now))
+                elif scene in inspect_scenes:
+                    once('scene', elapsed, 1.0, lambda: start_inspect(now))
                 elif scene in ('natural', 'next'):
                     once('scene', elapsed, 1.0, lambda: start_routine(now))
                 elif scene in activity_scenes:
@@ -274,8 +372,23 @@ def main():
                     if scene in ('work-next', 'ukulele-next-result') and brain.clip == ACTIVITY_ENDINGS[source][-1]:
                         for key, at in (('next-cleanup', 0.8), ('next-cleanup-again', 1.3)):
                             once(key, now - brain.clip_started, at, change_activity)
-                elif scene == 'air-fire':
-                    once('scene', elapsed, 1.0, lambda: start_air_fire(now))
+                elif scene in ('air-fire', 'air-flight'):
+                    once('scene', elapsed, 1.0, lambda: start_flight(now))
+                elif scene == 'flight-interrupt':
+                    once('scene', elapsed, 1.0, lambda: start_flight(now))
+                    if (brain.mode == 'fly' and brain.floor - brain.y >= brain.figure * 0.7
+                            and now - brain.step_started >= 0.6):
+                        once('interrupt', elapsed, 0.0, lambda: interrupt_flight(now))
+                elif scene in throw_scenes:
+                    once('press', elapsed, 1.0, lambda: brain.press(now, *throw_origin))
+                    if 1.04 <= elapsed < 2.8:
+                        lift = min(1.0, (elapsed - 1.04) / 0.96)
+                        flick = max(0.0, (elapsed - 2.5) / 0.3) if scene == 'throw' else 0.0
+                        pointer[0] = QPoint(round(throw_origin[0] + 240 * flick),
+                                            round(throw_origin[1] - 350 * lift - 200 * flick))
+                        brain.drag(now, pointer[0].x(), pointer[0].y())
+                    once('release', elapsed, 2.8,
+                         lambda: brain.release(now, pointer[0].x(), pointer[0].y()))
                 elif scene in ('air-catch', 'air-miss'):
                     if scene == 'air-miss':
                         once('existing-bubble', elapsed, 0.5,
@@ -307,10 +420,15 @@ def main():
                             brain._hidden_sleep_at = now
                     once('wake', elapsed, 9.0, lambda: brain.poke(now))
                 pet.step(now)
+                if (scene == 'flight-interrupt' and 'interrupt' in events
+                        and 'after_interrupt' not in scene_metadata):
+                    scene_metadata['after_interrupt'] = {
+                        'clip': brain.clip, 'mode': brain.mode, 'attention': brain.attention,
+                        'programme': record_programme()}
                 # Keep the comparison ending idle; do not append an unrelated random programme.
-                end_after = (12.0 if scene in air_scenes else 2.2 if scene == 'feed'
+                end_after = (12.0 if scene in air_scenes else 3.0 if scene in throw_scenes else 2.2 if scene == 'feed'
                              else 1.0 if scene in daily or scene in activity_scenes else 9.0)
-                if (not finished_feed and elapsed > end_after
+                if (scene not in focused_scenes and not finished_feed and elapsed > end_after
                         and brain.mode == 'ground' and brain.clip == 'idle'):
                     finished_feed = True
                     brain._queue(Step('idle', 60), now=now, interrupt=True)
@@ -326,13 +444,65 @@ def main():
                 app.quit()
 
         timer.timeout.connect(tick)
-        with patch.object(QCursor, 'pos', side_effect=lambda: pointer[0]):
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(QCursor, 'pos', side_effect=lambda: pointer[0]))
+            if scene in focused_scenes:
+                # Only suppress the unrelated programme after the authored tail.
+                stack.enter_context(patch.object(brain, '_choose', return_value=[Step('idle', 60)]))
+            if scene == 'magic-prop':
+                stack.enter_context(patch.object(brain.props, 'kick', side_effect=observe_kick))
             timer.start()
             app.exec()
         pet.close()
         app.processEvents()
         if errors:
             raise errors[0]
+        checks = {}
+        if scene in focused_scenes:
+            checks['returned_to_ground_idle'] = records[-1]['mode'] == 'ground' and records[-1]['clip'] == 'idle'
+            if scene in magic_scenes:
+                checks['real_magic_accepted'] = scene_metadata.get('accepted') is True
+                if scene == 'magic-dragon':
+                    checks['default_first_dragon'] = (scene_metadata.get('dragon_shown_before') is False
+                                                       and 'dragon' in scene_metadata.get('magic_used', ()))
+                    checks['dragon_and_recovery_shown'] = (
+                        any(r['clip'] == 'form_dragon' for r in records)
+                        and any(r['clip'] in ('form_recover', 'form_tidy') for r in records))
+                elif scene == 'magic-prop':
+                    initial = scene_metadata['initial_prop']
+                    checks['prop_purpose_warp_shown'] = any(r['warp_cause'] == 'prop' for r in records)
+                    checks['real_ball_kick_succeeded'] = any(c['result'] and c['prop_id'] == initial['id']
+                                                            for c in kick_calls)
+                    checks['same_ball_moved'] = any(abs(p['x'] - initial['x']) > 5 or abs(p['y'] - initial['y']) > 5
+                                                    for r in records for p in r['props'] if p['id'] == initial['id'])
+                    scene_metadata['kick_calls'] = kick_calls
+                else:
+                    checks['requested_daily_shown'] = any(r['clip'] == scene for r in records)
+                    checks['all_four_frames_shown'] = {r['frame'] for r in records if r['clip'] == scene} == {0, 1, 2, 3}
+            elif scene == 'flight-interrupt':
+                interrupted = scene_metadata.get('interrupt_at', args.seconds + 1)
+                returning = [r for r in records if r['t'] >= interrupted and r['mode'] == 'fly']
+                checks['real_attention_interrupted_airborne'] = (
+                    scene_metadata.get('before_interrupt', {}).get('mode') == 'fly'
+                    and scene_metadata.get('after_interrupt', {}).get('attention') is True)
+                checks['return_uses_flap_then_approach'] = (bool(returning)
+                    and all(r['clip_family'] in ('flap', 'approach') for r in returning)
+                    and returning[-1]['clip'] == 'motion_fly_approach')
+                checks['return_wings_animate'] = len({r['frame'] for r in returning}) >= 2
+                checks['landing_shown'] = any(r['t'] >= interrupted and r['clip_family'] == 'landing' for r in records)
+            else:
+                clip = inspect_scenes[scene]
+                checks['requested_clip_shown'] = any(r['clip'] == clip for r in records)
+                checks['all_four_frames_shown'] = {r['frame'] for r in records if r['clip'] == clip} == {0, 1, 2, 3}
+        if (scene in {'air-flight', 'air-fire', 'air-catch', 'air-miss', 'flight-interrupt'}
+                and 'motion_fly_approach' in adopted):
+            approaches = [r for r in records if r['clip'] == 'motion_fly_approach']
+            settles = [r for r in records if r['clip'] == 'motion_fly_settle']
+            checks['approach_before_contact'] = bool(approaches) and all(
+                r['mode'] == 'fly' and r['frame'] == 0 for r in approaches)
+            checks['grounded_settle_uses_only_123'] = bool(settles) and all(
+                r['mode'] == 'ground' for r in settles) and {r['frame'] for r in settles} == {1, 2, 3}
+            checks['approach_precedes_settle'] = bool(approaches and settles) and approaches[-1]['t'] < settles[0]['t']
         durations = [max(1, round((records[i + 1]['t'] - row['t']) * 1000))
                      for i, row in enumerate(records[:-1])] + [83]
         frames[0].save(output / 'continuous.webp', save_all=True, append_images=frames[1:],
@@ -353,13 +523,18 @@ def main():
         (output / 'frames.json').write_text(json.dumps({
             'source': str(args.source.resolve()), 'scene': scene, 'platform': app.platformName(),
             'requested_seconds': args.seconds, 'edge_micro': args.edge_micro,
+            'seed': args.seed,
             'activity_main_seconds': args.activity_seconds if scene in activity_scenes else None,
             'screen_available': list(area.getRect()), 'crop': crop,
             'captured_windows': 'only QA-owned Qt widgets; no desktop or other app capture',
             'blocked_requests': submitted, 'events': sorted(events), 'programme': programmes,
+            'scene_metadata': scene_metadata, 'verification': checks,
             'frames': records}, ensure_ascii=False, indent=2))
         print(json.dumps({'scene': scene, 'frames': len(frames), 'seconds': records[-1]['t'],
-                          'output': str(output)}, ensure_ascii=False), flush=True)
+                          'output': str(output), 'verification': checks}, ensure_ascii=False), flush=True)
+        if checks and not all(checks.values()):
+            raise AssertionError('incomplete or failed scene; inspect frames.json: '
+                                 + ', '.join(name for name, passed in checks.items() if not passed))
     return 0
 
 

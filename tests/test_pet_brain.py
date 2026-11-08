@@ -6,7 +6,7 @@ import random
 import unittest
 from unittest.mock import patch
 
-from regular.pet_routines import EPISODES, choose_routine
+from regular.pet_routines import DAILY_MAGIC, EPISODES, choose_routine
 from regular.pet_repertoire import ACTIONS, curated_actions
 from regular.pet_brain import (ASLEEP, CARE_COOL_LINES, CARE_FULL_LINES, CARE_GAIN,
                                CARE_LINES, CARE_MAX, CLIPS, CUE_ACTIONS, EDGE, EDGE_PEEK, FIGURE, LINES, PLAY,
@@ -566,16 +566,38 @@ class MotionRepertoireTest(unittest.TestCase):
         if len(b.repertoire.actions) < 30:
             self.skipTest("full adopted catalog not present")
         b.observe(0, ready(chatter=2))
-        counts = Counter()
+        counts, travel = Counter(), Counter()
         for i in range(36000):
+            x, y = b.x, b.y
             b.tick((i + 1) * 0.1)
             counts[b.clip] += 1
-        # The prop library is still a large part of the day, but no longer the whole of it:
-        # whole-body spells (circles, sneezes) and walks take a real share.
+            travel[b.mode] += abs(b.x - x) + abs(b.y - y)
+        # Quiet catalog activities remain substantial, with actual walking and
+        # flight between them. An empty desktop need not produce a teleport.
         self.assertGreater(sum(n for clip, n in counts.items() if clip in b.repertoire.actions), 12000)
-        self.assertTrue(any(clip.startswith("warp_") for clip in counts))
+        self.assertGreater(travel["ground"], b.figure)
+        self.assertGreater(travel["fly"], b.figure)
         self.assertGreaterEqual(sum(clip in b.repertoire.actions for clip in counts), 30)
         self.assertLess(sum(n for clip, n in counts.items() if clip in ASLEEP), 1800)
+
+        # A requested, adopted daily spell must be reachable and finish its
+        # useful result. Do not require this rare family in one random hour.
+        adopted_magic = [name for name in DAILY_MAGIC if b._has(name)]
+        if adopted_magic:
+            requested = PetBrain(rng=random.Random(42), now=0)
+            requested.set_ground(0, 1440, 860, 0)
+            requested.place(700)
+            clip = adopted_magic[0]
+            self.assertTrue(requested.magic(0, kind=clip))
+            frames = set()
+            for i in range(100):
+                if requested.clip != clip:
+                    break
+                frames.add(requested.pose()[1])
+                requested.tick((i + 1) * 0.1)
+            self.assertEqual(frames, {0, 1, 2, 3})
+            self.assertEqual(requested.clip, "idle")
+            self.assertEqual(requested.posture(), "stand")
 
     def test_adopted_drawing_remains_semantically_busy(self):
         b = PetBrain(rng=random.Random(7), now=0)
@@ -2190,8 +2212,8 @@ class SpellTest(unittest.TestCase):
     def test_reduced_motion_and_the_legacy_repertoire_never_cast(self):
         b = brain()
         self.assertFalse(b._can_warp())
-        b.magic(1.0)
-        self.assertEqual(b.clip, "wave")
+        self.assertFalse(b.magic(1.0))
+        self.assertEqual(b.clip, "idle")
         still = PetBrain(rng=random.Random(3), now=0.0, motion=False)
         still.set_ground(0, 1440, 860, 30)
         still.place(300)
