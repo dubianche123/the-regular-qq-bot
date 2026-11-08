@@ -27,6 +27,31 @@ class SpritePlanTest(unittest.TestCase):
         self.assertEqual(set(plan["outputs"]), {"gamepad", "popcorn"})
         self.assertEqual(plan["endpoint"], sprites.ENDPOINT)
 
+    def test_extra_references_survive_style_override(self):
+        from regular.pet_repertoire import ACTIONS
+        spec = {"style": "idle", "prompt": "action", "extra_refs": ["chair"]}
+        args = SimpleNamespace(stage="library", output="/tmp/test-source", model=sprites.MODELS[0],
+                               group="form", only=["form_example"], style_reference="/tmp/style.png")
+        with patch.dict(ACTIONS, {"form_example": spec}):
+            job = sprites._selected_jobs(args)[0]
+            self.assertEqual(job["refs"], [Path("/tmp/test-source/base.png"), Path("/tmp/style.png"), Path("/tmp/test-source/chair.png")])
+            self.assertEqual(sprites.plan(args)["requests"], 1)
+
+    def test_custom_header_remains_on_prompt_override_and_scope_stays_narrow(self):
+        from regular.pet_repertoire import ACTIONS
+        with tempfile.TemporaryDirectory() as folder:
+            prompt = Path(folder) / "prompt.txt"
+            prompt.write_text("new action", encoding="utf-8")
+            custom = {"style": "idle", "prompt": "old action", "prompt_header": "DRAGON ONLY"}
+            args = SimpleNamespace(stage="library", output=folder, model=sprites.MODELS[0],
+                                   group="form", only=["form_dragon"], prompt_file=str(prompt))
+            with patch.dict(ACTIONS, {"form_dragon": custom, "form_other": custom}):
+                self.assertEqual(sprites.plan(args)["outputs"], ["form_dragon"])
+                job = sprites._selected_jobs(args)[0]
+                self.assertEqual(job["prompt"], "DRAGON ONLY\nAction: new action")
+                args.prompt_file = None
+                self.assertEqual(sprites._selected_jobs(args)[0]["prompt"], "DRAGON ONLY\nAction: old action")
+
     def test_library_group_and_action_filters_cannot_expand_paid_scope(self):
         args = SimpleNamespace(stage="library", output="/unused/source", model=sprites.MODELS[0],
                                group="life", only=["life_sleep_back", "motion_edge_peek"])
@@ -95,6 +120,94 @@ class SpriteGenerationSelectionTest(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(PIL_AVAILABLE, "maintainer sprite pipeline requires Pillow")
 class PartialSpriteBuildTest(unittest.TestCase):
+    def test_reused_rest_starts_with_exact_settled_frame(self):
+        from PIL import Image
+        from regular.pet_repertoire import ACTIONS
+
+        with tempfile.TemporaryDirectory() as folder:
+            source, out = Path(folder) / "source", Path(folder) / "built"
+            source.mkdir(); out.mkdir()
+            Image.new("RGBA", (1024, 1024), (120, 80, 200, 255)).save(source / "idle.png")
+            original = Image.new("RGBA", (2048, 512))
+            for i in range(4):
+                original.paste((20 * i, 60, 120, 200), (i * 512, 0, (i + 1) * 512, 512))
+            original.save(out / "example_settle.webp", "WEBP", lossless=True, exact=True)
+            (out / "sprites.json").write_text(json.dumps({"frame": [512, 512], "actions": {"example_settle": {"file": "example_settle.webp", "frames": 4}}, "geometry": {"example_settle": {"bounds": [0, 0, 1, 1]}}}))
+            spec = {"scale": 1.0, "reuse_strip_frames": {"strip": "example_settle", "frames": [3, 2, 3, 3]}}
+            with patch.dict(ACTIONS, {"example_rest": spec}), contextlib.redirect_stdout(io.StringIO()):
+                sprites.build(SimpleNamespace(source=str(source), out=str(out), only=["example_rest"]))
+            with Image.open(out / "example_settle.webp") as a, Image.open(out / "example_rest.webp") as b:
+                self.assertEqual(a.convert("RGBA").crop((1536, 0, 2048, 512)).tobytes(), b.convert("RGBA").crop((0, 0, 512, 512)).tobytes())
+
+    def test_calibrate_reuses_calibrated_parent_even_when_child_precedes_it(self):
+        from PIL import Image, ImageDraw
+        from regular.pet_repertoire import ACTIONS
+
+        with tempfile.TemporaryDirectory() as folder:
+            source, out = Path(folder) / "source", Path(folder) / "out"
+            source.mkdir()
+            single = Image.new("RGBA", (512, 512))
+            ImageDraw.Draw(single).rectangle((180, 160, 330, 480), fill=(180, 120, 220, 255))
+            strip = Image.new("RGBA", (2048, 512))
+            for i in range(4):
+                frame = single.copy()
+                ImageDraw.Draw(frame).rectangle((210 + i * 8, 210, 220 + i * 8, 220), fill=(20, 20, 20, 255))
+                strip.paste(frame, (i * 512, 0))
+            for name in ("idle", "example_parent", "example_child"):
+                strip.save(source / (name + ".webp"), "WEBP", lossless=True, exact=True)
+            actions = {name: {"file": name + ".webp", "frames": 4} for name in ("idle", "example_child", "example_parent")}
+            (source / "sprites.json").write_text(json.dumps({"frame": [512, 512], "anchor": [256, 492], "actions": actions}))
+            child = {"reuse_strip_frames": {"strip": "example_parent", "frames": [3, 2, 3, 3]}}
+            matcher = SimpleNamespace(strip_scale=lambda frames: (1.0, [(1.0, 1.0)] * len(frames)))
+            with patch.dict(ACTIONS, {"example_child": child}), patch.object(sprites, "HeadMatcher", return_value=matcher), contextlib.redirect_stdout(io.StringIO()):
+                sprites.calibrate(SimpleNamespace(source=str(source), out=str(out), only=None))
+            with Image.open(out / "example_parent.webp") as a, Image.open(out / "example_child.webp") as b:
+                self.assertEqual(a.convert("RGBA").crop((1536, 0, 2048, 512)).tobytes(), b.convert("RGBA").crop((0, 0, 512, 512)).tobytes())
+            result = json.loads((out / "sprites.json").read_text())
+            self.assertEqual(result["geometry"]["example_child"], result["geometry"]["example_parent"])
+
+    def test_performance_camera_zoom_is_removed_without_using_prop_bounds(self):
+        from PIL import Image, ImageDraw
+        from regular.pet_repertoire import ACTIONS
+
+        with tempfile.TemporaryDirectory() as folder:
+            source, out = Path(folder) / "source", Path(folder) / "built"
+            source.mkdir(); out.mkdir()
+            frame = Image.new("RGBA", (512, 512))
+            draw = ImageDraw.Draw(frame)
+            draw.rectangle((205, 285, 305, 470), fill=(90, 140, 110, 255))
+            draw.ellipse((165, 120, 345, 300), fill=(220, 200, 240, 255))
+            draw.ellipse((200, 165, 310, 275), fill=(250, 214, 200, 255))
+            for x in (222, 270):
+                draw.ellipse((x, 208, x + 18, 235), fill=(120, 90, 170, 255))
+            draw.polygon([(180, 155), (195, 80), (218, 150)], fill=(200, 190, 230, 255))
+            draw.polygon([(295, 150), (320, 80), (332, 160)], fill=(200, 190, 230, 255))
+            sheet = Image.new("RGBA", (1024, 1024))
+            for i in range(4):
+                sheet.alpha_composite(frame, (i % 2 * 512, i // 2 * 512))
+            sheet.save(source / "idle.png")
+            for face in sprites.FACES:
+                sheet.save(source / f"{face}.png")
+            with contextlib.redirect_stdout(io.StringIO()):
+                sprites.build(SimpleNamespace(source=str(source), out=str(out), only=["idle"]))
+            changed = Image.new("RGBA", (1024, 1024))
+            for i, factor in enumerate((.75, .85, .95, 1.0)):
+                smaller = frame.resize((round(512 * factor), round(512 * factor)))
+                cell = Image.new("RGBA", (512, 512))
+                cell.alpha_composite(smaller, (round(256 * (1-factor)), round(470 * (1-factor))))
+                changed.alpha_composite(cell, (i % 2 * 512, i // 2 * 512))
+            changed.save(source / "synthetic_performance.png")
+            with patch.dict(ACTIONS, {"synthetic_performance": {"scale": 1.0, "frame_calibration": True}}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                sprites.build(SimpleNamespace(source=str(source), out=str(out), only=["synthetic_performance"]))
+            with Image.open(out / "idle.webp") as strip:
+                matcher = sprites.HeadMatcher(strip.crop((0, 0, 512, 512)))
+            with Image.open(out / "synthetic_performance.webp") as strip:
+                for i in range(4):
+                    confidence, relative = matcher.measure(strip.crop((i*512, 0, (i+1)*512, 512)))
+                    self.assertGreater(confidence, .5)
+                    self.assertAlmostEqual(relative, 1.0, delta=.045)
+
     def test_calibration_keeps_head_size_when_arms_change_the_full_height(self):
         from PIL import Image, ImageDraw
 
@@ -123,10 +236,14 @@ class PartialSpriteBuildTest(unittest.TestCase):
                 strip.save(source / f"{name}.webp", lossless=True)
             original = {"schema": 2, "frame": [512, 512], "anchor": [256, 492], "figure_height": 320,
                         "actions": {n: {"file": f"{n}.webp", "frames": 4} for n in ("idle", "raised", "faceless")}}
+            original["geometry"] = {"raised": {"rest_x": -25, "rest_y": -100}}
             (source / "sprites.json").write_text(json.dumps(original))
             with contextlib.redirect_stdout(io.StringIO()):
                 sprites.calibrate(SimpleNamespace(source=str(source), out=str(out), only=None))
             report = json.loads((out / "calibration-report.json").read_text())
+            geometry = json.loads((out / "sprites.json").read_text())["geometry"]["raised"]
+            self.assertAlmostEqual(geometry["rest_x"], -25 * report["raised"]["scale"], delta=.02)
+            self.assertAlmostEqual(geometry["rest_y"], -100 * report["raised"]["scale"], delta=.02)
             self.assertAlmostEqual(report["raised"]["relative_head"], 0.75, delta=0.04)
             self.assertIsNone(report["faceless"]["relative_head"])       # nothing to match: left as it was
             self.assertEqual(report["faceless"]["scale"], 1.0)
@@ -174,6 +291,37 @@ class PartialSpriteBuildTest(unittest.TestCase):
                             if (lambda p: p[3] > 100 and p[0] > 170 and p[2] > 170 and p[1] < 80)(frame.getpixel((x, y)))]
                     self.assertEqual(pole, [])
                 self.assertLessEqual(max(widths) - min(widths), 1)
+
+    def test_supported_sleep_keeps_the_contact_plane_fixed_across_entry_frames(self):
+        from PIL import Image, ImageDraw
+        from regular.pet_repertoire import ACTIONS
+
+        with tempfile.TemporaryDirectory() as folder:
+            source, out = Path(folder) / "source", Path(folder) / "built"
+            source.mkdir()
+            idle = Image.new("RGBA", (1024, 1024))
+            ImageDraw.Draw(idle).rectangle((180, 60, 330, 450), fill=(100, 150, 120, 255))
+            idle.save(source / "idle.png")
+            sheet = Image.new("RGBA", (1024, 1024))
+            for i, feet in enumerate((410, 430, 450, 470)):
+                x, y = i % 2 * 512, i // 2 * 512
+                draw = ImageDraw.Draw(sheet)
+                draw.rectangle((x + 180, y + 80, x + 330, y + feet), fill=(90, 150, 120, 255))
+                draw.rectangle((x + 190, y + 300, x + 320, y + 303), fill=(30, 50, 240, 255))
+            sheet.save(source / "supported_sleep.png")
+            args = SimpleNamespace(source=str(source), out=str(out), only=["supported_sleep"])
+            with patch.dict(ACTIONS, {"supported_sleep": {"scale": 1.0, "rest_y": 300}}), contextlib.redirect_stdout(io.StringIO()):
+                sprites.build(args)
+            geometry = json.loads((out / "sprites.json").read_text())["geometry"]["supported_sleep"]
+            expected = sprites.ANCHOR[1] + geometry["rest_y"]
+            with Image.open(out / "supported_sleep.webp") as strip:
+                for i in range(4):
+                    frame = strip.crop((i * 512, 0, (i + 1) * 512, 512)).convert("RGBA")
+                    rows = [y for y in range(512) if any(
+                        (lambda p: p[2] > 180 and p[0] < 80 and p[1] < 100 and p[3] > 150)(frame.getpixel((x, y)))
+                        for x in range(512))]
+                    self.assertTrue(rows)
+                    self.assertAlmostEqual(min(rows), expected, delta=2)
 
     def test_new_strips_keep_existing_files_and_manifest_entries(self):
         from PIL import Image, ImageDraw

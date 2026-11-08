@@ -194,10 +194,11 @@ def _selected_jobs(args):
     if getattr(args, "prompt_file", None):
         if len(jobs) != 1:
             raise ValueError("replacement prompt requires one selected action")
-        jobs[0]["prompt"] = SHEET_HEAD + "\nAction: " + Path(args.prompt_file).read_text(encoding="utf-8")
+        header = jobs[0].get("prompt_header", SHEET_HEAD)
+        jobs[0]["prompt"] = header + "\nAction: " + Path(args.prompt_file).read_text(encoding="utf-8")
     if getattr(args, "style_reference", None):
         for job in jobs:
-            job["refs"] = [job["refs"][0], Path(args.style_reference)]
+            job["refs"] = [job["refs"][0], Path(args.style_reference), *job["refs"][2:]]
     return jobs
 
 
@@ -222,10 +223,13 @@ def _jobs(stage, out, model):
                 for name, action in SHEETS.items()]
     if stage == "library":
         from regular.pet_repertoire import ACTIONS
+        default_header = SHEET_HEAD + "\nImage 2 supplies face, outfit, proportions, palette and linework only. The NEW action below determines pose, arm position and props; replace the reference pose when it differs."
         return [{"name": name, "group": name.split("_", 1)[0],
-                 "refs": [out / "base.png", out / (spec["style"] + ".png")],
+                 "refs": [out / "base.png", out / (spec["style"] + ".png"),
+                          *(out / (name + ".png") for name in spec.get("extra_refs", ()))],
                  "size": "1024x1024", "model": model,
-                 "prompt": SHEET_HEAD + "\nImage 2 supplies face, outfit, proportions, palette and linework only. The NEW action below determines pose, arm position and props; replace the reference pose when it differs.\nAction: " + spec["prompt"]}
+                 **({"prompt_header": spec["prompt_header"]} if "prompt_header" in spec else {}),
+                 "prompt": spec.get("prompt_header", default_header) + "\nAction: " + spec["prompt"]}
                 for name, spec in ACTIONS.items()]
     if stage == "faces":
         return [{"name": name, "refs": [out / "idle.png"], "mask": out / "eyes-mask.png", "size": "1024x1024",
@@ -347,13 +351,13 @@ def _drop_strays(frame, keep=0.03):
     return frame
 
 
-def _idle_reference(out):
-    """A head matcher for the idle frame already in the output folder, if there is one."""
+def _idle_reference(out, name="idle"):
+    """Match an adopted form's own reference, normally the human idle frame."""
     from PIL import Image
 
     try:
         spec = json.loads((out / "sprites.json").read_text(encoding="utf-8"))
-        with Image.open(out / spec["actions"]["idle"]["file"]) as strip:
+        with Image.open(out / spec["actions"][name]["file"]) as strip:
             return HeadMatcher(strip.crop((0, 0, CANVAS[0], CANVAS[1])).convert("RGBA"))
     except (OSError, KeyError, ValueError):
         return None
@@ -502,11 +506,12 @@ def _fit_scale(geometry, scale, source_x, target_x):
     return scale
 
 
-def _place(frame, scale, *, source_x=None, target_x=None):
+def _place(frame, scale, *, source_x=None, target_x=None, source_y=None):
     from PIL import Image
 
     x, feet, box = _anchor(frame)
     x = x if source_x is None else source_x
+    feet = feet if source_y is None else source_y
     target_x = ANCHOR[0] if target_x is None else target_x
     scaled = frame.convert("RGBa").resize((round(frame.width * scale), round(frame.height * scale)),
                                           Image.LANCZOS).convert("RGBA")
@@ -553,11 +558,29 @@ def build(args):
                 "actions": {name: action for name, action in kept.items() if name not in strips or args.only}}
     manifest.setdefault("geometry", {})
     warnings = []
-    reference = None
+    references = {}
+    reference_names = {"idle"} | {spec["calibration_reference"] for spec in ACTIONS.values()
+                                  if spec.get("calibration_reference")}
     for name, (sheet_name, cells, multiplier) in strips.items():
         if args.only and name not in args.only:
             continue
         action_spec = ACTIONS.get(name, {})
+        reuse = action_spec.get("reuse_strip_frames")
+        if reuse:
+            ref_name, indices = reuse["strip"], reuse["frames"]
+            entry = manifest["actions"].get(ref_name)
+            if not entry or not indices or any(type(i) is not int or i < 0 or i >= entry["frames"] for i in indices):
+                raise ValueError(f"missing or invalid source strip for {name}: {ref_name}")
+            with Image.open(out / entry["file"]) as existing:
+                source_strip = existing.convert("RGBA")
+            strip = Image.new("RGBA", (CANVAS[0] * len(indices), CANVAS[1]))
+            for index, old in enumerate(indices):
+                strip.paste(source_strip.crop((old * CANVAS[0], 0, (old + 1) * CANVAS[0], CANVAS[1])), (index * CANVAS[0], 0))
+            filename = f"{name}.webp"
+            strip.save(out / filename, "WEBP", lossless=True, exact=True, method=6)
+            manifest["actions"][name] = {"file": filename, "frames": len(indices)}
+            manifest["geometry"][name] = dict(manifest["geometry"][ref_name])
+            continue
         frames = [clean(_cell(sheet(sheet_name), index), action_spec.get("alpha_cutoff", 12)) for index in cells]
         if action_spec.get("drop_strays"):
             frames = [_drop_strays(frame) for frame in frames]
@@ -566,31 +589,60 @@ def build(args):
         strip = Image.new("RGBA", (CANVAS[0] * len(frames), CANVAS[1]), (0, 0, 0, 0))
         scale = base_scale * multiplier
         grip = ACTIONS.get(name, {}).get("grip_x")
+        source_x = action_spec.get("anchor_x", grip)
+        rest = action_spec.get("rest_y")
+        source_y = None
         # Hide the support behind the screen cut, including resize/compression fringes.
         target_x = ANCHOR[0] - FIGURE_HEIGHT * .12 - 3 if grip is not None else ANCHOR[0]
         if name in ACTIONS:
             geometry = [_anchor(frame) for frame in frames]
+            if rest is not None or action_spec.get("fixed_ground"):
+                # A supporting plane must stay put while the head settles onto
+                # arms/a pillow. Do not re-anchor each pose to a moving foot.
+                source_y = (max(box[3] for _, _, box in geometry)
+                            if action_spec.get("fixed_ground") and rest is None
+                            else max(feet for _, feet, _ in geometry))
+                geometry = [(x, source_y, box) for x, _, box in geometry]
             scale = _fit_scale(geometry, FIGURE_HEIGHT * multiplier / statistics.median(
-                box[3] - box[1] for _, _, box in geometry), grip, target_x)
+                box[3] - box[1] for _, _, box in geometry), source_x, target_x)
             # Then match the shipped idle head, so a new strip plays at the size she already is.
-            reference = reference or _idle_reference(out)
+            reference_name = action_spec.get("calibration_reference", "idle")
+            if reference_name not in references:
+                references[reference_name] = _idle_reference(out, reference_name)
+            reference = references[reference_name] if action_spec.get("head_calibration", True) else None
+            if reference_name != "idle" and action_spec.get("head_calibration", True) and reference is None:
+                raise ValueError(f"build reference {reference_name} before {name}")
             if reference is not None:
-                frames_at = [frames[i] for i in action_spec.get("calibration_frames", range(len(frames)))]
-                relative, _ = reference.strip_scale([_place(frame, scale, source_x=grip, target_x=target_x)[0]
+                indices = [0] if action_spec.get("frame_calibration") else action_spec.get("calibration_frames", range(len(frames)))
+                frames_at = [frames[i] for i in indices]
+                relative, _ = reference.strip_scale([_place(frame, scale, source_x=source_x, target_x=target_x, source_y=source_y)[0]
                                                      for frame in frames_at])
                 if relative:
-                    scale = _fit_scale(geometry, scale / relative, grip, target_x)
+                    scale = _fit_scale(geometry, scale / relative, source_x, target_x)
+        # Match each performance against its own first frame, whose hair, facial
+        # rendering and costume match this sheet better than the idle artwork.
+        # The initial shared scale above still relates the whole sheet to idle.
+        frame_reference = None
+        if action_spec.get("frame_calibration") and reference is not None:
+            first, _ = _place(frames[0], scale, source_x=source_x, target_x=target_x, source_y=source_y)
+            frame_reference = HeadMatcher(first)
         placed_bounds = []
         for index, frame in enumerate(frames):
-            placed, clipped = _place(frame, scale, source_x=grip, target_x=target_x)
+            frame_scale = scale
+            if frame_reference is not None and index:
+                probe, _ = _place(frame, scale, source_x=source_x, target_x=target_x, source_y=source_y)
+                confidence, relative = frame_reference.measure(probe)
+                if confidence >= 0.5 and 0.7 <= relative <= 1.4:
+                    frame_scale = _fit_scale([geometry[index]], scale / relative, source_x, target_x)
+            placed, clipped = _place(frame, frame_scale, source_x=source_x, target_x=target_x, source_y=source_y)
             if grip is not None:
                 placed = _drop_support(placed, target_x)
             if clipped:
                 warnings.append(f"{name}[{index}]")
             strip.alpha_composite(placed, (index * CANVAS[0], 0))
             placed_bounds.append(placed.getchannel("A").point(lambda a: 255 if a > 40 else 0).getbbox())
-        if name == "idle":
-            reference = HeadMatcher(strip.crop((0, 0, CANVAS[0], CANVAS[1])))
+        if name in reference_names:
+            references[name] = HeadMatcher(strip.crop((0, 0, CANVAS[0], CANVAS[1])))
         filename = f"{name}.webp"
         strip.save(out / filename, "WEBP", quality=86, alpha_quality=92, method=6)
         manifest["actions"][name] = {"file": filename, "frames": len(frames)}
@@ -598,6 +650,10 @@ def build(args):
                                                    min(b[1] for b in placed_bounds) - ANCHOR[1],
                                                    max(b[2] for b in placed_bounds) - ANCHOR[0],
                                                    max(b[3] for b in placed_bounds) - ANCHOR[1]]}
+        if grip is not None:
+            manifest["geometry"][name]["rest_x"] = round(target_x - ANCHOR[0], 3)
+        if rest is not None:
+            manifest["geometry"][name]["rest_y"] = round((rest - source_y) * scale, 3)
     (out / "sprites.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     size = sum(p.stat().st_size for p in out.glob("*.webp"))
     print(json.dumps({"actions": len(manifest["actions"]),
@@ -632,13 +688,22 @@ def calibrate(args):
     # The idle figure defines the size on screen; matching only needs a square canvas.
     base = 1.0 if [width, height] == list(CANVAS) else FIGURE_HEIGHT / (alpha[3] - alpha[1])
     padded = lambda frame: frame if frame.size == (width, width) else frame.crop((0, 0, max(width, height), max(width, height)))
-    matcher = HeadMatcher(padded(idle[0]))
+    matchers = {"idle": HeadMatcher(padded(idle[0]))}
     measured = {}
     for name in spec["actions"]:
         if args.only and name not in args.only:
             measured[name] = (1.0, [], "kept")
         else:
-            relative, rows = matcher.strip_scale([padded(frame) for frame in frames_of(name)])
+            action_spec = ACTIONS.get(name, {})
+            if not action_spec.get("head_calibration", True):
+                measured[name] = (1.0, [], "form_reference")
+                continue
+            reference_name = action_spec.get("calibration_reference", "idle")
+            if reference_name not in matchers:
+                matchers[reference_name] = HeadMatcher(padded(frames_of(reference_name)[0]))
+            frames = frames_of(name)
+            selected = action_spec.get("calibration_frames", range(len(frames)))
+            relative, rows = matchers[reference_name].strip_scale([padded(frames[i]) for i in selected])
             measured[name] = (relative, rows, "measured" if relative else None)
 
     def family(name):
@@ -682,11 +747,38 @@ def calibrate(args):
                  max(box[2] for box in bounds), max(box[3] for box in bounds)]
         result["geometry"][name] = {"bounds": [union[0] - ANCHOR[0], union[1] - ANCHOR[1],
                                                union[2] - ANCHOR[0], union[3] - ANCHOR[1]]}
+        previous_geometry = spec.get("geometry", {}).get(name, {})
+        if "rest_x" in previous_geometry:
+            result["geometry"][name]["rest_x"] = round(
+                target_x - ANCHOR[0] + (old_x + previous_geometry["rest_x"] - source_x) * scale, 3)
+        if "rest_y" in previous_geometry:
+            result["geometry"][name]["rest_y"] = round(previous_geometry["rest_y"] * scale, 3)
         report[name] = {"relative_head": round(relative, 3) if relative else None, "from": source_kind,
                         "scale": round(scale, 4),
                         "limited": scale < desired * .98,
                         "frames": [[round(score, 2), round(rel, 3)] for score, rel in rows]}
         print(json.dumps({"name": name, **{k: v for k, v in report[name].items() if k != "frames"}}), flush=True)
+    # Rebuild dependent strips from the already-calibrated parent, regardless
+    # of manifest order or --only selection. Independent calibration can break
+    # the pixel-identical transition between a performance and its rest loop.
+    for name, action in spec["actions"].items():
+        reuse = ACTIONS.get(name, {}).get("reuse_strip_frames")
+        if not reuse:
+            continue
+        parent, indices = reuse["strip"], reuse["frames"]
+        parent_action = spec["actions"].get(parent)
+        if not parent_action or not indices or any(type(i) is not int or i < 0 or i >= parent_action["frames"] for i in indices):
+            raise ValueError(f"missing or invalid source strip for {name}: {parent}")
+        with Image.open(out / parent_action["file"]) as existing:
+            parent_strip = existing.convert("RGBA")
+        child_strip = Image.new("RGBA", (CANVAS[0] * len(indices), CANVAS[1]))
+        for i, old in enumerate(indices):
+            child_strip.paste(parent_strip.crop((old * CANVAS[0], 0, (old + 1) * CANVAS[0], CANVAS[1])), (i * CANVAS[0], 0))
+        child_strip.save(out / action["file"], "WEBP", lossless=True, exact=True, method=6)
+        result["actions"][name] = {**action, "frames": len(indices)}
+        result["geometry"][name] = dict(result["geometry"][parent])
+        report[name] = {"relative_head": None, "from": "reuse:" + parent,
+                        "scale": report[parent]["scale"], "limited": report[parent]["limited"], "frames": []}
     (out / "sprites.json").write_text(json.dumps(result, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     (out / "calibration-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1) + "\n")
     print(json.dumps({"actions": len(report), "limited": [name for name, row in report.items() if row["limited"]],
@@ -723,13 +815,15 @@ def review(args):
 
 
 def main():
+    from regular.pet_repertoire import ACTIONS
+    groups = sorted({name.split("_", 1)[0] for name in ACTIONS})
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     gen = sub.add_parser("generate", help="paid sheet generation (plan only without --allow-paid)")
     gen.add_argument("--directory", required=True, help="private instance directory holding .env")
     gen.add_argument("--output", required=True, help="directory outside the repository for raw sheets")
     gen.add_argument("--stage", choices=("base", "anchor", "sheets", "faces", "library"), required=True)
-    gen.add_argument("--group", choices=("motion", "dragon", "life", "boundary", "spell"), help="select one library director's group")
+    gen.add_argument("--group", choices=groups, help="select one library director's group")
     gen.add_argument("--prompt-file", help="replacement action prompt for one selected sheet")
     gen.add_argument("--style-reference", help="override the style-reference PNG")
     gen.add_argument("--only", nargs="+", help="limit to these sheet names")
@@ -747,7 +841,7 @@ def main():
     rev = sub.add_parser("review", help="offline layout and transparency checks")
     rev.add_argument("--source", required=True)
     rev.add_argument("--out", required=True)
-    rev.add_argument("--group", choices=("motion", "dragon", "life", "boundary", "spell"), required=True)
+    rev.add_argument("--group", choices=groups, required=True)
     args = parser.parse_args()
     if args.command == "build":
         return build(args)

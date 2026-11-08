@@ -1157,6 +1157,206 @@
   "spell_sneeze": {
    "file": "spell_sneeze.webp",
    "frames": 4
+  },
+  "boundary_side_launch": {
+   "file": "boundary_side_launch.webp",
+   "frames": 4
+  },
+  "boundary_bottom_spring": {
+   "file": "boundary_bottom_spring.webp",
+   "frames": 4
+  },
+  "boundary_land": {
+   "file": "boundary_land.webp",
+   "frames": 4
+  },
+  "boundary_side_sleep": {
+   "file": "boundary_side_sleep.webp",
+   "frames": 4
+  },
+  "boundary_bottom_sleep": {
+   "file": "boundary_bottom_sleep.webp",
+   "frames": 4
+  },
+  "boundary_top_sleep": {
+   "file": "boundary_top_sleep.webp",
+   "frames": 4
+  },
+  "boundary_bottom_pillow": {
+   "file": "boundary_bottom_pillow.webp",
+   "frames": 4
+  },
+  "boundary_top_look": {
+   "file": "boundary_top_look.webp",
+   "frames": 4
+  },
+  "boundary_side_slip": {
+   "file": "boundary_side_slip.webp",
+   "frames": 4
+  },
+  "scene_sweet_hide": {
+   "file": "scene_sweet_hide.webp",
+   "frames": 4
+  },
+  "scene_sweet_share": {
+   "file": "scene_sweet_share.webp",
+   "frames": 4
+  },
+  "scene_sweet_sneak": {
+   "file": "scene_sweet_sneak.webp",
+   "frames": 4
+  },
+  "scene_sweet_caught": {
+   "file": "scene_sweet_caught.webp",
+   "frames": 4
+  },
+  "scene_height_peek": {
+   "file": "scene_height_peek.webp",
+   "frames": 4
+  },
+  "scene_height_nervous": {
+   "file": "scene_height_nervous.webp",
+   "frames": 4
+  },
+  "scene_height_wings": {
+   "file": "scene_height_wings.webp",
+   "frames": 4
+  },
+  "scene_height_shortcut": {
+   "file": "scene_height_shortcut.webp",
+   "frames": 4
+  },
+  "scene_fire_overdo": {
+   "file": "scene_fire_overdo.webp",
+   "frames": 4
+  },
+  "scene_fire_startled": {
+   "file": "scene_fire_startled.webp",
+   "frames": 4
+  },
+  "scene_fire_recover": {
+   "file": "scene_fire_recover.webp",
+   "frames": 4
+  },
+  "scene_tea_hot": {
+   "file": "scene_tea_hot.webp",
+   "frames": 4
+  },
+  "scene_tea_relax": {
+   "file": "scene_tea_relax.webp",
+   "frames": 4
+  },
+  "scene_fire_controlled": {
+   "file": "scene_fire_controlled.webp",
+   "frames": 4
+  },
+  "scene_paint_proud": {
+   "file": "scene_paint_proud.webp",
+   "frames": 4
+  },
+  "scene_paint_rework": {
+   "file": "scene_paint_rework.webp",
+   "frames": 4
+  },
+  "scene_sleepy_book": {
+   "file": "scene_sleepy_book.webp",
+   "frames": 4
+  },
+  "scene_sleepy_cover": {
+   "file": "scene_sleepy_cover.webp",
+   "frames": 4
+  },
+  "scene_sweet_share_more": {
+   "file": "scene_sweet_share_more.webp",
+   "frames": 4
+  },
+  "scene_game_win": {
+   "file": "scene_game_win.webp",
+   "frames": 4
+  },
+  "scene_game_loss": {
+   "file": "scene_game_loss.webp",
+   "frames": 4
+  },
+  "scene_game_rematch": {
+   "file": "scene_game_rematch.webp",
+   "frames": 4
+  },
+  "scene_paint_cheek": {
+   "file": "scene_paint_cheek.webp",
+   "frames": 4
+  },
+  "scene_sofa_settle": {
+   "file": "scene_sofa_settle.webp",
+   "frames": 4
+  },
+  "scene_chair_exit": {
+   "file": "scene_chair_exit.webp",
+   "frames": 4
+  },
+  "scene_chair_entry": {
+   "file": "scene_chair_entry.webp",
+   "frames": 4
+  },
+  "scene_chair_rest": {
+   "file": "scene_chair_rest.webp",
+   "frames": 4
+  },
+  "scene_sofa_entry": {
+   "file": "scene_sofa_entry.webp",
+   "frames": 4
+  },
+  "scene_sofa_lounge": {
+   "file": "scene_sofa_lounge.webp",
+   "frames": 4
+  },
+  "scene_sofa_exit": {
+   "file": "scene_sofa_exit.webp",
+   "frames": 4
+  },
+  "scene_glass_hello": {
+   "file": "scene_glass_hello.webp",
+   "frames": 4
+  },
+  "scene_fog_wipe": {
+   "file": "scene_fog_wipe.webp",
+   "frames": 4
+  },
+  "scene_diary_hide": {
+   "file": "scene_diary_hide.webp",
+   "frames": 4
+  },
+  "scene_pounce_miss": {
+   "file": "scene_pounce_miss.webp",
+   "frames": 4
+  },
+  "form_dragon": {
+   "file": "form_dragon.webp",
+   "frames": 4
+  },
+  "form_dragon_reach": {
+   "file": "form_dragon_reach.webp",
+   "frames": 4
+  },
+  "form_dragon_guard": {
+   "file": "form_dragon_guard.webp",
+   "frames": 4
+  },
+  "form_recover": {
+   "file": "form_recover.webp",
+   "frames": 4
+  },
+  "form_dragon_hop": {
+   "file": "form_dragon_hop.webp",
+   "frames": 4
+  },
+  "form_dragon_flap": {
+   "file": "form_dragon_flap.webp",
+   "frames": 4
+  },
+  "form_dragon_tail_chase": {
+   "file": "form_dragon_tail_chase.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -1228,7 +1428,7 @@
    "bounds": [
     -136,
     -305,
-    135,
+    124,
     0
    ]
   },
@@ -3322,17 +3522,17 @@
   },
   "motion_edge_tilt": {
    "bounds": [
-    -140,
-    -344,
-    80,
-    -5
+    -129,
+    -306,
+    67,
+    -4
    ]
   },
   "motion_land_soft": {
    "bounds": [
     -129,
     -278,
-    114,
+    108,
     0
    ]
   },
@@ -3453,6 +3653,411 @@
     -166,
     -303,
     119,
+    0
+   ]
+  },
+  "boundary_side_launch": {
+   "bounds": [
+    -128,
+    -298,
+    130,
+    0
+   ]
+  },
+  "boundary_bottom_spring": {
+   "bounds": [
+    -125,
+    -323,
+    122,
+    0
+   ]
+  },
+  "boundary_land": {
+   "bounds": [
+    -124,
+    -290,
+    116,
+    0
+   ]
+  },
+  "boundary_side_sleep": {
+   "bounds": [
+    -71,
+    -275,
+    96,
+    -2
+   ],
+   "rest_x": -41.4
+  },
+  "boundary_bottom_sleep": {
+   "bounds": [
+    -93,
+    -218,
+    86,
+    -1
+   ],
+   "rest_y": -49.011
+  },
+  "boundary_top_sleep": {
+   "bounds": [
+    -95,
+    -219,
+    79,
+    -1
+   ],
+   "rest_y": -182.008
+  },
+  "boundary_bottom_pillow": {
+   "bounds": [
+    -106,
+    -232,
+    89,
+    0
+   ],
+   "rest_y": -45.32
+  },
+  "boundary_top_look": {
+   "bounds": [
+    -98,
+    -265,
+    77,
+    -1
+   ]
+  },
+  "boundary_side_slip": {
+   "bounds": [
+    -91,
+    -276,
+    129,
+    0
+   ],
+   "rest_x": -41.4
+  },
+  "scene_sweet_hide": {
+   "bounds": [
+    -106,
+    -321,
+    87,
+    0
+   ]
+  },
+  "scene_sweet_share": {
+   "bounds": [
+    -105,
+    -309,
+    99,
+    0
+   ]
+  },
+  "scene_sweet_sneak": {
+   "bounds": [
+    -106,
+    -285,
+    87,
+    1
+   ]
+  },
+  "scene_sweet_caught": {
+   "bounds": [
+    -122,
+    -309,
+    91,
+    0
+   ]
+  },
+  "scene_height_peek": {
+   "bounds": [
+    -118,
+    -290,
+    87,
+    0
+   ]
+  },
+  "scene_height_nervous": {
+   "bounds": [
+    -106,
+    -296,
+    99,
+    0
+   ]
+  },
+  "scene_height_wings": {
+   "bounds": [
+    -111,
+    -283,
+    99,
+    0
+   ]
+  },
+  "scene_height_shortcut": {
+   "bounds": [
+    -128,
+    -300,
+    104,
+    0
+   ]
+  },
+  "scene_fire_overdo": {
+   "bounds": [
+    -148,
+    -311,
+    148,
+    0
+   ]
+  },
+  "scene_fire_startled": {
+   "bounds": [
+    -101,
+    -322,
+    127,
+    0
+   ]
+  },
+  "scene_fire_recover": {
+   "bounds": [
+    -137,
+    -280,
+    127,
+    0
+   ]
+  },
+  "scene_tea_hot": {
+   "bounds": [
+    -96,
+    -229,
+    89,
+    0
+   ]
+  },
+  "scene_tea_relax": {
+   "bounds": [
+    -92,
+    -225,
+    84,
+    0
+   ]
+  },
+  "scene_fire_controlled": {
+   "bounds": [
+    -115,
+    -328,
+    94,
+    0
+   ]
+  },
+  "scene_paint_proud": {
+   "bounds": [
+    -123,
+    -325,
+    145,
+    0
+   ]
+  },
+  "scene_paint_rework": {
+   "bounds": [
+    -118,
+    -320,
+    157,
+    0
+   ]
+  },
+  "scene_sleepy_book": {
+   "bounds": [
+    -103,
+    -219,
+    84,
+    0
+   ]
+  },
+  "scene_sleepy_cover": {
+   "bounds": [
+    -94,
+    -233,
+    86,
+    1
+   ]
+  },
+  "scene_sweet_share_more": {
+   "bounds": [
+    -98,
+    -286,
+    84,
+    0
+   ]
+  },
+  "scene_game_win": {
+   "bounds": [
+    -99,
+    -285,
+    91,
+    0
+   ]
+  },
+  "scene_game_loss": {
+   "bounds": [
+    -98,
+    -219,
+    84,
+    -1
+   ]
+  },
+  "scene_game_rematch": {
+   "bounds": [
+    -104,
+    -226,
+    89,
+    0
+   ]
+  },
+  "scene_paint_cheek": {
+   "bounds": [
+    -110,
+    -288,
+    134,
+    0
+   ]
+  },
+  "scene_sofa_settle": {
+   "bounds": [
+    -159,
+    -310,
+    162,
+    -1
+   ]
+  },
+  "scene_chair_exit": {
+   "bounds": [
+    -116,
+    -296,
+    119,
+    -1
+   ]
+  },
+  "scene_chair_entry": {
+   "bounds": [
+    -122,
+    -316,
+    135,
+    0
+   ]
+  },
+  "scene_chair_rest": {
+   "bounds": [
+    -115,
+    -299,
+    114,
+    0
+   ]
+  },
+  "scene_sofa_entry": {
+   "bounds": [
+    -169,
+    -309,
+    194,
+    0
+   ]
+  },
+  "scene_sofa_lounge": {
+   "bounds": [
+    -159,
+    -310,
+    162,
+    -1
+   ]
+  },
+  "scene_sofa_exit": {
+   "bounds": [
+    -184,
+    -308,
+    178,
+    0
+   ]
+  },
+  "scene_glass_hello": {
+   "bounds": [
+    -93,
+    -293,
+    94,
+    0
+   ]
+  },
+  "scene_fog_wipe": {
+   "bounds": [
+    -113,
+    -300,
+    90,
+    1
+   ]
+  },
+  "scene_diary_hide": {
+   "bounds": [
+    -102,
+    -259,
+    90,
+    0
+   ]
+  },
+  "scene_pounce_miss": {
+   "bounds": [
+    -135,
+    -324,
+    94,
+    0
+   ]
+  },
+  "form_dragon": {
+   "bounds": [
+    -121,
+    -186,
+    80,
+    0
+   ]
+  },
+  "form_dragon_reach": {
+   "bounds": [
+    -109,
+    -181,
+    107,
+    0
+   ]
+  },
+  "form_dragon_guard": {
+   "bounds": [
+    -111,
+    -160,
+    84,
+    0
+   ]
+  },
+  "form_recover": {
+   "bounds": [
+    -96,
+    -332,
+    104,
+    1
+   ]
+  },
+  "form_dragon_hop": {
+   "bounds": [
+    -125,
+    -188,
+    81,
+    -1
+   ]
+  },
+  "form_dragon_flap": {
+   "bounds": [
+    -134,
+    -196,
+    109,
+    0
+   ]
+  },
+  "form_dragon_tail_chase": {
+   "bounds": [
+    -131,
+    -192,
+    89,
     0
    ]
   }

@@ -10,8 +10,53 @@ from regular.pet_actions_dragon import ACTIONS as DRAGON
 from regular.pet_actions_life import ACTIONS as LIFE
 from regular.pet_actions_boundary import ACTIONS as BOUNDARY
 from regular.pet_actions_spell import ACTIONS as SPELL
+from regular.pet_actions_scenes import ACTIONS as SCENES
+from regular.pet_actions_dragon_form import ACTIONS as FORM
 
-ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL}
+ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL, **SCENES, **FORM}
+
+# The archive is not a playlist. Pick performances, not a quota per prop family.
+# Scripted endings still use the full catalog.
+CURATED_POOLS = {
+    "music": ("dragon_music_ukulele", "dragon_music_kalimba"),
+    "treasure": ("dragon_treasure_polish", "dragon_treasure_coin_spin"),
+    "toys": ("dragon_toy_handheld", "dragon_toy_kaleidoscope", "dragon_toy_ball"),
+    "craft": ("dragon_craft_knit", "dragon_craft_sketch"),
+    "garden": ("dragon_garden_water", "dragon_garden_sprout"),
+    "dragon_care": ("dragon_tail_brush", "dragon_wing_brush", "dragon_tail_ball"),
+    "magic": ("dragon_magic_snow", "dragon_magic_flower", "dragon_magic_feather"),
+    "fire": ("dragon_fire_palm", "dragon_fire_marshmallow"),
+    "snack": ("dragon_snack_cookie", "dragon_snack_berry"),
+    "reading": ("life_comic_turn", "life_note_read"),
+    "work": ("life_laptop_type", "life_laptop_think"),
+    "tea": ("life_tea_sip", "life_tea_cool"),
+    "care": ("life_hair_comb", "life_tail_pillow", "life_water"),
+    "curious": ("life_clock_check", "life_chat_popcorn"),
+    "sleep": ("life_sleep_hug_tail", "life_sleep_wing_blanket", "life_sleep_face_down"),
+    # Real reply states retain their posture and mood, beyond a numeric quota.
+    "reply": ("life_reply_air_phone", "life_reply_sit_calm", "life_reply_sit_sleepy",
+              "life_reply_stand_bright", "life_reply_stand_think"),
+    "inspect": ("life_image_photo", "life_image_magnify", "life_phone_read"),
+    "listen": ("life_voice_headphone", "life_chat_nod"),
+    "search": ("life_search_book", "life_search_laptop"),
+    "drawing": ("life_drawing_pencil", "life_drawing_tablet"),
+    "voice": ("life_voice_record", "life_voice_mic_check"),
+    "celebrate": ("life_sent_confetti", "life_sent_check"),
+    "greet": ("life_phone_notice", "life_phone_greet"),
+    "eat": ("life_bread_bite", "life_riceball", "life_candy_unwrap"),
+}
+_CURATED = frozenset(name for pool in CURATED_POOLS.values() for name in pool)
+_LEGACY = frozenset(DRAGON) | frozenset(LIFE)
+
+
+def curated_actions(actions):
+    """Select everyday actors; keep motion and explicit scenes addressable.
+
+    Retired legacy art remains loadable for scripted endings and older installs.
+    New catalogs are not silently excluded by a filename-prefix filter.
+    """
+    return {name: spec for name, spec in actions.items()
+            if name not in _LEGACY or name in _CURATED}
 
 
 def available():
@@ -33,11 +78,12 @@ class Repertoire:
         self.actions = available() if actions is None else actions
         self.rng, self.bags, self.recent = rng, {}, deque(maxlen=24)
 
-    def choose(self, role, *, posture=None, family=None, fallback=None):
-        key = (role, posture, family)
-        pool = [name for name, spec in self.actions.items()
+    def choose(self, role, *, posture=None, family=None, loop=None, fallback=None):
+        key = (role, posture, family, loop)
+        pool = [name for name, spec in curated_actions(self.actions).items()
                 if spec["role"] == role and (posture is None or spec["posture"] == posture)
-                and (family is None or spec["family"] == family)]
+                and (family is None or spec["family"] == family)
+                and (loop is None or spec["loop"] == loop)]
         if not pool:
             return fallback
         bag = self.bags.setdefault(key, [])
