@@ -859,7 +859,7 @@ class InteractionTest(unittest.TestCase):
         def collect(_):
             if b.warp:
                 seen.append((b.warp["phase"], b.y, b.portal_clip, b.warp["src"], b.warp["dst"]))
-        run(b, 1, 5, fps=60, each=collect)
+        run(b, 1, 7, fps=60, each=collect)
         phases = [entry[0] for entry in seen]
         self.assertLess(phases.index("top_sink"), phases.index("gone"))
         self.assertLess(phases.index("gone"), phases.index("rise"))
@@ -886,14 +886,13 @@ class InteractionTest(unittest.TestCase):
             self.assertAlmostEqual(b.transform(0)["rot"], 0)
             self.assertAlmostEqual(b.transform(2)["rot"], 0)
 
-    def test_edge_sleep_entry_runs_once_and_rest_anchor_eases(self):
+    def test_edge_sleep_entry_runs_once_on_a_fixed_support(self):
         b = PetBrain(rng=random.Random(7), now=0)
         b.set_ground(0, 1440, 860, 38)
         b.hidden_edge, b.mode, b.bottom_peek = "bottom", "hidden", True
         b._hidden_clip = b._hidden_awake_clip = "motion_bottom_look"
         b._set_clip(b._hidden_clip, 0, restart=True)
         b.x, b.y = b._hidden_target()
-        y0 = b.y
         b._hidden_sleep_at = 1
         spec = {"role": "edge_sleep", "family": "bottom", "posture": "air",
                 "entry_sequence": [0, 1, 2], "entry_fps": 2.5,
@@ -903,11 +902,11 @@ class InteractionTest(unittest.TestCase):
             b.tick(1)
             target = 860 - 350 * b.figure / 320
             self.assertEqual(b.pose(1)[1], 0)
-            self.assertEqual(b.y, y0)
+            self.assertEqual(b.y, target)
             b.set_ground(0, 1440, 860, 38)
-            self.assertEqual(b.y, y0)
+            self.assertEqual(b.y, target)
             b.tick(1.325)
-            self.assertTrue(min(y0, target) < b.y < max(y0, target))
+            self.assertEqual(b.y, target)
             b.tick(1.41)
             self.assertEqual(b.pose(1.41)[1], 1)
             b.tick(1.8)
@@ -1050,9 +1049,10 @@ class InteractionTest(unittest.TestCase):
                 self.assertTrue(b.hidden_asleep)
                 b.poke(t + 0.1)
                 self.assertEqual(b._edge_exit["phase"], "wake")
-                self.assertEqual(b.clip, awake)
+                # Wake on the same support before changing to the launch pose.
+                self.assertEqual(b.clip, sleep if sleep in CLIPS else awake)
                 self.assertFalse(b.hidden_asleep)
-                t, clips = run(b, t + 0.1, 5)
+                t, clips = run(b, t + 0.1, 7 if edge == "top" else 5)
                 self.assertEqual((b.mode, b.y), ("ground", b.floor))
                 self.assertIn("warp_land" if edge == "top" and b._can_warp() else
                               "boundary_land" if "boundary_land" in CLIPS else "land", clips)
@@ -1078,7 +1078,7 @@ class InteractionTest(unittest.TestCase):
                     if b._role(b.clip) == "edge_launch":
                         frames.add(b.pose(now)[1])
                     self.assertEqual((b.transform(now)["sx"], b.transform(now)["sy"]), (1, 1))
-                run(b, 1, 5, fps=60, each=collect)
+                run(b, 1, 7 if edge == "top" else 5, fps=60, each=collect)
                 self.assertEqual((b.mode, b.y), ("ground", b.floor))
                 if edge == "top" and b._can_warp():
                     self.assertIn("warp_sink", clips)
@@ -1163,15 +1163,67 @@ class InteractionTest(unittest.TestCase):
         b.poke(t)
         self.assertEqual(b._sleep_cue_until, 0)
 
-    def test_feed_and_confirmed_care_keep_cookie_semantics(self):
+    def test_feeding_uses_one_cookie_sheet_in_order_then_responds(self):
         b = PetBrain(rng=random.Random(7), now=0)
-        picked = set()
-        for _ in range(30):
-            picked.add(b._feed_clip())
-        self.assertEqual(picked, {"eat", "dragon_snack_cookie"})
-        with patch.object(b.rng, "random", return_value=0):
-            b.receive_care(1, {"kind": "care", "action": "feed", "result": "gain", "id": "x"})
-        self.assertEqual(b.clip, "dragon_snack_cookie")
+        b.feed(1)
+        self.assertEqual(b.clip, "feed_expect")
+        frames = []
+        source = CLIPS["feed_accept"][0]
+        feed_clips = ("feed_accept", "feed_bite", "feed_content")
+        if CLIPS["feed_expect"][0] == source:
+            feed_clips = ("feed_expect", *feed_clips)
+        def remember(t):
+            if b.clip in feed_clips:
+                strip, frame, _, transform = b.pose(t)
+                self.assertEqual(strip, source)
+                self.assertEqual((transform["sx"], transform["sy"]), (1.0, 1.0))
+                if not frames or frames[-1] != frame:
+                    frames.append(frame)
+        _, played = run(b, 1, 4.1, each=remember)
+        self.assertEqual(frames, [0, 1, 2, 3])
+        self.assertEqual([name for name in played if name.startswith("feed_")],
+                         ["feed_expect", "feed_accept", "feed_bite", "feed_content"])
+        self.assertNotIn("dragon_snack_cookie", played)
+        self.assertNotIn("scene_sweet_share", played)
+        self.assertIn(b.bubble.text, CARE_LINES["feed"])
+
+    def test_panel_confirmation_continues_one_feeding_even_when_delayed(self):
+        for delay in (0.1, 2.0):
+            with self.subTest(delay=delay):
+                b = PetBrain(rng=random.Random(7), now=0)
+                b.external_care = True
+                b.feed(1)
+                started = b.clip_started
+                now, before = run(b, 1, delay)
+                self.assertFalse(any(name in ("feed_accept", "feed_bite", "feed_content") for name in before))
+                self.assertEqual(b.warmth, 0)
+                event = {"kind": "care", "action": "feed", "result": "gain", "id": "cookie-1",
+                         "text": "吃饱了，心情也好了。"}
+                b.receive_care(now, event)
+                self.assertFalse(b._feed_waiting)
+                if delay < 1:
+                    self.assertEqual((b.clip, b.clip_started), ("feed_expect", started))
+                else:
+                    self.assertEqual(b.clip, "feed_accept")
+                _, played = run(b, now, 4)
+                self.assertEqual(played.count("feed_accept"), 1)
+                self.assertEqual(played.count("feed_bite"), 1)
+                self.assertEqual(played.count("feed_content"), 1)
+                self.assertEqual(b.bubble.text, event["text"])
+                before_duplicate = (b.clip, b.clip_started, tuple(b.plan))
+                b.receive_care(now + 4.1, event)
+                self.assertEqual((b.clip, b.clip_started, tuple(b.plan)), before_duplicate)
+
+    def test_full_cookie_receipt_does_not_start_eating_and_care_is_not_reapplied(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.external_care = True
+        b.feed(1)
+        b.receive_care(1.2, {"kind": "care", "action": "feed", "result": "fed_full", "id": "full",
+                             "text": "吃饱啦，留着下回再吃。"})
+        self.assertEqual(b.clip, "peek")
+        self.assertFalse(any(step.clip.startswith("feed_") for step in b.plan))
+        self.assertFalse(b._feed_waiting)
+        self.assertEqual(b.warmth, 0)
 
     def test_released_at_edge_hides_until_click_or_drag(self):
         for edge, cursor in (("left", (-50, 400)), ("right", (1500, 400)),
@@ -1207,9 +1259,11 @@ class InteractionTest(unittest.TestCase):
                 self.assertEqual(b.release(t + 0.1, b.x, b.y - 20), "click")
                 b.poke(t + 0.1)
                 self.assertIsNone(b.hidden_edge)
-                if edge == "top" and "boundary_top_return" in CLIPS:
+                if edge == "top" and b._can_warp():
+                    self.assertIn(b.clip, ("edge_daily_top_cast", "boundary_top_look", "boundary_top_peek"))
+                elif edge == "top" and "boundary_top_return" in CLIPS:
                     self.assertEqual(b.clip, "boundary_top_return")
-                t, clips = run(b, t + 0.1, 5)
+                t, clips = run(b, t + 0.1, 7 if edge == "top" else 5)
                 if edge == "top" and b._can_warp():
                     self.assertIn("warp_land", clips)
                 elif "boundary_land" in CLIPS:
@@ -1530,7 +1584,7 @@ class InteractionTest(unittest.TestCase):
         b = brain()
         for i in range(4):
             b.feed(1.0 + i * 5)
-            self.assertEqual(b.clip, "eat")
+            self.assertEqual(b.clip, "feed_expect")
         b.feed(30.0)
         self.assertEqual(b.clip, "peek")                      # 吃不下只歪头，不跺脚
         self.assertIn(b.bubble.text, LINES["full"])
@@ -1813,6 +1867,7 @@ class CareMoodTest(unittest.TestCase):
         self.assertIn(b.bubble.text, CARE_LINES["pat"])
         b.feed(2.0)
         self.assertGreater(b.warmth, CARE_GAIN["pat"])
+        run(b, 2.0, 3.4)
         self.assertIn(b.bubble.text, CARE_LINES["feed"])
         self.assertEqual(b.presence.mood, -0.4)      # 群聊统计始终是只读的
 

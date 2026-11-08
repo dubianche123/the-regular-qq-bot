@@ -176,7 +176,8 @@ def test_recent_results_change_endings_without_forcing_a_new_story():
     sweet = {name: ACTIONS[name] for branch in EPISODES["sweet"] for name, _ in branch}
     for seed in range(20):
         _, beats = choose_routine(random.Random(seed), sweet, mode="story",
-                                  recent_clips=("scene_sweet_share", "scene_sweet_hide", "scene_sweet_caught"))
+                                  recent_clips=("scene_sweet_share", "scene_sweet_hide", "scene_sweet_caught",
+                                                "daily_last_cookie"))
         assert [name for name, _ in beats] == ["scene_sweet_sneak", "scene_sweet_share_more"]
 
 

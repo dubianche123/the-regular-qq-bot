@@ -1847,13 +1847,44 @@ class PetWidget(QWidget):
         self.toolbar.move(self._clamp(QRect(round(x), round(y), self.toolbar.width(), self.toolbar.height())))
 
     def _place_bubble(self):
-        head = self.head_global()
-        top = head.y() - 8
+        brain = self.brain
+        left, body_top, right, bottom = brain.body_rect()
+        center_x = (left + right) / 2
+        # A curled sleeper is taller than the generic lie hitbox. Reuse the
+        # cached sprite silhouette so speech also clears her hair and horns.
+        strip, frame, mirrored, transform = brain.pose()
+        ink = QRectF(self.sprites.region(strip, frame, mirrored, brain.scale).boundingRect())
+        ink.translate(-self.anchor_pt[0], -self.anchor_pt[1])
+        placement = QTransform().translate(brain.x, brain.y + transform["dy"])
+        if transform["rot"]:
+            pivot = -brain.figure * 0.98 if transform["pivot"] == "hands" else 0.0
+            placement.translate(0, pivot).rotate(transform["rot"]).translate(0, -pivot)
+        placement.scale(transform["sx"], transform["sy"])
+        ink = placement.mapRect(ink)
+        left, right = min(left, ink.left()), max(right, ink.right())
+        body_top, bottom = min(body_top, ink.top()), max(bottom, ink.bottom())
+        top = body_top - 8
         if self.chat_bar is not None and self.chat_bar.isVisible():
             top = self.chat_bar.y() + 4
-        rect = QRect(round(head.x() - self.bubble.width() / 2), round(top - self.bubble.height()),
+        rect = QRect(round(center_x - self.bubble.width() / 2), round(top - self.bubble.height()),
                      self.bubble.width(), self.bubble.height())
-        self.bubble.move(self._clamp(rect))
+        rect.moveTopLeft(self._clamp(rect))
+        # At the ceiling, clamping an above-head bubble can put it over her face.
+        # Prefer the open side of the screen, including while she turns upright.
+        body = QRect(round(left - 4), round(body_top - 4),
+                     round(right - left + 8), round(bottom - body_top + 8))
+        if rect.intersects(body):
+            sides = (right + 8, left - self.bubble.width() - 8)
+            if self._side() < 0:
+                sides = tuple(reversed(sides))
+            candidates = [QRect(round(x), round(body_top), rect.width(), rect.height()) for x in sides]
+            candidates.append(QRect(rect.x(), round(bottom + 8), rect.width(), rect.height()))
+            for candidate in candidates:
+                candidate.moveTopLeft(self._clamp(candidate))
+                if not candidate.intersects(body):
+                    rect = candidate
+                    break
+        self.bubble.move(rect.topLeft())
 
     def _place_chat(self):
         head = self.head_global()

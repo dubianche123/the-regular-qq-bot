@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Give daily performances distinct physical endings: hug a closed book to sleep,
+  leave the last cookie for you, shelter a lamp, cool a second cup, rediscover a
+  keepsake, make room beside her, release a treasured gem, prepare for an audience,
+  leave a painting as a gift, or put a lost game down. Joy, sadness, curiosity and
+  quiet company use her body and tail instead of only changing her face. Keep the
+  existing story frequency; the new quiet seated loop brings the curated long-stay
+  pool to 34.
+- Keep feeding within one new four-frame strip: expect, receive, bite and respond
+  contentedly. A delayed care receipt continues that one feeding instead of replaying
+  it or switching to a shorter-bodied cookie pose.
+- Keep edge sleep and waking attached to their authored support; wake by reversing
+  the same sleep entry. Add occasional supported edge micro-performances, then return
+  to the original peek without postponing sleep. Open the top portal with both palms
+  at the chest before releasing and turning into it. A normal portal landing may
+  stumble and recover (18%), never on consecutive trips.
+- Record six daily scenes and all four awake edge performances in native Cocoa
+  windows with real elapsed time, including the delayed feeding receipt. Capture
+  only QA-owned Qt windows and log actual native positions; moving edge anchors
+  stay within 0.5 pixels. Final recordings after the bubble fix confirm unobstructed
+  hair, horns and eyes, all four sleep/wake transitions, and every top turn frame. See
+  `docs/pet-performance-2026-11-08.md` for adopted art and evidence.
+- Keep speech bubbles clear of the sprite's actual alpha contour under the same
+  rendering transform, including lying poses and protruding hair. Check all four
+  edges, three sizes and three wake frames for pixel overlap. The related suite
+  passed 280 tests / 939 subtests; after the final bubble change, the complete Qt
+  file passed 56 tests / 62 subtests. Each run had two existing Qt teardown warnings.
 - Curate daily accompaniment from 92 eligible loops to 33, while retaining the
   full asset archive for explicit states and story endings. Keep the existing
   story cooldown and use its slots for complete character episodes. Reading and
@@ -11,7 +37,7 @@
   one-shot could replace a loop and freeze on its last frame for 45–90 seconds.
   Return from non-candy dragon scenes without inventing a candy in her hand.
 - Add 34 character scenes woven into daily life rather than a separate menu: sharing
-  half a cookie when fed, showing off a little flame after a head pat, hot tea, game
+  half a cookie, showing off a little flame after a head pat, hot tea, game
   wins and losses, painting do-overs, dozing over a comic, folding chair and sofa
   stays, a cursor pounce that misses, and greeting you through the "glass". Each beat
   holds its key poses (about three seconds) instead of freezing on the last frame.
@@ -25,8 +51,9 @@
 - Bring every strip back to the idle head size: four new scenes had heads 1.2–1.3x
   too large and several others about 10% off; frames are rescaled about the feet (or
   the grip on screen-edge strips) and checked side by side against idle.
-- Library: 337 WebP strips / 1,342 frames (34,589,330 bytes), 43 legacy strips and 294
-  repertoire definitions, including 34 scenes, 7 dragon-form strips and 13 edge actions.
+- Library: 360 WebP strips / 1,434 frames (36,527,434 bytes), with 43 legacy strips,
+  317 repertoire definitions and one same-strip book-sleep alias. This follow-up
+  adopts 15 daily and 8 edge sheets; see `docs/pet-performance-2026-11-08.md`.
 
 - Keep macOS pet windows above ordinary app windows across Spaces, applying
   native level and full-screen auxiliary flags on show/handle changes without

@@ -97,6 +97,62 @@ class DesktopPetTest(unittest.TestCase):
         pet._sync_windows(force=True)
         self.assertFalse(pet.mask().isEmpty())
 
+    def test_ceiling_bubble_moves_beside_her_without_covering_the_body(self):
+        pet, brain = self.pet, self.pet.brain
+        area = QRect(0, 33, 1440, 827)
+        brain.set_ground(0, 1440, 860, 33)
+        pet.bubble.resize(210, 64)
+        with patch.object(pet, "_screen_for", return_value=area):
+            for x in (90, 720, 1350):
+                for clip in ("idle", "edge_daily_top_cast", "edge_daily_top_release"):
+                    with self.subTest(x=x, clip=clip):
+                        brain.x, brain.y = x, 33 + brain.figure
+                        brain._set_clip(clip, self.t[0], restart=True)
+                        pet._place_bubble()
+                        left, top, right, bottom = brain.body_rect()
+                        body = QRect(round(left), round(top), round(right - left), round(bottom - top))
+                        self.assertFalse(pet.bubble.geometry().intersects(body))
+                        self.assertTrue(area.contains(pet.bubble.geometry()))
+            brain.place(720)
+            brain._set_clip("idle", self.t[0], restart=True)
+            pet._place_bubble()
+            self.assertLess(pet.bubble.geometry().bottom(), pet.head_global().y())
+            self.assertAlmostEqual(pet.bubble.geometry().center().x(), brain.x, delta=1)
+
+    def test_edge_wake_bubble_clears_actual_sprite_ink_at_each_scale(self):
+        pet, brain = self.pet, self.pet.brain
+        area = QRect(0, 33, 1440, 827)
+        sleepers = {"left": "boundary_side_sleep", "right": "boundary_side_sleep",
+                    "bottom": "boundary_bottom_pillow", "top": "boundary_top_sleep"}
+        with patch.object(pet, "_screen_for", return_value=area):
+            for scale in (0.6, 1.0, 1.5):
+                brain.scale = scale
+                pet._apply_size()
+                brain.set_ground(0, 1440, 860, 33)
+                for edge, clip in sleepers.items():
+                    brain.x, brain.y = 720, 450
+                    brain.mode, brain.hidden_edge, brain.hidden_asleep = "hidden", edge, True
+                    brain.facing = -1 if edge == "right" else 1
+                    brain.top_peek, brain.bottom_peek = edge == "top", edge == "bottom"
+                    brain._hidden_side_y, brain._hidden_clip = 450, clip
+                    brain._set_clip(clip, self.t[0], restart=True)
+                    brain.x, brain.y = brain._hidden_target()
+                    brain._emerge(self.t[0])
+                    for _ in range(3):
+                        with self.subTest(scale=scale, edge=edge, frame=brain.pose()[1]):
+                            pet.step()
+                            strip, frame, mirrored, _ = brain.pose()
+                            anchor = pet.window_anchor()
+                            origin = pet.pos() + QPoint(round(anchor.x() - pet.anchor_pt[0]),
+                                                        round(anchor.y() - pet.anchor_pt[1]))
+                            ink = self.sprites.region(strip, frame, mirrored, scale).translated(origin)
+                            visible = ink.intersected(QRegion(area))
+                            overlap = visible.intersected(QRegion(pet.bubble.geometry()))
+                            self.assertTrue(overlap.isEmpty(),
+                                            f"{strip}:{frame} bubble={pet.bubble.geometry().getRect()} "
+                                            f"overlap={overlap.boundingRect().getRect()} ink={visible.boundingRect().getRect()}")
+                        self.t[0] += 0.2
+
     def test_breath_mist_is_visible_only_during_its_scene_and_clears_on_interruption(self):
         pet, brain = self.pet, self.pet.brain
         if "scene_fog_wipe" not in brain.repertoire.actions:
@@ -323,6 +379,14 @@ class DesktopPetTest(unittest.TestCase):
         value = {'care': {'warmth': .26, 'updated_at': 100}, 'care_event': event}
         self.pet._finished('care', {'ok': True, 'value': value})
         self.assertEqual(self.pet.brain.warmth, .26)
+        self.assertEqual(self.pet.brain.clip, 'feed_expect')
+        self.assertNotEqual(self.pet.brain.bubble.text, event['text'])
+        # Accounting is immediate; satisfaction belongs after receiving and eating.
+        for _ in range(180):
+            self.advance(1 / 30)
+            if self.pet.brain.clip == 'feed_content':
+                break
+        self.assertEqual(self.pet.brain.clip, 'feed_content')
         self.assertEqual(self.pet.brain.bubble.text, event['text'])
         serial = self.pet.brain.bubble.serial
         self.pet.brain.observe(self.t[0], {'care': value['care'], 'events': [event]})
@@ -804,9 +868,7 @@ class DesktopPetTest(unittest.TestCase):
         self.assertLess(abs(panel.center().y() - ring.center().y()), panel.height() // 2 + 1)
         feed = next(b for b in menu.findChildren(QPushButton) if b.text() == "投喂一块小饼干")
         feed.click()
-        clip = pet.brain.clip
-        spec = pet.brain.repertoire.actions.get(clip, {})
-        self.assertTrue(clip == "eat" or (spec.get("role"), spec.get("family")) == ("snack", "cookie"))
+        self.assertEqual(pet.brain.clip, "feed_expect")
         with patch.object(desktop_pet.webbrowser, "open") as browser:
             self.client.management_url.return_value = "http://127.0.0.1:8765/?token=x"
             next(b for b in menu.findChildren(QPushButton) if b.text() == "打开工作台").click()

@@ -25,20 +25,25 @@ EPISODES = {
         (("scene_glass_hello", None),),
         (("scene_fog_wipe", None),),
         (("scene_diary_hide", None),),
+        (("daily_quiet_space", None),),
     ),
     "sweet": (
         (("scene_sweet_share", None),),
         (("scene_sweet_hide", None),),
         (("scene_sweet_sneak", None), ("scene_sweet_caught", None)),
         (("scene_sweet_sneak", None), ("scene_sweet_share_more", None)),
+        (("daily_last_cookie", None),),
     ),
     "fire": (
         (("scene_fire_controlled", None),),
         (("scene_fire_overdo", None), ("scene_fire_startled", None), ("scene_fire_recover", None)),
+        (("daily_lamp_shelter", None),),
+        (("daily_audience_prepare", None), ("scene_fire_controlled", None)),
     ),
     "wonder": (
         (("dragon_magic_flower", None),),
         (("dragon_magic_snow", None),),
+        (("daily_curious_feather", None),),
     ),
     "chair": ((("scene_chair_entry", None), ("scene_chair_rest", (35, 65)),
                ("scene_chair_exit", None)),),
@@ -46,9 +51,20 @@ EPISODES = {
               ("scene_sofa_lounge", (45, 75)), ("scene_sofa_exit", None)),),
     "sleepy_read": (
         (("life_comic_turn", 8.0), ("scene_sleepy_book", None), ("life_bookmark_place", 4.0)),
+        (("daily_book_hug_sleep", None), ("daily_book_sleep_hold", (35, 60))),
     ),
+    # Each new prop story starts within its own sheet. A new paperback is not
+    # spliced onto the old comic, and the second cup exists from the first beat.
+    "tea_kindness": ((("daily_second_cup", None),),),
+    "keepsake": ((("daily_old_keepsake", None),),),
+    "collection": ((("daily_gem_release", None),),),
+    "gift": ((("daily_painting_gift", None),),),
+    "tired_game": ((("daily_game_set_down", None),),),
+    "joy": ((("daily_joy_tail_catch", None),),),
+    "low": ((("daily_low_tail_comfort", None),),),
 }
-QUIET_EPISODES = frozenset({"viewer", "sweet", "chair", "sofa", "sleepy_read"})
+QUIET_EPISODES = frozenset({"viewer", "sweet", "chair", "sofa", "sleepy_read", "tea_kindness",
+                            "keepsake", "collection", "gift", "tired_game", "low"})
 
 
 def _choose_ending(rng, options, recent_clips=(), *, empty_cue=None):
@@ -173,6 +189,12 @@ def choose_routine(rng, actions, recent_families=(), *, mode="rest", quiet=False
                 continue
             if family == "sleepy_read" and not sleepy:
                 continue
+            if family == "tired_game" and not (sleepy or energy < 0.5):
+                continue
+            if family == "joy" and mood < 0.2:
+                continue
+            if family == "low" and mood > -0.2:
+                continue
             adopted = [beats for beats in branches if all(name in actions for name, _ in beats)]
             if adopted:
                 groups["scene:" + family] = adopted
@@ -215,9 +237,12 @@ def choose_routine(rng, actions, recent_families=(), *, mode="rest", quiet=False
     family = rng.choice(scenes if scenes and rng.random() < 0.35 else candidates)
     if family.startswith(("scene:", "home:")):
         branches = groups[family]
-        if family == "scene:fire" and len(branches) == 2:
+        if family == "scene:fire":
             failure = 0.2 + max(0.0, mood) * 0.3 + max(0.0, 0.4 - energy) * 0.25
-            options = [(1 - failure, branches[0]), (failure, branches[1])]
+            failures = [branch for branch in branches if any(name == "scene_fire_overdo" for name, _ in branch)]
+            successes = [branch for branch in branches if branch not in failures]
+            options = [(failure / len(failures), branch) for branch in failures]
+            options += [((1 - failure) / len(successes), branch) for branch in successes]
         else:
             options = [(1.0, branch) for branch in branches]
         branch = _choose_ending(rng, options, recent_clips)
