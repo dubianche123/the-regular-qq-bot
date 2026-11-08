@@ -341,6 +341,57 @@ class MotionRepertoireTest(unittest.TestCase):
         self.assertFalse(b.next_activity(3))
         self.assertEqual((b.clip, b.step, tuple(b.plan), b.state_until), work)
 
+    def test_next_activity_keeps_natural_plan_duration_and_playback(self):
+        for seed in (1, 3, 7, 19):
+            for story_ready in (False, True):
+                with self.subTest(seed=seed, story_ready=story_ready):
+                    natural, manual = (PetBrain(rng=random.Random(seed), now=0) for _ in range(2))
+                    for b in (natural, manual):
+                        b.set_ground(0, 1440, 860, 0)
+                        b.place(700)
+                        b.set_attention(True, 10)
+                        if story_ready:
+                            b._last_story_at, b._rests_since_story = -180, 2
+                    natural._queue(*natural._routine_steps(10), now=10, interrupt=True)
+                    self.assertTrue(manual.next_activity(10))
+                    self.assertEqual((manual.step, tuple(manual.plan)), (natural.step, tuple(natural.plan)))
+                    # Compare actual displayed frames, including posture bridges,
+                    # at the same elapsed times rather than only checking FPS metadata.
+                    for tick in range(1, 181):
+                        now = 10 + tick / 30
+                        natural.tick(now)
+                        manual.tick(now)
+                        self.assertEqual((manual.clip, manual.pose(now)[:3]),
+                                         (natural.clip, natural.pose(now)[:3]))
+
+    def test_next_activity_uses_the_natural_story_gate(self):
+        for now, rests, chance, expected in ((100, 2, 0.0, "ambient:quiet_company"),
+                                              (500, 1, 0.0, "ambient:quiet_company"),
+                                              (500, 2, 0.8, "ambient:quiet_company"),
+                                              (500, 2, 0.2, "scene:fire")):
+            with self.subTest(now=now, rests=rests, chance=chance):
+                b = PetBrain(rng=random.Random(7), now=0)
+                b.set_ground(0, 1440, 860, 0)
+                b.place(700)
+                b.repertoire.actions = {name: ACTIONS[name] for name in
+                                        ("daily_quiet_tail_rest", "scene_fire_controlled")}
+                b._last_story_at, b._rests_since_story = 0, rests
+                with patch.object(b.rng, "random", return_value=chance):
+                    self.assertTrue(b.next_activity(now))
+                self.assertEqual(b._ambient_families[-1], expected)
+                if expected.startswith("ambient:"):
+                    stay = next(s for s in (b.step, *b.plan) if s.clip == "daily_quiet_tail_rest")
+                    self.assertGreaterEqual(stay.duration, 45)
+                    self.assertLessEqual(stay.duration, 90)
+                    self.assertEqual(b._last_story_at, 0)
+
+    def test_pending_next_activity_keeps_the_same_pacing_after_returning(self):
+        natural, pending = (PetBrain(rng=random.Random(7), now=0) for _ in range(2))
+        pending._next_pending = True
+        pending.set_attention(True, 10)
+        self.assertEqual(pending._choose(10), natural._routine_steps(10))
+        self.assertFalse(pending._next_pending)
+
     def test_prop_feedback_and_return_do_not_change_relationship_state(self):
         b = brain()
         gem = b.props.emit("gem", b.x + 50, b.floor - 12, 0)

@@ -41,7 +41,7 @@ def main():
 
     adopted = available()
     daily = {name for name in adopted if name.startswith('daily_')}
-    unknown = set(scenes) - {'feed', 'left', 'right', 'top', 'bottom'} - daily
+    unknown = set(scenes) - {'feed', 'left', 'right', 'top', 'bottom', 'natural', 'next'} - daily
     if unknown:
         parser.error('unknown or unadopted scene: ' + ', '.join(sorted(unknown)))
 
@@ -95,7 +95,7 @@ def main():
             cx, cy = center.x(), area.bottom() - 140
         crop = (round(cx - 300), round(cy - 260), 600, 440)
         pointer = [QPoint(center.x(), center.y())]
-        frames, records, events, errors = [], [], set(), []
+        frames, records, events, errors, programmes = [], [], set(), [], []
         started, next_capture = clock(), 0.0
         finished_feed = False
         drag_target = {'left': (area.left() - 40, center.y() - 80),
@@ -116,6 +116,21 @@ def main():
             if scene == 'daily_book_hug_sleep' and 'daily_book_sleep_hold' in adopted:
                 steps.append(Step('daily_book_sleep_hold', max(1.0, args.seconds - 6.0)))
             brain._queue(*steps, Step('idle', 60), now=now, interrupt=True)
+
+        def start_routine(now):
+            # Compare the real button signal against the natural routine entry
+            # with the same history and RNG, without changing authored timings.
+            brain.rng.seed(7)
+            brain._last_story_at, brain._rests_since_story = now, 0
+            brain._ambient_families.clear()
+            brain.repertoire.bags.clear()
+            brain.repertoire.recent.clear()
+            if scene == 'next':
+                pet.toolbar.play.click()
+            else:
+                brain._queue(*brain._routine_steps(now), now=now, interrupt=True)
+            programmes.extend({'clip': step.clip, 'duration': step.duration}
+                              for step in (brain.step, *brain.plan) if step is not None)
 
         def once(key, elapsed, at, action):
             if elapsed >= at and key not in events:
@@ -161,6 +176,8 @@ def main():
                                        'result': 'gain', 'text': '吃饱了，心情也好了。'}}}))
                 elif scene in daily:
                     once('scene', elapsed, 1.0, lambda: start_daily(now))
+                elif scene in ('natural', 'next'):
+                    once('scene', elapsed, 1.0, lambda: start_routine(now))
                 else:
                     once('press', elapsed, 1.0, lambda: brain.press(now, brain.x, brain.y - 100))
                     once('lift', elapsed, 1.1, lambda: brain.drag(now, brain.x, center.y()))
@@ -227,7 +244,8 @@ def main():
             'requested_seconds': args.seconds, 'edge_micro': args.edge_micro,
             'screen_available': list(area.getRect()), 'crop': crop,
             'captured_windows': 'only QA-owned Qt widgets; no desktop or other app capture',
-            'blocked_requests': submitted, 'events': sorted(events), 'frames': records}, ensure_ascii=False, indent=2))
+            'blocked_requests': submitted, 'events': sorted(events), 'programme': programmes,
+            'frames': records}, ensure_ascii=False, indent=2))
         print(json.dumps({'scene': scene, 'frames': len(frames), 'seconds': records[-1]['t'],
                           'output': str(output)}, ensure_ascii=False), flush=True)
     return 0

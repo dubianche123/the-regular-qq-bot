@@ -1053,7 +1053,9 @@ class PetBrain:
 
     def _routine_steps(self, now, *, manual=False):
         can_story = now - self._last_story_at >= 180 and self._rests_since_story >= 2
-        mode = "story" if manual or (can_story and self.rng.random() < 0.45) else "rest"
+        # Asking for the next activity changes the choice, not its pacing.
+        # Forcing story here replaced 45–90s accompaniment with a 3s one-shot.
+        mode = "story" if can_story and self.rng.random() < 0.45 else "rest"
         quiet = self.quiet or not self.motion
         sleepy = self.presence.circadian in NIGHT or self.presence.circadian == "午后有点困" or self.energy < 0.5
         context = {"quiet": quiet, "mood": self.effective_mood, "energy": self.energy, "sleepy": sleepy,
