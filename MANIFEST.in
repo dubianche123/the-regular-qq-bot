@@ -5,4 +5,5 @@ recursive-include .agents/skills/regular-iterate *.md *.py
 recursive-include .claude/skills/regular-iterate *.md
 recursive-include tools *.py *.sh *.md *.swift
 recursive-include docs *.md *.svg *.jpg *.png *.webp
+prune docs/proposals
 recursive-include tests *.py

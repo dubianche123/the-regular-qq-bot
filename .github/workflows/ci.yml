@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
 jobs:
-  desktop-audio:
+  desktop:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -22,6 +22,19 @@ jobs:
       - run: python -m pip install -e '.[dev,desktop]'
       - name: Desktop audio and interface regression without devices
         run: python tools/test_offline.py tests/test_duplex_audio.py tests/test_voice_playback.py tests/test_continuous_desktop_voice.py tests/test_desktop_voice.py -q
+      - name: Desktop pet, art and interaction regression (offscreen)
+        run: >-
+          python tools/test_offline.py
+          tests/test_desktop_pet.py
+          tests/test_pet_brain.py
+          tests/test_pet_brain_edges.py
+          tests/test_pet_repertoire.py
+          tests/test_pet_magic_purpose.py
+          tests/test_pet_powered_flight.py
+          tests/test_pet_air_play.py
+          tests/test_pet_activity_endings.py
+          tests/test_pet_ending_flow.py
+          -q
   windows-launcher:
     runs-on: windows-latest
     env:
