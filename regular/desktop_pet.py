@@ -409,6 +409,22 @@ class PortalLayer:
             for window in self.windows[portal_id]:
                 window.sync(portal)
 
+    def _restack(self):
+        """Re-establish portal layers after native windows change level, without activation."""
+        for back, _ in self.windows.values():
+            if back.isVisible():
+                back.raise_()
+        if self.pet.isVisible():
+            self.pet.raise_()
+        if self.pet.fx.isVisible():
+            self.pet.fx.raise_()
+        for _, front in self.windows.values():
+            if front.isVisible():
+                front.raise_()
+        for surface in (self.pet.toolbar, self.pet.bubble):
+            if surface.isVisible():
+                surface.raise_()
+
     def close(self):
         for windows in self.windows.values():
             for window in windows:
@@ -549,6 +565,69 @@ def _soft_card(painter, rect, radius, fill=PAPER, border=QColor(23, 59, 50, 30))
     painter.drawRoundedRect(rect, radius, radius)
 
 
+def _apply_macos_window_level(native, appkit):
+    """Keep one native window above normal windows across Spaces without taking focus."""
+    behavior = native.collectionBehavior()
+    conflicts = (appkit.NSWindowCollectionBehaviorMoveToActiveSpace
+                 | appkit.NSWindowCollectionBehaviorFullScreenPrimary
+                 | appkit.NSWindowCollectionBehaviorFullScreenNone)
+    behavior = ((behavior & ~conflicts) | appkit.NSWindowCollectionBehaviorCanJoinAllSpaces
+                | appkit.NSWindowCollectionBehaviorFullScreenAuxiliary
+                | appkit.NSWindowCollectionBehaviorIgnoresCycle)
+    if native.collectionBehavior() != behavior:
+        native.setCollectionBehavior_(behavior)
+    if native.level() < appkit.NSStatusWindowLevel:
+        native.setLevel_(appkit.NSStatusWindowLevel)
+
+
+def _configure_macos_floating(window):
+    # Qt's cocoa winId is an NSView pointer; do not interpret offscreen/X11 handles as ObjC.
+    if QApplication.platformName() != "cocoa":
+        return False
+    try:
+        if not window.isVisible():
+            return False
+        import AppKit
+        import ctypes
+        import objc
+        view = objc.objc_object(c_void_p=ctypes.c_void_p(int(window.winId())))
+        native = view.window()
+        if native is not None:
+            _apply_macos_window_level(native, AppKit)
+            return True
+    except (ImportError, AttributeError, TypeError, ValueError, RuntimeError):
+        # Qt's normal floating flags remain in force if the optional bridge is unavailable.
+        pass
+    return False
+
+
+class _FloatingEvents(QObject):
+    """Reapply native flags only when Qt creates or shows a top-level window."""
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+        self.pending = False
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Show, QEvent.Type.WinIdChange) and not self.pending:
+            self.pending = True
+            QTimer.singleShot(0, self._apply)
+        return False
+
+    def _apply(self):
+        self.pending = False
+        if _configure_macos_floating(self.window) and isinstance(self.window, PortalWindow):
+            # Native level changes can reorder a just-created portal; restore its layers once.
+            QTimer.singleShot(0, self.window.layer._restack)
+
+
+def _watch_floating(window):
+    if QApplication.platformName() != "cocoa":
+        return
+    window._floating_events = _FloatingEvents(window)
+    window.installEventFilter(window._floating_events)
+
+
 def _floating(window, *, input=True):
     window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
     # Qt::Tool otherwise hides on macOS when another application becomes active.
@@ -557,6 +636,39 @@ def _floating(window, *, input=True):
     window.setAutoFillBackground(False)
     if not input:
         window.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
+    _watch_floating(window)
+
+
+def _clip_overlay(brain, now):
+    cue = brain.repertoire.actions.get(brain.clip, {}).get("overlay")
+    if not brain.motion or not cue:
+        return None
+    elapsed = now - brain.clip_started
+    return (cue, elapsed) if 0 <= elapsed < cue["duration"] else None
+
+
+def _paint_clip_overlay(painter, cue, elapsed, figure):
+    if cue["kind"] != "mist":
+        return
+    radius = figure * cue["radius"]
+    wipe = max(0.0, min(1.0, (elapsed - cue["wipe_start"]) / (cue["duration"] - cue["wipe_start"])))
+    painter.save()
+    painter.translate(figure * cue["pos"][0], figure * cue["pos"][1])
+    cloud = QPainterPath()
+    cloud.addEllipse(QPointF(0, 0), radius, radius * 0.8)
+    cleared = QPainterPath()
+    cleared.addRoundedRect(QRectF(radius * (1 - 2 * wipe), -radius, 3 * radius, 2 * radius),
+                           radius, radius)
+    painter.setClipPath(cloud.subtracted(cleared), Qt.ClipOperation.IntersectClip)
+    painter.setOpacity(min(1.0, elapsed / 0.18))
+    fog = QRadialGradient(QPointF(0, 0), radius)
+    fog.setColorAt(0, QColor(255, 254, 249, 150))
+    fog.setColorAt(0.65, QColor(243, 248, 245, 105))
+    fog.setColorAt(1, QColor(243, 248, 245, 0))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(fog)
+    painter.drawEllipse(QPointF(0, 0), radius, radius * 0.8)
+    painter.restore()
 
 
 class FxLayer(QWidget):
@@ -576,6 +688,12 @@ class FxLayer(QWidget):
             painter.setClipRect(_screen_clip(self, brain))
         origin = self.mapFromGlobal(QPoint(round(brain.x), round(brain.y)))
         f = brain.figure
+        overlay = _clip_overlay(brain, now)
+        if overlay:
+            painter.save()
+            painter.translate(origin)
+            _paint_clip_overlay(painter, *overlay, f)
+            painter.restore()
         for p in brain.particles:
             age = (now - p.born) / p.life
             alpha = max(0.0, min(1.0, 1.4 - age * 1.4))
@@ -600,6 +718,17 @@ def _particle(painter, kind, figure, age, seed=0.0):
         painter.drawEllipse(QPointF(0, 0), s * 1.8, s * 1.8)
         painter.setBrush(QColor("#ff8a3d"))
         painter.drawEllipse(QPointF(0, 0), s, s)
+        return
+    if kind == "cloud":
+        # Opaque at once so the swap underneath never shows, then it swells and thins.
+        r = figure * (0.14 + 0.1 * age)
+        painter.setPen(QPen(QColor(185, 170, 220, 160), max(1.0, figure * 0.008)))
+        painter.setBrush(QColor(255, 253, 250))
+        for dx, dy, k in ((0, 0, 1.0), (-0.55, 0.2, 0.7), (0.55, 0.22, 0.72), (0.05, -0.45, 0.66)):
+            painter.drawEllipse(QPointF(dx * r, dy * r), r * k, r * k * 0.92)
+        painter.setPen(Qt.PenStyle.NoPen)
+        for dx, dy, k in ((0, 0, 1.0), (-0.55, 0.2, 0.7), (0.55, 0.22, 0.72), (0.05, -0.45, 0.66)):
+            painter.drawEllipse(QPointF(dx * r, dy * r), r * k * 0.93, r * k * 0.85)
         return
     if kind == "smoke":
         painter.setPen(Qt.PenStyle.NoPen)
@@ -971,6 +1100,7 @@ class _Card(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setAutoFillBackground(False)
+        _watch_floating(self)
         self.setStyleSheet("""
             QLineEdit { background: transparent; color:#173b32; border:0; font-size:14px; padding:4px 2px; }
             QPushButton#send { color:#fffdf7; background:#173b32; border:0; border-radius:17px; font-size:15px; }
@@ -1500,11 +1630,12 @@ class PetWidget(QWidget):
             self._paint_key = key
             self._update_mask(strip, frame, mirrored, transform)
             self.update()
-        if brain.particles or self._fx_dirty:
-            if brain.particles and not self.fx.isVisible() and self.isVisible():
+        effects = bool(brain.particles or _clip_overlay(brain, self.now()))
+        if effects or self._fx_dirty:
+            if effects and not self.fx.isVisible() and self.isVisible():
                 self.fx.show()
             self.fx.update()
-            self._fx_dirty = bool(brain.particles)
+            self._fx_dirty = effects
 
     def _update_mask(self, strip, frame, mirrored, transform):
         brain = self.brain
@@ -1529,9 +1660,11 @@ class PetWidget(QWidget):
             return
         # While moving or dissolving between two frames the silhouette changes every paint.
         if brain.mode != "ground" or transform["rot"] or transform["dy"] or transform["fade"]:
-            if self._mask_key is not None:
+            # Lift/resize can invalidate the cache while Qt still holds the old
+            # clipped shape. Inspect the real mask before clearing it once.
+            if not self.mask().isEmpty():
                 self.clearMask()
-                self._mask_key = None
+            self._mask_key = None
             return
         key = (strip, frame, mirrored, brain.scale)
         if key == self._mask_key:

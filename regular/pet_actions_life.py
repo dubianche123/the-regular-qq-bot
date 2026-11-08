@@ -78,8 +78,10 @@ _ROWS = [
 
 _CONSTRAINTS = (" Four-frame 2x2 sprite sheet on transparent background; each complete figure and prop "
                 "fits within its own 512px cell. Same adult chibi silver-white lavender dragon woman "
-                "in sage cardigan, exactly two arms, two hands and two legs. Keep head, torso, feet, "
-                "scale and position stable, with only small readable hand, eye, tail or wing movements. "
+                "in sage cardigan, exactly two arms, two hands and two legs. Keep the camera, head size "
+                "and body proportions consistent. Let posture, weight, gaze, wings and tail express "
+                "the specified intention and result. Quiet loops settle naturally; one-shot results "
+                "retain their changed prop or emotion instead of undoing the action. "
                 "No text, chat content, group IDs, borders, anger, stomping or pointing at anyone.")
 
 ACTIONS = {

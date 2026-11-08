@@ -74,6 +74,51 @@ class DesktopPetTest(unittest.TestCase):
         pet._sync_windows(force=True)
         self.assertEqual(pet.lift, 0)
 
+    def test_top_descent_clears_the_real_clip_mask_when_lift_invalidates_the_cache(self):
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        brain.set_ground(0, 1728, 1080, 33)
+        brain.mode, brain.top_peek = "edge_exit", True
+        brain.y = 120
+        brain._set_clip("fall", self.t[0], restart=True)
+        pet._sync_windows(force=True)
+        self.assertFalse(pet.mask().isEmpty())
+
+        before = pet.lift
+        # She has fully entered the screen, but her native window is still pinned
+        # under the menu bar. Lift changes and invalidates the cached mask key.
+        brain.top_peek, brain.y = False, 230
+        pet._sync_windows(force=True)
+        self.assertGreater(pet.lift, 0)
+        self.assertNotEqual(pet.lift, before)
+        self.assertTrue(pet.mask().isEmpty())
+        brain.mode, brain.y = "ground", brain.floor
+        brain._set_clip("idle", self.t[0], restart=True)
+        pet._sync_windows(force=True)
+        self.assertFalse(pet.mask().isEmpty())
+
+    def test_breath_mist_is_visible_only_during_its_scene_and_clears_on_interruption(self):
+        pet, brain = self.pet, self.pet.brain
+        if "scene_fog_wipe" not in brain.repertoire.actions:
+            self.skipTest("viewer sheets not adopted")
+        pet.show()
+        brain.mode = "ground"
+        brain._set_clip("scene_fog_wipe", self.t[0], restart=True)
+        self.t[0] += .25
+        pet._sync_windows(force=True)
+        self.app.processEvents()
+
+        def visible_pixels():
+            frame = pet.fx.grab().toImage()
+            return sum(frame.pixelColor(x, y).alpha() > 20
+                       for y in range(0, frame.height(), 4) for x in range(0, frame.width(), 4))
+
+        self.assertGreater(visible_pixels(), 0)
+        brain._set_clip("idle", self.t[0], restart=True)
+        pet._sync_windows(force=True)
+        self.app.processEvents()
+        self.assertEqual(visible_pixels(), 0)
+
     def test_magic_circles_open_two_click_through_windows_each_and_close_with_the_spell(self):
         pet, brain = self.pet, self.pet.brain
         if not brain._can_warp():
@@ -308,6 +353,87 @@ class DesktopPetTest(unittest.TestCase):
             button = Qt.MouseButton.LeftButton
         return QMouseEvent(kind, QPointF(10, 10), QPointF(*where), button,
                            button if buttons is None else buttons, Qt.KeyboardModifier.NoModifier)
+
+    def test_macos_window_flags_preserve_unrelated_bits_without_activating(self):
+        appkit = SimpleNamespace(NSWindowCollectionBehaviorMoveToActiveSpace=2,
+                                 NSWindowCollectionBehaviorFullScreenPrimary=128,
+                                 NSWindowCollectionBehaviorFullScreenNone=512,
+                                 NSWindowCollectionBehaviorCanJoinAllSpaces=1,
+                                 NSWindowCollectionBehaviorFullScreenAuxiliary=256,
+                                 NSWindowCollectionBehaviorIgnoresCycle=64,
+                                 NSStatusWindowLevel=25)
+        native = Mock()
+        native.collectionBehavior.return_value = 2 | 128 | 512 | 4096
+        native.level.return_value = 3
+        desktop_pet._apply_macos_window_level(native, appkit)
+        native.setCollectionBehavior_.assert_called_once_with(4096 | 1 | 256 | 64)
+        native.setLevel_.assert_called_once_with(25)
+        native.makeKeyAndOrderFront_.assert_not_called()
+        native.orderFrontRegardless.assert_not_called()
+        native.level.return_value = 30
+        native.setLevel_.reset_mock()
+        desktop_pet._apply_macos_window_level(native, appkit)
+        native.setLevel_.assert_not_called()
+
+    def test_cocoa_bridge_uses_view_pointer_and_does_not_activate(self):
+        import ctypes
+        native = Mock()
+        native.collectionBehavior.return_value = 0
+        native.level.return_value = 3
+        view = Mock()
+        view.window.return_value = native
+        bridge = SimpleNamespace(objc_object=Mock(return_value=view))
+        kit = SimpleNamespace(NSWindowCollectionBehaviorMoveToActiveSpace=2,
+                              NSWindowCollectionBehaviorFullScreenPrimary=128,
+                              NSWindowCollectionBehaviorFullScreenNone=512,
+                              NSWindowCollectionBehaviorCanJoinAllSpaces=1,
+                              NSWindowCollectionBehaviorFullScreenAuxiliary=256,
+                              NSWindowCollectionBehaviorIgnoresCycle=64,
+                              NSStatusWindowLevel=25)
+        fake_window = Mock()
+        fake_window.isVisible.return_value = True
+        fake_window.winId.return_value = 1234
+        with patch.object(desktop_pet.QApplication, "platformName", return_value="cocoa"), \
+             patch.dict(sys.modules, {"AppKit": kit, "objc": bridge}):
+            self.assertTrue(desktop_pet._configure_macos_floating(fake_window))
+        pointer = bridge.objc_object.call_args.kwargs["c_void_p"]
+        self.assertIsInstance(pointer, ctypes.c_void_p)
+        self.assertEqual(pointer.value, 1234)
+        native.setLevel_.assert_called_once_with(25)
+        native.makeKeyAndOrderFront_.assert_not_called()
+        native.orderFrontRegardless.assert_not_called()
+
+    def test_floating_native_setup_is_event_driven_and_offscreen_safe(self):
+        with patch.object(self.pet, "winId") as win_id:
+            self.assertFalse(desktop_pet._configure_macos_floating(self.pet))
+            win_id.assert_not_called()
+        watcher = desktop_pet._FloatingEvents(self.pet)
+        with patch.object(desktop_pet.QTimer, "singleShot") as schedule, \
+             patch.object(desktop_pet, "_configure_macos_floating", return_value=False) as configure:
+            watcher.eventFilter(self.pet, QEvent(QEvent.Type.Show))
+            watcher.eventFilter(self.pet, QEvent(QEvent.Type.WinIdChange))
+            watcher.eventFilter(self.pet, QEvent(QEvent.Type.Paint))
+            schedule.assert_called_once()
+            schedule.call_args.args[1]()
+            configure.assert_called_once_with(self.pet)
+            watcher.eventFilter(self.pet, QEvent(QEvent.Type.Paint))
+            schedule.assert_called_once()
+
+    def test_portal_native_restack_preserves_layer_order(self):
+        calls = []
+        def surface(name):
+            obj = Mock()
+            obj.isVisible.return_value = True
+            obj.raise_.side_effect = lambda: calls.append(name)
+            return obj
+        back, front = surface("back"), surface("front")
+        pet = surface("pet")
+        pet.fx, pet.toolbar, pet.bubble = surface("fx"), surface("toolbar"), surface("bubble")
+        layer = desktop_pet.PortalLayer(pet)
+        layer.windows[1] = (back, front)
+        layer._restack()
+        self.assertEqual(calls, ["back", "pet", "fx", "front", "toolbar", "bubble"])
+        pet.activateWindow.assert_not_called()
 
     def test_character_is_a_transparent_floating_window_with_a_click_through_effect_layer(self):
         pet = self.pet
@@ -882,7 +1008,14 @@ print("confirmation ownership and exit passed")
         pet._finished("chat", {"ok": True, "value": "<script>这也是纯文本</script>"})
         pet.step()
         self.assertEqual(pet.brain.state_name, "reply")
-        self.assertTrue(pet.brain.clip == "talk" or pet.brain._role(pet.brain.clip) == "reply")
+        # A seated reply first finishes its short sit-down transition.
+        for _ in range(30):
+            if pet.brain.clip == pet.brain.state_clip:
+                break
+            self.t[0] += 0.05
+            pet.step()
+        self.assertEqual(pet.brain.clip, pet.brain.state_clip)
+        self.assertTrue(pet.brain.clip in ("talk", "reply") or pet.brain._role(pet.brain.clip) == "reply")
         self.assertTrue(pet.bubble.isVisible())
         self.assertEqual(pet.bubble.text, "<script>这也是纯文本</script>")
         self.assertLessEqual(pet.bubble.geometry().bottom(), bar.geometry().bottom())

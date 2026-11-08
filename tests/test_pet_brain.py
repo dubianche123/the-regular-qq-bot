@@ -6,10 +6,12 @@ import random
 import unittest
 from unittest.mock import patch
 
+from regular.pet_routines import EPISODES, choose_routine
+from regular.pet_repertoire import ACTIONS, curated_actions
 from regular.pet_brain import (ASLEEP, CARE_COOL_LINES, CARE_FULL_LINES, CARE_GAIN,
                                CARE_LINES, CARE_MAX, CLIPS, CUE_ACTIONS, EDGE, EDGE_PEEK, FIGURE, LINES, PLAY,
                                PLAY_CANCEL, PLAY_GAP, PLAY_MAX_STREAK, PLAY_START, PLAY_WINDOW,
-                               TAP_POOL, WALK_SPEED, PetBrain, Step)
+                               TAP_POOL, WALK_SPEED, DRAGON_TRICKS, PetBrain, Step)
 
 LEGAL = {("stand", "stand"), ("sit", "sit"), ("lie", "lie"), ("air", "air"),
          ("stand", "sit"), ("sit", "stand"), ("sit", "lie"), ("lie", "sit"),
@@ -44,21 +46,230 @@ def ready(mood=0.0, circadian="", chatter=0, events=(), bot="ready"):
 
 
 class MotionRepertoireTest(unittest.TestCase):
+    def test_restful_energy_only_for_uninterrupted_loop(self):
+        for looping, working, expected in ((True, False, 0.1 / 600),
+                                           (False, False, -0.1 / 2400),
+                                           (True, True, -0.1 / 2400)):
+            with self.subTest(looping=looping, working=working):
+                b = brain()
+                b.energy = 0.5
+                b.repertoire.actions["test_rest"] = {"restful": True}
+                b.chat_pending = working
+                with patch.dict(CLIPS, {"test_rest": ("idle", [0], 1, looping, "stand")}), patch.object(b, "_ground"):
+                    b._set_clip("test_rest", 0, restart=True)
+                    b.tick(0.1)
+                self.assertAlmostEqual(b.energy, 0.5 + expected)
+
+    def test_home_routine_counts_as_rest_without_replacing_entry(self):
+        b = brain()
+        beats = [("scene_chair_entry", None), ("scene_chair_rest", 60), ("scene_chair_exit", None)]
+        with patch("regular.pet_brain.choose_routine", return_value=("home:chair", beats)):
+            result = b._routine_steps(200)
+        self.assertEqual([step.clip for step in result[:3]], [beat[0] for beat in beats])
+        self.assertEqual(b._rests_since_story, 1)
+        self.assertNotEqual(b._last_story_at, 200)
+
+    def test_furniture_shares_one_cooldown_across_chair_sofa_and_both_modes(self):
+        for first_mode in ("rest", "story"):
+            with self.subTest(mode=first_mode):
+                b = PetBrain(rng=random.Random(1), now=0)
+                b.repertoire.actions = {name: ACTIONS[name] for family in ("chair", "sofa")
+                                        for branch in EPISODES[family] for name, _ in branch}
+                if first_mode == "story":
+                    b._last_story_at, b._rests_since_story = -180, 2
+                with patch.object(b.rng, "random", return_value=0):
+                    first = b._routine_steps(0)
+                    self.assertIn(first[0].clip, ("scene_chair_entry", "scene_sofa_entry"))
+                    self.assertEqual(b._furniture_at, 0)
+                    self.assertEqual([step.clip for step in b._routine_steps(1799)], ["idle"])
+                    second = b._routine_steps(1800)
+                    self.assertIn(second[0].clip, ("scene_chair_entry", "scene_sofa_entry"))
+                    self.assertNotEqual(first[0].clip, second[0].clip)
+                    manual = b._routine_steps(1801, manual=True)
+                    self.assertIn(manual[0].clip, ("scene_chair_entry", "scene_sofa_entry"))
+                    self.assertEqual(b._furniture_at, 1801)
+
+    def test_pounce_uses_miss_only_when_pointer_has_moved_away(self):
+        b = brain()
+        b.repertoire.actions["scene_pounce_miss"] = {"role": "scene", "family": "viewer", "posture": "stand"}
+        with patch.dict(CLIPS, {"scene_pounce_miss": ("stand", [0, 1, 2, 3], 6, False, "stand")}):
+            b.pointer.seen = True
+            b.pointer.x, b.pointer.y = b.x + b.figure * .25, b.floor - b.figure * .45
+            b._landing = "pounce_catch"
+            b._land_trick(10)
+            self.assertEqual(b.clip, "pounce_catch")
+            b.pointer.x = b.right
+            b._landing = "pounce_catch"
+            b._land_trick(20)
+            self.assertEqual(b.clip, "scene_pounce_miss")
+
+    def test_scenes_have_no_separate_menu_and_play_inside_daily_routines(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        self.assertFalse(hasattr(b, "perform_routine"))
+        if "scene_sweet_share" not in b.repertoire.actions:
+            self.skipTest("personality scenes not adopted")
+        families = set()
+        for seed in range(80):
+            routine = choose_routine(random.Random(seed), b.repertoire.actions, mode="story")
+            families.add(routine[0])
+        self.assertTrue(any(name.startswith("scene:") for name in families))
+        self.assertTrue(all(name.startswith("scene:") for name in families))
+
+    def test_adopted_scene_start_posture_prevents_extra_bridge(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        if "scene_game_win" not in b.repertoire.actions:
+            self.skipTest("game result not adopted")
+        b._set_clip("gamepad", 0, restart=True)
+        b._queue(Step("scene_game_win"), now=1, interrupt=True)
+        self.assertEqual(b.clip, "scene_game_win")
+        self.assertNotIn("stand_up", [step.clip for step in b.plan])
+
+    def test_manual_change_closes_furniture_before_new_scene(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.repertoire.actions.update({"scene_chair_rest": {"role": "scene_furniture", "family": "chair"},
+                                     "scene_chair_exit": {"role": "scene_furniture", "family": "chair", "starts_from": "sit"}})
+        clips = {"scene_chair_rest": ("sit", [0], 1, True, "sit"),
+                 "scene_chair_exit": ("sit", [0, 1], 2, False, "stand")}
+        with patch.dict(CLIPS, clips), patch.object(b, "_routine_steps", return_value=[Step("peek")]):
+            b._set_clip("scene_chair_rest", 0, restart=True)
+            self.assertTrue(b.next_activity(1))
+            self.assertEqual(b.clip, "scene_chair_exit")
+            self.assertEqual(b.plan[0].clip, "peek")
+
+    def test_form_change_is_hidden_by_a_puff_whoever_switches_the_clip(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        clips = {name: ("idle", [0, 1, 2, 3], 4, False, "stand") for name in ("form_dragon", "form_recover")}
+        b.repertoire.actions.update({"form_dragon": {"form": "dragon", "role": "form"},
+                                     "form_recover": {"form": "human", "role": "form"}})
+        with patch.dict(CLIPS, clips):
+            b._set_clip("form_dragon", 1, restart=True)
+            self.assertEqual(sum(p.kind == "cloud" for p in b.particles), 11)
+            b.particles.clear()
+            b._set_clip("form_dragon", 2, restart=True)          # same form: no puff
+            self.assertFalse(b.particles)
+            b._queue(Step("pat"), now=3, interrupt=True)          # a cue brings her straight back
+            self.assertEqual(b.clip, "pat")
+            self.assertTrue(any(p.kind == "cloud" for p in b.particles))
+            b._set_clip("form_dragon", 4, restart=True)
+            b.press(5, b.x, b.y - 50)
+            b.drag(5.1, b.x + 30, b.y - 70)                        # picked up: a puff and a human dangle
+            self.assertEqual(b._form(), "human")
+            self.assertEqual(b._poof_at, 5.1)
+
+    def test_dragon_episode_is_rare_and_always_ends_on_two_legs(self):
+        b = PetBrain(rng=random.Random(3), now=0)
+        if not b._has("form_dragon"):
+            self.skipTest("dragon form not adopted")
+        b.set_ground(0, 1440, 860, 0)
+        b.place(700)
+        self.assertFalse(b._can_dragon(10))                       # not in the first minutes
+        self.assertTrue(b._can_dragon(1000))
+        b.quiet = True
+        self.assertFalse(b._can_dragon(1000))
+        b.quiet = False
+        for trick in DRAGON_TRICKS:
+            steps = b._dragon_steps(1000, trick=trick)
+            clips = [step.clip for step in steps]
+            self.assertEqual(clips[0], "form_dragon")
+            self.assertIn(trick, clips)
+            recovery = "form_recover" if trick == "form_dragon_reach" else "form_tidy"
+            self.assertEqual(clips[-2:], [recovery, "idle"])
+            self.assertTrue(all(clip in CLIPS for clip in clips))
+            self.assertEqual(steps[-2].line, DRAGON_TRICKS[trick][1])
+        self.assertFalse(b._can_dragon(1500))                     # cooldown after an episode
+        b._queue(*b._dragon_steps(1000, trick="form_dragon_flap"), now=1000, interrupt=True)
+        _, clips = run(b, 1000, 18)
+        self.assertIn("form_dragon_flap", clips)
+        self.assertEqual(b._form(), "human")
+
     def test_rest_uses_repertoire_bag_and_story_records_played_beats(self):
         b = PetBrain(rng=random.Random(7), now=0)
-        group = [name for name, spec in b.repertoire.actions.items()
-                 if spec["role"] == "study" and spec["family"] == "reading" and spec["posture"] == "sit"]
-        if len(group) < 3:
-            self.skipTest("no adopted reading variants")
+        group = [name for name, spec in curated_actions(b.repertoire.actions).items()
+                 if spec["role"] == "study" and spec["family"] == "work" and spec["posture"] == "sit"]
+        if len(group) < 2:
+            self.skipTest("no adopted work variants")
         with (patch.object(b, "_weighted", return_value="library"),
-              patch("regular.pet_brain.choose_routine", return_value=("ambient:reading", [(group[0], 30)]))):
-            selected = [b._choose(i)[0].clip for i in range(3)]
-        self.assertEqual(len(set(selected)), 3)
+              patch("regular.pet_brain.choose_routine", return_value=("ambient:work", [(group[0], 30)]))):
+            selected = [b._choose(i)[0].clip for i in range(len(group))]
+        self.assertEqual(set(selected), set(group))
         b.repertoire.recent.clear()
         b._queue(Step(group[0], 1), Step(group[1], 1), now=3, interrupt=True)
         run(b, 3, 3)
         self.assertIn(group[0], b.repertoire.recent)
         self.assertIn(group[1], b.repertoire.recent)
+
+    def test_long_rest_cannot_redraw_a_one_shot_from_the_same_family(self):
+        b = PetBrain(rng=random.Random(1), now=0)
+        b.repertoire.actions = {
+            "test_count": ACTIONS["dragon_treasure_count"],
+            "test_find": ACTIONS["dragon_treasure_find"],
+        }
+        with patch("regular.pet_brain.choose_routine",
+                   return_value=("ambient:coins", [("test_count", 60)])):
+            for now in range(20):
+                steps = b._routine_steps(now)
+                self.assertEqual((steps[0].clip, steps[0].duration), ("test_count", 60))
+
+    def test_collection_history_precedes_the_next_main_clip_selection(self):
+        b = PetBrain(rng=random.Random(1), now=0)
+        b.repertoire.recent.extend(("dragon_treasure_polish", "dragon_treasure_share"))
+        with patch("regular.pet_brain.choose_routine",
+                   return_value=("ambient:gems", [("dragon_treasure_polish", 60)])):
+            private = b._routine_steps(1)
+            self.assertNotIn("dragon_treasure_share", [step.clip for step in private])
+            shared = b._routine_steps(2)
+            self.assertIn("dragon_treasure_share", [step.clip for step in shared])
+
+    def test_reading_and_laptop_keep_their_objects_and_reading_gets_an_ending(self):
+        b = PetBrain(rng=random.Random(1), now=0)
+        b.last_agent_event = 0
+        saw_comic = False
+        for _ in range(12):
+            with patch.object(b, "_weighted", return_value="book"):
+                steps = b._choose(1)
+            self.assertEqual(b.repertoire.actions[steps[0].clip]["family"], "reading")
+            self.assertFalse(any(b.repertoire.actions.get(step.clip, {}).get("family") == "work"
+                                 for step in steps))
+            if steps[0].clip == "life_comic_turn":
+                saw_comic = True
+                self.assertTrue(any(step.clip in ("life_comic_amused", "life_bookmark_place")
+                                    for step in steps))
+        self.assertTrue(saw_comic)
+        with patch.object(b, "_weighted", return_value="laptop"):
+            self.assertEqual(b.repertoire.actions[b._choose(1)[0].clip]["family"], "work")
+
+    def test_sketch_keeps_its_selected_result_without_an_extra_reveal(self):
+        b = PetBrain(rng=random.Random(1), now=0)
+        for result in ("scene_paint_proud", "scene_paint_cheek"):
+            with (patch.object(b, "_weighted", return_value="sketch"),
+                  patch.object(b, "_activity_steps", return_value=[Step("paint", 12), Step(result)])):
+                clips = [step.clip for step in b._choose(1)]
+            self.assertEqual(clips[-1], result)
+            self.assertNotIn("paint_reveal", clips)
+        with (patch.object(b, "_weighted", return_value="sketch"),
+              patch.object(b, "_activity_steps", return_value=[Step("paint", 12)])):
+            self.assertEqual([step.clip for step in b._choose(1)][-2:], ["paint_reveal", "nod"])
+
+    def test_dragon_avoids_recent_tricks_and_does_not_reenter_its_nap(self):
+        b = PetBrain(rng=random.Random(2), now=0)
+        b._queue(Step("form_dragon_flap"), now=1000, interrupt=True)
+        for _ in range(10):
+            steps = b._dragon_steps(3000)
+            self.assertNotIn("form_dragon_flap", [step.clip for step in steps])
+        guard = b._dragon_steps(3000, trick="form_dragon_guard")
+        self.assertEqual(sum(step.clip == "form_dragon_guard" for step in guard), 1)
+        stay = next(step for step in guard if step.clip == "form_dragon_guard")
+        self.assertGreater(stay.duration, len(CLIPS[stay.clip][1]) / CLIPS[stay.clip][2])
+        self.assertEqual(guard[-2].clip, "form_tidy")
+        self.assertEqual(set(CLIPS["form_tidy"][1]), {0, 1})
+
+    def test_real_work_discards_an_unplayed_activity_result(self):
+        b = PetBrain(rng=random.Random(2), now=0)
+        b._queue(*b._activity_steps("gamepad", 60), now=0, interrupt=True)
+        self.assertTrue(any(step.clip.startswith("scene_game_") for step in b.plan))
+        b.observe(1, {**ready(), "state": "reply"})
+        self.assertFalse(any(step.clip.startswith("scene_game_") for step in b.plan))
+        self.assertFalse(any(name.startswith("scene_game_") for name in b.repertoire.recent))
 
     def test_bottom_target_preserves_clickable_head_across_assets_and_scales(self):
         for scale in (0.6, 1.0, 1.5):
@@ -633,6 +844,252 @@ class ScreenEdgeTest(unittest.TestCase):
 
 
 class InteractionTest(unittest.TestCase):
+    def test_top_exit_sinks_into_near_portal_and_rises_from_floor(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        if not b._can_warp():
+            self.skipTest("portal assets not adopted")
+        b.set_ground(0, 1440, 860, 38)
+        b.place(700)
+        b.hidden_edge, b.mode, b.top_peek = "top", "hidden", True
+        b._hidden_clip = b._hidden_awake_clip = "boundary_top_peek"
+        b._set_clip(b._hidden_clip, 0, restart=True)
+        b.x, b.y = b._hidden_target()
+        b.poke(1)
+        seen = []
+        def collect(_):
+            if b.warp:
+                seen.append((b.warp["phase"], b.y, b.portal_clip, b.warp["src"], b.warp["dst"]))
+        run(b, 1, 5, fps=60, each=collect)
+        phases = [entry[0] for entry in seen]
+        self.assertLess(phases.index("top_sink"), phases.index("gone"))
+        self.assertLess(phases.index("gone"), phases.index("rise"))
+        source = next(entry for entry in seen if entry[0] == "top_sink")
+        self.assertEqual(source[2][1], "below")
+        self.assertLess(source[1], b.ceiling + b.figure * 2)
+        self.assertEqual(source[3].side, "floor")
+        self.assertEqual(source[4].y, b.floor)
+        self.assertTrue(any(entry[0] == "rise" and entry[2] == (b.floor, "below") for entry in seen))
+        self.assertEqual((b.mode, b.y, b.portal_clip), ("ground", b.floor, None))
+
+    def test_horizontal_glide_leans_in_direction_without_scaling(self):
+        for direction in (-1, 1):
+            b = PetBrain(rng=random.Random(7), now=0)
+            b.set_ground(0, 1440, 860, 0)
+            b.place(700)
+            b.mode, b.y = "fly", 500
+            b.step = Step("motion_fly_glide", target_x=700 + direction * 200, target_y=500)
+            b._move_origin, b._move_duration, b.step_started = (700, 500), 2, 0
+            b._set_clip("motion_fly_glide", 0, restart=True)
+            transform = b.transform(1)
+            self.assertAlmostEqual(transform["rot"], direction * 5)
+            self.assertEqual((transform["sx"], transform["sy"]), (1, 1))
+            self.assertAlmostEqual(b.transform(0)["rot"], 0)
+            self.assertAlmostEqual(b.transform(2)["rot"], 0)
+
+    def test_edge_sleep_entry_runs_once_and_rest_anchor_eases(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 38)
+        b.hidden_edge, b.mode, b.bottom_peek = "bottom", "hidden", True
+        b._hidden_clip = b._hidden_awake_clip = "motion_bottom_look"
+        b._set_clip(b._hidden_clip, 0, restart=True)
+        b.x, b.y = b._hidden_target()
+        y0 = b.y
+        b._hidden_sleep_at = 1
+        spec = {"role": "edge_sleep", "family": "bottom", "posture": "air",
+                "entry_sequence": [0, 1, 2], "entry_fps": 2.5,
+                "geometry": {"rest_y": 350, "bounds": [-100, -300, 100, 0]}}
+        with patch.dict(CLIPS, {"test_edge_sleep": ("test_edge_sleep", [2, 3], 0.5, True, "air")}), \
+             patch.dict(b.repertoire.actions, {"test_edge_sleep": spec}, clear=True):
+            b.tick(1)
+            target = 860 - 350 * b.figure / 320
+            self.assertEqual(b.pose(1)[1], 0)
+            self.assertEqual(b.y, y0)
+            b.set_ground(0, 1440, 860, 38)
+            self.assertEqual(b.y, y0)
+            b.tick(1.325)
+            self.assertTrue(min(y0, target) < b.y < max(y0, target))
+            b.tick(1.41)
+            self.assertEqual(b.pose(1.41)[1], 1)
+            b.tick(1.8)
+            self.assertAlmostEqual(b.y, target)
+            self.assertEqual(b.pose(1.8)[1], 2)
+            b.tick(2.3)
+            self.assertEqual(b.pose(2.3)[1], 2)
+            b.tick(4.3)
+            self.assertEqual(b.pose(4.3)[1], 3)
+            b.tick(6.3)
+            self.assertEqual(b.pose(6.3)[1], 2)
+
+    def test_side_hide_preserves_drop_height(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 38)
+        b.place(700)
+        b.press(1, 700, 760)
+        b.drag(1.1, 700, 500)
+        b.tick(1.1)
+        b.drag(1.2, -50, 360)
+        b.tick(1.2)
+        dropped_y = b.y
+        b.release(1.3, -50, 360)
+        run(b, 1.3, 4)
+        self.assertEqual((b.mode, b.hidden_edge), ("hidden", "left"))
+        self.assertAlmostEqual(b.y, dropped_y)
+
+    def test_side_sleep_slip_is_rare_bounded_and_interruptible(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 38)
+        b.hidden_edge, b.mode, b.hidden_asleep = "left", "hidden", True
+        b._hidden_side_y = b.y = 400
+        b._hidden_clip = b._hidden_awake_clip = "motion_edge_look"
+        b._set_clip(b._hidden_clip, 0, restart=True)
+        b.x, b.y = b._hidden_target()
+        b._hidden_sleep_started, b._hidden_slip_check_at = 1, 91
+        with patch.dict(CLIPS, {"boundary_side_slip": ("motion_edge_look", [0, 1, 2, 3], 6, False, "stand")}), \
+             patch.object(b.rng, "random", return_value=0):
+            b.tick(90)
+            self.assertIsNone(b._hidden_slip_started)
+            b.tick(91)
+            self.assertEqual(b.clip, "boundary_side_slip")
+            b.tick(91.3)
+            self.assertGreater(b.y, 400)
+            b.tick(91.8)
+            self.assertAlmostEqual(b.y, 400)
+            self.assertEqual(b.clip, "motion_edge_look")
+            b._hidden_slip_check_at = 92
+            b.tick(92)
+            self.assertIsNone(b._hidden_slip_started)
+            self.assertTrue(b.hidden_asleep)
+
+    def test_hidden_bottom_stays_at_fixed_height_and_only_blinks_when_idle(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 38)
+        b.hidden_edge, b.mode, b.bottom_peek = "bottom", "hidden", True
+        b._hidden_clip = b._hidden_awake_clip = "motion_bottom_look"
+        b._set_clip(b._hidden_clip, 0, restart=True)
+        b.x, b.y = b._hidden_target()
+        b._hidden_sleep_at = float("inf")
+        positions, frames = set(), set()
+        for i in range(1800):
+            now = (i + 1) / 30
+            b.tick(now)
+            positions.add(b.y)
+            frames.add(b.pose(now)[1])
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(frames, {1, 3})
+        self.assertEqual((b.mode, b.hidden_edge), ("hidden", "bottom"))
+
+    def test_awake_hidden_gaze_tracks_cursor_without_moving_or_unhiding(self):
+        cases = (("left", "motion_edge_look"), ("right", "motion_edge_look"),
+                 ("bottom", "motion_bottom_look"), ("top", "boundary_top_look"))
+        for edge, clip in cases:
+            if clip not in CLIPS:
+                continue
+            with self.subTest(edge=edge):
+                b = PetBrain(rng=random.Random(7), now=0)
+                b.set_ground(0, 1440, 860, 38)
+                b.hidden_edge, b.mode = edge, "hidden"
+                b.bottom_peek, b.top_peek = edge == "bottom", edge == "top"
+                b.facing = -1 if edge == "right" else 1
+                b._hidden_clip = b._hidden_awake_clip = clip
+                b._set_clip(clip, 0, restart=True)
+                b.x, b.y = b._hidden_target()
+                b._hidden_sleep_at = b._hidden_blink_at = float("inf")
+                position = (b.x, b.y)
+                b.hover(0.1, 0, 400, near=False)
+                b.tick(0.1)
+                b.tick(0.4)
+                first = b.pose(0.4)[1]
+                b.hover(0.5, 1440, 400, near=False)
+                b.tick(0.5)
+                b.tick(0.6)
+                self.assertEqual(b.pose(0.6)[1], first)  # debounce jitter
+                b.tick(0.8)
+                second = b.pose(0.8)[1]
+                self.assertNotEqual(first, second)
+                self.assertEqual((b.x, b.y), position)
+                self.assertEqual((b.mode, b.hidden_edge), ("hidden", edge))
+                self.assertEqual(b.transform(0.8)["rot"], 0)
+
+    def test_hidden_sleep_particles_point_into_screen(self):
+        b = brain()
+        b.mode, b.hidden_asleep, b.hidden_edge = "hidden", True, "right"
+        b._emit("z", 0)
+        self.assertLess(b.particles[-1].x, 0)
+        self.assertLess(b.particles[-1].vx, 0)
+        b.hidden_edge = "top"
+        b._emit("z", 1)
+        self.assertEqual(b.particles[-1].y, 0.15)
+
+    def test_hidden_sleep_loops_then_click_wakes_and_exits(self):
+        for edge, sleep in (("left", "boundary_side_sleep"), ("right", "boundary_side_sleep"),
+                            ("bottom", "boundary_bottom_sleep"), ("top", "boundary_top_sleep")):
+            with self.subTest(edge=edge):
+                b = PetBrain(rng=random.Random(7), now=0)
+                b.set_ground(0, 1440, 860, 38)
+                b.place(700)
+                b.hidden_edge, b.mode = edge, "hidden"
+                b.bottom_peek, b.top_peek = edge == "bottom", edge == "top"
+                awake = ("motion_bottom_peek" if edge == "bottom" else
+                         "boundary_top_peek" if edge == "top" else "motion_edge_peek")
+                b._hidden_clip = b._hidden_awake_clip = awake
+                b._set_clip(awake, 0, restart=True)
+                b.x, b.y = b._hidden_target()
+                b._hidden_sleep_at = 1
+                b.tick(1)
+                self.assertTrue(b.hidden_asleep)
+                if sleep in CLIPS:
+                    self.assertEqual(b.clip, sleep)
+                    frames = set()
+                    t, _ = run(b, 1, 2, each=lambda now: frames.add(b.pose(now)[1]))
+                    self.assertGreater(len(frames), 1)
+                else:
+                    t = 1
+                b.hover(t, b.x, b.y, near=True)
+                b.observe(t, ready(events=[{"kind": "mention", "ts": 100}]))
+                self.assertEqual((b.mode, b.hidden_edge), ("hidden", edge))
+                self.assertTrue(b.hidden_asleep)
+                b.poke(t + 0.1)
+                self.assertEqual(b._edge_exit["phase"], "wake")
+                self.assertEqual(b.clip, awake)
+                self.assertFalse(b.hidden_asleep)
+                t, clips = run(b, t + 0.1, 5)
+                self.assertEqual((b.mode, b.y), ("ground", b.floor))
+                self.assertIn("warp_land" if edge == "top" and b._can_warp() else
+                              "boundary_land" if "boundary_land" in CLIPS else "land", clips)
+
+    def test_edge_exit_has_real_arc_and_launch_frames(self):
+        for edge in ("left", "right", "bottom", "top"):
+            with self.subTest(edge=edge):
+                b = PetBrain(rng=random.Random(9), now=0)
+                b.set_ground(0, 1440, 860, 38)
+                b.place(700)
+                b.hidden_edge, b.mode = edge, "hidden"
+                b.bottom_peek, b.top_peek = edge == "bottom", edge == "top"
+                b._hidden_clip = b._hidden_awake_clip = ("motion_bottom_peek" if edge == "bottom" else
+                    "boundary_top_peek" if edge == "top" else "motion_edge_peek")
+                b._set_clip(b._hidden_clip, 0, restart=True)
+                b.x, b.y = b._hidden_target()
+                start = (b.x, b.y)
+                b.poke(1)
+                positions, frames, clips = [], set(), set()
+                def collect(now):
+                    positions.append((b.x, b.y, b.mode))
+                    clips.add(b.clip)
+                    if b._role(b.clip) == "edge_launch":
+                        frames.add(b.pose(now)[1])
+                    self.assertEqual((b.transform(now)["sx"], b.transform(now)["sy"]), (1, 1))
+                run(b, 1, 5, fps=60, each=collect)
+                self.assertEqual((b.mode, b.y), ("ground", b.floor))
+                if edge == "top" and b._can_warp():
+                    self.assertIn("warp_sink", clips)
+                    self.assertIn("warp_rise", clips)
+                else:
+                    self.assertTrue(any(b._role(clip) == "fly" and b.repertoire.actions[clip]["family"] == "flap" for clip in clips))
+                    self.assertTrue(any(abs(x - start[0]) > 10 for x, _, mode in positions if mode == "edge_exit"))
+                if edge in ("left", "right", "bottom"):
+                    self.assertLess(min(y for _, y, mode in positions if mode == "edge_exit"), b.floor - 10)
+                    self.assertEqual(frames, {0, 1, 2, 3})
+
     def test_body_poke_can_sneeze_but_head_keeps_pat(self):
         b = PetBrain(rng=random.Random(7), now=0)
         b.set_ground(0, 1440, 860, 0)
@@ -740,7 +1197,7 @@ class InteractionTest(unittest.TestCase):
                     self.assertEqual(b._role(b.clip), "edge")
                 self.assertEqual(b.top_peek, edge == "top")
                 if edge == "top" and "boundary_top_peek" in CLIPS:
-                    self.assertEqual(b.clip, "boundary_top_peek")
+                    self.assertEqual(b.clip, "boundary_top_look" if "boundary_top_look" in CLIPS else "boundary_top_peek")
                 b.hover(t, b.x, b.y, near=True)
                 b.set_attention(True, t)
                 b.observe(t, ready(events=[{"kind": "mention", "ts": 12}]))
@@ -753,8 +1210,12 @@ class InteractionTest(unittest.TestCase):
                 if edge == "top" and "boundary_top_return" in CLIPS:
                     self.assertEqual(b.clip, "boundary_top_return")
                 t, clips = run(b, t + 0.1, 5)
-                if "boundary_popout" in CLIPS:
-                    self.assertIn("boundary_popout", clips)
+                if edge == "top" and b._can_warp():
+                    self.assertIn("warp_land", clips)
+                elif "boundary_land" in CLIPS:
+                    self.assertIn("boundary_land", clips)
+                if edge != "top" or not b._can_warp():
+                    self.assertTrue(any(b._role(clip) == "fly" for clip in clips))
                 self.assertEqual(b.mode, "ground")
                 self.assertEqual(b.y, b.floor)
                 self.assertFalse(b.top_peek)

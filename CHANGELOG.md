@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+- Curate daily accompaniment from 92 eligible loops to 33, while retaining the
+  full asset archive for explicit states and story endings. Keep the existing
+  story cooldown and use its slots for complete character episodes. Reading and
+  treasure gain quiet outcomes; a rematch can still be lost, and a painting is
+  revealed once. Prefer different recent endings instead of more frequent shows.
+- Preserve the loop constraint when reshuffling a long stay. Previously a short
+  one-shot could replace a loop and freeze on its last frame for 45–90 seconds.
+  Return from non-candy dragon scenes without inventing a candy in her hand.
+- Add 34 character scenes woven into daily life rather than a separate menu: sharing
+  half a cookie when fed, showing off a little flame after a head pat, hot tea, game
+  wins and losses, painting do-overs, dozing over a comic, folding chair and sofa
+  stays, a cursor pounce that misses, and greeting you through the "glass". Each beat
+  holds its key poses (about three seconds) instead of freezing on the last frame.
+  Furniture comes out about every half hour; whole scenes no longer take every other
+  pick.
+- Redraw her dragon form as a round chibi dragon that keeps her face, hair, horns,
+  flower clip and scarf. A puff of cloud hides each change, so no half-human frames
+  are drawn; she hops, tries to fly and flops, cannot unwrap a candy with her paws,
+  curls around her treasure or chases her tail, then puffs back and tidies her hair.
+  It happens at most every 25 minutes, and a cue, poke or drag turns her back at once.
+- Bring every strip back to the idle head size: four new scenes had heads 1.2–1.3x
+  too large and several others about 10% off; frames are rescaled about the feet (or
+  the grip on screen-edge strips) and checked side by side against idle.
+- Library: 337 WebP strips / 1,342 frames (34,589,330 bytes), 43 legacy strips and 294
+  repertoire definitions, including 34 scenes, 7 dragon-form strips and 13 edge actions.
+
+- Keep macOS pet windows above ordinary app windows across Spaces, applying
+  native level and full-screen auxiliary flags on show/handle changes without
+  activating the app. Preserve the portal and control layer order.
+- Add wing-assisted exits from the sides and bottom: anticipate, hop along a
+  real arc, then fold wings on landing. From the top, turn upright and sink
+  through a nearby magic circle, then emerge from its counterpart on the floor.
+- Let her doze while hidden at any edge. A click wakes her briefly before the
+  exit; hovering and QQ events keep her in the hiding place.
+- Keep hidden peeks still while her eyes follow the cursor. Enter supported
+  sleep once, then loop only settled frames: cheek on sleeves or a pillow at
+  the bottom, curled against a side, or wrapped in wings like a hanging bat.
+  Side sleepers can rarely slip and catch themselves with a wingbeat.
+- Clear the actual native clipping mask when leaving the top edge, including
+  while the window's menu-bar offset is changing.
 - Give the desktop pet real magic. She draws a turning rune circle under her
   feet, a second one opens elsewhere, and she jumps in and pops out of the far
   circle; sometimes it opens just under the menu bar and she drops from there.
@@ -17,8 +57,8 @@
   pounce when the cursor wiggles in front of her. Eight new performance sheets,
   head-calibrated like the rest; the prop library now fills about a third to a
   half of the day instead of most of it, and pokes no longer trigger palm flames.
-- Expand the desktop pet to 279 shipped animation strips, including 236 new
-  four-frame actions for everyday life, dragon magic, treasure, toys and movement.
+- Extend everyday life, dragon magic, treasure, toys and movement with shuffled
+  four-frame action pools.
   Shuffled action pools and short routines reduce repetition during long sessions.
 - Add 12 sleeping variations and 14 reply actions. Mood, energy and time of day
   shape her replies; a cheerful pet can fly while replying in QQ, while local
