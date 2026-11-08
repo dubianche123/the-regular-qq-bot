@@ -6,6 +6,7 @@ import argparse
 from contextlib import ExitStack
 import ctypes
 from dataclasses import asdict
+import io
 import json
 import math
 import os
@@ -40,10 +41,11 @@ def main():
     os.environ['QT_QPA_PLATFORM'] = 'cocoa'
     from PIL import Image, ImageDraw
     from PySide6.QtCore import QPoint, QTimer
-    from PySide6.QtGui import QCursor, QImage
+    from PySide6.QtGui import QCursor
     from PySide6.QtWidgets import QApplication
     import AppKit
     import objc
+    import Quartz
     from regular.desktop_pet import PetWidget, SpriteBank
     from regular.pet_brain import Step
     from regular.pet_repertoire import available
@@ -84,6 +86,8 @@ def main():
     app = QApplication([])
     if app.platformName() != 'cocoa':
         raise RuntimeError('native Cocoa is required')
+    if not Quartz.CGPreflightScreenCaptureAccess():
+        raise RuntimeError('WindowServer capture requires existing Screen Recording permission')
     area = app.primaryScreen().availableGeometry()
     primary_height = float(AppKit.NSScreen.screens()[0].frame().size.height)
     args.out.mkdir(parents=True, exist_ok=True)
@@ -97,9 +101,17 @@ def main():
         return (round(frame.origin.x), round(primary_height - frame.origin.y - frame.size.height))
 
     def grab(widget):
-        qimage = widget.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
-        image = Image.frombytes('RGBA', (qimage.width(), qimage.height()), bytes(qimage.bits()),
-                               'raw', 'RGBA', qimage.bytesPerLine())
+        # QWidget.grab() redraws and ignores the widget mask, which can hide
+        # native blank frames. Capture only this owned window's server output.
+        native = native_window(widget)
+        captured = Quartz.CGWindowListCreateImage(
+            Quartz.CGRectNull, Quartz.kCGWindowListOptionIncludingWindow,
+            int(native.windowNumber()), Quartz.kCGWindowImageBoundsIgnoreFraming)
+        if captured is None:
+            return None  # A newly shown surface may not exist in WindowServer yet.
+        bitmap = AppKit.NSBitmapImageRep.alloc().initWithCGImage_(captured)
+        data = bitmap.representationUsingType_properties_(AppKit.NSPNGFileType, {})
+        image = Image.open(io.BytesIO(bytes(data))).convert('RGBA')
         return image.resize((widget.width(), widget.height()), Image.Resampling.LANCZOS)
 
     for scene in scenes:
@@ -285,6 +297,7 @@ def main():
         def capture(now, elapsed):
             canvas = Image.new('RGBA', crop[2:], '#e2e7eb')
             body_bounds = None
+            missing_windows = []
             portals = list(pet.portal_layer.windows.values())
             own_windows = [pair[0] for pair in portals] + [pet, pet.fx]
             own_windows += list(pet.props.windows.values()) + [pair[1] for pair in portals] + [pet.bubble]
@@ -292,6 +305,9 @@ def main():
                 if widget.isVisible():
                     x, y = native_position(widget)
                     captured = grab(widget)
+                    if captured is None:
+                        missing_windows.append(type(widget).__name__)
+                        continue  # Preserve the absent frame; never force a repaint to fill it.
                     canvas.alpha_composite(captured, (x - crop[0], y - crop[1]))
                     if widget is pet:
                         bounds = captured.getchannel('A').getbbox()
@@ -316,6 +332,7 @@ def main():
                             'step_elapsed': round(now - brain.step_started, 4),
                             'brain': [brain.x, brain.y], 'qt_window': [pet.x(), pet.y()],
                             'visible_body_bounds': body_bounds,
+                            'missing_native_windows': missing_windows,
                             'native_window': [wx, wy], 'window_anchor': [anchor.x(), anchor.y()],
                             'actual_anchor': [wx + anchor.x(), wy + anchor.y()],
                             'anchor_error': [wx + anchor.x() - brain.x, wy + anchor.y() - brain.y],
@@ -479,6 +496,8 @@ def main():
                 else:
                     checks['requested_daily_shown'] = any(r['clip'] == scene for r in records)
                     checks['all_four_frames_shown'] = {r['frame'] for r in records if r['clip'] == scene} == {0, 1, 2, 3}
+                    checks['visible_body_throughout_performance'] = all(
+                        r['visible_body_bounds'] is not None for r in records if r['t'] > .3)
             elif scene == 'flight-interrupt':
                 interrupted = scene_metadata.get('interrupt_at', args.seconds + 1)
                 returning = [r for r in records if r['t'] >= interrupted and r['mode'] == 'fly']
@@ -526,7 +545,7 @@ def main():
             'seed': args.seed,
             'activity_main_seconds': args.activity_seconds if scene in activity_scenes else None,
             'screen_available': list(area.getRect()), 'crop': crop,
-            'captured_windows': 'only QA-owned Qt widgets; no desktop or other app capture',
+            'captured_windows': 'WindowServer output of QA-owned windows only; no QWidget redraw, desktop or other app capture',
             'blocked_requests': submitted, 'events': sorted(events), 'programme': programmes,
             'scene_metadata': scene_metadata, 'verification': checks,
             'frames': records}, ensure_ascii=False, indent=2))

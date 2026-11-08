@@ -577,25 +577,59 @@ def _apply_macos_window_level(native, appkit):
         native.setLevel_(appkit.NSStatusWindowLevel)
 
 
-def _configure_macos_floating(window):
+def _macos_window(window):
     # Qt's cocoa winId is an NSView pointer; do not interpret offscreen/X11 handles as ObjC.
     if QApplication.platformName() != "cocoa":
-        return False
+        return None
     try:
-        if not window.isVisible():
-            return False
-        import AppKit
         import ctypes
         import objc
         view = objc.objc_object(c_void_p=ctypes.c_void_p(int(window.winId())))
-        native = view.window()
+        return view.window()
+    except (ImportError, AttributeError, TypeError, ValueError, RuntimeError):
+        return None
+
+
+def _configure_macos_floating(window):
+    if not window.isVisible():
+        return False
+    try:
+        native = _macos_window(window)
         if native is not None:
+            import AppKit
             _apply_macos_window_level(native, AppKit)
             return True
     except (ImportError, AttributeError, TypeError, ValueError, RuntimeError):
         # Qt's normal floating flags remain in force if the optional bridge is unavailable.
         pass
     return False
+
+
+def _set_input_passthrough(window, enabled):
+    """Change only input routing; never hide/reparent a translucent widget."""
+    flag = Qt.WindowType.WindowTransparentForInput
+    flags = window.windowFlags() | flag if enabled else window.windowFlags() & ~flag
+    handle = window.windowHandle()
+    if handle is not None:
+        native = _macos_window(window)
+        if native is not None:
+            level, behavior = native.level(), native.collectionBehavior()
+        # Qt also consults QWindow's input flag when dispatching mouse events;
+        # changing only the NSWindow property can leave a visible pet unclickable.
+        # QWindow changes the flag in place, unlike QWidget's hide/reparent path.
+        handle.setFlag(flag, enabled)
+        if native is not None:
+            # Cocoa's flag update resets level and Spaces membership too. Keep
+            # our existing floating setup, without hiding or showing the window.
+            if native.collectionBehavior() != behavior:
+                native.setCollectionBehavior_(behavior)
+            if native.level() != level:
+                native.setLevel_(level)
+            if native.ignoresMouseEvents() != bool(enabled):
+                native.setIgnoresMouseEvents_(bool(enabled))
+    # Keep QWidget's flags correct for later native creation and Qt hit tests;
+    # overrideWindowFlags deliberately performs no window-system operation.
+    window.overrideWindowFlags(flags)
 
 
 class _FloatingEvents(QObject):
@@ -1639,13 +1673,9 @@ class PetWidget(QWidget):
                                     (self.bubble, brain.air_play_active, "_bubble_passthrough")):
             if value == getattr(self, attr):
                 continue
-            visible = window.isVisible()
-            window.setWindowFlag(Qt.WindowType.WindowTransparentForInput, value)
-            if visible:
-                window.show()
+            _set_input_passthrough(window, value)
             setattr(self, attr, value)
             if window is self:
-                self.move(top_left)
                 handle = self.windowHandle()
                 if value:
                     self.unsetCursor()

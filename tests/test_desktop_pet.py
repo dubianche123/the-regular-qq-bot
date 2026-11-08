@@ -15,7 +15,7 @@ from unittest.mock import Mock, PropertyMock, patch
 
 HAS_QT = importlib.util.find_spec("PySide6") is not None
 if HAS_QT:
-    from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
+    from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, Qt
     from PySide6.QtGui import QImage, QMouseEvent, QRegion
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
@@ -158,6 +158,39 @@ class DesktopPetTest(unittest.TestCase):
             brain.release(self.t[0] + .1, point.x(), point.y())
             pet._sync_windows()
             self.assertTrue(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+
+    def test_hover_input_changes_keep_the_same_visible_window_and_pixels(self):
+        pet, brain = self.pet, self.pet.brain
+        brain.place(400)
+        brain._queue(Step("idle", 60), now=self.t[0], interrupt=True)
+        pet.show()
+        pet._sync_windows(force=True)
+        self.app.processEvents()
+        inside, blank = self._input_point(pet), QPoint(8, 8)
+        native_id, handle = pet.winId(), pet.windowHandle()
+        baseline, position = pet.grab().toImage(), pet.pos()
+        visibility_events = []
+
+        class VisibilityWatcher(QObject):
+            def eventFilter(self, watched, event):
+                if event.type() in (QEvent.Type.Show, QEvent.Type.Hide, QEvent.Type.WinIdChange):
+                    visibility_events.append(event.type())
+                return False
+
+        watcher = VisibilityWatcher(pet)
+        pet.installEventFilter(watcher)
+        for local in (blank, inside, blank, inside, blank, inside):
+            with patch.object(desktop_pet.QCursor, "pos", return_value=position + local):
+                pet._sync_windows()
+                self.app.processEvents()
+            self.assertIs(pet.windowHandle(), handle)
+            self.assertEqual(pet.winId(), native_id)
+            self.assertEqual(pet.pos(), position)
+            self.assertTrue(pet.isVisible())
+            self.assertEqual(pet.grab().toImage(), baseline)
+            self.assertEqual(bool(handle.flags() & Qt.WindowType.WindowTransparentForInput),
+                             local == blank)
+        self.assertEqual(visibility_events, [])
 
     def test_air_rotation_jump_and_dissolve_keep_a_visible_pixel_mask(self):
         pet, brain = self.pet, self.pet.brain
@@ -569,6 +602,49 @@ class DesktopPetTest(unittest.TestCase):
         native.setLevel_.assert_called_once_with(25)
         native.makeKeyAndOrderFront_.assert_not_called()
         native.orderFrontRegardless.assert_not_called()
+
+    def test_cocoa_input_change_syncs_qwindow_and_preserves_native_floating_setup(self):
+        native = Mock()
+        view = Mock()
+        view.window.return_value = native
+        bridge = SimpleNamespace(objc_object=Mock(return_value=view))
+        window = Mock()
+        initial_flags = desktop_pet.FLOATING
+        window.windowFlags.return_value = initial_flags
+        window.winId.return_value = 1234
+        handle = window.windowHandle.return_value
+        state = {"flags": initial_flags, "level": 27, "behavior": 4417, "ignores": False}
+        native.level.side_effect = lambda: state["level"]
+        native.collectionBehavior.side_effect = lambda: state["behavior"]
+        native.ignoresMouseEvents.side_effect = lambda: state["ignores"]
+        native.setLevel_.side_effect = lambda value: state.update(level=value)
+        native.setCollectionBehavior_.side_effect = lambda value: state.update(behavior=value)
+        native.setIgnoresMouseEvents_.side_effect = lambda value: state.update(ignores=value)
+
+        def platform_flags(flag, enabled):
+            state["flags"] = state["flags"] | flag if enabled else state["flags"] & ~flag
+            # QCocoaWindow::setWindowFlags also reapplies its default level and
+            # collection behavior; neither should leak into a hover update.
+            state.update(level=8, behavior=128, ignores=enabled)
+
+        handle.setFlag.side_effect = platform_flags
+        with patch.object(desktop_pet.QApplication, "platformName", return_value="cocoa"), \
+             patch.dict(sys.modules, {"objc": bridge}):
+            for enabled in (True, False):
+                desktop_pet._set_input_passthrough(window, enabled)
+                self.assertEqual(bool(state["flags"] & Qt.WindowType.WindowTransparentForInput), enabled)
+                self.assertEqual(state["ignores"], enabled)
+                self.assertEqual((state["level"], state["behavior"]), (27, 4417))
+                window.windowFlags.return_value = state["flags"]
+        self.assertEqual(window.overrideWindowFlags.call_args_list, [
+            unittest.mock.call(initial_flags | Qt.WindowType.WindowTransparentForInput),
+            unittest.mock.call(initial_flags)])
+        self.assertEqual(handle.setFlag.call_args_list, [
+            unittest.mock.call(Qt.WindowType.WindowTransparentForInput, True),
+            unittest.mock.call(Qt.WindowType.WindowTransparentForInput, False)])
+        window.setWindowFlag.assert_not_called()
+        window.show.assert_not_called()
+        window.hide.assert_not_called()
 
     def test_floating_native_setup_is_event_driven_and_offscreen_safe(self):
         with patch.object(self.pet, "winId") as win_id:
