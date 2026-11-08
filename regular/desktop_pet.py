@@ -608,7 +608,10 @@ def _configure_macos_floating(window):
 def _set_input_passthrough(window, enabled):
     """Change only input routing; never hide/reparent a translucent widget."""
     flag = Qt.WindowType.WindowTransparentForInput
-    flags = window.windowFlags() | flag if enabled else window.windowFlags() & ~flag
+    # Some PySide builds truncate high window hints when inverting a Qt enum.
+    # Clear only this bit as an integer, preserving every other native hint.
+    current = int(window.windowFlags())
+    flags = Qt.WindowType(current | int(flag) if enabled else current & ~int(flag))
     handle = window.windowHandle()
     if handle is not None:
         native = _macos_window(window)

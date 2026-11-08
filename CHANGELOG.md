@@ -69,6 +69,8 @@
 - macOS: the pet stays above ordinary windows across Spaces and below the menu bar,
   and portals keep their layer order. Input pass-through is changed in place, so the
   window is never hidden and re-shown.
+- Preserve unrelated window flags when toggling mouse pass-through, including high
+  bits that some Windows PySide builds lose when inverting a Qt enum.
 - Fix: a reshuffled long stay could swap a loop for a one-shot that then froze for
   45–90 seconds. Fix: returning from the dragon no longer invents a candy in her hand.
 - Generation prompts for every adopted strip live next to its spec in

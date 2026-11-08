@@ -622,7 +622,8 @@ class DesktopPetTest(unittest.TestCase):
         native.setIgnoresMouseEvents_.side_effect = lambda value: state.update(ignores=value)
 
         def platform_flags(flag, enabled):
-            state["flags"] = state["flags"] | flag if enabled else state["flags"] & ~flag
+            current = int(state["flags"])
+            state["flags"] = Qt.WindowType(current | int(flag) if enabled else current & ~int(flag))
             # QCocoaWindow::setWindowFlags also reapplies its default level and
             # collection behavior; neither should leak into a hover update.
             state.update(level=8, behavior=128, ignores=enabled)
@@ -633,6 +634,8 @@ class DesktopPetTest(unittest.TestCase):
             for enabled in (True, False):
                 desktop_pet._set_input_passthrough(window, enabled)
                 self.assertEqual(bool(state["flags"] & Qt.WindowType.WindowTransparentForInput), enabled)
+                self.assertEqual(int(window.overrideWindowFlags.call_args.args[0]) &
+                                 ~int(Qt.WindowType.WindowTransparentForInput), int(initial_flags))
                 self.assertEqual(state["ignores"], enabled)
                 self.assertEqual((state["level"], state["behavior"]), (27, 4417))
                 window.windowFlags.return_value = state["flags"]
