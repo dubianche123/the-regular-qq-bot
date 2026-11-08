@@ -122,7 +122,7 @@ class DesktopPetTest(unittest.TestCase):
     def test_edge_wake_bubble_clears_actual_sprite_ink_at_each_scale(self):
         pet, brain = self.pet, self.pet.brain
         area = QRect(0, 33, 1440, 827)
-        sleepers = {"left": "boundary_side_sleep", "right": "boundary_side_sleep",
+        sleepers = {"left": "boundary_side_doze", "right": "boundary_side_doze",
                     "bottom": "boundary_bottom_pillow", "top": "boundary_top_sleep"}
         with patch.object(pet, "_screen_for", return_value=area):
             for scale in (0.6, 1.0, 1.5):
@@ -606,6 +606,109 @@ class DesktopPetTest(unittest.TestCase):
                 finally:
                     pet.close()
                     pet.pool.waitForDone(1000)
+
+    def _hidden_render_pose(self, edge, clip, scale, area):
+        pet, brain = self.pet, self.pet.brain
+        brain.scale = scale
+        pet._apply_size()
+        brain.set_ground(area.left(), area.right() + 1, area.bottom() + 1, area.top())
+        brain.x, brain.y = area.center().x(), 450
+        brain.mode, brain.hidden_edge = "hidden", edge
+        brain.facing = -1 if edge == "right" else 1
+        brain.top_peek, brain.bottom_peek = edge == "top", edge == "bottom"
+        brain.hidden_asleep = brain._role(clip) == "edge_sleep"
+        brain._hidden_side_y = 450
+        brain._hidden_clip = clip
+        brain._hidden_awake_clip = "boundary_top_look" if edge == "top" else "motion_edge_look"
+        brain._set_clip(clip, self.t[0], restart=True)
+        brain.x, brain.y = brain._hidden_target()
+        brain._now = self.t[0]
+        pet.show()
+        pet._sync_windows(force=True)
+        return pet, brain
+
+    def _edge_source_ink(self, pet, rows=None):
+        brain = pet.brain
+        strip, frame, mirrored, _ = brain.pose()
+        pixmap = self.sprites.pixmap(strip, frame, mirrored, brain.scale, 1.0)
+        region = QRegion(pixmap.mask())
+        if rows is not None:
+            factor = self.sprites.points(brain.scale)
+            top, bottom = (round(value * factor) for value in rows)
+            region = region.intersected(QRegion(QRect(0, top, pixmap.width(), bottom - top)))
+        anchor = pet.window_anchor()
+        origin = pet.pos() + QPoint(round(anchor.x() - pet.anchor_pt[0]),
+                                    round(anchor.y() - pet.anchor_pt[1]))
+        return region.translated(origin)
+
+    def test_top_hidden_pixels_show_a_head_band_and_keep_source_legs_outside(self):
+        area = QRect(0, 33, 1440, 827)
+        for scale in (.6, 1.0, 1.5):
+            for clip in ("boundary_top_look", "boundary_top_sleep", "edge_daily_top_wonder"):
+                pet, brain = self._hidden_render_pose("top", clip, scale, area)
+                started = self.t[0]
+                for index, elapsed in enumerate((0, .4, .8, 1.4, 3.4)):
+                    with self.subTest(scale=scale, clip=clip, elapsed=elapsed):
+                        brain._now = started + elapsed
+                        brain._hidden_gaze = index % 3
+                        brain._hidden_blink_started = brain._now if index == 3 else -10
+                        pet._sync_windows(force=True)
+                        ink = self._edge_source_ink(pet)
+                        visible = ink.intersected(QRegion(area))
+                        self.assertFalse(visible.isEmpty())
+                        self.assertFalse(ink.subtracted(QRegion(area)).isEmpty())
+                        painted = QRegion(pet.grab().mask()).translated(pet.pos())
+                        self.assertTrue(painted.subtracted(QRegion(area)).isEmpty())
+                        self.assertGreater(painted.boundingRect().height(), brain.figure * .25)
+                        self.assertLess(painted.boundingRect().height(), brain.figure * .5)
+                        # In these reviewed inverted sheets the upper source band
+                        # contains shoes/legs, above the face at the bottom.
+                        legs = self._edge_source_ink(pet, (0, 340))
+                        self.assertFalse(legs.isEmpty())
+                        self.assertTrue(legs.intersected(QRegion(area)).isEmpty())
+
+    def test_side_sleep_pixels_keep_the_grabbed_pose_and_hide_lower_source_legs(self):
+        area = QRect(0, 33, 1440, 827)
+        for scale in (.6, 1.0, 1.5):
+            for edge in ("left", "right"):
+                pet, brain = self._hidden_render_pose(edge, "motion_edge_look", scale, area)
+                awake_anchor = (brain.x, brain.y)
+                brain._hidden_sleep_at = self.t[0]
+                brain.tick(self.t[0])
+                self.assertEqual(brain.clip, "boundary_side_doze")
+                for elapsed in (0, .4, .8, 3.4, 120):
+                    with self.subTest(scale=scale, edge=edge, elapsed=elapsed):
+                        brain.tick(self.t[0] + elapsed)
+                        pet._sync_windows(force=True)
+                        self.assertEqual(brain.pose()[0], "motion_edge_look")
+                        self.assertEqual((brain.x, brain.y), awake_anchor)
+                        self.assertFalse(self._edge_source_ink(pet).intersected(QRegion(area)).isEmpty())
+                        legs = self._edge_source_ink(pet, (440, 512))
+                        self.assertFalse(legs.isEmpty())
+                        self.assertTrue(legs.intersected(QRegion(area)).isEmpty())
+                        if elapsed >= 3.4:
+                            self.assertEqual(brain.pose()[1], 3)
+                        self.assertIsNone(brain._hidden_slip_started)
+
+    def test_top_exit_pixels_reveal_gradually_before_the_cast_starts(self):
+        area = QRect(0, 33, 1440, 827)
+        for scale in (.6, 1.0, 1.5):
+            with self.subTest(scale=scale):
+                pet, brain = self._hidden_render_pose("top", "boundary_top_look", scale, area)
+                brain.poke(self.t[0])
+                heights = []
+                for elapsed in (0, .1, .2, .3, .4):
+                    brain.tick(self.t[0] + elapsed)
+                    pet._sync_windows(force=True)
+                    heights.append(QRegion(pet.grab().mask()).boundingRect().height())
+                    self.assertEqual(brain.clip, "edge_daily_top_cast")
+                    self.assertEqual(brain.pose()[1], 0)
+                    self.assertIsNone(brain.warp)
+                self.assertEqual(heights, sorted(heights))
+                self.assertLess(heights[0], brain.figure * .5)
+                self.assertGreater(heights[-1], brain.figure * .7)
+                span = heights[-1] - heights[0]
+                self.assertLess(max(b - a for a, b in zip(heights, heights[1:])), span * .6)
 
     def test_new_edge_role_has_no_shadow_but_walking_keeps_it(self):
         area = QRect(-1100, 30, 1100, 800)

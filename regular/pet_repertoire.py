@@ -8,14 +8,15 @@ from collections import deque
 from regular.pet_actions_motion import ACTIONS as MOTION
 from regular.pet_actions_dragon import ACTIONS as DRAGON
 from regular.pet_actions_life import ACTIONS as LIFE
-from regular.pet_actions_boundary import ACTIONS as BOUNDARY
+from regular.pet_actions_boundary import ACTIONS as BOUNDARY, PLAYBACK_ALIASES as BOUNDARY_ALIASES
 from regular.pet_actions_spell import ACTIONS as SPELL
 from regular.pet_actions_scenes import ACTIONS as SCENES
 from regular.pet_actions_dragon_form import ACTIONS as FORM
-from regular.pet_actions_daily import ACTIONS as DAILY, PLAYBACK_ALIASES
+from regular.pet_actions_daily import ACTIONS as DAILY, PLAYBACK_ALIASES as DAILY_ALIASES
 from regular.pet_actions_edge_daily import ACTIONS as EDGE_DAILY
 
 ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL, **SCENES, **FORM, **DAILY, **EDGE_DAILY}
+PLAYBACK_ALIASES = {**DAILY_ALIASES, **BOUNDARY_ALIASES}
 
 # The archive is not a playlist. Pick performances, not a quota per prop family.
 # Scripted endings still use the full catalog.

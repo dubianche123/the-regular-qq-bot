@@ -1412,7 +1412,19 @@ class PetBrain:
         if side and isinstance(rest_x, (int, float)):
             plane = self.left if side == -1 else self.right
             target_x = plane - rest_x * self.figure / 320.0 * (-1 if self.facing < 0 else 1)
+        if edge == "top":
+            # The shoe contact belongs to a fully revealed hanging pose. Hidden
+            # means only the inverted head peeks below the edge, not the body.
+            depth = 0.38 if self._role(clip) == "edge_sleep" else 0.45
+            bottom = (geometry.get("bounds") or [0, 0, 0, 0])[3]
+            target_y = self.ceiling + self.figure * depth - bottom * self.figure / 320.0
         return target_x, target_y
+
+    def _top_support_y(self, clip):
+        """Feet meet the ceiling only when she deliberately comes out to leave."""
+        geometry = self.repertoire.actions.get(clip, {}).get("geometry") or {}
+        rest = geometry.get("rest_y")
+        return self.ceiling - rest * self.figure / 320.0 if rest is not None else self.ceiling + self._head_clearance(clip)
 
     def _hide_motion(self, now, dt):
         side = -1 if self.hidden_edge == "left" else 1 if self.hidden_edge == "right" else 0
@@ -1452,12 +1464,13 @@ class PetBrain:
                         self.clip_started = now - len(spec["entry_sequence"]) / spec["entry_fps"]
             elif now >= self._hidden_slip_check_at:
                 self._hidden_slip_check_at = now + 20
+                slip = self.repertoire.actions.get(self._hidden_clip, {}).get("slip_clip")
                 if (self.hidden_edge in ("left", "right") and self.motion and not self.quiet
-                        and "boundary_side_slip" in CLIPS and now - self._hidden_sleep_started >= 90
+                        and slip in CLIPS and now - self._hidden_sleep_started >= 90
                         and now - self._hidden_slip_at >= 600 and self.floor - self.y >= self.figure * 0.5
                         and self.rng.random() < 0.18):
                     self._hidden_slip_started = self._hidden_slip_at = now
-                    self._set_clip("boundary_side_slip", now, restart=True)
+                    self._set_clip(slip, now, restart=True)
             return
         if self._role(self.clip) == "edge_micro":
             if not self._clip_done(now):
@@ -1550,6 +1563,10 @@ class PetBrain:
         self._set_clip(name if name in CLIPS else fallback if fallback in CLIPS else "idle", now, restart=True)
         if edge == "top" and self._can_warp():
             self.x, self.y = self._hidden_target(edge=edge, clip=self.clip)
+            state.update(reveal_from=self.y, reveal_to=self._top_support_y(self.clip), reveal_duration=0.4)
+            # Keep the first pose while she comes out; the cast starts only
+            # after the body is revealed, with its normal authored frame rate.
+            self.clip_started = now + state["reveal_duration"]
         self._fade = None
 
     def _edge_exit_motion(self, now, dt):
@@ -1566,7 +1583,9 @@ class PetBrain:
                         if self.clip == "edge_daily_top_cast" else
                         0.65 if edge == "top" and self.motion else 0.2 if self.motion else 0.1)
             if edge == "top" and self._can_warp():
-                self.x, self.y = self._hidden_target(edge=edge, clip=self.clip)
+                duration += state["reveal_duration"]
+                p = max(0.0, min(1.0, (now - state["since"]) / state["reveal_duration"]))
+                self.y = state["reveal_from"] + (state["reveal_to"] - state["reveal_from"]) * p * p * (3 - 2 * p)
             if now - state["since"] < duration:
                 return
             if edge == "top" and self._can_warp():
@@ -1643,7 +1662,7 @@ class PetBrain:
         release = "edge_daily_top_release" if self._has("edge_daily_top_release") else None
         if release:
             self._set_clip(release, now, restart=True)
-            self.x, self.y = self._hidden_target(edge="top", clip=release)
+            self.y = self._top_support_y(release)
         plane = min(self.floor - self.figure, max(self.ceiling + self.figure * 0.6, self.y + self.figure * 0.25))
         src = self._open_portal(self.x, plane, "floor", now)
         dst = self._open_portal(target, self.floor, "floor", now + 0.15)

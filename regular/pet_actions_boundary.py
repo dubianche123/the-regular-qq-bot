@@ -200,3 +200,15 @@ ACTIONS["boundary_side_slip"] = {
         "and recovery. Full figure within each cell, no drawn edge, floor, motion line or text."
     ),
 }
+
+# The curled pose puts her knees and feet inside the screen. Keep that art in
+# the archive; edge hiding instead dozes on the same grip as the awake peek.
+ACTIONS["boundary_side_sleep"].update(automatic=False, slip_clip="boundary_side_slip")
+PLAYBACK_ALIASES = {
+    "boundary_side_doze": {
+        "title": "躲在边框后打盹", "strip": "motion_edge_look", "posture": "air",
+        "role": "edge_sleep", "family": "side", "fps": 0.5, "loop": True,
+        "sequence": [3, 3], "entry_sequence": [1, 1, 3], "entry_fps": 2.5,
+        "duration": 8.0,
+    },
+}

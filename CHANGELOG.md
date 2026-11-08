@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Correct edge hiding after the previous anchor-stability review missed body
+  exposure: keep only the head and necessary hands visible at the top, including
+  during micro-performances and sleep. On an explicit exit, hold the first prepare
+  pose and reveal the body over 0.4 seconds before casting; use the authored top
+  support only for that active reveal. Side dozing now reuses the closed-eye peek
+  frames, while the full-body curled sleep stays archived and no longer triggers
+  automatic slips. These corrections do not add or redraw asset strips.
+- Let “换个节目” use the natural activity selector and its existing story gate
+  instead of forcing a short scene. Across 100 identical seeded starting states,
+  the manual median changes from 4.00 seconds to the natural 66.29 seconds; both
+  entrances now select the same sequence in all 100 cases. Sprite FPS is unchanged.
+  Native recordings compare the actual Qt toolbar button with natural selection:
+  both schedule the same programme and show the same 30 frame changes over 16 seconds.
+- Verify the corrected exposure in new native sleep/wake and micro-performance
+  recordings: the body stays outside while hidden, and the top exit reveals it
+  before casting. The final six directly related test files passed 275 tests /
+  1,061 subtests, with two existing Qt teardown warnings. Current evidence is in
+  `/private/tmp/regular-edge-peek-20261108/`; details and earlier history remain in
+  `docs/pet-performance-2026-11-08.md`.
 - Give daily performances distinct physical endings: hug a closed book to sleep,
   leave the last cookie for you, shelter a lamp, cool a second cup, rediscover a
   keepsake, make room beside her, release a treasured gem, prepare for an audience,
@@ -12,17 +31,20 @@
 - Keep feeding within one new four-frame strip: expect, receive, bite and respond
   contentedly. A delayed care receipt continues that one feeding instead of replaying
   it or switching to a shorter-bodied cookie pose.
-- Keep edge sleep and waking attached to their authored support; wake by reversing
-  the same sleep entry. Add occasional supported edge micro-performances, then return
+- Keep bottom sleep and waking attached to their authored support; preserve hidden
+  exposure at the other edges and wake by reversing the same sleep entry. Add
+  occasional supported edge micro-performances, then return
   to the original peek without postponing sleep. Open the top portal with both palms
   at the chest before releasing and turning into it. A normal portal landing may
   stumble and recover (18%), never on consecutive trips.
 - Record six daily scenes and all four awake edge performances in native Cocoa
   windows with real elapsed time, including the delayed feeding receipt. Capture
   only QA-owned Qt windows and log actual native positions; moving edge anchors
-  stay within 0.5 pixels. Final recordings after the bubble fix confirm unobstructed
+  stay within 0.5 pixels. Recordings after the bubble fix confirm unobstructed
   hair, horns and eyes, all four sleep/wake transitions, and every top turn frame. See
-  `docs/pet-performance-2026-11-08.md` for adopted art and evidence.
+  `docs/pet-performance-2026-11-08.md` for adopted art and evidence. This earlier
+  review missed that the top and curled side sleep exposed too much of the body;
+  stable anchors did not establish correct hiding.
 - Keep speech bubbles clear of the sprite's actual alpha contour under the same
   rendering transform, including lying poses and protruding hair. Check all four
   edges, three sizes and three wake frames for pixel overlap. The related suite
@@ -52,7 +74,8 @@
   too large and several others about 10% off; frames are rescaled about the feet (or
   the grip on screen-edge strips) and checked side by side against idle.
 - Library: 360 WebP strips / 1,434 frames (36,527,434 bytes), with 43 legacy strips,
-  317 repertoire definitions and one same-strip book-sleep alias. This follow-up
+  317 repertoire definitions and two same-strip aliases (book sleep and side doze),
+  giving 319 available repertoire items. This follow-up
   adopts 15 daily and 8 edge sheets; see `docs/pet-performance-2026-11-08.md`.
 
 - Keep macOS pet windows above ordinary app windows across Spaces, applying
@@ -63,10 +86,13 @@
   through a nearby magic circle, then emerge from its counterpart on the floor.
 - Let her doze while hidden at any edge. A click wakes her briefly before the
   exit; hovering and QQ events keep her in the hiding place.
-- Keep hidden peeks still while her eyes follow the cursor. Enter supported
+- Earlier edge sleep implementation: keep hidden peeks still while her eyes follow
+  the cursor. Enter supported
   sleep once, then loop only settled frames: cheek on sleeves or a pillow at
   the bottom, curled against a side, or wrapped in wings like a hanging bat.
-  Side sleepers can rarely slip and catch themselves with a wingbeat.
+  Side sleepers could rarely slip and catch themselves with a wingbeat. The current
+  correction above retires automatic curled side sleep and slips, and keeps the
+  top sleeper's body hidden.
 - Clear the actual native clipping mask when leaving the top edge, including
   while the window's menu-bar offset is changing.
 - Give the desktop pet real magic. She draws a turning rune circle under her

@@ -985,30 +985,38 @@ class InteractionTest(unittest.TestCase):
         self.assertEqual((b.mode, b.hidden_edge), ("hidden", "left"))
         self.assertAlmostEqual(b.y, dropped_y)
 
-    def test_side_sleep_slip_is_rare_bounded_and_interruptible(self):
-        b = PetBrain(rng=random.Random(7), now=0)
-        b.set_ground(0, 1440, 860, 38)
-        b.hidden_edge, b.mode, b.hidden_asleep = "left", "hidden", True
-        b._hidden_side_y = b.y = 400
-        b._hidden_clip = b._hidden_awake_clip = "motion_edge_look"
-        b._set_clip(b._hidden_clip, 0, restart=True)
-        b.x, b.y = b._hidden_target()
-        b._hidden_sleep_started, b._hidden_slip_check_at = 1, 91
-        with patch.dict(CLIPS, {"boundary_side_slip": ("motion_edge_look", [0, 1, 2, 3], 6, False, "stand")}), \
-             patch.object(b.rng, "random", return_value=0):
-            b.tick(90)
-            self.assertIsNone(b._hidden_slip_started)
-            b.tick(91)
-            self.assertEqual(b.clip, "boundary_side_slip")
-            b.tick(91.3)
-            self.assertGreater(b.y, 400)
-            b.tick(91.8)
-            self.assertAlmostEqual(b.y, 400)
-            self.assertEqual(b.clip, "motion_edge_look")
-            b._hidden_slip_check_at = 92
-            b.tick(92)
-            self.assertIsNone(b._hidden_slip_started)
-            self.assertTrue(b.hidden_asleep)
+    def test_side_doze_stays_on_its_grip_without_full_body_slips(self):
+        for edge in ("left", "right"):
+            with self.subTest(edge=edge):
+                b = PetBrain(rng=random.Random(7), now=0)
+                b.set_ground(0, 1440, 860, 38)
+                b.hidden_edge, b.mode = edge, "hidden"
+                b.facing = -1 if edge == "right" else 1
+                b._hidden_side_y = b.y = 400
+                b._hidden_clip = b._hidden_awake_clip = "motion_edge_look"
+                b._set_clip(b._hidden_clip, 0, restart=True)
+                b.x, b.y = b._hidden_target()
+                b._hidden_sleep_at = 1
+                b.tick(1)
+                self.assertEqual(b.clip, "boundary_side_doze")
+                support = (b.x, b.y)
+                # Even when every rare-chance check would succeed, the new
+                # same-grip doze must never switch to incompatible curled art.
+                with patch.object(b.rng, "random", return_value=0):
+                    for now in range(91, 1232, 20):
+                        b.tick(now)
+                        self.assertEqual(b.clip, "boundary_side_doze")
+                        self.assertEqual(b.pose(now)[:2], ("motion_edge_look", 3))
+                        self.assertEqual((b.x, b.y), support)
+                        self.assertIsNone(b._hidden_slip_started)
+                        self.assertTrue(b.hidden_asleep)
+                b.set_attention(True, 1232)
+                b.poke(1232)
+                self.assertEqual(b._edge_exit["phase"], "wake")
+                self.assertEqual(b.clip, "boundary_side_doze")
+                _, clips = run(b, 1232, 5)
+                self.assertNotIn("boundary_side_slip", clips)
+                self.assertEqual((b.mode, b.y), ("ground", b.floor))
 
     def test_hidden_bottom_stays_at_fixed_height_and_only_blinks_when_idle(self):
         b = PetBrain(rng=random.Random(7), now=0)
@@ -1071,7 +1079,7 @@ class InteractionTest(unittest.TestCase):
         self.assertEqual(b.particles[-1].y, 0.15)
 
     def test_hidden_sleep_loops_then_click_wakes_and_exits(self):
-        for edge, sleep in (("left", "boundary_side_sleep"), ("right", "boundary_side_sleep"),
+        for edge, sleep in (("left", "boundary_side_doze"), ("right", "boundary_side_doze"),
                             ("bottom", "boundary_bottom_sleep"), ("top", "boundary_top_sleep")):
             with self.subTest(edge=edge):
                 b = PetBrain(rng=random.Random(7), now=0)
@@ -1092,6 +1100,10 @@ class InteractionTest(unittest.TestCase):
                     frames = set()
                     t, _ = run(b, 1, 2, each=lambda now: frames.add(b.pose(now)[1]))
                     self.assertGreater(len(frames), 1)
+                    if edge in ("left", "right"):
+                        frames.clear()
+                        t, _ = run(b, t, 2, each=lambda now: frames.add(b.pose(now)[1]))
+                        self.assertEqual(frames, {3})
                 else:
                     t = 1
                 b.hover(t, b.x, b.y, near=True)

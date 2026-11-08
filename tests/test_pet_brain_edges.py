@@ -1,4 +1,4 @@
-"""Screen-edge contact is held by the authored support, not a moving feet anchor."""
+"""Hidden poses expose the face; deliberate exits reveal the supported body."""
 import random
 from unittest.mock import patch
 
@@ -12,7 +12,7 @@ AWAKE = {
     "bottom": "motion_bottom_look", "top": "boundary_top_look",
 }
 SLEEP = {
-    "left": "boundary_side_sleep", "right": "boundary_side_sleep",
+    "left": "boundary_side_doze", "right": "boundary_side_doze",
     "bottom": "boundary_bottom_sleep", "top": "boundary_top_sleep",
 }
 
@@ -42,11 +42,28 @@ def assert_support(brain, edge, clip):
     assert contact == pytest.approx(plane)
 
 
+def assert_hidden_projection(brain, edge, clip):
+    geometry = brain.repertoire.actions[clip]["geometry"]
+    factor = brain.figure / 320
+    bounds = geometry.get("bounds", [-100, -300, 100, 0])
+    if edge == "top":
+        visible_depth = brain.y + bounds[3] * factor - brain.ceiling
+        assert brain.figure * .25 < visible_depth < brain.figure * .5
+        assert brain.y + bounds[1] * factor < brain.ceiling
+    elif edge in ("left", "right") and "rest_x" not in geometry:
+        left = brain.x + (bounds[0] if brain.facing > 0 else -bounds[2]) * factor
+        right = brain.x + (bounds[2] if brain.facing > 0 else -bounds[0]) * factor
+        assert left < (brain.left if edge == "left" else brain.right) < right
+    else:
+        assert_support(brain, edge, clip)
+
+
 @pytest.mark.parametrize("edge", AWAKE)
 @pytest.mark.parametrize("scale", (0.6, 1.0, 1.5))
-def test_sleep_and_wake_keep_the_real_support_attached(edge, scale):
+def test_sleep_and_wake_keep_the_hidden_pose_without_exposing_the_body(edge, scale):
     brain = hidden(edge, scale=scale)
     brain._hidden_sleep_at = 1
+    awake_anchor = (brain.x, brain.y)
     # An outgoing ground-pose dissolve must not follow the new support anchor.
     brain._fade = ("idle", 0, False, 0.9, 0.5)
     with patch.object(brain, "_pick", return_value=SLEEP[edge]):
@@ -56,19 +73,23 @@ def test_sleep_and_wake_keep_the_real_support_attached(edge, scale):
     for time in (1, 1.2, 1.4, 1.8, 2.2, 4, 8):
         brain.set_ground(-800, 640, 860, 38)
         brain.tick(time)
-        assert_support(brain, edge, SLEEP[edge])
+        assert_hidden_projection(brain, edge, SLEEP[edge])
     settled = (brain.x, brain.y)
+    if edge in ("left", "right"):
+        assert settled == awake_anchor
+    entry = brain.repertoire.actions[SLEEP[edge]]["entry_sequence"]
     brain.poke(9)
     frames = []
-    for time in (9, 9.21, 9.41):
+    for index in range(len(entry)):
+        time = 9 + index / 5 + .01
         brain.set_ground(-800, 640, 860, 38)
         brain.tick(time)
         assert brain.clip == SLEEP[edge]
         assert (brain.x, brain.y) == pytest.approx(settled)
-        assert_support(brain, edge, SLEEP[edge])
+        assert_hidden_projection(brain, edge, SLEEP[edge])
         frames.append(brain.pose(time)[1])
-    assert frames == [2, 1, 0]
-    brain.tick(9.61)
+    assert frames == list(reversed(entry))
+    brain.tick(9 + len(entry) / 5 + .01)
     assert brain._edge_exit["phase"] == "prepare"
     assert not brain.hidden_asleep
 
@@ -87,7 +108,7 @@ def test_hidden_horizontal_edges_stay_in_the_current_screen_after_resize(edge, s
         assert brain.left + brain.figure * .35 <= brain.x <= brain.right - brain.figure * .35
         assert (brain.mode, brain.hidden_edge) == ("hidden", edge)
         if sleeping:
-            assert_support(brain, edge, SLEEP[edge])
+            assert_hidden_projection(brain, edge, SLEEP[edge])
 
 
 @pytest.mark.parametrize("edge", AWAKE)
@@ -136,7 +157,7 @@ def adopt_edge_assets(brain, monkeypatch):
     ('bottom', 'edge_daily_bottom_watch'), ('bottom', 'edge_daily_bottom_yawn'),
     ('top', 'edge_daily_top_wonder'),
 ))
-def test_micro_performance_keeps_support_then_returns_without_restarting_sleep(edge, clip, monkeypatch):
+def test_micro_performance_keeps_hidden_projection_then_returns_without_restarting_sleep(edge, clip, monkeypatch):
     brain = hidden(edge)
     adopt_edge_assets(brain, monkeypatch)
     brain._hidden_micro_at, brain._hidden_sleep_at = 1, 90
@@ -146,7 +167,7 @@ def test_micro_performance_keeps_support_then_returns_without_restarting_sleep(e
     for time in (1.2, 1.4, 1.6, 1.8):
         brain.set_ground(-800, 640, 860, 38)
         brain.tick(time)
-        assert_support(brain, edge, clip)
+        assert_hidden_projection(brain, edge, clip)
     brain.tick(4)
     assert brain.clip == AWAKE[edge]
     assert brain._hidden_sleep_at == 90
@@ -182,7 +203,7 @@ def test_top_escape_opens_its_route_while_supported_without_ground_fear(new_art,
         if brain.mode == 'edge_exit':
             assert brain._edge_exit['phase'] == 'prepare'
             assert brain.y < brain.floor
-            if new_art:
+            if new_art and now >= brain._edge_exit['since'] + brain._edge_exit['reveal_duration']:
                 assert_support(brain, 'top', 'edge_daily_top_cast')
         if brain.warp:
             phases.append(brain.warp['phase'])
@@ -232,13 +253,14 @@ def test_portal_stumble_only_starts_after_landing_and_never_on_consecutive_trips
 
 
 @pytest.mark.parametrize('scale', (0.6, 1.0, 1.5))
-def test_awake_top_contact_keeps_the_shoes_visible_before_casting(scale):
+@pytest.mark.parametrize('clip', ('boundary_top_look', 'boundary_top_sleep', 'edge_daily_top_wonder'))
+def test_top_hidden_exposes_only_a_head_depth_and_keeps_shoes_outside(scale, clip):
     brain = hidden('top', scale=scale)
-    geometry = brain.repertoire.actions['boundary_top_look']['geometry']
-    assert geometry['rest_y'] == geometry['bounds'][1]
-    assert_support(brain, 'top', 'boundary_top_look')
-    # The highest visible pixel is the inverted shoe tip, not a cropped leg.
-    assert brain.y + geometry['bounds'][1] * brain.figure / 320 == pytest.approx(brain.ceiling)
+    brain._hidden_clip = clip
+    brain.x, brain.y = brain._hidden_target()
+    geometry = brain.repertoire.actions[clip]['geometry']
+    assert_hidden_projection(brain, 'top', clip)
+    assert brain.y + geometry['rest_y'] * brain.figure / 320 < brain.ceiling
 
 
 def test_top_release_stays_attached_then_descends_before_the_head_turns_upright(monkeypatch):
@@ -261,3 +283,47 @@ def test_top_release_stays_attached_then_descends_before_the_head_turns_upright(
     brain._warp(1.81, 1 / 60)
     assert brain.warp['phase'] == 'top_sink'
     assert brain.warp['origin_y'] == pytest.approx(brain.warp['release_y'])
+
+
+@pytest.mark.parametrize('edge', ('left', 'right'))
+def test_side_sleep_closes_the_same_peeking_eyes_and_never_slips_into_full_body(edge):
+    brain = hidden(edge)
+    awake_anchor = (brain.x, brain.y)
+    brain._hidden_sleep_at = 1
+    brain.tick(1)
+    assert brain.clip == 'boundary_side_doze'
+    assert CLIPS[brain.clip][0] == CLIPS[AWAKE[edge]][0]
+    assert not brain.repertoire.actions[brain.clip].get('slip_clip')
+    with patch.object(brain.rng, 'random', return_value=0.0):
+        for time in (3, 91, 112, 612, 700):
+            brain.tick(time)
+            assert brain.clip == 'boundary_side_doze'
+            assert brain.pose(time)[0:2] == ('motion_edge_look', 3)
+            assert (brain.x, brain.y) == awake_anchor
+            assert brain._hidden_slip_started is None
+
+
+@pytest.mark.parametrize('scale', (0.6, 1.0, 1.5))
+def test_top_exit_smoothly_reveals_the_first_pose_before_casting(scale):
+    brain = hidden('top', scale=scale)
+    geometry = brain.repertoire.actions[brain.clip]['geometry']
+    hidden_bottom = brain.y + geometry['bounds'][3] * brain.figure / 320
+    brain.poke(1)
+    assert brain.clip == 'edge_daily_top_cast'
+    geometry = brain.repertoire.actions[brain.clip]['geometry']
+    assert brain.y + geometry['bounds'][3] * brain.figure / 320 == pytest.approx(hidden_bottom)
+    assert_hidden_projection(brain, 'top', brain.clip)
+    positions = []
+    for time in (1, 1.1, 1.2, 1.3, 1.4):
+        brain.tick(time)
+        positions.append(brain.y)
+        assert brain.clip == 'edge_daily_top_cast'
+        assert brain.pose(time)[1] == 0
+        assert brain.warp is None
+    assert positions == sorted(positions)
+    span = positions[-1] - positions[0]
+    assert span > brain.figure * .25
+    assert max(b - a for a, b in zip(positions, positions[1:])) < span * .5
+    assert_support(brain, 'top', 'edge_daily_top_cast')
+    brain.tick(1.75)
+    assert brain.pose(1.75)[1] == 1
