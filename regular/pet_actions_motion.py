@@ -151,3 +151,114 @@ ACTIONS["motion_fly_flap_slow"]["prompt"] += (
     "Keep the head, face size, torso, hands and suspended feet identical across all four frames. "
     "The pose must be airborne, not standing. No substitute body bobbing for wing articulation."
 )
+
+# Match the shipped idle anatomy, not the old short-bodied fall drawings.
+_FALL_HEADER = (
+    "Transparent 1024x1024 animation sheet, exactly four full-body frames in a 2x2 grid "
+    "of 512px cells. Image 1 is the original adult chibi dragon-woman identity. Image 2 "
+    "is her EXACT shipped idle figure and is authoritative for anatomy, clothes, camera "
+    "and style. Image 3 shows normal airborne wings and legs. Preserve the silver-lilac "
+    "hair, horns, pointed ears, flower clip, scarf, sage cardigan, cream dress, socks, "
+    "sneakers, two bat wings and one tail. Exactly two arms, two human hands, two legs. "
+    "CRITICAL: copy Image 2's head diameter AND neck-flower-to-center-dress-hem length, "
+    "shoulder-to-hip length, thighs, shins and shoes. Bending knees must NOT shorten the "
+    "torso or make a tiny baby body under the same head. The cardigan and dress remain "
+    "their full original length. Same camera, head, body scale and torso position in all "
+    "cells. Both feet stay airborne. The silhouette can naturally shorten with curled "
+    "knees: do not resize the person to equalize silhouette heights. Full horns, fingers, "
+    "wings, tail and shoes inside each cell with margin. No standing/landing pose, floor, "
+    "shadow, props, words, symbols, motion trails or backdrop. Genuine alpha-zero background."
+)
+for _name, _direction in {
+    "motion_fall_upward": (
+        "Four stages of an airborne upward-toss adjustment: 1 arms lift beside her head, "
+        "full-length torso extended, knees trail softly, eyes open; 2 elbows soften, knees "
+        "bend slightly behind her and wings open; 3 arms spread halfway, wings check the "
+        "motion and one lower leg relaxes; 4 return toward the first balanced airborne "
+        "pose with eyes open and both feet suspended. Repeatable, never land or stand."
+    ),
+    "motion_fall_flutter": (
+        "Four stages of an airborne flutter: 1 both small wing tips UP, arms loosely "
+        "spread at shoulder height, normal-length legs dangle and eyes open; 2 wings "
+        "HORIZONTAL, fingers relax and one ankle swings; 3 wing tips DOWN beside hips, "
+        "elbows soften and other ankle relaxes; 4 wings return halfway up, arms and legs "
+        "return toward frame 1, eyes open. Full torso stays fixed while wings articulate."
+    ),
+    "motion_fall_curl": (
+        "Four stages of a gentle airborne knee curl, never a ground crouch: 1 full-length "
+        "torso as Image 2, both arms relaxed close to her sides with exactly two hands "
+        "beside the hips and NO hands near the chest, knees softly forward, eyes open; 2 knees curl "
+        "a little closer without compressing the torso, wings open; 3 one lower leg "
+        "unbends gently while the other stays curled, tail adjusts; 4 restore frame 1 "
+        "with eyes open. Show real hip-knee-ankle joints, unchanged cardigan/dress length."
+    ),
+    "motion_fall_reach": (
+        "Four stages of an airborne balancing reach: 1 arms extend sideways below "
+        "shoulders, palms open, wings open, normal-length legs hang with soft knees, "
+        "eyes open; 2 elbows bend toward chest and one knee bends a little; 3 arms "
+        "extend again, opposite knee relaxes, tail counterbalances; 4 settle toward "
+        "frame 1 with open eyes and both feet suspended. Full-length torso stays stable."
+    ),
+}.items():
+    ACTIONS[_name].update(
+        prompt_header=_FALL_HEADER, prompt=_direction, style="idle",
+        extra_refs=["motion_fly_flap_slow"], fixed_ground=True,
+        calibration_reference="idle", calibration_frames=[0, 3],
+    )
+
+# These landing endpoints had the same short-body problem even when standing.
+_LAND_HEADER = (
+    "Transparent 1024x1024 four-frame animation sheet in a 2x2 grid of 512px cells. "
+    "Image 1 is the original adult chibi dragon-woman identity. Image 2 is her exact "
+    "shipped IDLE anatomy, outfit and rendering. Image 3 shows airborne wing anatomy. "
+    "Copy the idle head diameter AND full torso, neck-flower-to-center-dress-hem length, "
+    "hips, thighs, shins and shoes. Preserve silver-lilac hair, two horns, pointed ears, "
+    "flower clip, scarf, sage cardigan, cream dress, socks, sneakers, two small bat "
+    "wings and one scaled tail. Exactly two connected arms, two hands and two legs. "
+    "Fixed camera and scale, one common foot-support line. Bending knees is allowed "
+    "but must NOT compress the cardigan/dress or turn the body into a tiny baby under "
+    "the same head. Final standing frame MUST have the same head, torso and legs as "
+    "Image 2, not just the same overall bounding height. Complete figure inside each "
+    "cell with transparent margin. No drawn floor, cast shadow, background, props, "
+    "words, symbols, speed lines or extra limbs. Genuine alpha-zero background."
+)
+for _name, _direction in {
+    "motion_fly_land": (
+        "Four gentle landing stages: 1 airborne with wings open and normal-length "
+        "legs reaching down, feet just above the common support line; 2 toes touch "
+        "that line, knees soften slightly and arms balance; 3 both soles settle, "
+        "knees bend a little more and wings ease halfway closed; 4 fully straighten "
+        "to the EXACT idle torso/leg proportions, shoulders relaxed and wings folded. "
+        "Keep the same head size throughout. Small calm face, no collapse or squash."
+    ),
+    "motion_land_one_foot": (
+        "Four one-foot landing stages: 1 one normal-length leg reaches toward the "
+        "common support line while the other knee is softly lifted, arms balance; "
+        "2 the first foot supports her as the second lowers; 3 both feet touch and "
+        "knees gently absorb the landing, full torso length preserved; 4 stand "
+        "securely with the SAME full torso and leg lengths as Image 2, arms relax "
+        "beside her, wings settle. One consistent camera, no shrinking or pose jump."
+    ),
+    "motion_land_wing": (
+        "Four supported landing recovery stages: 1 both feet on the common support "
+        "line, knees gently bent and wings wide for balance; 2 straighten the knees "
+        "halfway while wings fold halfway; 3 stand almost upright, lower both hands "
+        "and ease shoulders; 4 fully upright in the SAME anatomy and proportions as "
+        "the idle reference, both feet planted and small wings folded. Knees may bend "
+        "but the dress and cardigan retain their original length in every frame."
+    ),
+}.items():
+    ACTIONS[_name].update(
+        prompt_header=_LAND_HEADER, prompt=_direction, style="idle",
+        extra_refs=["motion_fly_flap_slow"], fixed_ground=True,
+        calibration_reference="idle", calibration_frames=[0, 3],
+    )
+
+ACTIONS["motion_fly_land"]["prompt"] += (
+    " All four cells MUST use the SAME head width and neck-to-hem length, matching "
+    "the final standing figure. Keep the horns and ahoge at least 40px from the "
+    "top of every cell. Frame 1 floats only a SMALL distance above the common "
+    "foot line: do not move or enlarge the figure toward the top border. Frame 2 "
+    "is not a smaller copy of frame 1. Knee bending changes joint angles only, "
+    "never the scale of the head or torso. Fixed camera; four equal-size characters."
+)

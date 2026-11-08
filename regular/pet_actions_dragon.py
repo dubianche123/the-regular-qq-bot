@@ -130,3 +130,34 @@ for _name in (
 ):
     ACTIONS[_name]["loop"] = False
     ACTIONS[_name]["duration"] = 2.0
+
+# Keep the berry loop's prop, but use idle anatomy rather than its old short body.
+ACTIONS["dragon_snack_berry"].update(
+    style="idle", extra_refs=["dragon_snack_berry_ref"],
+    calibration_reference="idle", calibration_frames=[0, 3], fixed_ground=True,
+    prompt_header=(
+        "Transparent 1024x1024 animation sheet, four complete full-body frames in a "
+        "2x2 grid of 512px cells. Image 1 defines the original adult chibi dragon "
+        "woman. Image 2 is the exact shipped idle and is authoritative for head "
+        "diameter, FULL torso, collar-flower-to-dress-hem length, hips, thighs, shins "
+        "and sneakers. Preserve the original clothes, horns, hair, flower, wings "
+        "and tail. Image 3 supplies ONLY the tiny brown bowl, purple berries and "
+        "hand action: do NOT copy its shortened baby torso or short legs. Exactly "
+        "two arms, two human hands, two legs. Fixed camera, constant head AND body "
+        "proportions in every cell, feet planted on one common support line. Full "
+        "figure with margin, genuine alpha-zero background, no shadow or floor, "
+        "no extra objects, letters, symbols or limbs."
+    ),
+    prompt=(
+        "Stand in the same relaxed full-length idle stance throughout. The hand "
+        "on the viewer's right cradles the SAME tiny shallow warm-brown bowl of "
+        "dark purple berries as Image 3 at waist height in all four frames. The "
+        "other hand takes one berry, never a spoon. Frame 1 fingertips pick a "
+        "berry above the bowl, eyes open; frame 2 bring it to her lips and taste; "
+        "frame 3 finish the small bite with a quiet pleased expression; frame 4 "
+        "lower the empty hand back beside the bowl and reopen her eyes, matching "
+        "frame 1 for a gentle loop. Bowl size, shape, color and holding hand stay "
+        "unchanged. Her full-length cardigan and cream dress remain the exact "
+        "idle length; no body compression under the head."
+    ),
+)
