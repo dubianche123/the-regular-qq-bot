@@ -53,15 +53,17 @@
 | `edge_daily_bottom_watch` | 双前臂固定撑在底边，低头靠近袖口、看回来 | 底边清醒隐藏 |
 | `edge_daily_bottom_yawn` | 肘和前臂不离开支撑，小哈欠后重新睁眼 | 底边清醒隐藏，不直接转睡 |
 | `edge_daily_top_wonder` | 藏住躯干腿脚，只露倒挂头与必要手部，眼神追绒羽 | 顶边清醒隐藏 |
-| `edge_daily_top_cast` | 主动离场先保持首格，用 0.4 秒逐渐露身，再打开双掌准备近端和地面出口 | 顶边点击离开时先演 |
-| `edge_daily_top_release` | 确认出口后松脚，侧转、斜身、正身悬空，再沉入阵 | 顶部开阵之后，不先落到桌面再施法 |
+| `edge_daily_top_cast` | 保持隐藏位置正常施法，近端入口与地面出口从零张开 | 顶边点击离开时先演，不先下移露身 |
+| `edge_daily_top_release` | 首格仍只探头，随后松脚、侧转、斜身、正身悬空，进入已打开的阵 | 顶部施法结束之后，不先落到桌面再施法 |
 | `edge_daily_warp_stumble` | 已落地才踉跄，扶稳后重新站好 | 非喷嚏传送落地后 18% 概率；不连续两次出现 |
 
 清醒隐藏后首段微动作等 25–40 秒，之后隔 45–70 秒，距离原定入睡不足四秒就不再开始。安静模式或减弱动态时不演；播完恢复原探头，不重新计算入睡时间。入睡片段只播一次，再循环同源睡姿；点击逆序醒来后才进入出场。底边不再同时移动窗口下沉，顶部不再把倒挂姿态直接切成地面站姿。
 
 ## 后续更正：藏身曝光与换节目节奏
 
-顶部隐藏的位置按可见范围决定：清醒与微动作的锚点在顶边下方 `0.45 × figure`，睡眠为 `0.38 × figure`，让躯干、腿脚留在屏外。顶部 `rest_y` 记录的是鞋尾支撑，只在主动离场露身时使用；不再拿它决定隐藏位置。`prepare` 阶段固定首格，用 0.4 秒从探头位置移到支撑位置，随后才播放施法与转身。
+顶部隐藏的位置按可见范围决定：清醒与微动作的锚点在顶边下方 `0.45 × figure`，睡眠为 `0.38 × figure`，让躯干、腿脚留在屏外；不再拿鞋尾支撑 `rest_y` 决定隐藏位置。最初的曝光修正仍在 `prepare` 固定首格，用 0.4 秒移到支撑位置，随后才施法。用户继续指出这会变成“先下移再开阵”，因此取消了这段平移。
+
+当前顺序是 `prepare` 保持隐藏位置并正常播放 `edge_daily_top_cast`，近端入口与地面出口先从零张开。施法结束进入 `edge_daily_top_release`，首格仍只探头，然后松脚、转身进入已开的门。静止隐藏与微动作仍只露头，不因出场流程改变。清醒点击和睡醒点击需要各自验证；新顺序的 18 秒原生录制分别归档于 `/private/tmp/regular-air-play-20261108/top-awake/top` 与 `top-wake/top`，实际结果和新测试记录见[空中互动记录](pet-air-play-2026-11-08.md)，不沿用下方旧阶段的通过结论。
 
 左右打盹改用 `boundary_side_doze`：同源 `motion_edge_look` 的入睡帧序为 `[1, 1, 3]`，睡眠循环为 `[3, 3]`，继续保持抓边和探头的姿势。旧 `boundary_side_sleep` 全身蜷睡素材保留，设为 `automatic=False`；日常隐藏不再自动选它，也不自动进入睡滑。此轮没有改图、增加素材或调整人物缩放。
 
@@ -74,19 +76,19 @@
 
 修复后 100/100 个种子的选片和时长一致，自然入口本身 100/100 与修复前相同；没有改素材 FPS。seed 7 的两个入口以 60Hz 实际采样十秒，21 次可见帧变化也完全一致。定向回归为 7 passed、14 subtests passed；证据见[换节目对照记录](/private/tmp/regular-pet-followup-20261108/next-activity/comparison.md)。这些条件下没有抽到完整剧场，不表示按钮以后不会选到符合门槛的剧场。
 
-### 当前更正的最终验证
+### 上一阶段曝光更正的验证记录
 
-当前曝光验收以 `/private/tmp/regular-edge-peek-20261108/` 为准。以下录像均用真实 Cocoa Qt 窗口与真实时钟，人工观看了隐藏、微动作、睡醒和主动离场；旧目录保留为历史，不能替代这一轮证据。
+`/private/tmp/regular-edge-peek-20261108/` 保留为上一阶段曝光验收历史。以下录像均用真实 Cocoa Qt 窗口与真实时钟，人工观看了隐藏、微动作、睡醒和当时的主动离场；顶部仍使用先露身再开阵的旧顺序，不能验证此后改为原位施法的流程。
 
-| 场景 | 新原生录像 | 时长与捕获 | 人工复核结果 |
+| 场景 | 当时的原生录像 | 时长与捕获 | 当时的人工复核结果 |
 | --- | --- | --- | --- |
 | 顶边、左右边睡醒 | [顶边](/private/tmp/regular-edge-peek-20261108/native-sleep/top/continuous.webp)、[左边](/private/tmp/regular-edge-peek-20261108/native-sleep/left/continuous.webp)、[右边](/private/tmp/regular-edge-peek-20261108/native-sleep/right/continuous.webp) | 各约 18 秒、217 帧 | 静止与睡眠只露头和抓边部分，睁眼→闭眼→醒来，腿鞋在屏外；顶部主动离场先用 0.4 秒渐露再施法 |
 | 顶部、底部微动作 | [顶部](/private/tmp/regular-edge-peek-20261108/native-comparison/top/continuous.webp)、[底部](/private/tmp/regular-edge-peek-20261108/native-comparison/bottom/continuous.webp) | 各约 16 秒、193 帧 | 顶部观察仍只露头、必要手部和羽毛；底部露头与前臂，腿脚在外；最后均回到 `ground` |
 | 自然入口与真实按钮 | [自然入口](/private/tmp/regular-edge-peek-20261108/native-comparison/natural/continuous.webp)、[按钮入口](/private/tmp/regular-edge-peek-20261108/native-comparison/next/continuous.webp) | 各约 16 秒、193 帧 | 按钮通过实际 Qt `toolbar.play.click()` 触发，两个入口的排定节目和捕获到的 30 次可见帧变化序列一致 |
 
-按钮与自然入口均排定 `dragon_magic_feather` 74.292051 秒，加结尾 `idle` 1 秒；录像比较的是开头 16 秒。该素材保持 2 FPS，捕获帧变化间隔中位数分别为 0.5106 / 0.4962 秒，差异来自 12 FPS 录制采样，不是播放速度改变。新录像的原生窗口取整最大锚点误差约 0.5 像素，全部数据见 [summary.json](/private/tmp/regular-edge-peek-20261108/summary.json)。[曝光修正前后图](/private/tmp/regular-edge-peek-20261108/before-after.png)与[微动作曝光图](/private/tmp/regular-edge-peek-20261108/micro-exposure.jpg)也已人工复核。
+按钮与自然入口均排定 `dragon_magic_feather` 74.292051 秒，加结尾 `idle` 1 秒；录像比较的是开头 16 秒。该素材保持 2 FPS，捕获帧变化间隔中位数分别为 0.5106 / 0.4962 秒，差异来自 12 FPS 录制采样，不是播放速度改变。该批录像的原生窗口取整最大锚点误差约 0.5 像素，全部数据见 [summary.json](/private/tmp/regular-edge-peek-20261108/summary.json)。[曝光修正前后图](/private/tmp/regular-edge-peek-20261108/before-after.png)与[微动作曝光图](/private/tmp/regular-edge-peek-20261108/micro-exposure.jpg)也已人工复核。
 
-最终完整重跑直接相关的六个测试文件：**275 passed、1061 subtests passed**，无失败；有两条已有的 Qt 退出 `disconnect` RuntimeWarning。此结果单独记录，不与前面的定向回归或旧阶段结果相加：
+该阶段完整重跑直接相关的六个测试文件：**275 passed、1061 subtests passed**，无失败；有两条已有的 Qt 退出 `disconnect` RuntimeWarning。此结果单独记录，不与前面的定向回归或旧阶段结果相加，也不作为此后顶部离场顺序修正的测试结果：
 
 ```bash
 .venv/bin/python -m pytest -q \

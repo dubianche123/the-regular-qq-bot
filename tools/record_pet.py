@@ -157,13 +157,19 @@ def main():
 
         def capture(now, elapsed):
             canvas = Image.new('RGBA', crop[2:], '#e2e7eb')
+            body_bounds = None
             portals = list(pet.portal_layer.windows.values())
             own_windows = [pair[0] for pair in portals] + [pet, pet.fx]
             own_windows += list(pet.props.windows.values()) + [pair[1] for pair in portals] + [pet.bubble]
             for widget in own_windows:
                 if widget.isVisible():
                     x, y = native_position(widget)
-                    canvas.alpha_composite(grab(widget), (x - crop[0], y - crop[1]))
+                    captured = grab(widget)
+                    canvas.alpha_composite(captured, (x - crop[0], y - crop[1]))
+                    if widget is pet:
+                        bounds = captured.getchannel('A').getbbox()
+                        if bounds:
+                            body_bounds = [bounds[0] + x, bounds[1] + y, bounds[2] + x, bounds[3] + y]
             draw = ImageDraw.Draw(canvas)
             rect = (area.left() - crop[0], area.top() - crop[1],
                     area.right() + 1 - crop[0], area.bottom() + 1 - crop[1])
@@ -180,12 +186,17 @@ def main():
             records.append({'t': round(elapsed, 4), 'mode': brain.mode, 'clip': brain.clip,
                             'strip': strip, 'frame': index, 'mirrored': mirrored,
                             'brain': [brain.x, brain.y], 'qt_window': [pet.x(), pet.y()],
+                            'visible_body_bounds': body_bounds,
                             'native_window': [wx, wy], 'window_anchor': [anchor.x(), anchor.y()],
                             'actual_anchor': [wx + anchor.x(), wy + anchor.y()],
                             'anchor_error': [wx + anchor.x() - brain.x, wy + anchor.y() - brain.y],
                             'pointer': [pointer[0].x(), pointer[0].y()],
                             'air_play': brain.air_play_active,
                             'air_caught': (brain._air_chase or {}).get('caught'),
+                            'edge_phase': (brain._edge_exit or {}).get('phase'),
+                            'warp_phase': (brain.warp or {}).get('phase'),
+                            'portals': [{'id': p.id, 'x': p.x, 'y': p.y, 'open': p.openness(now)}
+                                        for p in brain.portals],
                             'input_passthrough': bool(native_window(pet).ignoresMouseEvents()),
                             'bubble_passthrough': (bool(native_window(pet.bubble).ignoresMouseEvents())
                                                    if pet.bubble.isVisible() else None),

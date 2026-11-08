@@ -1,4 +1,4 @@
-"""Hidden poses expose the face; deliberate exits reveal the supported body."""
+"""Hidden poses expose the face; exits open a route before releasing support."""
 import random
 from unittest.mock import patch
 
@@ -203,8 +203,8 @@ def test_top_escape_opens_its_route_while_supported_without_ground_fear(new_art,
         if brain.mode == 'edge_exit':
             assert brain._edge_exit['phase'] == 'prepare'
             assert brain.y < brain.floor
-            if new_art and now >= brain._edge_exit['since'] + brain._edge_exit['reveal_duration']:
-                assert_support(brain, 'top', 'edge_daily_top_cast')
+            assert_hidden_projection(brain, 'top', brain.clip)
+            assert len(brain.portals) == 2
         if brain.warp:
             phases.append(brain.warp['phase'])
             if brain.warp['phase'] == 'top_release':
@@ -268,19 +268,25 @@ def test_top_release_stays_attached_then_descends_before_the_head_turns_upright(
     adopt_edge_assets(brain, monkeypatch)
     geometry = brain.repertoire.actions['edge_daily_top_release']['geometry']
     geometry['bounds'] = [-100, -320, 100, 0]
-    brain._begin_top_escape(1)
+    brain.poke(1)
+    brain.tick(2.34)
+    assert brain.warp['phase'] == 'top_release'
+    started = brain.warp['since']
     origin = brain.y
-    for time in (1, 1.1, 1.199):
+    for elapsed in (0, .1, .199):
+        time = started + elapsed
         brain._warp(time, 1 / 60)
         assert brain.y == origin
-        assert_support(brain, 'top', 'edge_daily_top_release')
-    brain._warp(1.3, 1 / 60)
+        assert_hidden_projection(brain, 'top', 'edge_daily_top_release')
+        assert brain.warp['src'].openness(time) == 1
+    brain._warp(started + .3, 1 / 60)
     assert origin < brain.y < brain.warp['release_y']
-    for time in (1.4, 1.6, 1.79):
+    for elapsed in (.4, .6, .79):
+        time = started + elapsed
         brain._warp(time, 1 / 60)
         assert brain.y - brain._head_clearance('edge_daily_top_release') >= brain.ceiling
         assert brain.transform(time)['sx'] == brain.transform(time)['sy'] == 1
-    brain._warp(1.81, 1 / 60)
+    brain._warp(started + .81, 1 / 60)
     assert brain.warp['phase'] == 'top_sink'
     assert brain.warp['origin_y'] == pytest.approx(brain.warp['release_y'])
 
@@ -304,26 +310,104 @@ def test_side_sleep_closes_the_same_peeking_eyes_and_never_slips_into_full_body(
 
 
 @pytest.mark.parametrize('scale', (0.6, 1.0, 1.5))
-def test_top_exit_smoothly_reveals_the_first_pose_before_casting(scale):
+@pytest.mark.parametrize('sleeping', (False, True))
+def test_top_cast_stays_at_the_original_head_depth_until_the_open_route_is_ready(scale, sleeping):
     brain = hidden('top', scale=scale)
+    if sleeping:
+        brain._hidden_sleep_at = .1
+        with patch.object(brain, '_pick', return_value=SLEEP['top']):
+            brain.tick(.1)
+        brain.tick(.9)
     geometry = brain.repertoire.actions[brain.clip]['geometry']
     hidden_bottom = brain.y + geometry['bounds'][3] * brain.figure / 320
     brain.poke(1)
+    now = 1
+    while brain._edge_exit['phase'] == 'wake':
+        now += .05
+        brain.tick(now)
+    started = brain._edge_exit['since']
     assert brain.clip == 'edge_daily_top_cast'
     geometry = brain.repertoire.actions[brain.clip]['geometry']
     assert brain.y + geometry['bounds'][3] * brain.figure / 320 == pytest.approx(hidden_bottom)
     assert_hidden_projection(brain, 'top', brain.clip)
-    positions = []
-    for time in (1, 1.1, 1.2, 1.3, 1.4):
+    route = tuple(brain.portals)
+    assert len(route) == 2 and route[0].born == started
+    positions, frames = [], set()
+    for elapsed in (0, .1, .2, .34, .5, .67, .9, 1.01, 1.3):
+        time = started + elapsed
         brain.tick(time)
         positions.append(brain.y)
+        frames.add(brain.pose(time)[1])
         assert brain.clip == 'edge_daily_top_cast'
-        assert brain.pose(time)[1] == 0
         assert brain.warp is None
-    assert positions == sorted(positions)
-    span = positions[-1] - positions[0]
-    assert span > brain.figure * .25
-    assert max(b - a for a, b in zip(positions, positions[1:])) < span * .5
-    assert_support(brain, 'top', 'edge_daily_top_cast')
-    brain.tick(1.75)
-    assert brain.pose(1.75)[1] == 1
+        assert_hidden_projection(brain, 'top', brain.clip)
+        assert tuple(brain.portals) == route
+        if elapsed >= .65:
+            assert all(portal.openness(time) == 1 for portal in route)
+    assert positions == pytest.approx([positions[0]] * len(positions))
+    assert frames == {0, 1, 2, 3}
+    brain.tick(started + 1.34)
+    assert brain.warp['phase'] == 'top_release'
+    assert brain.warp['src'] is route[0] and brain.warp['dst'] is route[1]
+    geometry = brain.repertoire.actions[brain.clip]['geometry']
+    assert brain.y + geometry['bounds'][3] * brain.figure / 320 == pytest.approx(hidden_bottom)
+    origin = brain.y
+    brain.tick(started + 1.5)
+    assert brain.y == origin
+
+
+def test_drag_during_top_cast_closes_the_preopened_route():
+    brain = hidden('top')
+    brain.poke(1)
+    portals = tuple(brain.portals)
+    brain.press(1.1, brain.x, brain.y)
+    brain.drag(1.2, brain.x + 30, brain.y + 30)
+    assert brain.mode == 'drag'
+    assert all(portal.closing == 1.2 for portal in portals)
+    brain.tick(1.8)
+    assert not brain.portals
+
+
+def test_cancelling_before_the_destination_opens_never_flashes_it_later():
+    brain = hidden('top')
+    brain.poke(1)
+    source, destination = brain.portals
+    brain.press(1.02, brain.x, brain.y)
+    brain.drag(1.05, brain.x + 30, brain.y + 30)
+    initial = source.openness(1.05)
+    for time in (1.06, 1.15, 1.2, 1.3, 1.55):
+        assert destination.openness(time) == 0
+        assert source.openness(time) <= initial
+
+
+def test_top_route_follows_screen_and_scale_changes_without_reopening():
+    brain = hidden('top')
+    brain.poke(1)
+    portals = tuple(brain.portals)
+    born = [portal.born for portal in portals]
+    brain.scale = 1.5
+    brain.set_ground(-700, 500, 700, 50)
+    brain.tick(1.2)
+    assert tuple(brain.portals) == portals
+    assert [portal.born for portal in portals] == born
+    assert all(portal.x == brain.x and portal.radius == brain.figure * .5 for portal in portals)
+    assert portals[0].y == pytest.approx(brain.ceiling + brain.figure * .65)
+    assert portals[1].y == brain.floor
+    assert_hidden_projection(brain, 'top', brain.clip)
+
+
+@pytest.mark.parametrize('disable_after_open', (False, True))
+def test_top_exit_without_motion_returns_without_leaving_an_open_route(disable_after_open):
+    brain = hidden('top')
+    brain.motion = disable_after_open
+    brain.poke(1)
+    portals = tuple(brain.portals)
+    brain.motion = False
+    for index in range(1, 301):
+        brain.tick(1 + index / 60)
+        if brain.mode == 'ground':
+            break
+    assert brain.mode == 'ground' and brain.y == brain.floor
+    assert brain.warp is None and not brain.portals
+    if disable_after_open:
+        assert all(portal.closing is not None for portal in portals)

@@ -14,9 +14,11 @@
   already have endings in `docs/pet-air-play-2026-11-08.md`.
 - Correct edge hiding after the previous anchor-stability review missed body
   exposure: keep only the head and necessary hands visible at the top, including
-  during micro-performances and sleep. On an explicit exit, hold the first prepare
-  pose and reveal the body over 0.4 seconds before casting; use the authored top
-  support only for that active reveal. Side dozing now reuses the closed-eye peek
+  during micro-performances and sleep. On an explicit exit, cast at the hidden
+  position while the entrance and floor exit grow open from zero. The release
+  starts with the same head-only exposure, then she lets go and turns into the
+  open portal. Remove the earlier 0.4-second body reveal before casting. Side
+  dozing now reuses the closed-eye peek
   frames, while the full-body curled sleep stays archived and no longer triggers
   automatic slips. These corrections do not add or redraw asset strips.
 - Let “换个节目” use the natural activity selector and its existing story gate
@@ -25,11 +27,13 @@
   entrances now select the same sequence in all 100 cases. Sprite FPS is unchanged.
   Native recordings compare the actual Qt toolbar button with natural selection:
   both schedule the same programme and show the same 30 frame changes over 16 seconds.
-- Verify the corrected exposure in new native sleep/wake and micro-performance
-  recordings: the body stays outside while hidden, and the top exit reveals it
-  before casting. The final six directly related test files passed 275 tests /
-  1,061 subtests, with two existing Qt teardown warnings. Current evidence is in
-  `/private/tmp/regular-edge-peek-20261108/`; details and earlier history remain in
+- Preserve the earlier native exposure review: the body stayed outside while
+  hidden, but the top exit still revealed it before casting. That stage passed
+  275 tests / 1,061 subtests across six directly related files, with two existing
+  Qt teardown warnings. `/private/tmp/regular-edge-peek-20261108/` remains historical
+  evidence for hiding, not validation of the revised top exit order. Separate
+  awake and sleep/wake exit recordings and current results are tracked in
+  `docs/pet-air-play-2026-11-08.md`; earlier history remains in
   `docs/pet-performance-2026-11-08.md`.
 - Give daily performances distinct physical endings: hug a closed book to sleep,
   leave the last cookie for you, shelter a lamp, cool a second cup, rediscover a

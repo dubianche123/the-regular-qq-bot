@@ -713,25 +713,28 @@ class DesktopPetTest(unittest.TestCase):
                             self.assertEqual(brain.pose()[1], 3)
                         self.assertIsNone(brain._hidden_slip_started)
 
-    def test_top_exit_pixels_reveal_gradually_before_the_cast_starts(self):
+    def test_top_exit_cast_keeps_the_body_hidden_until_the_portal_opens(self):
         area = QRect(0, 33, 1440, 827)
         for scale in (.6, 1.0, 1.5):
             with self.subTest(scale=scale):
                 pet, brain = self._hidden_render_pose("top", "boundary_top_look", scale, area)
                 brain.poke(self.t[0])
-                heights = []
-                for elapsed in (0, .1, .2, .3, .4):
+                anchor_y = brain.y
+                frames = set()
+                for elapsed in (0, .15, .35, .6, .9, 1.2):
                     brain.tick(self.t[0] + elapsed)
                     pet._sync_windows(force=True)
-                    heights.append(QRegion(pet.grab().mask()).boundingRect().height())
+                    height = QRegion(pet.grab().mask()).boundingRect().height()
+                    self.assertLess(height, brain.figure * .5)
+                    self.assertGreater(height, brain.figure * .25)
+                    self.assertAlmostEqual(brain.y, anchor_y)
                     self.assertEqual(brain.clip, "edge_daily_top_cast")
-                    self.assertEqual(brain.pose()[1], 0)
-                    self.assertIsNone(brain.warp)
-                self.assertEqual(heights, sorted(heights))
-                self.assertLess(heights[0], brain.figure * .5)
-                self.assertGreater(heights[-1], brain.figure * .7)
-                span = heights[-1] - heights[0]
-                self.assertLess(max(b - a for a, b in zip(heights, heights[1:])), span * .6)
+                    frames.add(brain.pose()[1])
+                    if elapsed >= .9:
+                        self.assertTrue(any(p.openness(self.t[0] + elapsed) > .5 for p in brain.portals))
+                self.assertEqual(frames, {0, 1, 2, 3})
+                for i in range(73, 481):
+                    brain.tick(self.t[0] + i / 60)
 
     def test_new_edge_role_has_no_shadow_but_walking_keeps_it(self):
         area = QRect(-1100, 30, 1100, 800)

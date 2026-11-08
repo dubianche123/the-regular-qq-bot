@@ -69,3 +69,22 @@
 - [抓到鼠标](/private/tmp/regular-air-play-20261108/native/air-catch/continuous.webp)
 - [抓空与已有气泡](/private/tmp/regular-air-play-20261108/native/air-miss/continuous.webp)
 - [关键拍对照](/private/tmp/regular-air-play-20261108/native/beats.jpg)、[数值汇总](/private/tmp/regular-air-play-20261108/native/summary.json)
+
+## 顶部点击先开阵，再进入
+
+用户随后指出顶部点击仍先往下平移再开阵。此前曝光修复加了 0.4 秒露身，并把施法帧推迟；加上施法时长，约 1.73 秒后才创建法阵。睡醒还会把露头深度从 0.38 改到 0.45，默认大小额外下移 11.2 像素。这两段都已移除。
+
+现在保留当前露头深度，原位正常播放施法，同时让入口与地面出口张开。释放首帧继续对齐可见头部，留足 0.2 秒后才松脚转身进入已打开的门。门户沿用同一组对象；拖动取消和关闭动态会关门，屏幕或尺寸变化只更新位置和半径。旧曝光实录仍是历史证据，不代表这次离场顺序。
+
+取消尚未出现的出口时，它不会在稍后短暂闪现；已经张开的入口从取消时的大小收口，不再继续扩张。该边界补充后，边缘定向测试为 54 项通过。
+
+此次直接相关四文件回归通过 274 项、617 个子测试，两条已有 Qt 退出警告不变。清醒与睡醒各在 Cocoa 上录制 18 秒、217 帧：
+
+| 路径 | 施法阶段整体纵向位移 | 法阵开始可见 | 释放首帧 | 结尾 |
+| --- | ---: | ---: | ---: | --- |
+| 清醒点击 | 0 | 9.0908 秒 | 10.4467 秒 | 回地面 |
+| 睡醒离场 | 0 | 9.6690 秒 | 11.0136 秒 | 回地面 |
+
+时间是录像绝对时间，点击发生在约第 9 秒；睡醒先逆播睡姿再施法。睡姿最后一帧与施法首帧的可见轮廓底部只差 −1 像素，没有向下跳；原生窗口取整误差最多半个逻辑像素。两段都只有入口、出口两个门户 ID，没有重复开门。
+
+[清醒连续实录](/private/tmp/regular-air-play-20261108/top-awake/top/continuous.webp)、[清醒关键拍](/private/tmp/regular-air-play-20261108/top-awake/top/exit-beats.jpg)；[睡醒连续实录](/private/tmp/regular-air-play-20261108/top-wake/top/continuous.webp)、[睡醒关键拍](/private/tmp/regular-air-play-20261108/top-wake/top/exit-beats.jpg)；[阶段数值](/private/tmp/regular-air-play-20261108/top-summary.json)。

@@ -339,7 +339,8 @@ class Portal:
     flare: float = -10.0      # last time she passed through (bright pulse and light column)
 
     def openness(self, now):
-        opened = max(0.0, min(1.0, (now - self.born) / 0.45))
+        opening_until = now if self.closing is None else min(now, self.closing)
+        opened = max(0.0, min(1.0, (opening_until - self.born) / 0.45))
         if self.closing is None:
             return opened
         return opened * max(0.0, 1.0 - (now - self.closing) / 0.5)
@@ -1450,7 +1451,7 @@ class PetBrain:
         self.swing += self.swing_v * dt
         self.vx *= max(0.0, 1 - dt * 6)     # stillness lets the pendulum settle
 
-    def _hidden_target(self, *, edge=None, clip=None):
+    def _hidden_target(self, *, edge=None, clip=None, top_depth=None):
         edge, clip = edge or self.hidden_edge, clip or self._hidden_clip
         side = -1 if edge == "left" else 1 if edge == "right" else 0
         target_x = (self.left + self.figure * EDGE_PEEK if side == -1 else
@@ -1471,16 +1472,10 @@ class PetBrain:
         if edge == "top":
             # The shoe contact belongs to a fully revealed hanging pose. Hidden
             # means only the inverted head peeks below the edge, not the body.
-            depth = 0.38 if self._role(clip) == "edge_sleep" else 0.45
+            depth = top_depth if top_depth is not None else 0.38 if self._role(clip) == "edge_sleep" else 0.45
             bottom = (geometry.get("bounds") or [0, 0, 0, 0])[3]
             target_y = self.ceiling + self.figure * depth - bottom * self.figure / 320.0
         return target_x, target_y
-
-    def _top_support_y(self, clip):
-        """Feet meet the ceiling only when she deliberately comes out to leave."""
-        geometry = self.repertoire.actions.get(clip, {}).get("geometry") or {}
-        rest = geometry.get("rest_y")
-        return self.ceiling - rest * self.figure / 320.0 if rest is not None else self.ceiling + self._head_clearance(clip)
 
     def _hide_motion(self, now, dt):
         side = -1 if self.hidden_edge == "left" else 1 if self.hidden_edge == "right" else 0
@@ -1605,9 +1600,13 @@ class PetBrain:
     def _prepare_edge_exit(self, now):
         state = self._edge_exit
         edge = state["edge"]
+        if edge == "top":
+            bounds = (self.repertoire.actions.get(self.clip, {}).get("geometry") or {}).get("bounds") or [0, 0, 0, 0]
+            state["peek_depth"] = (self.y + bounds[3] * self.figure / 320.0 - self.ceiling) / self.figure
         if state["phase"] == "wake":
             self._hidden_clip = self._hidden_awake_clip or self._hidden_clip
-            self.x, self.y = self._hidden_target(edge=edge)
+            if edge != "top":
+                self.x, self.y = self._hidden_target(edge=edge)
         state.update(phase="prepare", since=now)
         if edge == "top" and self._can_warp():
             name = ("edge_daily_top_cast" if self._has("edge_daily_top_cast") else
@@ -1618,11 +1617,12 @@ class PetBrain:
         fallback = "boundary_popout" if edge != "top" else "fall"
         self._set_clip(name if name in CLIPS else fallback if fallback in CLIPS else "idle", now, restart=True)
         if edge == "top" and self._can_warp():
-            self.x, self.y = self._hidden_target(edge=edge, clip=self.clip)
-            state.update(reveal_from=self.y, reveal_to=self._top_support_y(self.clip), reveal_duration=0.4)
-            # Keep the first pose while she comes out; the cast starts only
-            # after the body is revealed, with its normal authored frame rate.
-            self.clip_started = now + state["reveal_duration"]
+            self.x, self.y = self._hidden_target(edge=edge, clip=self.clip, top_depth=state["peek_depth"])
+            # Open the route while only her head peeks out. Nothing slides down
+            # to expose a hanging body before the spell has somewhere to lead.
+            plane = min(self.floor - self.figure, self.ceiling + self.figure * 0.65)
+            state["src"] = self._open_portal(self.x, plane, "floor", now)
+            state["dst"] = self._open_portal(self.x, self.floor, "floor", now + 0.15)
         self._fade = None
 
     def _edge_exit_motion(self, now, dt):
@@ -1635,16 +1635,22 @@ class PetBrain:
                 self._prepare_edge_exit(now)
             return
         if phase == "prepare":
+            top_route = edge == "top" and "src" in state and self._can_warp()
             duration = (len(CLIPS[self.clip][1]) / CLIPS[self.clip][2]
                         if self.clip == "edge_daily_top_cast" else
                         0.65 if edge == "top" and self.motion else 0.2 if self.motion else 0.1)
-            if edge == "top" and self._can_warp():
-                duration += state["reveal_duration"]
-                p = max(0.0, min(1.0, (now - state["since"]) / state["reveal_duration"]))
-                self.y = state["reveal_from"] + (state["reveal_to"] - state["reveal_from"]) * p * p * (3 - 2 * p)
+            if top_route:
+                self.x, self.y = self._hidden_target(edge=edge, clip=self.clip, top_depth=state["peek_depth"])
+                state["src"].x, state["src"].y = self.x, min(self.floor - self.figure, self.ceiling + self.figure * 0.65)
+                state["dst"].x, state["dst"].y = self.x, self.floor
+                state["src"].radius = state["dst"].radius = self.figure * PORTAL_RADIUS
+            elif "src" in state:
+                self._cancel_warp(now)
+                state.pop("src")
+                state.pop("dst")
             if now - state["since"] < duration:
                 return
-            if edge == "top" and self._can_warp():
+            if top_route:
                 # Ground fear scenes end in sitting/standing poses. Decide here
                 # while she is still attached, then open a route before release.
                 self._begin_top_escape(now)
@@ -1714,14 +1720,14 @@ class PetBrain:
 
     def _begin_top_escape(self, now):
         """A short top-edge entry reuses the regular floor-portal exit."""
+        state = self._edge_exit
+        src, dst = state["src"], state["dst"]
         target = self._clamp_x(self.x, edge_side=0)
         release = "edge_daily_top_release" if self._has("edge_daily_top_release") else None
         if release:
             self._set_clip(release, now, restart=True)
-            self.y = self._top_support_y(release)
-        plane = min(self.floor - self.figure, max(self.ceiling + self.figure * 0.6, self.y + self.figure * 0.25))
-        src = self._open_portal(self.x, plane, "floor", now)
-        dst = self._open_portal(target, self.floor, "floor", now + 0.15)
+            self.x, self.y = self._hidden_target(edge="top", clip=release, top_depth=state["peek_depth"])
+        plane = src.y
         self.warp = {"phase": "top_release" if release else "top_sink", "since": now, "x": target, "via": "floor",
                      "cause": "top_edge", "src": src, "dst": dst, "origin_y": self.y, "plane": plane,
                      "release_y": max(self.y, self.ceiling + self._head_clearance(release) + 2) if release else self.y}
@@ -1936,7 +1942,7 @@ class PetBrain:
             self._advance(now)
 
     def _cancel_warp(self, now):
-        if self.warp is None:
+        if self.warp is None and not (self._edge_exit and "src" in self._edge_exit):
             return
         self.warp, self.portal_clip = None, None
         for portal in self.portals:
