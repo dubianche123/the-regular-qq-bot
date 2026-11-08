@@ -66,6 +66,46 @@ EPISODES = {
 QUIET_EPISODES = frozenset({"viewer", "sweet", "chair", "sofa", "sleepy_read", "tea_kindness",
                             "keepsake", "collection", "gift", "tired_game", "low"})
 
+# Exact object compatibility, not the broad family (both instruments are
+# "strings"). The last clip puts that same object away and ends empty-handed.
+_WORK_ENDINGS = ("ending_work_clear", "ending_work_pause", "ending_work_put_away")
+ACTIVITY_ENDINGS = {
+    "life_laptop_type": _WORK_ENDINGS,
+    "life_laptop_think": _WORK_ENDINGS,
+    "dragon_music_ukulele": ("ending_ukulele_resolve", "ending_ukulele_sour", "ending_ukulele_put_away"),
+    "dragon_music_kalimba": ("ending_kalimba_linger", "ending_kalimba_drowsy", "ending_kalimba_put_away"),
+}
+
+
+def _activity_ending(rng, actions, clip, *, mood, energy, quiet, sleepy, recent_clips):
+    first, second, cleanup = ACTIVITY_ENDINGS[clip]
+    if cleanup not in actions:
+        return []                       # Never leave a new result without its matching cleanup.
+    ending = [(cleanup, None)]
+    if rng.random() >= (0.18 if quiet else 0.28):
+        return ending                   # Most activities simply finish quietly.
+    if clip in ("life_laptop_type", "life_laptop_think"):
+        secondary = max(0.1, min(0.9, 0.25 + max(0.0, 0.6 - energy) * 0.9
+                                + max(0.0, -mood) * 0.35 - max(0.0, mood) * 0.15
+                                + (0.35 if sleepy else 0.0)))
+    elif clip == "dragon_music_ukulele":
+        secondary = 0.2 if not quiet and (energy < 0.5 or mood < -0.15) else 0.0
+    else:                               # Only this exact kalimba may become drowsy.
+        secondary = 0.7 if sleepy else 0.55 if energy < 0.5 else 0.0
+    options = [(name, weight) for name, weight in ((first, 1 - secondary), (second, secondary))
+               if weight > 0]
+    pick = rng.random() * sum(weight for _, weight in options)
+    chosen = options[-1][0]
+    for name, weight in options:
+        pick -= weight
+        if pick <= 0:
+            chosen = name
+            break
+    latest = next((name for name in reversed(tuple(recent_clips)) if name in (first, second)), None)
+    # Suppress a repeat after the probability draw. Promoting a "fresh" result
+    # here would make the rare wrong note / tired pause happen more often.
+    return ending if chosen not in actions or chosen == latest else [(chosen, None), *ending]
+
 
 def _choose_ending(rng, options, recent_clips=(), *, empty_cue=None):
     """Avoid repeating the distinguishing beat, even with a shared final pose.
@@ -129,6 +169,9 @@ def activity_sequence(rng, actions, clip, duration, *, mood=0.0, energy=1.0, qui
     family = {"gamepad": "game", "paint": "floating_canvas", "tea": "tea_time"}.get(
         clip, spec.get("family"))
     main = [(clip, duration)]
+    if clip in ACTIVITY_ENDINGS:
+        return main + _activity_ending(rng, actions, clip, mood=mood, energy=energy,
+                                      quiet=quiet, sleepy=sleepy, recent_clips=recent_clips)
     options = []
     if family == "game" and not quiet:
         # Tired/frustrated play is more likely to go wrong; she still likes a rematch.

@@ -23,10 +23,14 @@ def main():
                         help='real-time duration per scene, for example 8, 10 or 16 seconds')
     parser.add_argument('--edge-micro', action='store_true',
                         help='trigger an awake edge micro-animation at 4s instead of edge sleep')
+    parser.add_argument('--activity-seconds', type=float, default=8.0,
+                        help='QA main-loop duration for work/music endings; authored FPS and tails stay unchanged')
     args = parser.parse_args()
     scenes = [scene.strip() for scene in args.scenes.split(',')]
     if not math.isfinite(args.seconds) or args.seconds <= 1:
         parser.error('--seconds must be finite and greater than 1')
+    if not math.isfinite(args.activity_seconds) or args.activity_seconds <= 0:
+        parser.error('--activity-seconds must be finite and positive')
     sys.path.insert(0, str(args.source.resolve()))
     os.environ['QT_QPA_PLATFORM'] = 'cocoa'
     from PIL import Image, ImageDraw
@@ -38,11 +42,27 @@ def main():
     from regular.desktop_pet import PetWidget, SpriteBank
     from regular.pet_brain import Step
     from regular.pet_repertoire import available
+    from regular.pet_routines import ACTIVITY_ENDINGS
 
     adopted = available()
     daily = {name for name in adopted if name.startswith('daily_')}
     air_scenes = {'air-fire', 'air-catch', 'air-miss'}
-    unknown = set(scenes) - {'feed', 'left', 'right', 'top', 'bottom', 'natural', 'next'} - daily - air_scenes
+    activity_scenes = {result: (source, result)
+                       for source, endings in reversed(tuple(ACTIVITY_ENDINGS.items()))
+                       for result in endings[:-1]}
+    activity_scenes.update({
+        'work-think-clear': ('life_laptop_think', 'ending_work_clear'),
+        'work-quiet': ('life_laptop_type', None),
+        'ukulele-quiet': ('dragon_music_ukulele', None),
+        'kalimba-quiet': ('dragon_music_kalimba', None),
+        'work-next': ('life_laptop_type', 'ending_work_clear'),
+        'ukulele-next-result': ('dragon_music_ukulele', 'ending_ukulele_resolve'),
+    })
+    activity_scenes = {name: (source, result) for name, (source, result) in activity_scenes.items()
+                       if source in adopted and (result is None or result in adopted)
+                       and ACTIVITY_ENDINGS[source][-1] in adopted}
+    unknown = (set(scenes) - {'feed', 'left', 'right', 'top', 'bottom', 'natural', 'next'}
+               - daily - air_scenes - activity_scenes.keys())
     if unknown:
         parser.error('unknown or unadopted scene: ' + ', '.join(sorted(unknown)))
 
@@ -150,6 +170,31 @@ def main():
             programmes.extend({'clip': step.clip, 'duration': step.duration}
                               for step in (brain.step, *brain.plan) if step is not None)
 
+        def start_activity(now):
+            source, result = activity_scenes[scene]
+            secondary = result == ACTIVITY_ENDINGS[source][1]
+            brain.energy = 0.4 if secondary else 0.9
+            if result == 'ending_kalimba_drowsy':
+                brain.presence.circadian = '午后有点困'
+            brain.repertoire.recent.clear()
+            # Force only which branch is inspected. The real selector, queue,
+            # transitions, four-frame cadence and cleanup run unchanged.
+            draws = [1.0] if result is None else [0.0, 0.999 if secondary else 0.0]
+            with patch.object(brain.rng, 'random', side_effect=draws):
+                steps = brain._activity_steps(source, args.activity_seconds)
+            expected = [source, *([result] if result else []), ACTIVITY_ENDINGS[source][-1]]
+            if [step.clip for step in steps] != expected:
+                raise AssertionError('activity branch did not match the requested QA scene')
+            brain._queue(*steps, Step('idle', 60), now=now, interrupt=True)
+            programmes.extend({'clip': step.clip, 'duration': step.duration}
+                              for step in (brain.step, *brain.plan) if step is not None)
+
+        def change_activity():
+            # Use the actual toolbar signal. A neutral destination makes a prop
+            # reappearing or a restarted cleanup unambiguous in this recording.
+            with patch.object(brain, '_routine_steps', return_value=[Step('idle', 60)]):
+                pet.toolbar.play.click()
+
         def once(key, elapsed, at, action):
             if elapsed >= at and key not in events:
                 events.add(key)
@@ -185,6 +230,8 @@ def main():
             strip, index, mirrored, transform = brain.pose(now)
             records.append({'t': round(elapsed, 4), 'mode': brain.mode, 'clip': brain.clip,
                             'strip': strip, 'frame': index, 'mirrored': mirrored,
+                            'clip_elapsed': round(now - brain.clip_started, 4),
+                            'step_elapsed': round(now - brain.step_started, 4),
                             'brain': [brain.x, brain.y], 'qt_window': [pet.x(), pet.y()],
                             'visible_body_bounds': body_bounds,
                             'native_window': [wx, wy], 'window_anchor': [anchor.x(), anchor.y()],
@@ -217,6 +264,16 @@ def main():
                     once('scene', elapsed, 1.0, lambda: start_daily(now))
                 elif scene in ('natural', 'next'):
                     once('scene', elapsed, 1.0, lambda: start_routine(now))
+                elif scene in activity_scenes:
+                    once('scene', elapsed, 1.0, lambda: start_activity(now))
+                    source, result = activity_scenes[scene]
+                    if scene == 'work-next':
+                        once('next-main', elapsed, 4.0, change_activity)
+                    elif scene == 'ukulele-next-result' and brain.clip == result:
+                        once('next-result', now - brain.clip_started, 0.8, change_activity)
+                    if scene in ('work-next', 'ukulele-next-result') and brain.clip == ACTIVITY_ENDINGS[source][-1]:
+                        for key, at in (('next-cleanup', 0.8), ('next-cleanup-again', 1.3)):
+                            once(key, now - brain.clip_started, at, change_activity)
                 elif scene == 'air-fire':
                     once('scene', elapsed, 1.0, lambda: start_air_fire(now))
                 elif scene in ('air-catch', 'air-miss'):
@@ -252,7 +309,7 @@ def main():
                 pet.step(now)
                 # Keep the comparison ending idle; do not append an unrelated random programme.
                 end_after = (12.0 if scene in air_scenes else 2.2 if scene == 'feed'
-                             else 1.0 if scene in daily else 9.0)
+                             else 1.0 if scene in daily or scene in activity_scenes else 9.0)
                 if (not finished_feed and elapsed > end_after
                         and brain.mode == 'ground' and brain.clip == 'idle'):
                     finished_feed = True
@@ -296,6 +353,7 @@ def main():
         (output / 'frames.json').write_text(json.dumps({
             'source': str(args.source.resolve()), 'scene': scene, 'platform': app.platformName(),
             'requested_seconds': args.seconds, 'edge_micro': args.edge_micro,
+            'activity_main_seconds': args.activity_seconds if scene in activity_scenes else None,
             'screen_available': list(area.getRect()), 'crop': crop,
             'captured_windows': 'only QA-owned Qt widgets; no desktop or other app capture',
             'blocked_requests': submitted, 'events': sorted(events), 'programme': programmes,

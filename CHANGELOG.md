@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Add nine object-specific activity endings: two outcomes and one put-away sequence
+  each for the laptop, ukulele and kalimba. Keep the four existing main loops and
+  their 45–90-second stays; the curated long-stay pool remains 34. Match exact clip
+  names and the existing seated/standing/seated poses, rather than the shared
+  instrument family. Put-away sequences finish empty-handed.
+- Adopt all nine ending sheets. The library now contains 372 WebP strips /
+  1,482 frames (37,511,196 bytes), 329 repertoire definitions and three same-strip
+  aliases, giving 332 available items. Native validation is recorded separately.
+- Keep quiet accompaniment dominant: try at most one emotional result on 28% of
+  ordinary stays or 18% in quiet mode, then apply mood, energy and sleepiness.
+  Repeated or unavailable results fall back to quiet cleanup without promoting a
+  rarer emotion. Missing cleanup art leaves the original activity intact. These
+  local endings do not claim completion of real QQ, panel or chat work.
+- When manually changing a programme, put the current laptop or instrument away
+  once. Preserve an already playing result or cleanup and its original frame
+  clock; repeated requests only replace what follows. Keep real state/agent/chat
+  holds separate. Adoption and native validation are tracked in
+  `docs/pet-activity-endings-2026-11-08.md`.
 - Add three airborne performances: a controlled breath of fire during flight,
   a cursor-catching reach, and an empty-handed search. Reuse the satisfied hover
   for a successful catch. High cursor wiggles invite a bounded chase; the contact

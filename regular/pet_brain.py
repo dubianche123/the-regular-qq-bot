@@ -19,7 +19,7 @@ import random
 from regular.pet_care import CARE_GAIN, CARE_COOLDOWN, CARE_MAX, CARE_DECAY, change, decay
 from regular.pet_repertoire import Repertoire, clips as repertoire_clips
 from regular.pet_props import PropPlay
-from regular.pet_routines import EPISODES, activity_sequence, choose_routine
+from regular.pet_routines import ACTIVITY_ENDINGS, EPISODES, activity_sequence, choose_routine
 
 FIGURE = 160.0          # 100% 时人物站立高度（点）
 WALK_SPEED = 46.0       # 点/秒，随 scale 缩放
@@ -1022,7 +1022,8 @@ class PetBrain:
                 steps += [Step("doze"), Step(self._pick("sleep", "sleep"), r(12, 18))]
             return [*steps, Step("sit_swing", r(4, 7))]
         if choice == "laptop":
-            return [Step(self._pick("study", "laptop", family="work"), r(8, 15)), Step("sit_swing", r(4, 7))]
+            working = self._pick("study", "laptop", family="work")
+            return [*self._activity_steps(working, r(8, 15)), Step("sit_swing", r(4, 7))]
         if choice == "sketch":
             if self._has("spell_paint"):
                 activity = self._activity_steps("paint", r(9, 16))
@@ -1149,6 +1150,22 @@ class PetBrain:
         return None
 
     def _queue_manual(self, steps, now):
+        # Only these local activities own a prop-matched put-away. Real work
+        # holds remain controlled by their actual chat/agent/state result.
+        if self.step is None or self.step.hold is None:
+            for source, endings in ACTIVITY_ENDINGS.items():
+                cleanup = endings[-1]
+                if self.clip not in (source, *endings) or cleanup not in self.repertoire.actions:
+                    continue
+                if self.clip in endings and self.step is not None:
+                    # Let the short gesture finish at its original speed. More
+                    # clicks replace the destination, never restart the hands.
+                    self.plan.clear()
+                    tail = [] if self.clip == cleanup else [Step(cleanup)]
+                    self._queue(*tail, *steps, now=now)
+                else:
+                    self._queue(Step(cleanup), *steps, now=now, interrupt=True)
+                return
         exit_beat = self._furniture_exit()
         if exit_beat and self.clip == exit_beat[0] and self.step is not None:
             self.plan.clear()
