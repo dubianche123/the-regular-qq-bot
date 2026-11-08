@@ -155,25 +155,43 @@ def test_recent_daily_magic_family_yields_to_another_complete_story(with_magic):
     assert family == "scene:daily_magic" and len(beats) == 1
 
 
-@pytest.mark.parametrize("name", DAILY_MAGIC)
-def test_each_daily_story_plays_every_frame_once_then_returns_empty_handed_to_idle(with_magic, name):
+@pytest.mark.parametrize("name,dwell", [
+    ("magic_daily_cola", (1.25, 1.5, 1.75, 1.0)),
+    ("magic_daily_roast", (1.25, 1.75, 1.75, 1.0)),
+    ("magic_daily_scarf", (1.5, 1.75, 1.75, 1.0)),
+    ("magic_daily_brush", (1.5, 2.0, 1.5, 1.0)),
+    ("magic_daily_mend", (1.75, 2.0, 1.75, 1.0)),
+])
+@pytest.mark.parametrize("entry", ["story", "manual"])
+def test_each_daily_performance_holds_its_beats_then_returns_to_idle(with_magic, name, dwell, entry):
     b = with_magic
     b.repertoire.actions = {name: MAGIC[name]}
     b._last_story_at, b._rests_since_story = -180, 2
-    with patch.object(b.rng, "random", return_value=0):
-        steps = b._routine_steps(0)
-    assert [step.clip for step in steps] == [name, "idle"]
-    b._queue(*steps, now=0, interrupt=True)
-    seen = []
-    while b.clip == name:
+    if entry == "story":
+        with patch.object(b.rng, "random", return_value=0):
+            steps = b._routine_steps(0)
+        assert [step.clip for step in steps] == [name, "idle"]
+        b._queue(*steps, now=0, interrupt=True)
+    else:
+        assert b.magic(0, kind=name)
+    seen, starts = [], []
+    for _ in range(600):
+        if b.clip != name:
+            break
         frame = b.pose()[1]
         if not seen or frame != seen[-1]:
             seen.append(frame)
+            starts.append(b._now)
         b.tick(round(b._now + 1 / 60, 9))
     assert seen == [0, 1, 2, 3]
-    assert b._now == pytest.approx(len(CLIPS[name][1]) / CLIPS[name][2], abs=1 / 60)
+    elapsed = [end - start for start, end in zip(starts, [*starts[1:], b._now])]
+    assert elapsed == pytest.approx(dwell, abs=1 / 60)
+    assert b._now == pytest.approx(sum(dwell), abs=1 / 60)
+    assert MAGIC[name]["duration"] == sum(dwell)
+    assert CLIPS[name][2:4] == (4, False)
     assert b.clip == "idle" and b.posture() == "stand" and not b.plan
-    assert b._last_story_at == 0 and b._rests_since_story == 0
+    if entry == "story":
+        assert b._last_story_at == 0 and b._rests_since_story == 0
 
 
 @pytest.mark.parametrize("kind", ["ball", "coin", "gem"])

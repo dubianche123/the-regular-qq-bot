@@ -86,12 +86,23 @@ _SCENES = {
     )),
 }
 
+# Quarter-second holds for intention, spell, useful result and putting away.
+# Let each small need register; the last beat stays a concise one-second close.
+_BEAT_TICKS = {
+    "cola": (5, 6, 7, 4),
+    "roast": (5, 7, 7, 4),
+    "scarf": (6, 7, 7, 4),
+    "brush": (6, 8, 6, 4),
+    "mend": (7, 8, 7, 4),
+}
+
 ACTIONS = {
     "magic_daily_" + name: {
         "title": title, "prompt_header": _HEADER, "prompt": prompt, "style": "idle",
         "starts_from": "stand", "posture": "stand", "role": "magic_daily", "family": name,
         "automatic": False, "loop": False, "fps": 4,
-        "sequence": [0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3], "duration": 3.5,
+        "sequence": [frame for frame, ticks in enumerate(_BEAT_TICKS[name]) for _ in range(ticks)],
+        "duration": sum(_BEAT_TICKS[name]) / 4,
         "scale": 1.0, "fixed_ground": True, "calibration_reference": "idle",
     }
     for name, (title, prompt) in _SCENES.items()
