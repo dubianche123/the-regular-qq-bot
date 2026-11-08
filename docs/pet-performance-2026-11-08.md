@@ -74,7 +74,7 @@
 | 修复前 | 66.29 秒 | 4.00 秒 |
 | 修复后 | 66.29 秒 | 66.29 秒 |
 
-修复后 100/100 个种子的选片和时长一致，自然入口本身 100/100 与修复前相同；没有改素材 FPS。seed 7 的两个入口以 60Hz 实际采样十秒，21 次可见帧变化也完全一致。定向回归为 7 passed、14 subtests passed；证据见[换节目对照记录](/private/tmp/regular-pet-followup-20261108/next-activity/comparison.md)。这些条件下没有抽到完整剧场，不表示按钮以后不会选到符合门槛的剧场。
+修复后 100/100 个种子的选片和时长一致，自然入口本身 100/100 与修复前相同；没有改素材 FPS。seed 7 的两个入口以 60Hz 实际采样十秒，21 次可见帧变化也完全一致。定向回归为 7 passed、14 subtests passed；证据见换节目对照记录。这些条件下没有抽到完整剧场，不表示按钮以后不会选到符合门槛的剧场。
 
 ### 上一阶段曝光更正的验证记录
 
@@ -82,11 +82,11 @@
 
 | 场景 | 当时的原生录像 | 时长与捕获 | 当时的人工复核结果 |
 | --- | --- | --- | --- |
-| 顶边、左右边睡醒 | [顶边](/private/tmp/regular-edge-peek-20261108/native-sleep/top/continuous.webp)、[左边](/private/tmp/regular-edge-peek-20261108/native-sleep/left/continuous.webp)、[右边](/private/tmp/regular-edge-peek-20261108/native-sleep/right/continuous.webp) | 各约 18 秒、217 帧 | 静止与睡眠只露头和抓边部分，睁眼→闭眼→醒来，腿鞋在屏外；顶部主动离场先用 0.4 秒渐露再施法 |
-| 顶部、底部微动作 | [顶部](/private/tmp/regular-edge-peek-20261108/native-comparison/top/continuous.webp)、[底部](/private/tmp/regular-edge-peek-20261108/native-comparison/bottom/continuous.webp) | 各约 16 秒、193 帧 | 顶部观察仍只露头、必要手部和羽毛；底部露头与前臂，腿脚在外；最后均回到 `ground` |
-| 自然入口与真实按钮 | [自然入口](/private/tmp/regular-edge-peek-20261108/native-comparison/natural/continuous.webp)、[按钮入口](/private/tmp/regular-edge-peek-20261108/native-comparison/next/continuous.webp) | 各约 16 秒、193 帧 | 按钮通过实际 Qt `toolbar.play.click()` 触发，两个入口的排定节目和捕获到的 30 次可见帧变化序列一致 |
+| 顶边、左右边睡醒 | 顶边、左边、右边 | 各约 18 秒、217 帧 | 静止与睡眠只露头和抓边部分，睁眼→闭眼→醒来，腿鞋在屏外；顶部主动离场先用 0.4 秒渐露再施法 |
+| 顶部、底部微动作 | 顶部、底部 | 各约 16 秒、193 帧 | 顶部观察仍只露头、必要手部和羽毛；底部露头与前臂，腿脚在外；最后均回到 `ground` |
+| 自然入口与真实按钮 | 自然入口、按钮入口 | 各约 16 秒、193 帧 | 按钮通过实际 Qt `toolbar.play.click()` 触发，两个入口的排定节目和捕获到的 30 次可见帧变化序列一致 |
 
-按钮与自然入口均排定 `dragon_magic_feather` 74.292051 秒，加结尾 `idle` 1 秒；录像比较的是开头 16 秒。该素材保持 2 FPS，捕获帧变化间隔中位数分别为 0.5106 / 0.4962 秒，差异来自 12 FPS 录制采样，不是播放速度改变。该批录像的原生窗口取整最大锚点误差约 0.5 像素，全部数据见 [summary.json](/private/tmp/regular-edge-peek-20261108/summary.json)。[曝光修正前后图](/private/tmp/regular-edge-peek-20261108/before-after.png)与[微动作曝光图](/private/tmp/regular-edge-peek-20261108/micro-exposure.jpg)也已人工复核。
+按钮与自然入口均排定 `dragon_magic_feather` 74.292051 秒，加结尾 `idle` 1 秒；录像比较的是开头 16 秒。该素材保持 2 FPS，捕获帧变化间隔中位数分别为 0.5106 / 0.4962 秒，差异来自 12 FPS 录制采样，不是播放速度改变。该批录像的原生窗口取整最大锚点误差约 0.5 像素，全部数据见 summary.json。曝光修正前后图与微动作曝光图也已人工复核。
 
 该阶段完整重跑直接相关的六个测试文件：**275 passed、1061 subtests passed**，无失败；有两条已有的 Qt 退出 `disconnect` RuntimeWarning。此结果单独记录，不与前面的定向回归或旧阶段结果相加，也不作为此后顶部离场顺序修正的测试结果：
 
@@ -136,27 +136,27 @@
 
 | 场景 | 连续画面 | 重点 |
 | --- | --- | --- |
-| 投喂 | [feed/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native/feed/continuous.webp) | 空手期待、同源吃饼干、延迟回执只确认一次 |
-| 抱书睡 | [daily_book_hug_sleep/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native/daily_book_hug_sleep/continuous.webp) | 合书入睡后只留同源睡姿，不再合书一次 |
-| 护灯 | [daily_lamp_shelter/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native/daily_lamp_shelter/continuous.webp) | 炫技转为照料，站到坐有身体变化 |
-| 低落 | [daily_low_tail_comfort/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native/daily_low_tail_comfort/continuous.webp) | 抱尾巴自我安慰，情绪保留 |
-| 欣喜 | [daily_joy_tail_catch/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native/daily_joy_tail_catch/continuous.webp) | 尾巴、翅膀、踮脚共同表达开心 |
-| 留空位 | [daily_quiet_space/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native/daily_quiet_space/continuous.webp) | 收回招呼、坐下挪尾巴、轻拍空处 |
+| 投喂 | feed/continuous.webp | 空手期待、同源吃饼干、延迟回执只确认一次 |
+| 抱书睡 | daily_book_hug_sleep/continuous.webp | 合书入睡后只留同源睡姿，不再合书一次 |
+| 护灯 | daily_lamp_shelter/continuous.webp | 炫技转为照料，站到坐有身体变化 |
+| 低落 | daily_low_tail_comfort/continuous.webp | 抱尾巴自我安慰，情绪保留 |
+| 欣喜 | daily_joy_tail_catch/continuous.webp | 尾巴、翅膀、踮脚共同表达开心 |
+| 留空位 | daily_quiet_space/continuous.webp | 收回招呼、坐下挪尾巴、轻拍空处 |
 
 四边清醒微动作使用相同的原生录制方式，每段 16 秒，包含探头、微动作、恢复与点击离开。下列睡醒录像是气泡修复后的阶段版本，早于此次藏身曝光更正：
 
 | 场景 | 连续画面 | 捕获帧数 |
 | --- | --- | ---: |
-| 左边 | [left/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native-edges/left/continuous.webp) | 193 |
-| 右边 | [right/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native-edges/right/continuous.webp) | 186 |
-| 底边 | [bottom/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native-edges/bottom/continuous.webp) | 191 |
-| 顶边 | [top/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native-edges/top/continuous.webp) | 185 |
-| 左边睡醒与离开 | [left/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native-wake-clear/left/continuous.webp) | 193 |
-| 右边睡醒与离开 | [right/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native-wake-clear/right/continuous.webp) | 193 |
-| 底边睡醒与离开 | [bottom/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native-wake-clear/bottom/continuous.webp) | 193 |
-| 顶边睡醒与离开 | [top/continuous.webp](/private/tmp/regular-pet-followup-20261108/final-native-wake-clear/top/continuous.webp) | 193 |
+| 左边 | left/continuous.webp | 193 |
+| 右边 | right/continuous.webp | 186 |
+| 底边 | bottom/continuous.webp | 191 |
+| 顶边 | top/continuous.webp | 185 |
+| 左边睡醒与离开 | left/continuous.webp | 193 |
+| 右边睡醒与离开 | right/continuous.webp | 193 |
+| 底边睡醒与离开 | bottom/continuous.webp | 193 |
+| 顶边睡醒与离开 | top/continuous.webp | 193 |
 
-气泡修复阶段睡醒记录的精确数据如下，原始汇总保存在 [summary.json](/private/tmp/regular-pet-followup-20261108/final-native-wake-clear/summary.json)：
+气泡修复阶段睡醒记录的精确数据如下，原始汇总保存在 summary.json：
 
 | 边缘 | 实际时长（秒） | 最大锚点误差（像素） | 最大捕获间隔（秒） |
 | --- | ---: | ---: | ---: |
@@ -165,6 +165,6 @@
 | 底 | 16.0023 | 0.4752 | 0.0971 |
 | 顶 | 16.0005 | 0.4903 | 0.1083 |
 
-[四边各四个关键时刻的复核图](/private/tmp/regular-pet-followup-20261108/final-native-wake-clear/wake-clear-review.jpg)当时确认了气泡没有遮住头发、角和眼睛，逆醒后能回到地面。真实 alpha 轮廓避让修复了气泡遮发问题；该记录没有证明隐藏时只露头，不能覆盖此次用户截图指出的身体曝光问题。每段同目录的 `keyframes.jpg` 是关键帧速览，`frames.json` 保存时间、clip、strip、帧号、原生窗口位置、锚点误差和播放缩放。临时证据不会随运行包发布。
+四边各四个关键时刻的复核图当时确认了气泡没有遮住头发、角和眼睛，逆醒后能回到地面。真实 alpha 轮廓避让修复了气泡遮发问题；该记录没有证明隐藏时只露头，不能覆盖此次用户截图指出的身体曝光问题。每段同目录的 `keyframes.jpg` 是关键帧速览，`frames.json` 保存时间、clip、strip、帧号、原生窗口位置、锚点误差和播放缩放。临时证据不会随运行包发布。
 
 数字能检查卡住、重播、错位或放缩，不能证明可爱和耐看。前一阶段人工观看确认了这些片段的动作顺序与落点，却漏掉了隐藏曝光；这次反馈补上了检查范围。长期重复观看是否仍有趣，仍以实际使用反馈继续取舍，不以新增 23 张作为完成质量的证明。

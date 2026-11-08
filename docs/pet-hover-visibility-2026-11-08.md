@@ -14,9 +14,9 @@
 
 固定同一 idle 素材与时钟，用真实鼠标交替跨越透明/实体 14 次，旧版与新版各捕获 98 帧 WindowServer 输出。旧版有 13 次 Hide、13 次 Show，窗口层级在 8/25 之间变化；alpha 总和最低降为 0，28 个样本没有 alpha 大于 220 的像素，既有整体变淡也有完全空帧。新版为 **0 Hide / 0 Show / 0 WinIdChange**，同一窗口、固定层级 25；98 帧 alpha 总和均为 9,143,814，不透明像素均为 35,442，未发生闪透明。
 
-[对照画面](/private/tmp/regular-hover-opacity-20261108/hover-before-after.jpg)、[旧版实录](/private/tmp/regular-hover-opacity-20261108/before/hover-native.webp)、[新版实录](/private/tmp/regular-hover-opacity-20261108/after/hover-native.webp)与同目录 JSON 保留逐帧数据。此测试只观察自建验收窗口，结束恢复真实鼠标位置。
+对照画面、旧版实录、新版实录与同目录 JSON 保留逐帧数据。此测试只观察自建验收窗口，结束恢复真实鼠标位置。
 
-随后以 `CGEventPost` 做七种状态的空白/实体点击，共 **14/14 通过**：空白点击到自建底窗，实体点击到桌宠，三个输入状态一致。未点击其他应用；[点击证据](/private/tmp/regular-hover-opacity-20261108/hit/native-hit.json)。
+随后以 `CGEventPost` 做七种状态的空白/实体点击，共 **14/14 通过**：空白点击到自建底窗，实体点击到桌宠，三个输入状态一致。未点击其他应用；点击证据。
 
 ## 修正显示验收的盲点
 
@@ -40,7 +40,7 @@
 
 使用新的 WindowServer 捕获连续录制五段，各 10 秒、121 帧，共 605 帧。四拍完整、实体在稳定后全程可见、最后均回到地面 idle。可乐录制开始约 0.07 秒时新建窗口尚无画面，已如实保留空帧和缺失记录；其余采样无缺失，没有用主动重绘填补。采样间隔约 1/12 秒，逐拍观测时长相对定义存在该采样量级的误差。
 
-[冰可乐](/private/tmp/regular-hover-opacity-20261108/magic/magic_daily_cola/continuous.webp)、[烤棉花糖](/private/tmp/regular-hover-opacity-20261108/magic/magic_daily_roast/continuous.webp)、[吹干围巾](/private/tmp/regular-hover-opacity-20261108/magic/magic_daily_scarf/continuous.webp)、[梳尾巴](/private/tmp/regular-hover-opacity-20261108/magic/magic_daily_brush/continuous.webp)、[修书角](/private/tmp/regular-hover-opacity-20261108/magic/magic_daily_mend/continuous.webp)及[实测时长汇总](/private/tmp/regular-hover-opacity-20261108/magic/summary.json)记录最终采用的节奏。
+冰可乐、烤棉花糖、吹干围巾、梳尾巴、修书角及实测时长汇总记录最终采用的节奏。
 
 ## 定向测试
 

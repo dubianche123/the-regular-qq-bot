@@ -18,7 +18,7 @@
 
 首稿电脑收纳的闭眼笑会覆盖“没理顺”的情绪，改为平静睁眼、闭嘴。尤克里里首稿移到身侧的过程不清楚，重画后保留完整琴、半遮挡、空手三个状态。拇指琴第二稿出现多余的胸前拳头，局部编辑去掉；保留全部四个移动格，没有用跳帧掩盖问题。
 
-最终 36 帧相对各自原活动的头部测量比值为 **0.9733–1.0509**，匹配分数 0.5649–0.7875，构建没有裁切。测量用于发现比例问题，不代替画面审查；同尺度对照和实录未见明显尺寸跳变。原画、完整请求与弃稿原因见[素材审核说明](/private/tmp/regular-activity-endings-20261108/review/asset-review.md)，制作规格在 `regular/pet_actions_endings.py`，逐帧数据在[头部检查](/private/tmp/regular-activity-endings-20261108/review/head-check.json)。
+最终 36 帧相对各自原活动的头部测量比值为 **0.9733–1.0509**，匹配分数 0.5649–0.7875，构建没有裁切。测量用于发现比例问题，不代替画面审查；同尺度对照和实录未见明显尺寸跳变。原画、完整请求与弃稿原因见素材审核说明，制作规格在 `regular/pet_actions_endings.py`，逐帧数据在头部检查。
 
 ## 调度与打断
 
@@ -34,19 +34,19 @@
 
 十二段各约 18 秒、217 帧，主循环在这些定向样本中设为 8 秒：六种结果、`life_laptop_think` 的兼容衔接、三个直接收纳，以及两段连续换节目。它们都展示了尾声的四个源帧，只收纳一次，没有播放时钟回退，最后回到地面待机；原生脚锚点取整误差最大 0.2 个逻辑像素。坐到站最初几帧沿用既有的短暂淡入，多轮廓不是原画额外肢体。
 
-另录一段 **55 秒、661 帧** 的完整拇指琴演出，主段保留 **45.3 秒**，在旧循环源帧 2 接困倦结果和收纳。约第 46.76 秒进入结果、第 49.25 秒收琴、第 52.18 秒回到待机；四格完整、没有时钟重置，头身和琴的衔接可读。[长驻完整实录](/private/tmp/regular-activity-endings-20261108/native-long/ending_kalimba_drowsy/continuous.webp)、[接片关键帧](/private/tmp/regular-activity-endings-20261108/native-long/ending_kalimba_drowsy/tail-beats.jpg)、[数据汇总](/private/tmp/regular-activity-endings-20261108/native-long/summary.json)。十三段总计 3265 个捕获帧。
+另录一段 **55 秒、661 帧** 的完整拇指琴演出，主段保留 **45.3 秒**，在旧循环源帧 2 接困倦结果和收纳。约第 46.76 秒进入结果、第 49.25 秒收琴、第 52.18 秒回到待机；四格完整、没有时钟重置，头身和琴的衔接可读。长驻完整实录、接片关键帧、数据汇总。十三段总计 3265 个捕获帧。
 
 | 检查 | 连续实录 |
 | --- | --- |
-| 电脑理顺 / 暂停 | [理顺](/private/tmp/regular-activity-endings-20261108/native/ending_work_clear/continuous.webp)、[暂停](/private/tmp/regular-activity-endings-20261108/native/ending_work_pause/continuous.webp) |
-| 尤克里里满意 / 走音 | [满意](/private/tmp/regular-activity-endings-20261108/native/ending_ukulele_resolve/continuous.webp)、[走音](/private/tmp/regular-activity-endings-20261108/native/ending_ukulele_sour/continuous.webp) |
-| 拇指琴余音 / 困倦 | [余音](/private/tmp/regular-activity-endings-20261108/native/ending_kalimba_linger/continuous.webp)、[困倦](/private/tmp/regular-activity-endings-20261108/native/ending_kalimba_drowsy/continuous.webp) |
-| 另一段电脑主活动 | [思考后理顺](/private/tmp/regular-activity-endings-20261108/native/work-think-clear/continuous.webp) |
-| 直接安静收纳 | [电脑](/private/tmp/regular-activity-endings-20261108/native/work-quiet/continuous.webp)、[尤克里里](/private/tmp/regular-activity-endings-20261108/native/ukulele-quiet/continuous.webp)、[拇指琴](/private/tmp/regular-activity-endings-20261108/native/kalimba-quiet/continuous.webp) |
-| 主活动中换节目，再两次点击收纳中途 | [电脑连续换节目](/private/tmp/regular-activity-endings-20261108/native/work-next/continuous.webp) |
-| 结果中换节目，再两次点击收纳中途 | [尤克里里连续换节目](/private/tmp/regular-activity-endings-20261108/native/ukulele-next-result/continuous.webp) |
+| 电脑理顺 / 暂停 | 理顺、暂停 |
+| 尤克里里满意 / 走音 | 满意、走音 |
+| 拇指琴余音 / 困倦 | 余音、困倦 |
+| 另一段电脑主活动 | 思考后理顺 |
+| 直接安静收纳 | 电脑、尤克里里、拇指琴 |
+| 主活动中换节目，再两次点击收纳中途 | 电脑连续换节目 |
+| 结果中换节目，再两次点击收纳中途 | 尤克里里连续换节目 |
 
-每段目录还保存 `frames.json`、`keyframes.jpg` 和放大检查的 `tail-beats.jpg`。[十二段汇总](/private/tmp/regular-activity-endings-20261108/native/summary.json)记录动作区间、四格覆盖、换节目事件和锚点误差。实录可以判断这次衔接是否清楚，不能证明连续几天观看后的耐看程度。
+每段目录还保存 `frames.json`、`keyframes.jpg` 和放大检查的 `tail-beats.jpg`。十二段汇总记录动作区间、四格覆盖、换节目事件和锚点误差。实录可以判断这次衔接是否清楚，不能证明连续几天观看后的耐看程度。
 
 例如在本机重录长驻样本：
 

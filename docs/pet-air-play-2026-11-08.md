@@ -65,10 +65,10 @@
 
 连续实录与逐帧数据：
 
-- [飞行喷火](/private/tmp/regular-air-play-20261108/native/air-fire/continuous.webp)
-- [抓到鼠标](/private/tmp/regular-air-play-20261108/native/air-catch/continuous.webp)
-- [抓空与已有气泡](/private/tmp/regular-air-play-20261108/native/air-miss/continuous.webp)
-- [关键拍对照](/private/tmp/regular-air-play-20261108/native/beats.jpg)、[数值汇总](/private/tmp/regular-air-play-20261108/native/summary.json)
+- 飞行喷火
+- 抓到鼠标
+- 抓空与已有气泡
+- 关键拍对照、数值汇总
 
 ## 顶部点击先开阵，再进入
 
@@ -87,4 +87,4 @@
 
 时间是录像绝对时间，点击发生在约第 9 秒；睡醒先逆播睡姿再施法。睡姿最后一帧与施法首帧的可见轮廓底部只差 −1 像素，没有向下跳；原生窗口取整误差最多半个逻辑像素。两段都只有入口、出口两个门户 ID，没有重复开门。
 
-[清醒连续实录](/private/tmp/regular-air-play-20261108/top-awake/top/continuous.webp)、[清醒关键拍](/private/tmp/regular-air-play-20261108/top-awake/top/exit-beats.jpg)；[睡醒连续实录](/private/tmp/regular-air-play-20261108/top-wake/top/continuous.webp)、[睡醒关键拍](/private/tmp/regular-air-play-20261108/top-wake/top/exit-beats.jpg)；[阶段数值](/private/tmp/regular-air-play-20261108/top-summary.json)。
+清醒连续实录、清醒关键拍；睡醒连续实录、睡醒关键拍；阶段数值。

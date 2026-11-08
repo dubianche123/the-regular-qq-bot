@@ -8,7 +8,7 @@
 
 运行时 `scale` 及 `sx/sy` 没有因飞行或甩出而降低。旧下落稿和莓果稿的头接近 idle，但衣身、腿被画短：同尺度图里 idle 的领花至裙摆约 106px，旧 upward 约 65px、curl 约 69px、reach 约 80px。直接放大整图会把头也放大，不能解决这个问题。
 
-替换八张四帧素材：`motion_fall_upward/flutter/curl/reach`、`motion_fly_land`、`motion_land_one_foot`、`motion_land_wing`、`dragon_snack_berry`。32 帧头径比为 0.9765–1.0232，人工衣身约 94–108px，构建无裁切。curl 多手和 fly_land 发梢裁切的首稿已弃用，共十次项目 Images API 请求。详见[资产审核](/private/tmp/regular-air-scale-20261108/review/asset-review.md)及[莓果前后对照](/private/tmp/regular-air-scale-20261108/review/berry-comparison.jpg)。
+替换八张四帧素材：`motion_fall_upward/flutter/curl/reach`、`motion_fly_land`、`motion_land_one_foot`、`motion_land_wing`、`dragon_snack_berry`。32 帧头径比为 0.9765–1.0232，人工衣身约 94–108px，构建无裁切。curl 多手和 fly_land 发梢裁切的首稿已弃用，共十次项目 Images API 请求。详见资产审核及莓果前后对照。
 
 第二张用户截图准确对应 `life_comic_turn`。同尺度头径约 1.010–1.013，鞋底与露出大腿也与 idle 接近；身体坐下、书遮住腰部会降低总高度，本轮没有把正常坐姿整体放大。拖拽举手造成的自动头部匹配误差也未被当作缩小证据。保留的动作、依据和边界均在上述审核中。
 
@@ -26,7 +26,7 @@
 
 Cocoa 的原生窗口输入还需随真实光标位置切换：透明处穿透并撤掉手形，实体处恢复接收；已按住或拖拽时保持捕获。空中抓鼠标仍全程透传，气泡独立处理。
 
-实际 `CGEventPost` 点击验证覆盖七种状态的空白/实体，共 **14/14** 通过：空白点击到自建底窗，实体点击到桌宠，原生 `ignoresMouseEvents` 与预期一致。未点击其他应用，完成后恢复原鼠标位置。空白没有 OpenHand；实体处注入环境的系统 cursor 读数偶尔仍报 Arrow，因此不把 Qt/NSView 已配置 OpenHand 写成系统显示已完全验证。[原生证据与限制](/private/tmp/regular-air-scale-20261108/hit-native-window-cursor/review.md)。
+实际 `CGEventPost` 点击验证覆盖七种状态的空白/实体，共 **14/14** 通过：空白点击到自建底窗，实体点击到桌宠，原生 `ignoresMouseEvents` 与预期一致。未点击其他应用，完成后恢复原鼠标位置。空白没有 OpenHand；实体处注入环境的系统 cursor 读数偶尔仍报 Arrow，因此不把 Qt/NSView 已配置 OpenHand 写成系统显示已完全验证。原生证据与限制。
 
 ## 能力服务日常
 
@@ -44,7 +44,7 @@ Cocoa 的原生窗口输入还需随真实光标位置切换：透明处穿透�
 
 新魔法使用项目已有生成流程与授权的 `gpt-image-2.6-flare`。五张首稿和五张定向修稿后，刷尾与修书再各修一次；刷尾编辑仍保留短衣身，因此弃用，最后从 idle 重新生成一张直背、正常髋位的版本。新魔法共十三次请求，连同八张替换共二十三次；没有 SDK 自动重试。最终采用 cola/roast/scarf v2、mend v3、brush v4。刷尾最终衣身约 105px，idle 约 106px。修书角是小尺寸下的细节，不能当作大幅炫技来描述。
 
-[首轮独立审核](/private/tmp/regular-purpose-magic-20261108/independent-review/review.md)、[定向修稿记录](/private/tmp/regular-purpose-magic-20261108/review-v3/review.md)、[最终梳尾比例](/private/tmp/regular-purpose-magic-20261108/review-v4/review.md)分别保留采用与弃用依据；生产规格位于 `regular/pet_actions_magic_daily.py`。库存为 **377 条 WebP、1502 帧、334 个动作定义**，长驻循环仍为 34 条。
+首轮独立审核、定向修稿记录、最终梳尾比例分别保留采用与弃用依据；生产规格位于 `regular/pet_actions_magic_daily.py`。库存为 **377 条 WebP、1502 帧、334 个动作定义**，长驻循环仍为 34 条。
 
 ## 实机验收方式
 
@@ -56,14 +56,14 @@ Cocoa 的原生窗口输入还需随真实光标位置切换：透明处穿透�
 
 | 实机检查 | 连续录制 |
 | --- | --- |
-| 自然飞行与接地逐拍 | [完整飞行](/private/tmp/regular-air-scale-20261108/after/air-flight/continuous.webp)、[接地逐拍](/private/tmp/regular-air-scale-20261108/after/air-flight/touchdown-beats.jpg) |
-| 打断返航、空中喷火、抓到与抓空 | [打断](/private/tmp/regular-air-scale-20261108/after/flight-interrupt/continuous.webp)、[喷火](/private/tmp/regular-air-scale-20261108/after/air-fire/continuous.webp)、[抓到](/private/tmp/regular-air-scale-20261108/after/air-catch/continuous.webp)、[抓空](/private/tmp/regular-air-scale-20261108/after/air-miss/continuous.webp) |
-| 抛出、松手下落、顶部离场 | [抛出](/private/tmp/regular-air-scale-20261108/after/throw/continuous.webp)、[下落](/private/tmp/regular-air-scale-20261108/after/drop/continuous.webp)、[顶部](/private/tmp/regular-air-scale-20261108/after/top/continuous.webp) |
-| 两张用户截图对应动作 | [莓果碗](/private/tmp/regular-purpose-magic-20261108/native/inspect-dragon_snack_berry/continuous.webp)、[翻漫画](/private/tmp/regular-purpose-magic-20261108/native/inspect-life_comic_turn/continuous.webp) |
-| 首次手动变龙与真实目标传送 | [小龙](/private/tmp/regular-purpose-magic-20261108/native/magic-dragon/continuous.webp)、[去踢球](/private/tmp/regular-purpose-magic-20261108/native/magic-prop/continuous.webp) |
-| 五种日常魔法 | [可乐](/private/tmp/regular-purpose-magic-20261108/native/magic_daily_cola/continuous.webp)、[棉花糖](/private/tmp/regular-purpose-magic-20261108/native/magic_daily_roast/continuous.webp)、[围巾](/private/tmp/regular-purpose-magic-20261108/native/magic_daily_scarf/continuous.webp)、[梳尾](/private/tmp/regular-purpose-magic-20261108/native/magic_daily_brush/continuous.webp)、[书角](/private/tmp/regular-purpose-magic-20261108/native/magic_daily_mend/continuous.webp) |
+| 自然飞行与接地逐拍 | 完整飞行、接地逐拍 |
+| 打断返航、空中喷火、抓到与抓空 | 打断、喷火、抓到、抓空 |
+| 抛出、松手下落、顶部离场 | 抛出、下落、顶部 |
+| 两张用户截图对应动作 | 莓果碗、翻漫画 |
+| 首次手动变龙与真实目标传送 | 小龙、去踢球 |
+| 五种日常魔法 | 可乐、棉花糖、围巾、梳尾、书角 |
 
-[汇总数据](/private/tmp/regular-purpose-magic-20261108/final-native-summary.json)保留验证与采样间隔；[五段飞行独立核对](/private/tmp/regular-air-scale-20261108/after/final-native-independent-review.md)保留时钟、轨迹和抓取距离。全部配置比例为 1、绘制 `sx/sy=1`，原生锚点取整误差小于 0.5 个逻辑像素。可见飞行与抛落没有整窗无遮挡输入；完全藏入法阵时有九个空 Qt mask 样本，但原生输入均已透传，不是九次抢点击。五段日常完整展示 0/1/2/3 并回到 idle；真实球的 id、kick 返回值与实际位移见对应 `frames.json`。
+汇总数据保留验证与采样间隔；五段飞行独立核对保留时钟、轨迹和抓取距离。全部配置比例为 1、绘制 `sx/sy=1`，原生锚点取整误差小于 0.5 个逻辑像素。可见飞行与抛落没有整窗无遮挡输入；完全藏入法阵时有九个空 Qt mask 样本，但原生输入均已透传，不是九次抢点击。五段日常完整展示 0/1/2/3 并回到 idle；真实球的 id、kick 返回值与实际位移见对应 `frames.json`。
 
 ## 定向验证
 
