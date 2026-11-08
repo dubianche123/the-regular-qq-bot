@@ -1485,6 +1485,44 @@ class InteractionTest(unittest.TestCase):
         self.assertNotIn("pout", clips)
         self.assertIn(b.bubble.text if b.bubble else "", LINES["thrown"] + ("",))
 
+    def test_lifted_high_then_dropped_her_legs_go_weak_before_she_stands_back_up(self):
+        def lift_and_drop(b, t, height):
+            b.press(t, 700, 760)
+            for i in range(30):                                   # lift slowly, then hold still
+                t += 1 / 30
+                b.drag(t, 700, 760 - (760 - height) * min(1.0, (i + 1) / 15))
+                b.tick(t)
+            b.release(t, 700, height)
+            return run(b, t, 12.0)
+
+        def drop(seed, height, *, quiet=False):
+            b = PetBrain(rng=random.Random(seed), now=0.0, quiet=quiet)
+            b.set_ground(0, 1440, 860, 30)
+            b.place(700)
+            return b, *lift_and_drop(b, 1.0, height)
+
+        high = [drop(seed, 200)[2] for seed in range(12)]
+        scared = [clips for clips in high if "scene_height_nervous" in clips]
+        self.assertTrue(scared)                                   # a real chance, not every time
+        self.assertLess(len(scared), len(high))
+        for clips in scared:
+            self.assertEqual([c for c in clips if c.startswith("scene_height_")],
+                             ["scene_height_nervous", "scene_height_wings"])
+            self.assertNotIn("startle", clips)
+        # A hop off your hand or staying put stays calm.
+        for seed in range(12):
+            self.assertNotIn("scene_height_nervous", drop(seed, 640)[2])
+            self.assertNotIn("scene_height_nervous", drop(seed, 200, quiet=True)[2])
+        # One scare, then a cooldown: a second high drop right after only lands.
+        for seed in range(12):
+            b, t, clips = drop(seed, 200)
+            if "scene_height_nervous" in clips:
+                _, again = lift_and_drop(b, t, 200)
+                self.assertNotIn("scene_height_nervous", again)
+                break
+        else:
+            self.fail("no seed was scared")
+
     def test_clicks_rotate_small_reactions_and_never_escalate_to_a_sulk(self):
         b = brain()
         b.press(1.0, 700, 760)

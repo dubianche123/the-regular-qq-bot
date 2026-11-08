@@ -23,7 +23,7 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--scenes', default='feed,left,right,top,bottom',
                         help='comma-separated scenes; includes magic-dragon, magic-prop, magic_daily_*, '
-                             'flight-interrupt, inspect-dragon_snack_berry and inspect-life_comic_turn')
+                             'fear-drop, flight-interrupt, inspect-dragon_snack_berry and inspect-life_comic_turn')
     parser.add_argument('--seed', type=int, default=7, help='reproducible optional action variants')
     parser.add_argument('--seconds', type=float, default=16.0,
                         help='real-time duration per scene, for example 8, 10 or 16 seconds')
@@ -54,7 +54,7 @@ def main():
     adopted = available()
     daily = {name for name in adopted if name.startswith('daily_')}
     air_scenes = {'air-fire', 'air-flight', 'air-catch', 'air-miss'}
-    throw_scenes = {'throw', 'drop'}
+    throw_scenes = {'throw', 'drop', 'fear-drop'}
     magic_scenes = {'magic-dragon': None, 'magic-prop': 'prop',
                     **{name: name for name in DAILY_MAGIC if name in adopted}}
     inspect_scenes = {f'inspect-{name}': name for name in ('dragon_snack_berry', 'life_comic_turn')
@@ -169,6 +169,8 @@ def main():
             pet._sync_windows(force=True)
             crop = (area.left() - 30, area.top() - 30, area.width() + 60, area.height() + 60)
         throw_origin = (brain.x, brain.floor - 100)
+        lift_distance = (min(brain.figure * 3, brain.floor - area.top() - brain.figure * 1.5)
+                         if scene == 'fear-drop' else 350)
         if scene == 'magic-prop':
             brain.place(brain.left + brain.figure * 0.9)
             pet._sync_windows(force=True)
@@ -402,7 +404,7 @@ def main():
                         lift = min(1.0, (elapsed - 1.04) / 0.96)
                         flick = max(0.0, (elapsed - 2.5) / 0.3) if scene == 'throw' else 0.0
                         pointer[0] = QPoint(round(throw_origin[0] + 240 * flick),
-                                            round(throw_origin[1] - 350 * lift - 200 * flick))
+                                            round(throw_origin[1] - lift_distance * lift - 200 * flick))
                         brain.drag(now, pointer[0].x(), pointer[0].y())
                     once('release', elapsed, 2.8,
                          lambda: brain.release(now, pointer[0].x(), pointer[0].y()))
@@ -475,6 +477,21 @@ def main():
         if errors:
             raise errors[0]
         checks = {}
+        if scene == 'fear-drop':
+            sequence = []
+            for row in records:
+                if not sequence or sequence[-1] != row['clip']:
+                    sequence.append(row['clip'])
+            checks['real_drag_and_release'] = {'press', 'release'} <= events and any(
+                row['mode'] == 'air' for row in records)
+            checks['fear_after_landing'] = [clip for clip in sequence if clip.startswith('scene_height_')] == [
+                'scene_height_nervous', 'scene_height_wings'] and all(
+                    row['mode'] == 'ground' for row in records if row['clip'].startswith('scene_height_'))
+            land_at = next((row['t'] for row in records if row['clip_family'] == 'landing'), None)
+            fear_at = next((row['t'] for row in records if row['clip'] == 'scene_height_nervous'), None)
+            checks['landing_precedes_fear'] = land_at is not None and fear_at is not None and land_at < fear_at
+            checks['returned_to_ground_idle'] = records[-1]['mode'] == 'ground' and records[-1]['clip'] == 'idle'
+            checks['height_history_cleared'] = brain._air_top is None
         if scene in focused_scenes:
             checks['returned_to_ground_idle'] = records[-1]['mode'] == 'ground' and records[-1]['clip'] == 'idle'
             if scene in magic_scenes:

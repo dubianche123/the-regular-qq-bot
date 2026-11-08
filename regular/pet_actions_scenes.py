@@ -19,7 +19,7 @@ _ROWS = [
     ("sweet_caught", "偷吃被发现", "idle", "stand", "stand", "scene_sweet", "sweet", "One partly eaten cookie. Frame 1 freeze mid-bite after noticing viewer; 2 lean back, surprised and blushing; 3 offer the remaining cookie with an apologetic bow; 4 smile sheepishly. No other person."),
     ("height_peek", "探头看高处", "idle", "stand", "stand", "scene_height", "height", "An invisible screen edge, no edge drawn. Frame 1 cautiously lean forward; 2 look downward over the imaginary edge; 3 recoil with wide anxious eyes, knees bent; 4 step back and hug her wings. Complete body inside every frame."),
     ("height_nervous", "高处脚软", "idle", "stand", "sit", "scene_height", "height", "Frame 1 look down nervously at an imaginary height; 2 knees wobble and wings tuck tight; 3 sink into a crouch hugging both wings; 4 sit safely on the ground line with a relieved but embarrassed smile. No ledge or background."),
-    ("height_wings", "抱住翅膀壮胆", "idle", "sit", "stand", "scene_height", "height", "Frame 1 sit hugging her folded wings, anxious; 2 peek up and take a breath; 3 push up to standing while keeping wings close; 4 look at the viewer with a brave but nervous smile. No ledge."),
+    ("height_wings", "抱住翅膀壮胆", "idle", "sit", "stand", "scene_height", "height", "Frame 1 sit hugging her folded wings, anxious; 2 peek up and take a breath; 3 push up while keeping wings close, knees still slightly bent; 4 finish straightening both knees and her torso, lower both hands naturally beside her body, and look at the viewer with a brave but nervous smile. The final frame must reach the idle reference's fully standing height and head position with unchanged head diameter and feet baseline; do not end still crouching or enlarge the whole figure. No ledge."),
     ("height_shortcut", "传送走捷径", "idle", "stand", "stand", "scene_height", "height", "Frame 1 peer downward fearfully at an imaginary height; 2 step back and think, finger raised; 3 draw a tiny hand-sized glowing ring beside her with one hand; 4 point to it with a relieved grin as if choosing a shortcut. The ring stays small; no real hole or background."),
     ("fire_overdo", "耍帅喷火", "idle", "stand", "stand", "scene_fire", "fire", "Frame 1 plant feet and pose confidently, wings open; 2 take a theatrical breath; 3 lean forward and breathe an exaggerated but harmless FAIRY-TALE orange flame, roughly as tall as her torso, entirely inside the cell; 4 recoil with shocked eyes at her own flame. No smoke filling the scene."),
     ("fire_startled", "被自己的火吓到", "idle", "stand", "sit", "scene_fire", "fire", "A single contained cartoon flame no larger than her torso. Frame 1 admire her own flame proudly; 2 notice its size with alarm; 3 hop backward with both hands raised and wings tucked; 4 land sitting safely, eyes wide, as flame shrinks. No destruction."),
@@ -58,8 +58,7 @@ ACTIONS = {
         "title": title, "prompt": _HEAD + action, "style": style,
         "starts_from": start, "posture": end, "role": role, "family": family,
         "fps": 4.0, "loop": name in _LOOPS, "scale": 1.0,
-        # The height beats play quickly inside the top-edge exit, which times them itself.
-        **({} if name in _LOOPS or name.startswith("height_") else {"sequence": _BEATS}),
+        **({} if name in _LOOPS else {"sequence": _BEATS}),
         "duration": 45.0 if name in _LOOPS else 1.0, "drop_strays": True,
         **({"restful": True} if name in _LOOPS else {}),
         **({"frame_calibration": True, "anchor_x": 256, "fixed_ground": True}

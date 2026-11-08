@@ -236,10 +236,14 @@ BEAT_LINES = {
     "scene_game_rematch": "再来一局！", "scene_paint_proud": "画好啦，看！", "scene_paint_rework": "这笔歪了。",
     "scene_paint_cheek": "……脸上也画到了。", "scene_sleepy_cover": "我、我在看书。",
     "scene_diary_hide": "不许偷看！", "scene_glass_hello": "你好呀～",
+    "scene_height_nervous": "……刚才好高。", "scene_height_wings": "没、没有怕。",
 }
 DRAGON_COOLDOWN = 1500.0  # 变小龙是偶遇的惊喜：日常里至少隔二十几分钟
 FURNITURE_COOLDOWN = 1800.0
 SHOW_OFF_COOLDOWN = 300.0
+# 被你拎到高处再松手：会飞，但不是自己飞上去的，落地后腿会软一下。
+HEIGHT_FEAR_DROP = 1.6          # 至少比自己高出这么多个身位才算「高」
+HEIGHT_FEAR_COOLDOWN = 240.0
 AIR_FIRE_COOLDOWN = 240.0
 AIR_CHASE_COOLDOWN = 60.0
 AIR_CHASE_SECONDS = 3.0
@@ -427,6 +431,8 @@ class PetBrain:
         self._magic_used = set()
         self._magic_dragon_shown = False
         self._show_off_at = now - SHOW_OFF_COOLDOWN
+        self._height_fear_at = now - HEIGHT_FEAR_COOLDOWN
+        self._air_top: float | None = None    # 被松手后飞得最高的位置，只为落地后那一下腿软
         self._sleep_cue_until = 0.0
         self._prop_chase_at = now - 120.0
         self._chasing_prop = None
@@ -562,6 +568,7 @@ class PetBrain:
     def place(self, x):
         self.x, self.y, self.mode = self._clamp_x(float(x)), self.floor, "ground"
         self._air_chase, self._air_returning = None, False
+        self._air_top = None
 
     def posture(self):
         return CLIPS[self.clip][4]
@@ -1106,6 +1113,17 @@ class PetBrain:
         return [Step(self._pick("fly", "fall", family="flap"), target_y=self.floor, hold="air_return"),
                 Step(self._powered_landing())]
 
+    def _height_scare(self, now, drop):
+        if (not self.motion or self.quiet or drop < self.figure * HEIGHT_FEAR_DROP
+                or self.chat_pending or self.media or now < self.agent_busy_until
+                or (self.state_clip and now < self.state_until)       # 群里真有事时不演
+                or now - self._height_fear_at < HEIGHT_FEAR_COOLDOWN
+                or not (self._has("scene_height_nervous") and self._has("scene_height_wings"))
+                or self.rng.random() >= 0.6):
+            return False
+        self._height_fear_at = now
+        return True
+
     def _powered_landing(self):
         if self._has("motion_fly_approach") and self._has("motion_fly_settle"):
             return "motion_fly_settle"
@@ -1471,6 +1489,8 @@ class PetBrain:
         self.x += self.vx * dt
         self.y += self.vy * dt
         self.vx *= 0.995
+        if self._air_top is not None:
+            self._air_top = min(self._air_top, self.y)
         clamped = self._clamp_x(self.x)
         if clamped != self.x:
             self.x, self.vx = clamped, -self.vx * 0.45
@@ -1492,13 +1512,19 @@ class PetBrain:
             self.swing = self.swing_v = 0.0
             self.plan.clear()
             self.step = None
+            drop = self.floor - self._air_top if self._air_top is not None else 0.0
+            self._air_top = None
             if self._landing:
                 self._land_trick(now)
                 return
             land = self._pick("land", "land")
             self._set_clip(land, now, restart=True)
             steps = [Step(land)]
-            if impact > 1900 * self.scale:
+            if self._height_scare(now, drop):
+                # 怕高：自己飞很熟练，被拎上去再放手就心虚，腿软坐下，抱着翅膀壮胆再站起来。
+                steps += [Step("scene_height_nervous", line=BEAT_LINES["scene_height_nervous"]),
+                          Step("scene_height_wings", line=BEAT_LINES["scene_height_wings"])]
+            elif impact > 1900 * self.scale:
                 steps.append(Step("startle"))       # 摔狠了只哆嗦一下，不再跺脚瞪人
                 self.say(self.rng.choice(LINES["thrown"]), now=now, seconds=3.0)
                 self._emit("sweat", now)
@@ -2528,6 +2554,7 @@ class PetBrain:
                 self._set_clip(entry, now, restart=True)
                 return "drop"
             self.mode = "air"
+            self._air_top = self.y
             self._set_clip(self._pick("fall", "fall"), now, restart=True)
             return "drop"
         return "click" if pressed is not None else None
