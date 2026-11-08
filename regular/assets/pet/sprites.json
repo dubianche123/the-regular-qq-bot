@@ -1449,6 +1449,18 @@
   "edge_daily_top_wonder": {
    "file": "edge_daily_top_wonder.webp",
    "frames": 4
+  },
+  "air_play_fire": {
+   "file": "air_play_fire.webp",
+   "frames": 4
+  },
+  "air_play_reach": {
+   "file": "air_play_reach.webp",
+   "frames": 4
+  },
+  "air_play_miss": {
+   "file": "air_play_miss.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -4344,6 +4356,30 @@
     0
    ],
    "rest_y": -262.745
+  },
+  "air_play_fire": {
+   "bounds": [
+    -126,
+    -302,
+    117,
+    0
+   ]
+  },
+  "air_play_reach": {
+   "bounds": [
+    -125,
+    -317,
+    121,
+    0
+   ]
+  },
+  "air_play_miss": {
+   "bounds": [
+    -116,
+    -306,
+    94,
+    0
+   ]
   }
  },
  "calibration": {

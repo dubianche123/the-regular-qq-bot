@@ -14,9 +14,10 @@ from regular.pet_actions_scenes import ACTIONS as SCENES
 from regular.pet_actions_dragon_form import ACTIONS as FORM
 from regular.pet_actions_daily import ACTIONS as DAILY, PLAYBACK_ALIASES as DAILY_ALIASES
 from regular.pet_actions_edge_daily import ACTIONS as EDGE_DAILY
+from regular.pet_actions_air_play import ACTIONS as AIR_PLAY, PLAYBACK_ALIASES as AIR_PLAY_ALIASES
 
-ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL, **SCENES, **FORM, **DAILY, **EDGE_DAILY}
-PLAYBACK_ALIASES = {**DAILY_ALIASES, **BOUNDARY_ALIASES}
+ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL, **SCENES, **FORM, **DAILY, **EDGE_DAILY, **AIR_PLAY}
+PLAYBACK_ALIASES = {**DAILY_ALIASES, **BOUNDARY_ALIASES, **AIR_PLAY_ALIASES}
 
 # The archive is not a playlist. Pick performances, not a quota per prop family.
 # Scripted endings still use the full catalog.
