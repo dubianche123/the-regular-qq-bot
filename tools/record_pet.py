@@ -41,7 +41,8 @@ def main():
 
     adopted = available()
     daily = {name for name in adopted if name.startswith('daily_')}
-    unknown = set(scenes) - {'feed', 'left', 'right', 'top', 'bottom', 'natural', 'next'} - daily
+    air_scenes = {'air-fire', 'air-catch', 'air-miss'}
+    unknown = set(scenes) - {'feed', 'left', 'right', 'top', 'bottom', 'natural', 'next'} - daily - air_scenes
     if unknown:
         parser.error('unknown or unadopted scene: ' + ', '.join(sorted(unknown)))
 
@@ -56,9 +57,12 @@ def main():
     primary_height = float(AppKit.NSScreen.screens()[0].frame().size.height)
     args.out.mkdir(parents=True, exist_ok=True)
 
-    def native_position(widget):
+    def native_window(widget):
         view = objc.objc_object(c_void_p=ctypes.c_void_p(int(widget.winId())))
-        frame = view.window().frame()
+        return view.window()
+
+    def native_position(widget):
+        frame = native_window(widget).frame()
         return (round(frame.origin.x), round(primary_height - frame.origin.y - frame.size.height))
 
     def grab(widget):
@@ -109,6 +113,11 @@ def main():
         if scene in ('left', 'right'):
             brain.place(cx)
             pet._sync_windows(force=True)
+        if scene in air_scenes:
+            brain.place(center.x() - 150)
+            pet._sync_windows(force=True)
+            crop = (center.x() - 400, max(area.top(), area.bottom() - 620), 800, 640)
+        air_target = (brain.x + brain.figure * 0.9, brain.floor - brain.figure * 2.1)
 
         def start_daily(now):
             duration = max(1.0, args.seconds - 2.5) if adopted[scene]['loop'] else None
@@ -132,6 +141,15 @@ def main():
             programmes.extend({'clip': step.clip, 'duration': step.duration}
                               for step in (brain.step, *brain.plan) if step is not None)
 
+        def start_air_fire(now):
+            # Force only the rare branch, preserving its real authored speed,
+            # movement, preparation and landing.
+            with patch.object(brain.rng, 'random', return_value=0.0):
+                steps = brain._flight_steps(now)
+            brain._queue(*steps, Step('idle', 60), now=now, interrupt=True)
+            programmes.extend({'clip': step.clip, 'duration': step.duration}
+                              for step in (brain.step, *brain.plan) if step is not None)
+
         def once(key, elapsed, at, action):
             if elapsed >= at and key not in events:
                 events.add(key)
@@ -150,6 +168,10 @@ def main():
             rect = (area.left() - crop[0], area.top() - crop[1],
                     area.right() + 1 - crop[0], area.bottom() + 1 - crop[1])
             draw.rectangle(rect, outline='#d85b65', width=1)
+            if scene.startswith('air-'):
+                px, py = pointer[0].x() - crop[0], pointer[0].y() - crop[1]
+                draw.polygon([(px, py), (px + 3, py + 18), (px + 8, py + 12),
+                              (px + 15, py + 12)], fill='white', outline='#173b32')
             draw.text((8, 8), f'{scene}  {elapsed:05.2f}s  {brain.mode}  {brain.clip}', fill='#173b32')
             frames.append(canvas.convert('RGB'))
             wx, wy = native_position(pet)
@@ -161,6 +183,12 @@ def main():
                             'native_window': [wx, wy], 'window_anchor': [anchor.x(), anchor.y()],
                             'actual_anchor': [wx + anchor.x(), wy + anchor.y()],
                             'anchor_error': [wx + anchor.x() - brain.x, wy + anchor.y() - brain.y],
+                            'pointer': [pointer[0].x(), pointer[0].y()],
+                            'air_play': brain.air_play_active,
+                            'air_caught': (brain._air_chase or {}).get('caught'),
+                            'input_passthrough': bool(native_window(pet).ignoresMouseEvents()),
+                            'bubble_passthrough': (bool(native_window(pet.bubble).ignoresMouseEvents())
+                                                   if pet.bubble.isVisible() else None),
                             'scale': [transform['sx'], transform['sy']], 'lift': pet.lift})
 
         def tick():
@@ -178,6 +206,20 @@ def main():
                     once('scene', elapsed, 1.0, lambda: start_daily(now))
                 elif scene in ('natural', 'next'):
                     once('scene', elapsed, 1.0, lambda: start_routine(now))
+                elif scene == 'air-fire':
+                    once('scene', elapsed, 1.0, lambda: start_air_fire(now))
+                elif scene in ('air-catch', 'air-miss'):
+                    if scene == 'air-miss':
+                        once('existing-bubble', elapsed, 0.5,
+                             lambda: brain.say('陪你待一会儿。', now=now, seconds=15, kind='say'))
+                    if 1.0 <= elapsed < 2.4:
+                        offset = 14 if int((elapsed - 1.0) * 8) % 2 else -14
+                        pointer[0] = QPoint(round(air_target[0] + offset), round(air_target[1]))
+                    elif elapsed >= 2.4:
+                        if scene == 'air-miss' and brain.clip == 'air_play_reach':
+                            events.add('pointer-escaped')
+                        offset = brain.figure * 2 if 'pointer-escaped' in events else 0
+                        pointer[0] = QPoint(round(air_target[0] + offset), round(air_target[1]))
                 else:
                     once('press', elapsed, 1.0, lambda: brain.press(now, brain.x, brain.y - 100))
                     once('lift', elapsed, 1.1, lambda: brain.drag(now, brain.x, center.y()))
@@ -198,7 +240,8 @@ def main():
                     once('wake', elapsed, 9.0, lambda: brain.poke(now))
                 pet.step(now)
                 # Keep the comparison ending idle; do not append an unrelated random programme.
-                end_after = 2.2 if scene == 'feed' else 1.0 if scene in daily else 9.0
+                end_after = (12.0 if scene in air_scenes else 2.2 if scene == 'feed'
+                             else 1.0 if scene in daily else 9.0)
                 if (not finished_feed and elapsed > end_after
                         and brain.mode == 'ground' and brain.clip == 'idle'):
                     finished_feed = True

@@ -11,7 +11,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 HAS_QT = importlib.util.find_spec("PySide6") is not None
 if HAS_QT:
@@ -73,6 +73,29 @@ class DesktopPetTest(unittest.TestCase):
         brain.y = 900
         pet._sync_windows(force=True)
         self.assertEqual(pet.lift, 0)
+
+    def test_cursor_play_passes_clicks_through_and_restores_the_visible_pet_afterwards(self):
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        brain.mode, brain.y = "fly", 500
+        pet._sync_windows(force=True)
+        position = pet.pos()
+        with patch.object(type(brain), "air_play_active", new_callable=PropertyMock) as active:
+            active.return_value = True
+            pet._sync_windows()
+            self.assertTrue(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+            self.assertTrue(pet.bubble.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+            self.assertTrue(pet.isVisible())
+            self.assertEqual(pet.pos(), position)
+            # Subsequent animation frames must retain both visibility and input pass-through.
+            brain.x += 20
+            pet._sync_windows()
+            self.assertEqual(pet.x(), position.x() + 20)
+            active.return_value = False
+            pet._sync_windows()
+            self.assertFalse(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+            self.assertFalse(pet.bubble.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+            self.assertTrue(pet.isVisible())
 
     def test_top_descent_clears_the_real_clip_mask_when_lift_invalidates_the_cache(self):
         pet, brain = self.pet, self.pet.brain

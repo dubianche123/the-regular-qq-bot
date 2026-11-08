@@ -240,6 +240,12 @@ BEAT_LINES = {
 DRAGON_COOLDOWN = 1500.0  # 变小龙是偶遇的惊喜：日常里至少隔二十几分钟
 FURNITURE_COOLDOWN = 1800.0
 SHOW_OFF_COOLDOWN = 300.0
+AIR_FIRE_COOLDOWN = 240.0
+AIR_CHASE_COOLDOWN = 60.0
+AIR_CHASE_SECONDS = 3.0
+AIR_CHASE_RANGE = 2.5             # figure heights from the takeoff / invitation point
+AIR_HAND = (38 / 320, -158 / 320)  # adopted reach frame 2, relative to the feet anchor
+AIR_CATCH_RADIUS = 0.16
 # 小龙形态的一段：变身后做哪件事、做完变回来时说什么
 DRAGON_TRICKS = {
     "form_dragon_flap": ("飞给你看——", "……飞行还要再练练。"),
@@ -494,6 +500,12 @@ class PetBrain:
         self._landing: str | None = None
         self._jiggles: deque = deque(maxlen=8)
         self._jiggle_dir = (0.0, 0.0)
+        self._air_fire_at = now - AIR_FIRE_COOLDOWN
+        self._air_chase_at = now - AIR_CHASE_COOLDOWN
+        self._air_chase = None
+        self._air_returning = False
+        self._air_jiggles: deque = deque(maxlen=8)
+        self._air_jiggle_dir = (0.0, 0.0)
         self._sneezed_at = -1000.0
         self._sneeze_warp = False
         self._sneeze_slip = False
@@ -503,6 +515,11 @@ class PetBrain:
     @property
     def figure(self):
         return FIGURE * self.scale
+
+    @property
+    def air_play_active(self):
+        """The shell lets clicks pass through while she plays with the cursor."""
+        return self._air_chase is not None or self._air_returning or self._role(self.clip) == "air_play"
 
     def set_ground(self, left, right, floor, ceiling=None):
         self.left, self.right, self.floor = float(left), float(right), float(floor)
@@ -540,6 +557,7 @@ class PetBrain:
 
     def place(self, x):
         self.x, self.y, self.mode = self._clamp_x(float(x)), self.floor, "ground"
+        self._air_chase, self._air_returning = None, False
 
     def posture(self):
         return CLIPS[self.clip][4]
@@ -722,6 +740,7 @@ class PetBrain:
 
     def _queue(self, *steps, now, interrupt=False):
         """Append steps, inserting sit/stand/lie transitions so poses never jump."""
+        interrupted_air_play = interrupt and self.air_play_active
         if interrupt and self.mode == "ground" and self.warp is not None:
             self._cancel_warp(now)
         if interrupt and self.mode == "warp":
@@ -729,6 +748,8 @@ class PetBrain:
             self.plan.clear()
             interrupt = False
         if interrupt:
+            self._air_chase = None
+            self._air_returning = interrupted_air_play and self.mode == "fly"
             self._chasing_prop = None
             if not any(step.hold == "sleep" for step in steps):
                 self._sleep_cue_until = 0.0
@@ -739,7 +760,8 @@ class PetBrain:
                     side = -1 if self.x < target else 1
                     steps = (Step("walk", target_x=target, edge_side=side), *steps)
             elif self.mode in ("fly", "bottom"):
-                steps = (Step(self.clip, target_y=self.floor), *steps)
+                descent = self._air_return_steps() if interrupted_air_play else [Step(self.clip, target_y=self.floor)]
+                steps = (*descent, *steps)
             self.plan.clear()
             self.step = None
         previous = self.plan[-1].clip if self.plan else self.step.clip if self.step else self.clip
@@ -777,6 +799,9 @@ class PetBrain:
             dx = (self.step.target_x - self.x) if self.step.target_x is not None else 0.0
             dy = self.step.target_y - self.y
             self._move_duration = max(0.35, math.hypot(dx, dy) / max(1.0, 85.0 * self.scale))
+            if self._role(self.step.clip) == "air_play" and not CLIPS[self.step.clip][3]:
+                # Pace the short route to the full performance, not the reverse.
+                self._move_duration = len(CLIPS[self.step.clip][1]) / CLIPS[self.step.clip][2]
         if self.step.target_x is not None:
             self.facing = 1 if self.step.target_x >= self.x else -1
         elif self.step.edge_side and (self.step.clip == "edge_peek" or self._role(self.step.clip) == "edge"):
@@ -816,8 +841,9 @@ class PetBrain:
         if step.hold == "sleep":
             return now >= self._sleep_cue_until or now - self.step_started >= 40
         if step.target_x is not None or step.target_y is not None:
-            return ((step.target_x is None or abs(self.x - step.target_x) < (0.001 if step.edge_side else 1.5))
-                    and (step.target_y is None or abs(self.y - step.target_y) < 1.5))
+            reached = ((step.target_x is None or abs(self.x - step.target_x) < (0.001 if step.edge_side else 1.5))
+                       and (step.target_y is None or abs(self.y - step.target_y) < 1.5))
+            return reached and (self._role(step.clip) != "air_play" or CLIPS[step.clip][3] or self._clip_done(now))
         if step.duration is not None:
             return now - self.step_started >= step.duration
         return now - self.step_started >= 4.0 if CLIPS[step.clip][3] else self._clip_done(now)
@@ -963,16 +989,7 @@ class PetBrain:
         if choice == "dragon":
             return self._dragon_steps(now)
         if choice == "flight":
-            height = max(self.ceiling + self.figure, self.floor - self.figure * self.rng.uniform(1.2, 2.5))
-            direction = 1 if self.x < (self.left + self.right) / 2 else -1
-            target = self._clamp_x(self.x + direction * self.rng.uniform(1.2, 2.2) * self.figure)
-            prep = self._pick("fly", "hop", family="takeoff")
-            flap = self._pick("fly", "fall", family="flap")
-            glide = self._pick("fly", flap, family="glide")
-            land = self._pick("fly", "land", family="landing")
-            return [Step(prep), Step(flap, target_y=height), Step(flap, 1.5),
-                    Step(glide, target_x=target, target_y=max(self.ceiling + self.figure, height - self.figure * 0.2)),
-                    Step(flap, target_y=self.floor), Step(land)]
+            return self._flight_steps(now)
         if choice == "bottom":
             clip = self._pick("bottom", "dangle")
             return [Step(clip, target_y=self._bottom_target(clip)), Step(clip, r(3, 6)),
@@ -1043,6 +1060,29 @@ class PetBrain:
         if choice == "sing":
             return [Step("sing", r(5, 9))]
         return [Step(choice)]
+
+    def _flight_steps(self, now):
+        height = max(self.ceiling + self.figure, self.floor - self.figure * self.rng.uniform(1.2, 2.5))
+        direction = 1 if self.x < (self.left + self.right) / 2 else -1
+        target = self._clamp_x(self.x + direction * self.rng.uniform(1.2, 2.2) * self.figure)
+        prep = self._pick("fly", "hop", family="takeoff")
+        flap = self._pick("fly", "fall", family="flap")
+        glide = self._pick("fly", flap, family="glide")
+        land = self._pick("fly", "land", family="landing")
+        cruise = []
+        if (self._air_play_allowed(now) and self._has("air_play_fire")
+                and now - self._air_fire_at >= AIR_FIRE_COOLDOWN and self.rng.random() < 0.2):
+            self._air_fire_at = now
+            fire_target = self._clamp_x(self.x + direction * min(abs(target - self.x), self.figure))
+            cruise.append(Step("air_play_fire", target_x=fire_target, target_y=height))
+        cruise.append(Step(glide, target_x=target,
+                           target_y=max(self.ceiling + self.figure, height - self.figure * 0.2)))
+        return [Step(prep), Step(flap, target_y=height), Step(flap, 1.5), *cruise,
+                Step(flap, target_y=self.floor, hold="air_return"), Step(land)]
+
+    def _air_return_steps(self):
+        return [Step(self._pick("fly", "fall", family="flap"), target_y=self.floor, hold="air_return"),
+                Step(self._pick("fly", "land", family="landing"))]
 
     def _stroll(self):
         """A few steps nearby, rather than a long trip across the whole screen."""
@@ -1183,6 +1223,8 @@ class PetBrain:
     def tick(self, now):
         dt = max(0.0, min(0.1, now - self._now))
         self._now = now
+        if self._air_chase is not None and self.mode == "ground" and not self._air_play_allowed(now, continuing=True):
+            self._queue(Step("idle", 1.5), now=now, interrupt=True)
         self._decay_warmth(now)
         self.props.tick(now, self.left, self.right, self.ceiling, self.floor)
         asleep = self.clip in ASLEEP or self.hidden_asleep
@@ -1277,11 +1319,22 @@ class PetBrain:
         self._look(now)
 
     def _fly(self, now, dt):
+        if self.air_play_active and not self._air_returning and not self._air_play_allowed(now, continuing=True):
+            self._queue(Step("idle", 1.5), now=now, interrupt=True)
         step = self.step
         if step is None:
             self.mode = "air"
             return
-        if step.target_x is not None or step.target_y is not None:
+        if not self.bottom_peek:
+            # Screen and pet-size changes must not leave an unreachable old waypoint.
+            if step.target_x is not None:
+                step.target_x = self._clamp_x(step.target_x, edge_side=0)
+            if step.target_y is not None:
+                step.target_y = (self.floor if step.hold == "air_return" else
+                                 min(self.floor, max(self.ceiling + self.figure, step.target_y)))
+        if step.hold == "air_chase" and self._air_chase is not None:
+            self._track_air_cursor(dt)
+        elif step.target_x is not None or step.target_y is not None:
             progress = max(0.0, min(1.0, (now - self.step_started) / self._move_duration))
             eased = progress * progress * (3 - 2 * progress)
             for axis, origin, target in (("x", self._move_origin[0], step.target_x),
@@ -1290,13 +1343,16 @@ class PetBrain:
                     setattr(self, axis, origin + (target - origin) * eased)
         self.x = self._clamp_x(self.x)
         lower = self._bottom_target() if self.bottom_peek else self.floor
-        self.y = max(self.ceiling + self.figure, min(lower, self.y))
+        self.y = max(min(lower, self.ceiling + self.figure), min(lower, self.y))
+        self._resolve_air_reach(now)
+        step = self.step
         if self._step_done(now):
             if self.bottom_peek and self.y <= self.floor + 1.5 and step.target_y == self.floor:
                 self.bottom_peek = False
                 self.y, self.mode = self.floor, "ground"
             elif not self.bottom_peek and self.y >= self.floor - 1.5:
                 self.y, self.mode = self.floor, "ground"
+                self._air_chase, self._air_returning = None, False
             self._advance(now)
             if self.step is None and self.mode in ("fly", "bottom"):
                 self.mode = "air"
@@ -1887,6 +1943,113 @@ class PetBrain:
             if portal.closing is None:
                 portal.closing = now
 
+    def _air_play_allowed(self, now, *, continuing=False):
+        return (self.motion and not self.quiet and not self.attention and not self.chat_pending
+                and not self.game_active and not self.media and now >= self.agent_busy_until
+                and not (self.state_clip and now < self.state_until)
+                and self.mode in ("ground", "fly") and self._form() == "human"
+                and self.warp is None and self.clip not in ASLEEP
+                and (continuing or not self.air_play_active))
+
+    def _air_cursor_check(self, now, x, y):
+        if (not self._air_play_allowed(now) or not self.pointer.seen
+                or not self._has("air_play_reach") or not self._has("air_play_miss")
+                or not self._has("air_play_caught")
+                or now - self._air_chase_at < AIR_CHASE_COOLDOWN
+                or now - self._pounce_at < POUNCE_COOLDOWN
+                or self.floor - self.ceiling < self.figure * 2.4
+                or (self.mode == "ground" and self.posture() != "stand")):
+            self._air_jiggles.clear()
+            return
+        f = self.figure
+        dx, altitude = x - self.x, self.floor - y
+        if self.mode == "ground":
+            # A low wiggle in front of her still belongs to the ground pounce.
+            low_pounce = f * 0.55 <= abs(dx) <= f * 2.4 and -f * 0.1 <= altitude <= f * 1.6
+            nearby = not low_pounce and f * 1.15 <= altitude <= f * 3.2 and abs(dx) <= f * 2.4
+        else:
+            nearby = math.hypot(dx, y - (self.y - f * 0.65)) <= f * 1.8
+        if not nearby or not self.left <= x <= self.right or y < self.ceiling + f * 0.35:
+            self._air_jiggles.clear()
+            return
+        mx, my = x - self.pointer.x, y - self.pointer.y
+        if abs(mx) + abs(my) < 2:
+            return
+        px, py = self._air_jiggle_dir
+        if (px and mx and (px > 0) != (mx > 0)) or (py and my and (py > 0) != (my > 0)):
+            self._air_jiggles.append(now)
+        self._air_jiggle_dir = (mx or px, my or py)
+        if sum(now - t < 1.0 for t in self._air_jiggles) >= 3:
+            self._air_jiggles.clear()
+            self._start_air_chase(now, x, y)
+
+    def _air_target(self, x, y, origin):
+        f = self.figure
+        tx, ty = x - self.facing * f * AIR_HAND[0], y - f * AIR_HAND[1]
+        dx, dy = tx - origin[0], ty - origin[1]
+        distance = math.hypot(dx, dy)
+        if distance > f * AIR_CHASE_RANGE:
+            tx = origin[0] + dx * f * AIR_CHASE_RANGE / distance
+            ty = origin[1] + dy * f * AIR_CHASE_RANGE / distance
+        return self._clamp_x(tx, edge_side=0), max(self.ceiling + f, min(self.floor - f * 0.25, ty))
+
+    def _start_air_chase(self, now, x=None, y=None):
+        if (not self._air_play_allowed(now) or not self.pointer.seen
+                or not self._has("air_play_reach") or not self._has("air_play_miss")
+                or not self._has("air_play_caught")
+                or now - self._air_chase_at < AIR_CHASE_COOLDOWN):
+            return False
+        x, y = self.pointer.x if x is None else x, self.pointer.y if y is None else y
+        origin = (self.x, self.y)
+        if abs(x - self.x) > self.figure * 0.15:
+            self.facing = 1 if x > self.x else -1
+        _, height = self._air_target(x, y, origin)
+        flap = self._pick("fly", "fall", family="flap")
+        steps = []
+        if self.mode == "ground":
+            steps = [Step(self._pick("fly", "hop", family="takeoff")), Step(flap, target_y=height)]
+        steps += [Step(flap, AIR_CHASE_SECONDS, hold="air_chase"), Step("air_play_reach"),
+                  *self._air_return_steps(), Step("idle", 1.5)]
+        self._air_chase_at = self._pounce_at = now
+        self._chasing_prop = None
+        self.plan.clear()
+        self.step = None
+        self._queue(*steps, now=now)
+        self._air_chase = {"origin": origin, "caught": None}
+        self._advance(now)
+        return True
+
+    def _track_air_cursor(self, dt):
+        if abs(self.pointer.x - self.x) > self.figure * 0.15:
+            self.facing = 1 if self.pointer.x > self.x else -1
+        tx, ty = self._air_target(self.pointer.x, self.pointer.y, self._air_chase["origin"])
+        dx, dy = tx - self.x, ty - self.y
+        distance = math.hypot(dx, dy)
+        amount = min(1.0, 140 * self.scale * dt / distance) if distance else 0.0
+        self.x, self.y = self.x + dx * amount, self.y + dy * amount
+
+    def _air_hands(self):
+        return self.x + self.facing * self.figure * AIR_HAND[0], self.y + self.figure * AIR_HAND[1]
+
+    def _resolve_air_reach(self, now):
+        if (self._air_chase is None or self._air_chase["caught"] is not None
+                or self.clip != "air_play_reach" or self._frame(now)[1] < 2):
+            return
+        hx, hy = self._air_hands()
+        caught = self.pointer.seen and math.hypot(self.pointer.x - hx, self.pointer.y - hy) <= self.figure * AIR_CATCH_RADIUS
+        self._air_chase["caught"] = caught
+        if caught:
+            # A brief contact glint leaves the palms and face readable; rising
+            # hearts used to cover both before the satisfied hover could play.
+            self.particles.append(Particle("sparkle", AIR_HAND[0] * self.facing, AIR_HAND[1],
+                                           self.facing * 0.06, -0.04, now, 0.4))
+            # Show the closed palms for their full half-second, then acknowledge
+            # contact instead of playing the final empty-handed inspection.
+            self.step.duration = 1.5
+            self.plan.appendleft(Step("air_play_caught"))
+        else:
+            self.plan.appendleft(Step("air_play_miss"))
+
     def _pounce_check(self, now, x, y):
         """Wiggle the cursor just in front of her and she crouches, wiggles back and pounces."""
         if (not self.motion or self.quiet or self.attention or self.chat_pending or self.game_active
@@ -2094,6 +2257,8 @@ class PetBrain:
         if near and not p.near:
             p.since = now
         p.near = near
+        if not near or self.mode == "fly":
+            self._air_cursor_check(now, x, y)
         if not near:
             self._pounce_check(now, x, y)
         left, top, right, bottom = self.body_rect()
@@ -2167,6 +2332,8 @@ class PetBrain:
             if math.hypot(x - px, y - py) < 4:
                 return
             self._cancel_warp(now)
+            self._air_chase = None
+            self._air_returning = False
             self.mode = "drag"
             self._landing = None
             self._edge_exit = None
@@ -2530,7 +2697,7 @@ class PetBrain:
     def set_attention(self, value, now):
         """Toolbar or chat open: stop wandering and face the user."""
         value = bool(value)
-        if value and self.mode in ("fly", "bottom"):
+        if value and not self.attention and self.mode in ("fly", "bottom"):
             self._queue(Step("idle", 1.5), now=now, interrupt=True)
         if (value and not self.attention and self.mode == "ground"
                 and (self.clip == "walk" or self.edge_side) and not self._retreating()):

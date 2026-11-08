@@ -1413,6 +1413,7 @@ class PetWidget(QWidget):
         self._mask_key = None
         self._paint_key = None
         self._fx_dirty = False
+        self._cursor_passthrough = False
         self.chat_bar = self.activity_card = self.proposal_card = self.voice_card = None
         self.voice_factory, self.permission_request = voice_factory, permission_request
         self.voice_session = None
@@ -1603,6 +1604,17 @@ class PetWidget(QWidget):
 
     def _sync_windows(self, force=False):
         brain = self.brain
+        # A playful chase may overlap the pointer. Keep the real click directed
+        # at the user's app for the entire chase and return to the floor.
+        passthrough = brain.air_play_active
+        if passthrough != self._cursor_passthrough:
+            for window in (self, self.bubble):
+                visible = window.isVisible()
+                window.setWindowFlag(Qt.WindowType.WindowTransparentForInput, passthrough)
+                if visible:
+                    window.show()
+            self._cursor_passthrough = passthrough
+            force = True
         top, lift = self._window_top(round(brain.y - (self.pad_top + self.anchor_pt[1])))
         top_left = QPoint(round(brain.x - self.width() / 2), top)
         lifted, self.lift = lift != self.lift, lift

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add three airborne performances: a controlled breath of fire during flight,
+  a cursor-catching reach, and an empty-handed search. Reuse the satisfied hover
+  for a successful catch. High cursor wiggles invite a bounded chase; the contact
+  frame uses the real pointer position, then she returns to the floor. Keep low
+  cursor pounces and quiet accompaniment unchanged. The pet passes clicks through
+  to the underlying app during the chase.
+- Review emotion eligibility, story exposure and long-stay endings without
+  lowering mood thresholds or increasing story frequency. Record the measured
+  current mood, the limits of synthetic exposure runs, and which activities
+  already have endings in `docs/pet-air-play-2026-11-08.md`.
 - Correct edge hiding after the previous anchor-stability review missed body
   exposure: keep only the head and necessary hands visible at the top, including
   during micro-performances and sleep. On an explicit exit, hold the first prepare
