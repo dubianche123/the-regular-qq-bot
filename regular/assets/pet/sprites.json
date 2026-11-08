@@ -1461,6 +1461,42 @@
   "air_play_miss": {
    "file": "air_play_miss.webp",
    "frames": 4
+  },
+  "ending_work_clear": {
+   "file": "ending_work_clear.webp",
+   "frames": 4
+  },
+  "ending_work_pause": {
+   "file": "ending_work_pause.webp",
+   "frames": 4
+  },
+  "ending_ukulele_resolve": {
+   "file": "ending_ukulele_resolve.webp",
+   "frames": 4
+  },
+  "ending_ukulele_sour": {
+   "file": "ending_ukulele_sour.webp",
+   "frames": 4
+  },
+  "ending_kalimba_linger": {
+   "file": "ending_kalimba_linger.webp",
+   "frames": 4
+  },
+  "ending_kalimba_drowsy": {
+   "file": "ending_kalimba_drowsy.webp",
+   "frames": 4
+  },
+  "ending_ukulele_put_away": {
+   "file": "ending_ukulele_put_away.webp",
+   "frames": 4
+  },
+  "ending_work_put_away": {
+   "file": "ending_work_put_away.webp",
+   "frames": 4
+  },
+  "ending_kalimba_put_away": {
+   "file": "ending_kalimba_put_away.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -4378,6 +4414,78 @@
     -116,
     -306,
     94,
+    0
+   ]
+  },
+  "ending_work_clear": {
+   "bounds": [
+    -102,
+    -223,
+    83,
+    0
+   ]
+  },
+  "ending_work_pause": {
+   "bounds": [
+    -102,
+    -214,
+    83,
+    0
+   ]
+  },
+  "ending_ukulele_resolve": {
+   "bounds": [
+    -103,
+    -306,
+    87,
+    -1
+   ]
+  },
+  "ending_ukulele_sour": {
+   "bounds": [
+    -102,
+    -313,
+    100,
+    0
+   ]
+  },
+  "ending_kalimba_linger": {
+   "bounds": [
+    -106,
+    -278,
+    86,
+    0
+   ]
+  },
+  "ending_kalimba_drowsy": {
+   "bounds": [
+    -106,
+    -270,
+    86,
+    -1
+   ]
+  },
+  "ending_ukulele_put_away": {
+   "bounds": [
+    -103,
+    -305,
+    88,
+    0
+   ]
+  },
+  "ending_work_put_away": {
+   "bounds": [
+    -99,
+    -218,
+    80,
+    -1
+   ]
+  },
+  "ending_kalimba_put_away": {
+   "bounds": [
+    -101,
+    -262,
+    87,
     0
    ]
   }
