@@ -1,192 +1,81 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-11-08
 
-- Add nine object-specific activity endings: two outcomes and one put-away sequence
-  each for the laptop, ukulele and kalimba. Keep the four existing main loops and
-  their 45–90-second stays; the curated long-stay pool remains 34. Match exact clip
-  names and the existing seated/standing/seated poses, rather than the shared
-  instrument family. Put-away sequences finish empty-handed.
-- Adopt all nine ending sheets. The library now contains 372 WebP strips /
-  1,482 frames (37,511,196 bytes), 329 repertoire definitions and three same-strip
-  aliases, giving 332 available items. Native validation is recorded separately.
-- Keep quiet accompaniment dominant: try at most one emotional result on 28% of
-  ordinary stays or 18% in quiet mode, then apply mood, energy and sleepiness.
-  Repeated or unavailable results fall back to quiet cleanup without promoting a
-  rarer emotion. Missing cleanup art leaves the original activity intact. These
-  local endings do not claim completion of real QQ, panel or chat work.
-- When manually changing a programme, put the current laptop or instrument away
-  once. Preserve an already playing result or cleanup and its original frame
-  clock; repeated requests only replace what follows. Keep real state/agent/chat
-  holds separate. Adoption and native validation are tracked in
-  `docs/pet-activity-endings-2026-11-08.md`.
-- Add three airborne performances: a controlled breath of fire during flight,
-  a cursor-catching reach, and an empty-handed search. Reuse the satisfied hover
-  for a successful catch. High cursor wiggles invite a bounded chase; the contact
-  frame uses the real pointer position, then she returns to the floor. Keep low
-  cursor pounces and quiet accompaniment unchanged. The pet passes clicks through
-  to the underlying app during the chase.
-- Review emotion eligibility, story exposure and long-stay endings without
-  lowering mood thresholds or increasing story frequency. Record the measured
-  current mood, the limits of synthetic exposure runs, and which activities
-  already have endings in `docs/pet-air-play-2026-11-08.md`.
-- Correct edge hiding after the previous anchor-stability review missed body
-  exposure: keep only the head and necessary hands visible at the top, including
-  during micro-performances and sleep. On an explicit exit, cast at the hidden
-  position while the entrance and floor exit grow open from zero. The release
-  starts with the same head-only exposure, then she lets go and turns into the
-  open portal. Remove the earlier 0.4-second body reveal before casting. Side
-  dozing now reuses the closed-eye peek
-  frames, while the full-body curled sleep stays archived and no longer triggers
-  automatic slips. These corrections do not add or redraw asset strips.
-- Let “换个节目” use the natural activity selector and its existing story gate
-  instead of forcing a short scene. Across 100 identical seeded starting states,
-  the manual median changes from 4.00 seconds to the natural 66.29 seconds; both
-  entrances now select the same sequence in all 100 cases. Sprite FPS is unchanged.
-  Native recordings compare the actual Qt toolbar button with natural selection:
-  both schedule the same programme and show the same 30 frame changes over 16 seconds.
-- Preserve the earlier native exposure review: the body stayed outside while
-  hidden, but the top exit still revealed it before casting. That stage passed
-  275 tests / 1,061 subtests across six directly related files, with two existing
-  Qt teardown warnings. `/private/tmp/regular-edge-peek-20261108/` remains historical
-  evidence for hiding, not validation of the revised top exit order. Separate
-  awake and sleep/wake exit recordings and current results are tracked in
-  `docs/pet-air-play-2026-11-08.md`; earlier history remains in
-  `docs/pet-performance-2026-11-08.md`.
-- Give daily performances distinct physical endings: hug a closed book to sleep,
-  leave the last cookie for you, shelter a lamp, cool a second cup, rediscover a
-  keepsake, make room beside her, release a treasured gem, prepare for an audience,
-  leave a painting as a gift, or put a lost game down. Joy, sadness, curiosity and
-  quiet company use her body and tail instead of only changing her face. Keep the
-  existing story frequency; the new quiet seated loop brings the curated long-stay
-  pool to 34.
-- Keep feeding within one new four-frame strip: expect, receive, bite and respond
-  contentedly. A delayed care receipt continues that one feeding instead of replaying
-  it or switching to a shorter-bodied cookie pose.
-- Keep bottom sleep and waking attached to their authored support; preserve hidden
-  exposure at the other edges and wake by reversing the same sleep entry. Add
-  occasional supported edge micro-performances, then return
-  to the original peek without postponing sleep. Open the top portal with both palms
-  at the chest before releasing and turning into it. A normal portal landing may
-  stumble and recover (18%), never on consecutive trips.
-- Record six daily scenes and all four awake edge performances in native Cocoa
-  windows with real elapsed time, including the delayed feeding receipt. Capture
-  only QA-owned Qt windows and log actual native positions; moving edge anchors
-  stay within 0.5 pixels. Recordings after the bubble fix confirm unobstructed
-  hair, horns and eyes, all four sleep/wake transitions, and every top turn frame. See
-  `docs/pet-performance-2026-11-08.md` for adopted art and evidence. This earlier
-  review missed that the top and curled side sleep exposed too much of the body;
-  stable anchors did not establish correct hiding.
-- Keep speech bubbles clear of the sprite's actual alpha contour under the same
-  rendering transform, including lying poses and protruding hair. Check all four
-  edges, three sizes and three wake frames for pixel overlap. The related suite
-  passed 280 tests / 939 subtests; after the final bubble change, the complete Qt
-  file passed 56 tests / 62 subtests. Each run had two existing Qt teardown warnings.
-- Curate daily accompaniment from 92 eligible loops to 33, while retaining the
-  full asset archive for explicit states and story endings. Keep the existing
-  story cooldown and use its slots for complete character episodes. Reading and
-  treasure gain quiet outcomes; a rematch can still be lost, and a painting is
-  revealed once. Prefer different recent endings instead of more frequent shows.
-- Preserve the loop constraint when reshuffling a long stay. Previously a short
-  one-shot could replace a loop and freeze on its last frame for 45–90 seconds.
-  Return from non-candy dragon scenes without inventing a candy in her hand.
-- Add 34 character scenes woven into daily life rather than a separate menu: sharing
-  half a cookie, showing off a little flame after a head pat, hot tea, game
-  wins and losses, painting do-overs, dozing over a comic, folding chair and sofa
-  stays, a cursor pounce that misses, and greeting you through the "glass". Each beat
-  holds its key poses (about three seconds) instead of freezing on the last frame.
-  Furniture comes out about every half hour; whole scenes no longer take every other
-  pick.
-- Redraw her dragon form as a round chibi dragon that keeps her face, hair, horns,
-  flower clip and scarf. A puff of cloud hides each change, so no half-human frames
-  are drawn; she hops, tries to fly and flops, cannot unwrap a candy with her paws,
-  curls around her treasure or chases her tail, then puffs back and tidies her hair.
-  It happens at most every 25 minutes, and a cue, poke or drag turns her back at once.
-- Bring every strip back to the idle head size: four new scenes had heads 1.2–1.3x
-  too large and several others about 10% off; frames are rescaled about the feet (or
-  the grip on screen-edge strips) and checked side by side against idle.
-- Library: 360 WebP strips / 1,434 frames (36,527,434 bytes), with 43 legacy strips,
-  317 repertoire definitions and two same-strip aliases (book sleep and side doze),
-  giving 319 available repertoire items. This follow-up
-  adopts 15 daily and 8 edge sheets; see `docs/pet-performance-2026-11-08.md`.
+### Highlights
 
-- Keep macOS pet windows above ordinary app windows across Spaces, applying
-  native level and full-screen auxiliary flags on show/handle changes without
-  activating the app. Preserve the portal and control layer order.
-- Add wing-assisted exits from the sides and bottom: anticipate, hop along a
-  real arc, then fold wings on landing. From the top, turn upright and sink
-  through a nearby magic circle, then emerge from its counterpart on the floor.
-- Let her doze while hidden at any edge. A click wakes her briefly before the
-  exit; hovering and QQ events keep her in the hiding place.
-- Earlier edge sleep implementation: keep hidden peeks still while her eyes follow
-  the cursor. Enter supported
-  sleep once, then loop only settled frames: cheek on sleeves or a pillow at
-  the bottom, curled against a side, or wrapped in wings like a hanging bat.
-  Side sleepers could rarely slip and catch themselves with a wingbeat. The current
-  correction above retires automatic curled side sleep and slips, and keeps the
-  top sleeper's body hidden.
-- Clear the actual native clipping mask when leaving the top edge, including
-  while the window's menu-bar offset is changing.
-- Give the desktop pet real magic. She draws a turning rune circle under her
-  feet, a second one opens elsewhere, and she jumps in and pops out of the far
-  circle; sometimes it opens just under the menu bar and she drops from there.
-  The circles are two click-through windows (far half behind her, near half in
-  front) and she is clipped at the plane as she sinks and rises. Ask for it from
-  More → 变个魔法; she also casts now and then, slips away when poked a lot, and
-  teleports to the cursor when someone @-mentions her and the pointer is far.
-  Casting stays interruptible until she jumps; nothing about it needs a model call.
-- Stage group work as three-part performances: while 小团团 draws in QQ she
-  conjures a floating canvas and paints, then turns the finished canvas round when
-  the picture is delivered; a QQ search opens a floating tome and ends on “找到了”.
-- Add a fire sneeze (sometimes it accidentally teleports her) and a cat-like
-  pounce when the cursor wiggles in front of her. Eight new performance sheets,
-  head-calibrated like the rest; the prop library now fills about a third to a
-  half of the day instead of most of it, and pokes no longer trigger palm flames.
-- Extend everyday life, dragon magic, treasure, toys and movement with shuffled
-  four-frame action pools.
-  Shuffled action pools and short routines reduce repetition during long sessions.
-- Add 12 sleeping variations and 14 reply actions. Mood, energy and time of day
-  shape her replies; a cheerful pet can fly while replying in QQ, while local
-  text chat keeps her nearby. New sleep poses retain the nap cooldown.
-- Add varied walking, bounded flight and landing, reactions while held against
-  the top or bottom, upward-throw collisions, and peeking from screen edges.
-  Redraw peeking hands and hide the supporting guide behind the screen edge.
-- Keep character scale stable across poses using a roomier transparent canvas.
-  Ceiling reactions no longer pause gravity. Releasing her at any screen edge
-  hides her there until a click or drag brings her back.
-- Recalibrate all 279 strips to one head size. The previous skin-colour and
-  hair-width estimate left strips between 0.7x and 1.3x of the idle head, so
-  she grew about 20% when hovering or waving and shrank when landing, sitting
-  or sleeping. `tools/pet_sprites.py calibrate` and `build` now match the idle
-  head itself (multi-scale normalized cross-correlation, mirrored, rotated
-  for lying poses), and fall back to the strip's sheet family when a face is
-  hidden.
-- Keep the pet window below the macOS menu bar and draw her higher inside it.
-  macOS pins a frameless window's top edge there, so near the top she used to
-  stop about 150 pt short, hang briefly and then jump; the effects layer had
-  the same problem.
-- Paint the generated support pole out of the five edge-peek strips instead of
-  only hiding it behind the screen edge; it flashed in magenta while the frame
-  dissolved after she popped out.
-- Let quiet activities stay longer and interleave ordered stories such as
-  boiling water, pouring and drinking tea. Feeding, gentle surprise reactions,
-  sleep variations and occasional toy chasing use the adopted repertoire.
-- Reflect actual image inspection and voice recognition alongside existing
-  search, drawing and voice-generation activity. Finished work releases its
-  matching state, including overlapping tasks.
-- Replace the ring's high-five entry with “next activity”. Keep ordinary taps
-  as small reactions, with rare surprises rather than frequent flower tricks.
-- Limit persistent toys to two. Balls, coins and diamond-shaped gems support
-  dragging, throwing and returning; the pet can kick or collect them herself.
-  Decorative sparkles fade quickly and let mouse input pass through.
-- Remove whole-sprite breathing, press and landing scaling. Redraw five wingbeat
-  strips and phase flight into preparation, flapping, gliding and landing, with
-  eased screen-edge movement.
-- Add local Codex and Claude Code hook adapters for reply-completion and
-  permission cues, with a `pet-notify` command and setup examples.
-- Decode sprite strips on demand with bounded caches, so the larger library
-  does not require loading every animation into memory at startup. Document
-  the adopted repertoire, generation prompts and offline visual checks.
+- The desktop pet has a daily life of her own. Activities end the way real ones do:
+  she laughs at a comic or slips in a bookmark, wins or loses at her handheld and
+  sometimes asks for a rematch, finishes a painting or redoes a stroke, then puts the
+  laptop or instrument away. Character scenes appear between quiet stays instead of
+  behind a menu: she shares half a cookie, shows off a small flame after a head pat,
+  burns her tongue on tea she heated with her own fire, dozes over a book, pulls out
+  a folding chair or sofa, or greets you through the "glass".
+- She can turn into a round chibi dragon with her own face, hair, horns and scarf. A
+  puff of cloud hides the change; she hops, tries to fly and flops, cannot unwrap a
+  candy with her paws, curls around her treasure or chases her tail, then puffs back.
+  It is a rare natural visit; when she is awake and free, More → 变个魔法 prioritises
+  it on the first successful request.
+- Her dragon abilities solve small wishes: frosty breath for a warm cola, a tiny
+  flame for a marshmallow, warm breath for a damp scarf, a floating brush for the
+  tail she cannot reach, gold thread for a torn book corner. Requested portals take
+  her to a real toy ball or treasure across the screen. She also uses portals to
+  answer a call near a far-away cursor or leave the top edge; a sneeze can still
+  send her through one by accident.
+- Flight takes off on a diagonal, flaps the whole way, banks with its speed and
+  reaches for the floor before touching down. In the air she may breathe a small
+  flame or chase a cursor wiggling near her.
+- Released at any of the four screen edges she hides her body and peeks in, with
+  small moments while hidden: her tail waves first, she listens, yawns or dozes.
+  Lift her high and let go, and she sometimes goes weak at the knees after landing
+  and hugs her wings for courage: she can fly, but heights still get to her.
+- Transparent pixels pass clicks to the window underneath. Her visible body remains
+  interactive during ordinary activities; cursor chases pass clicks through as well.
+  The window no longer flickers when the pointer crosses her outline.
+- Codex and Claude Code hooks (`regular pet-notify`) let her call you when an agent
+  finishes a turn; Claude Code permission requests can notify her too.
+
+### Details
+
+- Library: 377 WebP strips / 1,502 frames (37.9 MB), 334 repertoire definitions and
+  339 playable items. Strips are decoded on demand with bounded caches.
+- New and revised strips are calibrated against the idle head and checked side by
+  side; edge-gripping strips scale about the grip so her hand stays on
+  the edge. Falls, landings and the berry snack were redrawn where the body, not the
+  head, had been drawn too short.
+- Character bible in `docs/character.md`: how to recognise her in both forms, her
+  traits, which trigger shows which trait, pacing, and the rules for drawing new art.
+- Pacing: one-shot scenes hold their key poses (about three seconds per beat) instead
+  of freezing on the last frame. Whole scenes stay occasional (at least 180 seconds
+  and two quiet stays apart); furniture comes out about every half hour; the dragon
+  has at least 25 minutes between automatic appearances, waits through the first
+  ten minutes after launch, and stays human with "待在原地" on or low energy.
+  These are eligibility gates, not a fixed schedule; manual magic can request the
+  dragon sooner. Recent endings are avoided rather than shown more often.
+- "换个节目" (the ring's first button, which replaced the high-five game) picks the
+  next activity with the same rules as natural selection. It first puts away the
+  current laptop, instrument or furniture, once, even under repeated clicks.
+- Feeding is one continuous strip: she looks up, takes the cookie, bites and answers;
+  a delayed care receipt continues it instead of replaying it. Sharing her own cookie
+  or leaving the last one for you is a separate everyday scene.
+- Edges: only the head and necessary hands stay visible while hidden, including sleep
+  and micro-performances. A click wakes her by reversing the same sleep frames. From
+  the top she opens both portals while still peeking, then lets go and turns into
+  them. Full-body side sleep is retired.
+- Group work is staged in three parts: drawing in QQ conjures a floating canvas that
+  she turns round when the picture is delivered; a search opens a floating tome that
+  ends on "找到了"; image reading and voice recognition have their own actions.
+- Speech bubbles avoid the sprite's actual outline, including lying poses and hair.
+- macOS: the pet stays above ordinary windows across Spaces and below the menu bar,
+  and portals keep their layer order. Input pass-through is changed in place, so the
+  window is never hidden and re-shown.
+- Fix: a reshuffled long stay could swap a loop for a one-shot that then froze for
+  45–90 seconds. Fix: returning from the dragon no longer invents a candy in her hand.
+- Generation prompts for every adopted strip live next to its spec in
+  `regular/pet_actions_*.py`; see the dated [performance](docs/pet-performance-2026-11-08.md),
+  [flight](docs/pet-air-play-2026-11-08.md), [activity endings](docs/pet-activity-endings-2026-11-08.md),
+  [everyday magic](docs/pet-purpose-magic-2026-11-08.md), and
+  [hover visibility](docs/pet-hover-visibility-2026-11-08.md) review notes.
 
 ## 0.5.1 — 2026-11-07
 
