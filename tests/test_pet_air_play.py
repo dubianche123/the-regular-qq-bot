@@ -60,7 +60,9 @@ def test_natural_flight_adds_only_one_rare_fire_with_its_own_cooldown():
         assert not any(s.clip == "air_play_fire" for s in b._flight_steps(AIR_FIRE_COOLDOWN - .1))
         assert any(s.clip == "air_play_fire" for s in b._flight_steps(AIR_FIRE_COOLDOWN))
     fire = next(s for s in first if s.clip == "air_play_fire")
-    assert 0 < abs(fire.target_x - b.x) <= b.figure
+    ascent, landing = first[1], first[-2]
+    assert min(ascent.target_x, landing.target_x) < fire.target_x < max(ascent.target_x, landing.target_x)
+    assert 0 < abs(fire.target_x - ascent.target_x) <= b.figure * 1.3
     assert fire.target_y < b.floor and first[-2].hold == "air_return"
     with patch.object(b.rng, "random", return_value=.21):
         assert not any(s.clip == "air_play_fire" for s in b._flight_steps(2 * AIR_FIRE_COOLDOWN))

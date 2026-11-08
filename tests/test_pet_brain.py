@@ -931,10 +931,14 @@ class InteractionTest(unittest.TestCase):
             b.step = Step("motion_fly_glide", target_x=700 + direction * 200, target_y=500)
             b._move_origin, b._move_duration, b.step_started = (700, 500), 2, 0
             b._set_clip("motion_fly_glide", 0, restart=True)
-            transform = b.transform(1)
-            self.assertAlmostEqual(transform["rot"], direction * 5)
-            self.assertEqual((transform["sx"], transform["sy"]), (1, 1))
             self.assertAlmostEqual(b.transform(0)["rot"], 0)
+            for frame in range(1, 61):
+                b._fly(frame / 60, 1 / 60)
+            transform = b.transform(1)
+            self.assertGreater(transform["rot"] * direction, 0)
+            self.assertLessEqual(abs(transform["rot"]), 12)
+            self.assertEqual((transform["sx"], transform["sy"]), (1, 1))
+            b._fly(2, 1 / 60)
             self.assertAlmostEqual(b.transform(2)["rot"], 0)
 
     def test_edge_sleep_entry_runs_once_on_a_fixed_support(self):

@@ -5,7 +5,7 @@ from importlib.resources import files
 import json
 from collections import deque
 
-from regular.pet_actions_motion import ACTIONS as MOTION
+from regular.pet_actions_motion import ACTIONS as MOTION, PLAYBACK_ALIASES as MOTION_ALIASES
 from regular.pet_actions_dragon import ACTIONS as DRAGON
 from regular.pet_actions_life import ACTIONS as LIFE
 from regular.pet_actions_boundary import ACTIONS as BOUNDARY, PLAYBACK_ALIASES as BOUNDARY_ALIASES
@@ -18,7 +18,7 @@ from regular.pet_actions_air_play import ACTIONS as AIR_PLAY, PLAYBACK_ALIASES a
 from regular.pet_actions_endings import ACTIONS as ENDINGS
 
 ACTIONS = {**MOTION, **DRAGON, **LIFE, **BOUNDARY, **SPELL, **SCENES, **FORM, **DAILY, **EDGE_DAILY, **AIR_PLAY, **ENDINGS}
-PLAYBACK_ALIASES = {**DAILY_ALIASES, **BOUNDARY_ALIASES, **AIR_PLAY_ALIASES}
+PLAYBACK_ALIASES = {**MOTION_ALIASES, **DAILY_ALIASES, **BOUNDARY_ALIASES, **AIR_PLAY_ALIASES}
 
 # The archive is not a playlist. Pick performances, not a quota per prop family.
 # Scripted endings still use the full catalog.

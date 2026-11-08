@@ -394,6 +394,7 @@ class PetBrain:
         self._next_pending = False
         self._move_origin = (0.0, 0.0)
         self._move_duration = 1.0
+        self._flight_vx = 0.0
         self._hide_origin = (0.0, 0.0)
         self._hide_started = now
         self._hide_duration = 1.0
@@ -703,11 +704,10 @@ class PetBrain:
                 rot = 0.0 if self._grab and self._grab.get("boundary") else self.swing
             elif self.mode == "air":
                 rot = max(-16.0, min(16.0, self.vx * 0.01))
-            elif (self.mode == "fly" and self.step is not None and self.step.target_x is not None
-                  and self.repertoire.actions.get(self.clip, {}).get("family") == "glide"):
-                progress = max(0.0, min(1.0, (now - self.step_started) / self._move_duration))
-                delta = self.step.target_x - self._move_origin[0]
-                rot = (5.0 if delta > 0 else -5.0 if delta < 0 else 0.0) * math.sin(math.pi * progress)
+            elif self.mode == "fly":
+                # Bank with actual travel, including powered wingbeats and a
+                # cursor chase. A stationary reply/reach stays upright.
+                rot = max(-12.0, min(12.0, self._flight_vx / max(self.scale, 0.01) * 0.12))
         return {"sx": sx, "sy": sy, "rot": rot, "dy": self._hop_offset(now) + self._jolt_offset(now),
                 "pivot": "hands" if self.clip == "dangle" else "feet"}
 
@@ -761,7 +761,7 @@ class PetBrain:
                     side = -1 if self.x < target else 1
                     steps = (Step("walk", target_x=target, edge_side=side), *steps)
             elif self.mode in ("fly", "bottom"):
-                descent = self._air_return_steps() if interrupted_air_play else [Step(self.clip, target_y=self.floor)]
+                descent = self._air_return_steps() if self.mode == "fly" else [Step(self.clip, target_y=self.floor)]
                 steps = (*descent, *steps)
             self.plan.clear()
             self.step = None
@@ -786,6 +786,7 @@ class PetBrain:
     def _advance(self, now):
         self.step = self.plan.popleft() if self.plan else None
         self.step_started = now
+        self._flight_vx = 0.0
         if self.mode == "ground" and not self.edge_side:
             self.x = self._clamp_x(self.x)
         if self.step is None:
@@ -794,6 +795,13 @@ class PetBrain:
             return
         if self._role(self.step.clip) == "bottom":
             self.bottom_peek = True
+        if self.step.hold == "air_return" and self.step.target_x is None and not self.bottom_peek:
+            # A chase may have travelled since this return leg was planned.
+            offset = self.figure * 0.55
+            target = self._clamp_x(self.x + self.facing * offset, edge_side=0)
+            if abs(target - self.x) < self.figure * 0.2:
+                target = self._clamp_x(self.x - self.facing * offset, edge_side=0)
+            self.step.target_x = target
         if self.step.target_y is not None:
             self.mode = "bottom" if self.bottom_peek else "fly"
             self._move_origin = (self.x, self.y)
@@ -807,7 +815,9 @@ class PetBrain:
             self.facing = 1 if self.step.target_x >= self.x else -1
         elif self.step.edge_side and (self.step.clip == "edge_peek" or self._role(self.step.clip) == "edge"):
             self.facing = -self.step.edge_side
-        self._set_clip(self.step.clip, now, restart=True)
+        keep_wingbeat = (self.mode == "fly" and self.step.clip == self.clip and CLIPS[self.clip][3]
+                         and self.repertoire.actions.get(self.clip, {}).get("family") == "flap")
+        self._set_clip(self.step.clip, now, restart=not keep_wingbeat)
         if self.step.clip in DRAGON_TRICKS:
             self._dragon_recent.append(self.step.clip)
         if self.step.clip == "warp_cast":
@@ -900,9 +910,9 @@ class PetBrain:
             height = max(self.ceiling + self.figure, self.floor - self.figure * 1.2)
             prep = self._pick("fly", "hop", family="takeoff")
             flap = self._pick("fly", "fall", family="flap")
-            land = self._pick("fly", "land", family="landing")
+            land = self._powered_landing()
             return [Step(prep), Step(flap, target_y=height), Step(clip, hold="state"),
-                    Step(flap, target_y=self.floor), Step(land), Step("idle", 1)]
+                    Step(flap, target_y=self.floor, hold="air_return"), Step(land), Step("idle", 1)]
         return [Step(clip, hold="state"), Step("idle", 1)]
 
     def _choose(self, now):
@@ -1064,27 +1074,37 @@ class PetBrain:
         return [Step(choice)]
 
     def _flight_steps(self, now):
-        height = max(self.ceiling + self.figure, self.floor - self.figure * self.rng.uniform(1.2, 2.5))
+        clearance = self.floor - self.ceiling - self.figure * 1.1
+        if clearance < self.figure * 0.4:
+            return [Step("idle", 2)]
+        height = self.floor - min(clearance, self.figure * self.rng.uniform(0.9, 1.6))
         direction = 1 if self.x < (self.left + self.right) / 2 else -1
-        target = self._clamp_x(self.x + direction * self.rng.uniform(1.2, 2.2) * self.figure)
+        target = self._clamp_x(self.x + direction * self.rng.uniform(2.2, 3.4) * self.figure)
+        travel = target - self.x
+        if abs(travel) < self.figure * 0.5:
+            return [Step("idle", 2)]
+        self.facing = direction          # Look toward the route before taking off.
         prep = self._pick("fly", "hop", family="takeoff")
         flap = self._pick("fly", "fall", family="flap")
-        glide = self._pick("fly", flap, family="glide")
-        land = self._pick("fly", "land", family="landing")
-        cruise = []
+        land = self._powered_landing()
+        cruise = flap                    # Old glide art has standing legs and tiny static wings.
         if (self._air_play_allowed(now) and self._has("air_play_fire")
                 and now - self._air_fire_at >= AIR_FIRE_COOLDOWN and self.rng.random() < 0.2):
             self._air_fire_at = now
-            fire_target = self._clamp_x(self.x + direction * min(abs(target - self.x), self.figure))
-            cruise.append(Step("air_play_fire", target_x=fire_target, target_y=height))
-        cruise.append(Step(glide, target_x=target,
-                           target_y=max(self.ceiling + self.figure, height - self.figure * 0.2)))
-        return [Step(prep), Step(flap, target_y=height), Step(flap, 1.5), *cruise,
-                Step(flap, target_y=self.floor, hold="air_return"), Step(land)]
+            cruise = "air_play_fire"
+        return [Step(prep), Step(flap, target_x=self.x + travel * 0.32, target_y=height),
+                Step(cruise, target_x=self.x + travel * 0.68,
+                     target_y=max(self.ceiling + self.figure * 1.1, height - self.figure * 0.08)),
+                Step(flap, target_x=target, target_y=self.floor, hold="air_return"), Step(land)]
 
     def _air_return_steps(self):
         return [Step(self._pick("fly", "fall", family="flap"), target_y=self.floor, hold="air_return"),
-                Step(self._pick("fly", "land", family="landing"))]
+                Step(self._powered_landing())]
+
+    def _powered_landing(self):
+        if self._has("motion_fly_approach") and self._has("motion_fly_settle"):
+            return "motion_fly_settle"
+        return self._pick("fly", "land", family="landing")
 
     def _stroll(self):
         """A few steps nearby, rather than a long trip across the whole screen."""
@@ -1350,6 +1370,7 @@ class PetBrain:
             if step.target_y is not None:
                 step.target_y = (self.floor if step.hold == "air_return" else
                                  min(self.floor, max(self.ceiling + self.figure, step.target_y)))
+        previous_x = self.x
         if step.hold == "air_chase" and self._air_chase is not None:
             self._track_air_cursor(dt)
         elif step.target_x is not None or step.target_y is not None:
@@ -1362,6 +1383,15 @@ class PetBrain:
         self.x = self._clamp_x(self.x)
         lower = self._bottom_target() if self.bottom_peek else self.floor
         self.y = max(min(lower, self.ceiling + self.figure), min(lower, self.y))
+        self._flight_vx = (self.x - previous_x) / dt if dt > 0 else 0.0
+        if (step.hold == "air_return" and not self.bottom_peek
+                and 0 < self.floor - self.y <= self.figure * 0.18
+                and self.plan and self.plan[0].clip == "motion_fly_settle"
+                and self._has("motion_fly_approach") and self.clip != "motion_fly_approach"):
+            # Change only the picture near contact. The return leg keeps its
+            # original route and clock; its grounded sequel starts at frame 1.
+            step.clip = "motion_fly_approach"
+            self._set_clip(step.clip, now, restart=True)
         self._resolve_air_reach(now)
         step = self.step
         if self._step_done(now):

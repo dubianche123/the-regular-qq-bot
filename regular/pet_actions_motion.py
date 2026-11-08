@@ -262,3 +262,18 @@ ACTIONS["motion_fly_land"]["prompt"] += (
     "is not a smaller copy of frame 1. Knee bending changes joint angles only, "
     "never the scale of the head or torso. Fixed camera; four equal-size characters."
 )
+
+# This corrected sheet has an airborne reach followed by three grounded beats.
+# Reuse its exact pixels and geometry on the corresponding side of touchdown.
+PLAYBACK_ALIASES = {
+    "motion_fly_approach": {
+        "strip": "motion_fly_land", "title": "接地前伸腿收势",
+        "starts_from": "air", "posture": "air", "role": "fly", "family": "approach",
+        "fps": 4, "loop": False, "sequence": [0], "duration": 0.25, "automatic": False,
+    },
+    "motion_fly_settle": {
+        "strip": "motion_fly_land", "title": "接地缓冲再收翼",
+        "starts_from": "air", "posture": "stand", "role": "fly", "family": "landing",
+        "fps": 4, "loop": False, "sequence": [1, 2, 3], "duration": 0.75, "automatic": False,
+    },
+}
