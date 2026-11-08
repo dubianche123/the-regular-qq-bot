@@ -92,12 +92,14 @@ class DesktopPetTest(unittest.TestCase):
             pet._sync_windows()
             self.assertEqual(pet.x(), position.x() + 20)
             active.return_value = False
-            pet._sync_windows()
+            inside = self._input_point(pet)
+            with patch.object(desktop_pet.QCursor, "pos", return_value=pet.pos() + inside):
+                pet._sync_windows()
             self.assertFalse(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput)
             self.assertFalse(pet.bubble.windowFlags() & Qt.WindowType.WindowTransparentForInput)
             self.assertTrue(pet.isVisible())
 
-    def test_top_descent_clears_the_real_clip_mask_when_lift_invalidates_the_cache(self):
+    def test_top_descent_updates_the_silhouette_when_lift_invalidates_the_cache(self):
         pet, brain = self.pet, self.pet.brain
         pet.show()
         brain.set_ground(0, 1728, 1080, 33)
@@ -106,6 +108,7 @@ class DesktopPetTest(unittest.TestCase):
         brain._set_clip("fall", self.t[0], restart=True)
         pet._sync_windows(force=True)
         self.assertFalse(pet.mask().isEmpty())
+        old_mask = pet.mask()
 
         before = pet.lift
         # She has fully entered the screen, but her native window is still pinned
@@ -114,11 +117,88 @@ class DesktopPetTest(unittest.TestCase):
         pet._sync_windows(force=True)
         self.assertGreater(pet.lift, 0)
         self.assertNotEqual(pet.lift, before)
-        self.assertTrue(pet.mask().isEmpty())
+        self.assertFalse(pet.mask().isEmpty())
+        self.assertNotEqual(pet.mask(), old_mask)
+        self.assertEqual(pet.mask(), pet._input_region)
+        self.assertFalse(pet.mask().contains(QPoint(10, 10)))
         brain.mode, brain.y = "ground", brain.floor
         brain._set_clip("idle", self.t[0], restart=True)
         pet._sync_windows(force=True)
         self.assertFalse(pet.mask().isEmpty())
+
+    def _input_point(self, pet):
+        bounds = pet._input_region.boundingRect()
+        return next(QPoint(x, y) for y in range(bounds.top(), bounds.bottom() + 1)
+                    for x in range(bounds.left(), bounds.right() + 1)
+                    if pet._input_region.contains(QPoint(x, y)))
+
+    def test_native_input_is_transparent_over_padding_but_keeps_visible_character_and_press(self):
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        brain._queue(Step("idle", 60), now=self.t[0], interrupt=True)
+        pet._sync_windows(force=True)
+        inside = self._input_point(pet)
+        blank = QPoint(8, 8)
+        self.assertFalse(pet._input_region.contains(blank))
+        for local, expected in ((blank, True), (inside, False), (blank, True)):
+            with patch.object(desktop_pet.QCursor, "pos", return_value=pet.pos() + local):
+                pet._sync_windows()
+            self.assertEqual(bool(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput), expected)
+            self.assertEqual(pet.cursor().shape(), Qt.CursorShape.ArrowCursor if expected
+                             else Qt.CursorShape.OpenHandCursor)
+            self.assertFalse(pet.bubble.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+            self.assertTrue(pet.isVisible())
+        # After a valid press the pointer may leave the art; do not lose the
+        # mouse-up or interrupt a drag while it passes through transparent pixels.
+        point = pet.pos() + inside
+        brain.press(self.t[0], point.x(), point.y())
+        with patch.object(desktop_pet.QCursor, "pos", return_value=pet.pos() + blank):
+            pet._sync_windows()
+            self.assertFalse(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+            brain.release(self.t[0] + .1, point.x(), point.y())
+            pet._sync_windows()
+            self.assertTrue(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+
+    def test_air_rotation_jump_and_dissolve_keep_a_visible_pixel_mask(self):
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        brain.set_ground(0, 1440, 860, 33)
+        brain.x, brain.y = 700, 600
+        for mode, clip, rotation, dy, fade in (
+                ("air", "motion_fall_flutter", 16, 0, None),
+                ("drag", "motion_drag_hug", -23, 0, None),
+                ("fly", "motion_fly_flap_slow", 5, 0, None),
+                ("ground", "hop", 0, -40, None),
+                ("ground", "stand_up", 0, 0, (desktop_pet.CLIPS["sit_down"][0], 1, False, .5))):
+            with self.subTest(mode=mode, clip=clip):
+                brain.mode = mode
+                brain._set_clip(clip, self.t[0], restart=True)
+                strip, frame, mirrored, transform = brain.pose()
+                transform.update(rot=rotation, dy=dy, fade=fade)
+                with patch.object(brain, "pose", return_value=(strip, frame, mirrored, transform)):
+                    pet._sync_windows(force=True)
+                    image = pet.grab().toImage()
+                self.assertFalse(pet.mask().isEmpty())
+                self.assertFalse(pet.mask().contains(QPoint(10, 10)))
+                opaque, missed = 0, 0
+                for y in range(0, image.height(), 3):
+                    for x in range(0, image.width(), 3):
+                        if image.pixelColor(x, y).alpha() > 220:
+                            opaque += 1
+                            missed += not pet._input_region.contains(QPoint(x, y))
+                self.assertGreater(opaque, 300)
+                self.assertLess(missed / opaque, .025)
+
+    def test_fully_hidden_portal_frame_passes_input_without_creating_a_rectangle(self):
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        brain.mode, brain.y = "warp", 600
+        brain._set_clip("idle", self.t[0], restart=True)
+        # The portal keeps only pixels below a plane below the entire window.
+        with patch.object(brain, "portal_clip", (brain.y + 1000, "above")):
+            pet._sync_windows(force=True)
+            self.assertTrue(pet._input_region.isEmpty())
+            self.assertTrue(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput)
 
     def test_ceiling_bubble_moves_beside_her_without_covering_the_body(self):
         pet, brain = self.pet, self.pet.brain
@@ -807,7 +887,9 @@ class DesktopPetTest(unittest.TestCase):
             pet.step()
         self.assertTrue(pet.brain.clip == "dangle" or pet.brain._role(pet.brain.clip) == "drag")
         self.assertNotEqual(pet.pos(), start)
-        self.assertTrue(pet.mask().isEmpty())           # rotated frames are not clipped while held
+        self.assertFalse(pet.mask().isEmpty())          # rotating art keeps its own silhouette
+        self.assertFalse(pet.mask().contains(QPoint(10, 10)))
+        self.assertFalse(pet.windowFlags() & Qt.WindowType.WindowTransparentForInput)
         pet.mouseReleaseEvent(self.mouse(QEvent.Type.MouseButtonRelease, (pet.brain.x, 290),
                                          buttons=Qt.MouseButton.NoButton))
         self.assertEqual(pet.brain.mode, "air")

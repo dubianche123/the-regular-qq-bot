@@ -183,15 +183,12 @@ class SpriteBank:
         return cached
 
     def region(self, strip, index, mirrored, scale):
-        """Hit-test region in points, grown a little so breathing never clips the outline."""
+        """The sprite's actual alpha silhouette in logical screen points."""
         key = (strip, index, mirrored, round(scale, 3))
         region = self._regions.get(key)
         if region is None:
             pixmap = self.pixmap(strip, index, mirrored, scale, 1.0)
-            base = QRegion(pixmap.mask())
-            region = QRegion(base)
-            for dx, dy in ((3, 0), (-3, 0), (0, 3), (0, -3)):
-                region = region.united(base.translated(dx, dy))
+            region = QRegion(pixmap.mask())
             self._regions[key] = region
             if len(self._regions) > 192:
                 self._regions.popitem(last=False)
@@ -1414,6 +1411,8 @@ class PetWidget(QWidget):
         self._paint_key = None
         self._fx_dirty = False
         self._cursor_passthrough = False
+        self._bubble_passthrough = False
+        self._input_region = QRegion()
         self.chat_bar = self.activity_card = self.proposal_card = self.voice_card = None
         self.voice_factory, self.permission_request = voice_factory, permission_request
         self.voice_session = None
@@ -1604,17 +1603,6 @@ class PetWidget(QWidget):
 
     def _sync_windows(self, force=False):
         brain = self.brain
-        # A playful chase may overlap the pointer. Keep the real click directed
-        # at the user's app for the entire chase and return to the floor.
-        passthrough = brain.air_play_active
-        if passthrough != self._cursor_passthrough:
-            for window in (self, self.bubble):
-                visible = window.isVisible()
-                window.setWindowFlag(Qt.WindowType.WindowTransparentForInput, passthrough)
-                if visible:
-                    window.show()
-            self._cursor_passthrough = passthrough
-            force = True
         top, lift = self._window_top(round(brain.y - (self.pad_top + self.anchor_pt[1])))
         top_left = QPoint(round(brain.x - self.width() / 2), top)
         lifted, self.lift = lift != self.lift, lift
@@ -1642,6 +1630,32 @@ class PetWidget(QWidget):
             self._paint_key = key
             self._update_mask(strip, frame, mirrored, transform)
             self.update()
+        # Cocoa's window tracking can retain the open-hand cursor outside a
+        # QWidget mask. Ignore native input over transparent pixels as well,
+        # while keeping an existing press/drag captured until its release.
+        inside = self._input_region.contains(QCursor.pos() - top_left)
+        passthrough = brain.air_play_active or (not inside and brain._press is None)
+        for window, value, attr in ((self, passthrough, "_cursor_passthrough"),
+                                    (self.bubble, brain.air_play_active, "_bubble_passthrough")):
+            if value == getattr(self, attr):
+                continue
+            visible = window.isVisible()
+            window.setWindowFlag(Qt.WindowType.WindowTransparentForInput, value)
+            if visible:
+                window.show()
+            setattr(self, attr, value)
+            if window is self:
+                self.move(top_left)
+                handle = self.windowHandle()
+                if value:
+                    self.unsetCursor()
+                    if handle is not None:
+                        handle.unsetCursor()
+                else:
+                    self.setCursor(Qt.CursorShape.ClosedHandCursor if brain._press is not None
+                                   else Qt.CursorShape.OpenHandCursor)
+                    if handle is not None:
+                        handle.setCursor(self.cursor())
         effects = bool(brain.particles or _clip_overlay(brain, self.now()))
         if effects or self._fx_dirty:
             if effects and not self.fx.isVisible() and self.isVisible():
@@ -1651,42 +1665,41 @@ class PetWidget(QWidget):
 
     def _update_mask(self, strip, frame, mirrored, transform):
         brain = self.brain
-        if _screen_clipped(brain):
-            clip = _screen_clip(self, brain)
-            fade = transform["fade"]
-            key = ("edge", strip, frame, mirrored, brain.scale, clip.getRect(), fade and fade[:3])
-            if key != self._mask_key:
-                self._mask_key = key
-                anchor = self.window_anchor()
-                origin = QPoint(round(anchor.x() - self.anchor_pt[0]), round(anchor.y() - self.anchor_pt[1]))
-                region = self.sprites.region(strip, frame, mirrored, brain.scale).translated(origin)
-                if fade is not None:
-                    old_strip, old_frame, old_mirrored, _ = fade
-                    region = region.united(self.sprites.region(old_strip, old_frame, old_mirrored,
-                                                              brain.scale).translated(origin))
-                if not _edge_peeking(brain) and not (brain.bottom_peek or brain.top_peek):
-                    shadow = QRect(round(anchor.x() - brain.figure * 0.22), round(anchor.y() - 6),
-                                   round(brain.figure * 0.44), 12)
-                    region = region.united(QRegion(shadow, QRegion.RegionType.Ellipse))
-                self.setMask(region.intersected(QRegion(clip)))
-            return
-        # While moving or dissolving between two frames the silhouette changes every paint.
-        if brain.mode != "ground" or transform["rot"] or transform["dy"] or transform["fade"]:
-            # Lift/resize can invalidate the cache while Qt still holds the old
-            # clipped shape. Inspect the real mask before clearing it once.
-            if not self.mask().isEmpty():
-                self.clearMask()
-            self._mask_key = None
-            return
-        key = (strip, frame, mirrored, brain.scale)
+        anchor = self.window_anchor()
+        clip = _screen_clip(self, brain) if _screen_clipped(brain) else self.rect()
+        if brain.portal_clip is not None:
+            plane, hidden = brain.portal_clip
+            local = round(anchor.y() + plane - brain.y)
+            keep = (QRect(0, 0, self.width(), max(0, local)) if hidden == "below" else
+                    QRect(0, local, self.width(), max(0, self.height() - local)))
+            clip = clip.intersected(keep)
+        fade = transform["fade"]
+        key = (strip, frame, mirrored, brain.scale, anchor.x(), anchor.y(), clip.getRect(),
+               transform["rot"], transform["dy"], transform["sx"], transform["sy"], transform["pivot"],
+               fade and (*fade[:3], fade[3] < 1), brain.mode, _edge_peeking(brain), brain.bottom_peek, brain.top_peek)
         if key == self._mask_key:
             return
         self._mask_key = key
-        anchor = self.window_anchor()
-        origin = QPoint(round(anchor.x() - self.anchor_pt[0]), round(anchor.y() - self.anchor_pt[1]))
-        region = self.sprites.region(strip, frame, mirrored, brain.scale).translated(origin)
-        shadow = QRect(round(anchor.x() - brain.figure * 0.22), round(anchor.y() - 6), round(brain.figure * 0.44), 12)
-        self.setMask(region.united(QRegion(shadow, QRegion.RegionType.Ellipse)))
+        placement = QTransform().translate(anchor.x(), anchor.y() + transform["dy"])
+        if transform["rot"]:
+            pivot = -brain.figure * 0.98 if transform["pivot"] == "hands" else 0.0
+            placement.translate(0, pivot).rotate(transform["rot"]).translate(0, -pivot)
+        placement.scale(transform["sx"], transform["sy"])
+        placement.translate(-self.anchor_pt[0], -self.anchor_pt[1])
+        region = self.sprites.region(strip, frame, mirrored, brain.scale)
+        if fade is not None:
+            old_strip, old_frame, old_mirrored, opacity = fade
+            old_region = self.sprites.region(old_strip, old_frame, old_mirrored, brain.scale)
+            region = region.united(old_region) if opacity < 1 else old_region
+        region = placement.map(region).intersected(QRegion(clip))
+        self._input_region = region
+        if brain.mode == "ground" and not _edge_peeking(brain) and not (brain.bottom_peek or brain.top_peek):
+            lift = min(1.0, -transform["dy"] / (brain.figure * 0.32)) if transform["dy"] else 0.0
+            width = brain.figure * (0.5 if brain.posture() == "lie" else 0.36) * (1 - 0.35 * lift)
+            shadow = QRect(round(anchor.x() - width / 2), round(anchor.y() - 1 - brain.figure * 0.028),
+                           round(width), round(brain.figure * 0.056))
+            region = region.united(QRegion(shadow, QRegion.RegionType.Ellipse).intersected(QRegion(clip)))
+        self.setMask(region)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -2135,7 +2148,7 @@ class PetWidget(QWidget):
             self.brain.set_attention(False, self.now())
 
     def magic(self):
-        self._dismiss_transients()               # 收起面板，好看她开阵传送
+        self._dismiss_transients()               # 收起面板，好看她变魔法
         self.brain.magic(self.now())
 
     def feed(self):
