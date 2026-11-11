@@ -21,7 +21,8 @@ class NormalModeToneTest(unittest.TestCase):
     def test_roast_has_restraint(self):
         self.assertIn("损一句就收", prompts.PROMPT_NORMAL)
         self.assertIn("给对方留台阶", prompts.PROMPT_NORMAL)
-        self.assertIn("绝不追着打第二轮", prompts.PROMPT_NORMAL)
+        self.assertIn("对方主动续梗时可以接这一轮", prompts.PROMPT_NORMAL)
+        self.assertIn("不追着已经不想玩的人继续损", prompts.PROMPT_NORMAL)
 
     def test_backpedal_when_the_other_side_disengages(self):
         self.assertIn("立刻收", prompts.PROMPT_NORMAL)

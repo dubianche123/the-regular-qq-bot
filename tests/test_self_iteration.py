@@ -34,7 +34,7 @@ from regular import rules as rules_mod
 
 class CasesAndChecksTest(unittest.TestCase):
     def test_seed_cases_cover_all_documented_batches(self):
-        self.assertEqual(len(cases_mod.SEED_CASES), 88)
+        self.assertEqual(len(cases_mod.SEED_CASES), 94)
         for case in cases_mod.SEED_CASES:
             cases_mod.validate_case(case)
         deflect = [c for c in cases_mod.SEED_CASES if "deflect" in c.get("tags", ())]
