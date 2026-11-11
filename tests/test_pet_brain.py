@@ -1104,7 +1104,7 @@ class InteractionTest(unittest.TestCase):
         b._emit("z", 1)
         self.assertEqual(b.particles[-1].y, 0.15)
 
-    def test_hidden_sleep_loops_then_click_wakes_and_exits(self):
+    def test_hidden_sleep_loops_then_direct_call_wakes_and_exits(self):
         for edge, sleep in (("left", "boundary_side_doze"), ("right", "boundary_side_doze"),
                             ("bottom", "boundary_bottom_sleep"), ("top", "boundary_top_sleep")):
             with self.subTest(edge=edge):
@@ -1134,9 +1134,7 @@ class InteractionTest(unittest.TestCase):
                     t = 1
                 b.hover(t, b.x, b.y, near=True)
                 b.observe(t, ready(events=[{"kind": "mention", "ts": 100}]))
-                self.assertEqual((b.mode, b.hidden_edge), ("hidden", edge))
-                self.assertTrue(b.hidden_asleep)
-                b.poke(t + 0.1)
+                self.assertEqual((b.mode, b.hidden_edge), ("edge_exit", None))
                 self.assertEqual(b._edge_exit["phase"], "wake")
                 # Wake on the same support before changing to the launch pose.
                 self.assertEqual(b.clip, sleep if sleep in CLIPS else awake)

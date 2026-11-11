@@ -415,6 +415,52 @@ class NativeVoiceCardTest(unittest.TestCase):
         pet._finished("presence", {"ok": True, "value": {"bot": "ready", "state": "inspect", "events": []}})
         self.assertEqual(pet.brain.state_name, "inspect")
 
+    def _sleep_at_edge(self, edge):
+        from regular.pet_brain import PetBrain
+        brain = PetBrain(now=self.pet.now())
+        brain.set_ground(0, 1440, 860, 38)
+        brain.mode, brain.hidden_edge, brain.hidden_asleep = "hidden", edge, True
+        brain.bottom_peek, brain.top_peek = edge == "bottom", edge == "top"
+        brain.facing = -1 if edge == "right" else 1
+        brain._hidden_side_y = 400 if edge in ("left", "right") else None
+        brain._hidden_awake_clip = {"left": "motion_edge_look", "right": "motion_edge_look",
+                                    "top": "boundary_top_look", "bottom": "motion_bottom_look"}[edge]
+        brain._hidden_clip = {"left": "boundary_side_doze", "right": "boundary_side_doze",
+                              "top": "boundary_top_sleep", "bottom": "boundary_bottom_sleep"}[edge]
+        brain._set_clip(brain._hidden_clip, self.pet.now(), restart=True)
+        brain.x, brain.y = brain._hidden_target()
+        self.pet.brain = brain
+        return brain
+
+    def test_continuous_speech_listening_wakes_all_hidden_sleep_positions(self):
+        pet = self.pet
+        pet._voice_started = True
+        for edge in ("left", "right", "top", "bottom"):
+            with self.subTest(edge=edge):
+                brain = self._sleep_at_edge(edge)
+                # A connected continuous call already had this state before she hid.
+                brain.state_name, brain.state_clip, brain.state_source = "listen", "listen", "local"
+                brain.state_until = float("inf")
+                pet._voice_event(pet._voice_generation, {"type": "state", "state": "listening"})
+                self.assertFalse(brain.hidden_asleep)
+                self.assertEqual(brain.mode, "edge_exit")
+                self.assertEqual(brain.state_name, "listen")
+                exit_state = brain._edge_exit
+                pet._voice_event(pet._voice_generation, {"type": "state", "state": "listening"})
+                self.assertIs(brain._edge_exit, exit_state)
+
+    def test_sending_local_chat_wakes_all_hidden_sleep_positions(self):
+        pet = self.pet
+        pet.available = True
+        for edge in ("left", "right", "top", "bottom"):
+            with self.subTest(edge=edge), patch.object(pet, "_submit"):
+                pet.chat_busy = False
+                brain = self._sleep_at_edge(edge)
+                pet.send_chat("醒醒，叫你呢")
+                self.assertTrue(brain.chat_pending)
+                self.assertFalse(brain.hidden_asleep)
+                self.assertEqual(brain.mode, "edge_exit")
+
     def test_muting_stops_the_listen_pose_and_a_queued_listening_event_cannot_restore_it(self):
         pet = self.pet
         pet.brain.place(600)

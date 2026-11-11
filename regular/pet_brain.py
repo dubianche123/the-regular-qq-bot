@@ -1704,6 +1704,26 @@ class PetBrain:
         else:
             self._prepare_edge_exit(now)
 
+    def _wake_for_attention(self, now):
+        """An explicit local conversation can call her out without a mouse click."""
+        if self.mode not in ("hiding", "hidden") or not self.hidden_edge:
+            return False
+        self.last_interaction = self._nap_at = now
+        self._sleep_cue_until = 0.0
+        self._hidden_sleep_at = float("inf")
+        self._emerge(now)
+        return True
+
+    def _after_edge_exit(self, now):
+        """Resume the current conversation after the supported wake and landing."""
+        if self.chat_pending:
+            return [Step("think", hold="chat")]
+        if self.state_clip and now < self.state_until:
+            return self._state_steps(self.state_name, self.state_clip, now)
+        if self.media and now < self.agent_busy_until:
+            return [Step(self._busy_clip(), hold="agent")]
+        return list(self.plan) or [Step("idle", 1.5)]
+
     def _prepare_edge_exit(self, now):
         state = self._edge_exit
         edge = state["edge"]
@@ -1792,7 +1812,8 @@ class PetBrain:
             self.top_peek = self.bottom_peek = False
             self._edge_exit = None
             clip = "boundary_land" if "boundary_land" in CLIPS else "land"
-            self._queue(Step(clip), Step("idle", 1.5), now=now, interrupt=True)
+            following = self._after_edge_exit(now)
+            self._queue(Step(clip), *following, now=now, interrupt=True)
 
     def _top_exit_motion(self, now, dt):
         p = max(0.0, min(1.0, (now - self._hide_started) / self._hide_duration))
@@ -1846,7 +1867,8 @@ class PetBrain:
         if not release:
             self._set_clip("warp_sink", now, restart=True)
         self._fade = None
-        self.say("看准了，走这边。", now=now, seconds=1.8, kind="status")
+        if not self.chat_pending and not (self.bubble and self.bubble.kind == "say"):
+            self.say("看准了，走这边。", now=now, seconds=1.8, kind="status")
 
     def _ceiling_plane(self):
         return self.ceiling + self.figure * PORTAL_RADIUS * PORTAL_TILT + 6
@@ -2079,7 +2101,8 @@ class PetBrain:
                 self._chasing_prop = None
             else:
                 self._finish_prop_routine(now)
-        if w and w["cause"] != "prop" and not self.chat_pending:
+        if (w and w["cause"] != "prop" and not self.chat_pending
+                and not (self.bubble and self.bubble.kind == "say")):
             key = {"sneeze": "sneeze_warp", "called": "warp_called"}.get(w["cause"])
             line = (self.rng.choice(LINES["sneeze_warp"]) if w["cause"] == "sneeze"
                     else self.rng.choice(LINES["warp_sky" if w["via"] == "ceiling" else "warp_in"]))
@@ -2087,6 +2110,10 @@ class PetBrain:
                 self.say("呼，站稳了。" if w.get("stumbled") else line, now=now, seconds=2.2, kind="status")
         if w and w["cause"] == "sneeze":
             self.plan.appendleft(Step("startle"))
+        if w and w["cause"] == "top_edge":
+            following = self._after_edge_exit(now)
+            self.plan.clear()
+            self._queue(*following, now=now)
         self._advance(now)
         if self.step is None:
             self._queue(Step("idle", 1.5), now=now)
@@ -2927,8 +2954,6 @@ class PetBrain:
                 self.receive_care(now, event)
                 continue
             self._seen_events.append(self._event_key(event))
-            if self.mode == "hidden" and event.get("kind") in CALLS:
-                self._emit("!", now)
             self._agent_event(now, event)
 
     @staticmethod
@@ -2947,7 +2972,11 @@ class PetBrain:
             return False
         duration = math.inf if source == "local" else STATE_HEARTBEAT
         self.state_until = now + (duration if seconds is None else max(0.0, seconds))
-        if self.state_name == name and self.state_source == source:
+        local_attention = source == "local" and name in ("listen", "think", "talk", "reply")
+        if local_attention:
+            self._wake_for_attention(now)
+        if (self.state_name == name and self.state_source == source
+                and not (local_attention and self.mode == "ground" and self.clip in ASLEEP)):
             return True
         self.state_name, self.state_clip, self.state_source = name, clip, source
         self.last_agent_event = now
@@ -3006,6 +3035,13 @@ class PetBrain:
         busy = self.media is not None and kind not in MEDIA_HOLD
         if kind != "cue":
             self.last_agent_event = now
+        if kind in CALLS and self.mode == "hidden":
+            self._emit("!", now)
+            if self.hidden_asleep:
+                self._wake_for_attention(now)
+                if not busy:
+                    self.plan.extend((Step(self._pick("greet", "phone"), 4), Step("idle", 1)))
+            return
         if self.mode != "ground" or self.chat_pending:
             return
         # 状态层在演时，QQ 日志事件只记账（上面已经更新 media），不抢镜。

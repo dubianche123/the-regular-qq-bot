@@ -31,6 +31,128 @@ def hidden(edge, *, scale=1.0):
     return brain
 
 
+def sleeping_hidden(edge):
+    brain = hidden(edge)
+    brain._hidden_sleep_at = 1
+    with patch.object(brain, "_pick", return_value=SLEEP[edge]):
+        brain.tick(1)
+    assert brain.hidden_asleep
+    return brain
+
+
+def finish_waking(brain, since=2, seconds=12):
+    shown = []
+    for frame in range(int(seconds * 30)):
+        brain.tick(since + frame / 30)
+        shown.append((brain.mode, brain.clip))
+    return shown
+
+
+@pytest.mark.parametrize("edge", AWAKE)
+@pytest.mark.parametrize("kind", ("mention", "named", "quoted", "called"))
+def test_direct_group_call_wakes_hidden_sleep_once_and_then_greets(edge, kind):
+    brain = sleeping_hidden(edge)
+    anchor = (brain.x, brain.y)
+    event = {"kind": kind, "ts": 100, "id": "synthetic-call"}
+    brain.observe(2, {"bot": "ready", "events": [event]})
+    assert brain.mode == "edge_exit"
+    assert brain._edge_exit["phase"] == "wake"
+    assert not brain.hidden_asleep
+    assert (brain.x, brain.y) == pytest.approx(anchor)
+    phase_started = brain._edge_exit["since"]
+    brain.observe(2.1, {"bot": "ready", "events": [event]})
+    brain.observe(2.2, {"bot": "ready", "events": [{**event, "id": "new-call"}]})
+    assert brain._edge_exit["since"] == phase_started
+    shown = finish_waking(brain)
+    assert any(mode == "ground" and brain._role(clip) == "greet" for mode, clip in shown)
+    assert brain.mode == "ground"
+    assert brain.hidden_edge is None
+    assert not brain.hidden_asleep
+
+
+@pytest.mark.parametrize("edge", AWAKE)
+@pytest.mark.parametrize("name", ("listen", "think", "talk", "reply"))
+def test_local_conversation_wakes_hidden_sleep_and_keeps_current_state(edge, name):
+    brain = sleeping_hidden(edge)
+    brain.set_state(name, 2, source="local")
+    assert brain.mode == "edge_exit"
+    assert not brain.hidden_asleep
+    shown = finish_waking(brain)
+    assert any(mode == "ground" and (clip == name or brain._role(clip) == name)
+               for mode, clip in shown)
+    assert brain.state_name == name
+    assert brain.state_source == "local"
+    assert brain.mode in ("ground", "fly")
+    assert not brain.hidden_asleep
+
+
+@pytest.mark.parametrize("edge", AWAKE)
+def test_same_local_listening_state_still_wakes_a_hidden_sleeper(edge):
+    brain = sleeping_hidden(edge)
+    brain.state_name = brain.state_clip = "listen"
+    brain.state_source, brain.state_until = "local", float("inf")
+    brain.set_state("listen", 2, source="local")
+    started = brain._edge_exit["since"]
+    brain.set_state("listen", 2.1, source="local")
+    assert brain._edge_exit["since"] == started
+    assert not brain.hidden_asleep
+    shown = finish_waking(brain)
+    assert any(mode == "ground" and (clip == "listen" or brain._role(clip) == "listen")
+               for mode, clip in shown)
+
+
+@pytest.mark.parametrize("edge", AWAKE)
+def test_local_chat_sent_wakes_and_waits_for_reply_after_exit(edge):
+    brain = sleeping_hidden(edge)
+    brain.chat_sent(2)
+    assert brain.mode == "edge_exit"
+    assert brain.chat_pending
+    shown = finish_waking(brain)
+    assert any(mode == "ground" and clip == "think" for mode, clip in shown)
+    assert brain.chat_pending
+    assert brain.step.hold == "chat"
+    brain.chat_reply(14, "听到啦")
+    assert not brain.chat_pending
+    assert brain.state_name == "reply"
+    assert not brain.hidden_asleep
+
+
+@pytest.mark.parametrize("edge", AWAKE)
+def test_unrelated_heartbeat_does_not_wake_hidden_sleep(edge):
+    brain = sleeping_hidden(edge)
+    for now in (2, 3, 4):
+        brain.observe(now, {"bot": "ready", "state": None, "chatter": 30, "events": []})
+        brain.tick(now)
+    assert brain.mode == "hidden"
+    assert brain.hidden_asleep
+
+
+@pytest.mark.parametrize("edge", AWAKE)
+def test_reply_arriving_during_wake_owns_the_pose_and_actual_words(edge):
+    brain = sleeping_hidden(edge)
+    brain.chat_sent(2)
+    started = brain._edge_exit["since"]
+    brain.chat_reply(2.1, "我听到你啦")
+    brain.set_state("talk", 2.1, source="local")
+    brain.say("我听到你啦", now=2.1, seconds=30)
+    assert brain._edge_exit["since"] == started
+    shown = finish_waking(brain)
+    assert not brain.chat_pending
+    assert brain.state_name == "talk"
+    assert any(mode == "ground" and clip == "talk" for mode, clip in shown)
+    assert brain.bubble.text == "我听到你啦"
+
+
+def test_same_listen_state_wakes_a_ground_sleeper():
+    brain = PetBrain(rng=random.Random(7), now=0)
+    brain._set_clip("sleep", 0, restart=True)
+    brain.state_name = brain.state_clip = "listen"
+    brain.state_source, brain.state_until = "local", float("inf")
+    brain.set_state("listen", 2, source="local")
+    assert brain.clip == "wake"
+    assert any(step.clip == "listen" or brain._role(step.clip) == "listen" for step in brain.plan)
+
+
 def assert_support(brain, edge, clip):
     geometry = brain.repertoire.actions[clip]["geometry"]
     if edge in ("left", "right"):
