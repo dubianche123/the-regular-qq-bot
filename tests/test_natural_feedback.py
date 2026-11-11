@@ -239,6 +239,77 @@ class OneCallTest(_Base):
         self.assertEqual(self.calls.await_count, 0)
 
 
+class BackOffResolutionTest(_Base):
+    @staticmethod
+    def _triage_reply(questions, *, move="keep_playful", weak=False):
+        choices = {"addressed": "let_it_pass", "request_kind": "playful"}
+        if move is not None:
+            choices["next_move"] = move
+        answers = []
+        for question in questions:
+            name = question["name"]
+            if name not in choices:
+                continue
+            choice = choices[name]
+            values = [entry["value"] for entry in question["choices"]]
+            probability = 0.25 if weak and name == "next_move" else 0.9
+            answers.append({
+                "name": name, "type": "choice", "choice": choice,
+                "confidence": probability,
+                "probabilities": [
+                    {"value": value,
+                     "probability": probability if value == choice else
+                                    (1 - probability) / (len(values) - 1)}
+                    for value in values],
+            })
+        return {"answers": answers}
+
+    async def test_valid_playful_judgment_reaches_model_despite_local_stop_word(self):
+        text = "团团，没人吐槽我反而不舒服"
+        self.assertTrue(bot.looks_like_back_off(text))
+        self.assertIsNone(self.feedback._groups.get(self.G, {}).get("reply"))
+
+        async def answer(_text, questions):
+            return self._triage_reply(questions)
+
+        self.calls.side_effect = answer
+        with patch.object(config, "BOT_NAMES", ["团团"]):
+            message = await self._drive(text)
+        self.assertEqual(self.calls.await_count, 1)
+        self.assertEqual(len(self.unprompted_calls), 1)
+        tail = self.unprompted_calls[-1][-1]["content"]
+        self.assertNotIn(prompts.BACK_OFF_MARK, tail)
+        self.assertIn(prompts.PROMPT_PLAYFUL_REQUEST.strip(), tail)
+        # 放行到生成不是强迫开口：模型仍然可以选不接。
+        message.reply.assert_not_awaited()
+
+    async def test_missing_or_abstained_judgment_keeps_the_local_stop_fallback(self):
+        for move, weak in ((None, False), ("keep_playful", True)):
+            with self.subTest(move=move, weak=weak):
+                self.calls.reset_mock()
+                self.model_calls.clear()
+                self.unprompted_calls.clear()
+
+                async def answer(_text, questions):
+                    return self._triage_reply(questions, move=move, weak=weak)
+
+                self.calls.side_effect = answer
+                with patch.object(config, "BOT_NAMES", ["团团"]):
+                    message = await self._drive("团团，没人吐槽我反而不舒服")
+                self.assertEqual(self.calls.await_count, 1)
+                self.assertEqual((self.model_calls, self.unprompted_calls), ([], []))
+                message.reply.assert_not_awaited()
+
+    async def test_direct_generation_defaults_to_local_protection_but_honors_resolved_false(self):
+        text = "你这样说让我很不舒服"
+        await bot.get_ai_reply("backoff-default", text, private=True)
+        self.assertIn(prompts.BACK_OFF_MARK, self.model_calls[-1][-1]["content"])
+        await bot.get_ai_reply("backoff-resolved", text, back_off=False, playful_request=True)
+        tail = self.model_calls[-1][-1]["content"]
+        self.assertNotIn(prompts.BACK_OFF_MARK, tail)
+        self.assertIn(prompts.PROMPT_PLAYFUL_REQUEST.strip(), tail)
+
+
 class PrecedenceAndSearchTest(_Base):
     async def test_back_off_means_xiaowang_is_not_even_asked(self):
         await self._drive("开场", is_at=True)

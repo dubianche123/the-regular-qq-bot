@@ -787,7 +787,7 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        group_memory="", owner_label="", private=False, state_note="",
                        knowledge_note="", recall_note="", search_note="", allow_fallback=True,
                        personal_note="", feedback_note="", reply_context="",
-                       callback_approved=False, back_off=False, quip=False,
+                       callback_approved=False, back_off=None, quip=False,
                        lookup_note="", playful_note="", resource_note="",
                        media_note="", unprompted_hint="", playful_request=False, raw_reply_filter=None):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
@@ -806,11 +806,11 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
     ⚠️ 任何随「发言人或轮次」变化的内容都不许往 1) 里塞 —— 它之后的一切会跟着一起作废。
        以前群主身份、群聊背景、关系档案全挤在 system 里，等于把缓存全废了。
     """
-    # 喊停：调用方可以带上判断的结论（分诊里有把握的 back_off），这里再并上本地词表 ——
-    # 词表这一道放在生成入口，直接调 get_ai_reply 的旁路（私聊、主动开口、测试）也绕不开。
+    # 喊停：None 表示调用方尚未判定，私聊等旁路仍用本地后备；显式 bool 是入口已经
+    # 解析过的结果，不再让词表二次覆盖有效的语义结论。
     # ⚠️ 这一行必须是函数体第一句：locals() 此刻恰好是全部入参，每轮输入记录原样存它。
     params = dict(locals())
-    back_off = bool(back_off) or looks_like_back_off(user_text)
+    back_off = looks_like_back_off(user_text) if back_off is None else bool(back_off)
     try:
         # ── 1) 稳定头：同一个群里，每个人、每一轮，这一段都应当逐字节相同 ──
         # 人设里的 {bot} / {owner} 在这里换成真名（代码里不写死任何人名，见 naming.py）
@@ -3326,10 +3326,11 @@ class GroupBot(botpy.Client):
         # 门控决策：记的是「这道门当时放没放人」。没叫它的那几轮要等小王答完才知道，
         # 生成之后再记（见 11. 之后）。
         gate_decision = None
-        # 收敛语气：判断有把握的 back_off，或本地那张喊停词表 —— 取并集。
-        # 两者各漏一类（2026-10-31）：词表里没有「闭嘴」，判断有把握地认出了 3/3；
-        # 判断对「别老损我」排第一却不够有把握，词表一眼认得。见 docs/judgment-layer.md。
-        back_off = bool(feedback_result.get("back_off")) or looks_like_back_off(user_input)
+        # suggested_move 已过原生判断的格式/弃答闸，过期结论会被清空。已有结论时听
+        # 语义判断；缺失时才用本地词表，避免「没人吐槽反而不舒服」被裸词误认成喊停。
+        # 显式收敛仍优先，暂停窗的装卸继续由 FEEDBACK 管理。
+        back_off = bool(feedback_result.get("back_off")) or (
+            feedback_result.get("suggested_move") is None and looks_like_back_off(user_input))
         addressed = feedback_result.get("addressed")
         # 点了名：判断说「该答」就答；判断不可用也答（被叫到却被无视，比多答一句难受）——
         # 唯一例外是判断有把握地读出「收敛」：被叫闭嘴不该回一句「好的我闭嘴」。
