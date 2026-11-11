@@ -1,4 +1,4 @@
-"""小王回复里的「〔画〕」「〔动图〕」「〔语音〕」「〔不接〕」「〔提醒 …〕」标记（见 docs/media-replies.md）。
+"""小王回复里的「〔画〕」「〔动图〕」「〔语音〕」「〔搜索〕」「〔不接〕」「〔提醒 …〕」标记。
 
 画不画、念不念、画什么、用什么语气，都由小王自己在回复里写（提示词见
 prompts.PROMPT_DRAW_RULES / PROMPT_VOICE_RULES）；代码只认标记、管额度、记结果。
@@ -13,13 +13,15 @@ prompts.PROMPT_DRAW_RULES / PROMPT_VOICE_RULES）；代码只认标记、管额�
 〔提醒 11-03 09:00〕〔取消提醒〕是它答应了到点提醒、或者不提醒了（docs/reminders.md）：
 单独一行，跟〔画〕〔语音〕不抢位置；时间怎么算、记不记得上在 reminders.py。
 
+〔搜索〕关键词是一次查询请求，关键词只取标记同一行；是否执行、实际结果和下一步回复由调用方处理。
+
 认不出标记就当普通文字：宁可少画一张，也不把半截标记发进群里。
 """
 import re
 from dataclasses import dataclass
 
 # 第一行的标记；全角半角括号、方括号都认 —— 模型偶尔换括号，不值得为此丢一张图。
-_TAG = re.compile(r"^\s*[〔【\[［]\s*(画|动图|语音|不接)\s*[〕】\]］]\s*(.*)$")
+_TAG = re.compile(r"^\s*[〔【\[［]\s*(画|动图|语音|搜索|不接)\s*[〕】\]］]\s*(.*)$")
 # 「〔提醒 11-03 09:00〕提醒什么」「〔取消提醒〕」。设提醒必须带时间：「【提醒】」当小标题用的那种不算。
 _REMIND = re.compile(r"^\s*[〔【\[［]\s*(?:(取消提醒)|提醒\s+([^〕】\]］]+?))\s*[〕】\]］]\s*(.*)$")
 # 会话记录里系统补的那行（见 record）。模型照着写出来的一律删掉：它不许替系统作证。
@@ -48,8 +50,8 @@ VOICE_UNCONFIRMED = "这句语音送达未确认，群里可能听得到，不�
 
 @dataclass(frozen=True)
 class Said:
-    kind: str | None    # None / "image" / "voice" / "pass"
-    spec: str           # image：给画师的描述；voice：语气（可以为空）
+    kind: str | None    # None / "image" / "voice" / "search" / "pass"
+    spec: str           # image：画面描述；voice：语气；search：单行查询词
     text: str           # 发在群里的那句 / 要念的那句
     remind: tuple | None = None   # ("set", 时间, 提醒什么) / ("cancel", "", "")；见 reminders.apply
     animated: bool = False        # image：同一次画图请求的 GIF 输出，不是第二种工具或额外一张图
@@ -59,7 +61,7 @@ PASS = Said("pass", "", "")
 
 
 def parse(body):
-    """拆出标记。只认第一处；同一条回复里第二个标记只去掉括号，内容留作正文。"""
+    """只认第一个主动作；后续搜索请求整行丢弃，避免把查询词当正文发出去。"""
     lines = [line for line in (body or "").splitlines() if not _RECORD.match(line)]
     if any((m := _TAG.match(line)) and m.group(1) == "不接" for line in lines) \
             or "".join(lines).strip(" 。.！!") == "不接":
@@ -78,10 +80,13 @@ def parse(body):
         m = _TAG.match(line)
         if m and kind is None:
             animated = m.group(1) == "动图"
-            kind = "image" if m.group(1) in ("画", "动图") else "voice"
+            kind = ("image" if m.group(1) in ("画", "动图")
+                    else "search" if m.group(1) == "搜索" else "voice")
             spec = m.group(2).strip()
             continue
         if m:
+            if m.group(1) == "搜索":
+                continue
             line = m.group(2)
         rest.append(line)
     text = "\n".join(rest).strip()
@@ -106,6 +111,10 @@ def record(said, outcome):
         note = _IMAGE_OUTCOMES.get(outcome, _IMAGE_OUTCOMES[False])
         if said.animated:
             note = note.replace("这张图", "这张动图").replace("图发出去了", "动图发出去了")
+    elif said.kind == "search":
+        head = "〔搜索〕" + said.spec
+        note = ("这次联网查询已完成" if outcome is True else
+                "这次联网查询的结果尚未确认" if outcome is None else "这次没有查成")
     else:
         head = "〔语音〕" + (f"（{said.spec}）" if said.spec else "")
         note = VOICE_UNCONFIRMED if outcome is None else VOICE_SENT if outcome else VOICE_AS_TEXT

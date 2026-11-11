@@ -254,11 +254,45 @@ class SessionStore:
         if now - sess.get("last_time", 0) > self.ttl:
             # 静默太久，当作换了话题，别把陈年旧账串进来
             sess["messages"] = []
+            sess["message_times"] = []
             return sess
         return sess
 
+    def _trim_session(self, sess, *, keep=1.0):
+        """问答仍成对保存，时间旁表跟着同一段尾部一起裁剪。"""
+        messages = sess.get("messages") or []
+        times = list(sess.get("message_times") or [])[:len(messages)]
+        times.extend([None] * (len(messages) - len(times)))
+        trimmed = trim_messages(messages, self.max_turns * 2, self.max_chars,
+                                keep=keep)
+        offset = len(messages) - len(trimmed)
+        sess["messages"] = trimmed
+        sess["message_times"] = times[offset:]
+
+    def snapshot(self, session_id, now=None):
+        """同步冻结当时可见的历史，按收件/送达顺序提供给模型。
+
+        同人连发时，后一句可能早于前一句回复送达；成对落账不能代表事件顺序。
+        旧存档没有时间的条目保留原位置，其余条目按时间稳定排序。只复制模型所需
+        的 role/content，时间旁表和其他本地字段不会进入提示词。
+        """
+        now = time.time() if now is None else now
+        sess = self._live(session_id, now)
+        if sess is None:
+            return []
+        self._trim_session(sess)
+        messages = sess["messages"]
+        times = sess["message_times"]
+        timed = iter(sorted((i for i, ts in enumerate(times) if ts is not None),
+                            key=times.__getitem__))
+        order = [next(timed) if ts is not None else i
+                 for i, ts in enumerate(times)]
+        return [{"role": messages[i]["role"], "content": messages[i]["content"]}
+                for i in order]
+
     def build_messages(self, session_id, system_prompt, user_text,
-                       memory_block="", turn_context="", now=None):
+                       memory_block="", turn_context="", now=None,
+                       history_snapshot=None):
         """组装本次请求的消息列表。调用方需持有该 session 的锁。
 
         顺序是刻意的：**越稳定的越靠前**，前缀缓存才吃得满（实测命中率 85% → 98%）。
@@ -268,14 +302,13 @@ class SessionStore:
 
         注意：turn_context 只拼在发出去的请求里，不进历史 —— record() 存的是原话，
         所以信封不会一轮轮堆积。
+        history_snapshot=None 表示读取当前历史；[] 表示收到本句时确实没有历史，
+        不能用排队等待期间新送达的回复替换它。
         """
-        now = time.time() if now is None else now
-        sess = self._live(session_id, now)
-        history = trim_messages(
-            sess.get("messages", []) if sess else [],
-            self.max_turns * 2,
-            self.max_chars,
-        )
+        history = (self.snapshot(session_id, now=now) if history_snapshot is None
+                   else [{"role": msg["role"], "content": msg["content"]}
+                         for msg in trim_messages(history_snapshot,
+                                                  self.max_turns * 2, self.max_chars)])
         out = [{"role": "system", "content": system_prompt}]
         if memory_block:
             out.append({"role": "system", "content": memory_block})
@@ -286,22 +319,26 @@ class SessionStore:
         })
         return out
 
-    def record(self, session_id, user_text, reply, now=None):
-        """把这一轮问答写回滑动窗口。调用方需持有该 session 的锁。"""
+    def record(self, session_id, user_text, reply, now=None, received_at=None):
+        """把已送达问答写回窗口；received_at 是原句到达时刻，不是生成开始时刻。
+
+        调用方需持有该 session 的锁。messages 保留原有成对格式，事件时间单独保存，
+        让后续回合能还原并发发话时的真实顺序。
+        """
         now = time.time() if now is None else now
         sess = self._sessions.get(session_id)
         if sess is None or now - sess.get("last_time", 0) > self.ttl:
             sess = {"messages": [], "last_time": now}
             self._sessions[session_id] = sess
-        sess["messages"] = trim_messages(
-            sess["messages"] + [
-                {"role": "user", "content": user_text},
-                {"role": "assistant", "content": reply},
-            ],
-            self.max_turns * 2,
-            self.max_chars,
-            keep=HISTORY_KEEP,
-        )
+        messages = sess["messages"]
+        times = list(sess.get("message_times") or [])[:len(messages)]
+        times.extend([None] * (len(messages) - len(times)))
+        sess["messages"] = messages + [
+            {"role": "user", "content": user_text},
+            {"role": "assistant", "content": reply},
+        ]
+        sess["message_times"] = times + [now if received_at is None else received_at, now]
+        self._trim_session(sess, keep=HISTORY_KEEP)
         sess["last_time"] = now
 
     def clear_group(self, group_id):
@@ -387,12 +424,13 @@ class SessionStore:
         for sid, sess in (raw or {}).items():
             if not isinstance(sess, dict):
                 continue
-            self._sessions[sid] = {
-                "messages": trim_messages(
-                    sess.get("messages") or [], self.max_turns * 2, self.max_chars
-                ),
+            restored_session = {
+                "messages": sess.get("messages") or [],
+                "message_times": sess.get("message_times") or [],
                 "last_time": float(sess.get("last_time") or 0),
             }
+            self._trim_session(restored_session)
+            self._sessions[sid] = restored_session
             restored += 1
         if restored:
             self.prune()
@@ -400,7 +438,9 @@ class SessionStore:
 
     def dump_into(self, data: dict):
         data["sessions"] = {
-            sid: {"messages": s["messages"], "last_time": s["last_time"]}
+            sid: {"messages": s["messages"],
+                  "message_times": s.get("message_times", []),
+                  "last_time": s["last_time"]}
             for sid, s in self._sessions.items()
         }
 

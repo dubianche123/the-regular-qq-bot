@@ -320,17 +320,54 @@ for gid, slot in (runtime.STATE.data.get("groups") or {}).items():
     own_lines[gid].extend((slot.get("own_lines") or [])[-config.GROUP_BUFFER_SIZE:])
 
 
-def _note_own_line(group_id, text, *, medium="text", status="delivered"):
+def _note_own_line(group_id, text, *, medium="text", status="delivered", user=None):
     if group_id and text:
         if text.startswith("[图："):
             medium = "image"
         elif text.startswith("[动图："):
             medium = "animation"
         own_lines[group_id].append({"time": time.time(), "text": text,
-                                    "medium": medium, "status": status})
+                                    "medium": medium, "status": status, "user": user})
         slot = runtime.STATE.data.setdefault("groups", {}).setdefault(group_id, {})
         slot["own_lines"] = list(own_lines[group_id])[-config.GROUP_BUFFER_SIZE:]
         runtime.STATE.mark_dirty()
+
+
+def _later_scene(group_id, user, received_at):
+    """Refresh events after receipt without changing the original feedback target."""
+    if not group_id or received_at is None:
+        return ""
+    now = time.time()
+    humans = list(group_buffers.get(group_id, ()))
+    known = {group_id, user}
+    for row in humans:
+        known.update((row.get("sender"), row.get("message_id")))
+    rows = []
+    for row in humans:
+        stamp = float(row.get("time") or 0)
+        if not received_at < stamp <= now:
+            continue
+        who = "当前说话人" if row.get("sender") == user else "其他群友（" + _who_label(group_id, row.get("sender")) + "）"
+        text = decisions_mod._sanitize(row.get("text"), known)
+        if text:
+            rows.append((stamp, f"{who}又说：{json.dumps(text, ensure_ascii=False)}"))
+    for row in own_lines.get(group_id, ()):
+        stamp = float(row.get("time") or 0)
+        if not received_at < stamp <= now:
+            continue
+        text = decisions_mod._sanitize(proactive.own_text(row), known)
+        if text:
+            state = "送达未确认" if row.get("status", "delivered") != "delivered" else "已实际送达"
+            to = ("，回当前说话人" if row.get("user") == user else
+                  "，回其他群友" if row.get("user") else "")
+            rows.append((stamp, f"你（{state}{to}）：{json.dumps(text, ensure_ascii=False)}"))
+    if not rows:
+        return ""
+    rows.sort(key=lambda item: item[0])
+    return ("【本句到达之后发生的事 · 按实际时间排序】\n"
+            "以下内容发生在末尾这句原话之后；对方发这句时还没看到这些回复，不能当成在评价它们。"
+            "仍回答本句及其原有引用；结合后到的补充，别重复自己刚送达的说法，也别替别人办事。\n"
+            + "\n".join("- " + text for _, text in rows[-8:]))
 
 
 def _note_media(message, user, medium, status):
@@ -708,7 +745,7 @@ _reply_trace = contextvars.ContextVar(
 
 # 每轮输入记录里不存的入参：session_id 单列；allow_fallback 回放时一律 False；
 # raw_reply_filter 是本地渠道的输出清理函数，不是模型上下文。
-_TURN_SKIP_PARAMS = ("session_id", "allow_fallback", "raw_reply_filter")
+_TURN_SKIP_PARAMS = ("session_id", "allow_fallback", "raw_reply_filter", "history_snapshot")
 _release_id = None
 
 
@@ -789,7 +826,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        personal_note="", feedback_note="", reply_context="",
                        callback_approved=False, back_off=None, quip=False,
                        lookup_note="", playful_note="", resource_note="",
-                       media_note="", unprompted_hint="", playful_request=False, raw_reply_filter=None):
+                       media_note="", unprompted_hint="", playful_request=False, raw_reply_filter=None,
+                       history_snapshot=None, timeline_note="", search_action_note=""):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
     返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签（协议关了，
@@ -842,6 +880,10 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
             bits.append(prompts.PROMPT_QUIP_NOTE.strip())
         if context_hint:
             bits.append("【群聊最近背景】\n" + context_hint)
+        if timeline_note:
+            bits.append(timeline_note)
+        if search_action_note:
+            bits.append(search_action_note)
         if knowledge_note and not back_off \
                 and not feedback_note:
             # 维护者维护的事实优先于摘要；对方喊停时不追加额外材料。
@@ -911,6 +953,7 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
             session_id, head,
             prompts.PROMPT_UNPROMPTED_LINE.format(text=user_text) if unprompted else user_text,
             memory_block=group_memory, turn_context=turn_context,
+            history_snapshot=history_snapshot,
         )
         # 对话一律走对话梯队：不为「插嘴」单独换模型，那会让同一个角色在不同路径上表现不一致
         raw = await call_model(messages, max_tokens)
@@ -970,6 +1013,8 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             "policy_id": meta.get("policy_id"),
             "fallback": bool(result.fallback),
         }
+        if meta.get("carrier_message_id"):
+            fields["carrier_message_id"] = meta["carrier_message_id"]
         if result.reason:
             fields["reason"] = result.reason
         for key in ("medium", "generation", "provider", "model", "tier",
@@ -984,7 +1029,7 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             # 平台拒收后的兜底文案，都算「实际送达」；被拒的原稿不算。
             fields["text"] = result.text
             _remember_sent(group_id, result.receipt, result.text)
-            _note_own_line(group_id, result.text, medium=meta.get("medium", "text"))
+            _note_own_line(group_id, result.text, medium=meta.get("medium", "text"), user=member)
             rid = result.receipt
             rid = rid.get("id") if isinstance(rid, dict) else getattr(rid, "id", None)
             if isinstance(rid, (str, int)):
@@ -996,12 +1041,13 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
             # 「上一条 AI 回复」—— 本地应答、平台兜底文案、主动广播、
             # 排队/失败投递一律不算。登记失败不许影响投递提交。
             if (meta.get("generation") == "model"
-                    and meta.get("route") in ("reply", "banter")
+                    and meta.get("route") in ("reply", "banter", "followup")
                     and not result.fallback):
                 try:
                     runtime.FEEDBACK.remember(
                         group_id, meta.get("user"), result.text,
-                        route=meta.get("route"), outgoing_id=outgoing_id,
+                        route="reply" if meta.get("route") == "followup" else meta.get("route"),
+                        outgoing_id=outgoing_id,
                         history=meta.get("history") or ())
                 except Exception:
                     logger.exception("⚠️ 反馈观察登记失败（%s）", group_id[-6:])
@@ -1012,7 +1058,7 @@ def _delivery_observer(outgoing_id, group_id, meta, member):
 
 
 async def safe_reply(message, reply_text, *, on_delivered=None, interaction=None, on_outcome=None,
-                     **delivery):
+                     semantic_source=None, **delivery):
     """群消息才写观察日志；私聊没有 group_openid，原样发送、一行不落。
 
     interaction 是本条回复的本地元数据（route/feedback_eligible/生成出处），
@@ -1022,13 +1068,16 @@ async def safe_reply(message, reply_text, *, on_delivered=None, interaction=None
     if not group_id:
         return await SENDER.reply(message, reply_text, on_delivered=on_delivered,
                                   on_outcome=on_outcome, **delivery)
-    member = getattr(getattr(message, "author", None), "member_openid", None)
+    source = semantic_source if semantic_source is not None else message
+    member = getattr(getattr(source, "author", None), "member_openid", None)
     meta = dict(interaction or {})
     meta.setdefault("route", "local")
-    # 来源与关联人一律以实际消息为准（本地应答、AI 回复同口径），
-    # 调用方 metadata 不许给这次送达安到别的发言/别的人头上；
+    # 普通 metadata 不能重写来源。慢活捎带使用显式原请求对象，传输仍由
+    # message 决定（含被动回复窗口与序号），语义来源不会变成捎带它的人。
     # policy_id 在发起投递这一刻定版，排队补投也不许漂成新口径。
-    meta["source_message_id"] = getattr(message, "id", None)
+    meta["source_message_id"] = getattr(source, "id", None)
+    if semantic_source is not None:
+        meta["carrier_message_id"] = getattr(message, "id", None)
     meta["user"] = member
     meta["policy_id"] = config.INTERACTION_POLICY_ID
     observer = _delivery_observer(uuid.uuid4().hex, group_id, meta, member)
@@ -1053,7 +1102,7 @@ def media_flags():
     """稳定头里那几段开没开：静图 / 动图 / 语音 / 提醒。每轮输入记录存这个，回放时照着拼同一个头。"""
     return {"draw": bool(image_generation.available()),
             "animate": bool(image_generation.animation_available()), "voice": bool(_VOICE_OUT.ready()),
-            "remind": bool(config.REMINDER_ENABLED)}
+            "remind": bool(config.REMINDER_ENABLED), "search": bool(config.SEARCH_ENABLED)}
 
 
 def media_rules(flags=None):
@@ -1073,6 +1122,8 @@ def media_rules(flags=None):
         parts.append(prompts.PROMPT_MEDIA_RECORD)
     if flags.get("remind"):
         parts.append(prompts.PROMPT_REMIND_RULES)
+    if flags.get("search"):
+        parts.append(prompts.PROMPT_SEARCH_RULES)
     return "".join(parts)
 
 
@@ -1125,7 +1176,8 @@ def media_turn(group_id, user_id, score, *, asked, remind=False, voice=True):
 
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                            owner_hint_group=None, prepared=None, prepared_local=False,
-                           media=None, is_stale=None, reply_filter=None, raw_reply_filter=None, **context):
+                           media=None, is_stale=None, reply_filter=None, raw_reply_filter=None,
+                           received_at=None, lookup_used=False, **context):
     """Serialize generation and send; queued delivery commits through the same callback.
 
     prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
@@ -1136,11 +1188,21 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
     """
     async with runtime.SESSIONS.lock(session_id):
         generation = runtime.SESSIONS.begin_turn(session_id)
+        generation_deadline = time.monotonic() + config.AI_TOTAL_TIMEOUT
         reminder_revision = getattr(media, "reminder_revision",
                                     _reminder_revisions[getattr(media, "group", None)])
         # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
         # 从这里摘走，别漏进 get_ai_reply 的关键字里。
         history = context.pop("history", ())
+        lookup_used = lookup_used or bool(context.get("search_note"))
+        lookup_allowed = bool(config.SEARCH_ENABLED and getattr(message, "group_openid", None)
+                              and not context.get("private") and not context.get("back_off"))
+        context["search_action_note"] = (prompts.PROMPT_SEARCH_USED if lookup_used else
+                                         prompts.PROMPT_SEARCH_AVAILABLE if lookup_allowed else
+                                         prompts.PROMPT_SEARCH_UNAVAILABLE)
+        pending_lookup = None
+        lookup_record = "本轮已联网查询并取得资料" if context.get("search_note") else ""
+        lookup_delta_locked, lookup_delta = False, None
         media_notes = [context.get("media_note"), getattr(media, "note", "")]
         unavailable = []
         if not getattr(media, "draw", False):
@@ -1173,12 +1235,31 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             providers.reset_completion_meta()
             try:
                 generation_context = dict(context)
+                if received_at is not None:
+                    generation_context["timeline_note"] = _later_scene(
+                        trace["group"], trace["user"], received_at)
                 if raw_reply_filter is not None:
                     generation_context["raw_reply_filter"] = raw_reply_filter
-                body, delta = (prepared if prepared is not None else
-                               await get_ai_reply(session_id, user_text,
-                                                  allow_fallback=False, **generation_context))
-                return body, delta, providers.completion_meta()
+                if prepared is not None:
+                    body, delta = prepared
+                    completion = providers.completion_meta()
+                else:
+                    remaining = generation_deadline - time.monotonic()
+                    if remaining <= 0:
+                        return None, None, {}
+                    try:
+                        async def complete():
+                            body, delta = await get_ai_reply(
+                                session_id, user_text, allow_fallback=False, **generation_context)
+                            # wait_for runs a child task: read its ContextVar here,
+                            # rather than losing actual model provenance in the parent.
+                            return body, delta, providers.completion_meta()
+                        body, delta, completion = await asyncio.wait_for(complete(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        return None, None, {}
+                if lookup_used and expression.parse(body).kind == "search":
+                    body = "这次的资料还不足以确认，先不下结论。"
+                return body, delta, completion
             finally:
                 _reply_trace.reset(token)
 
@@ -1196,6 +1277,50 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         if is_stale is not None and is_stale():
             logger.info("⌛ 写好了没发：群里已经接着聊了（%s）", session_id[-12:])
             return "", delta, None
+        if said.kind == "search":
+            # The proposal is private. Only a result draft may execute other actions.
+            original_delta = delta
+            lookup_delta_locked, lookup_delta = True, delta
+            if media is not None:
+                media = MediaTurn(**(vars(media) | {"remind": False, "voice": False}))
+            reminder_intent = None
+            context["media_note"] += "\n【查询轮能力】这轮不发语音、不保存或取消提醒；查到资料后仍可按原有规则画图。"
+            if lookup_used or not lookup_allowed:
+                said = expression.Said(None, "", "这轮没法再查了，暂时还不能确认。")
+            else:
+                lookup_used = True  # failure and quota denial also exhaust this turn
+                context["search_action_note"] = prompts.PROMPT_SEARCH_USED
+                state, note, handle = await _model_lookup(
+                    message, said.spec, media, seconds=max(0, generation_deadline - time.monotonic()))
+                if state == slowwork.RUNNING:
+                    pending_lookup = handle
+                    said = expression.Said(None, "", "我去查查，等我一会儿。")
+                    body = said.text
+                    generated = False
+                    lookup_record = "联网查询任务已启动，仍在等待结果"
+                else:
+                    context["search_note"] = note if state == slowwork.DONE else ""
+                    lookup_record = "本轮已联网查询并取得资料" if state == slowwork.DONE else note
+                    context["search_action_note"] += ("\n【查询实际结果】查询已完成，资料见下方，直接回答原问题。"
+                                                       if state == slowwork.DONE else
+                                                       "\n【查询实际结果】" + note + "；这轮不再查询，不要说正在查或已经查到。")
+                    body, _, completion = await generate()
+                    if body and reply_filter is not None:
+                        body = reply_filter(body)
+                    generated = bool(body)
+                    said = expression.parse(body) if body else expression.Said(None, "", "这次没能整理出可靠的答复，先不乱说。")
+                    if said.kind == "search":
+                        said = expression.Said(None, "", "这次的资料还不足以确认，先不下结论。")
+                    if not generated:
+                        body = said.text
+                delta = original_delta
+            if is_stale is not None and is_stale():
+                if pending_lookup:
+                    _queue_lookup(message, session_id, user_text, "search", pending_lookup,
+                                  context, media, received_at=received_at)
+                return "", delta, None
+            if said.kind == "pass":
+                return "", delta, None
         if said.kind == "image" and not (media is not None and media.draw
                 and (not said.animated or getattr(media, "animate", False))):
             logger.info("🎨 这一轮不执行作图标记，交代未执行（%s）", session_id[-12:])
@@ -1289,6 +1414,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             body = "\n".join(part for part in (body, remind_line) if part) or remind_note
         elif said.remind:
             remind_applied = False
+        if lookup_delta_locked:
+            delta = lookup_delta
         if not body and said.kind != "image":
             return body, delta, None   # 只写了个标记、没写话：当它这轮不说
         hinted = f"{body}\n{OWNER_CLAIM_HINT}"
@@ -1298,6 +1425,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         recorded = {"as": expression.record_declined(body) if declined else None}
 
         def as_recorded(text):
+            if lookup_record:
+                text = f"{text}\n（系统：{lookup_record}）"
             if not remind_note:
                 return text
             if recorded_remind is not None:
@@ -1311,7 +1440,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             if runtime.SESSIONS.generation(session_id) != generation:
                 return  # a reset action invalidated this old pending reply
             if said.kind != "image":   # 画图那轮等图的结果出来再一起记
-                runtime.SESSIONS.record(session_id, user_text, as_recorded(recorded["as"] or result.text))
+                runtime.SESSIONS.record(session_id, user_text, as_recorded(recorded["as"] or result.text),
+                                        received_at=received_at)
             if generated and result.text in (body, hinted):
                 if result.text == hinted:
                     runtime.STATE.data.setdefault("groups", {}).setdefault(owner_hint_group, {})["owner_hint"] = True
@@ -1345,6 +1475,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         # 本地命令、主动广播、私聊都不在反馈口径里。
         interaction["feedback_eligible"] = bool(
             getattr(message, "group_openid", None) and member and source_id)
+        if is_stale is not None and is_stale():
+            return "", delta, None
         if said.kind == "voice":
             # 发语音持 owner-hint 锁：念出去的那句不能在合成途中被认主提示改掉。
             async with owner_hint_lock(owner_hint_group):
@@ -1355,7 +1487,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                     try:
                         voice_result, receipt = await _VOICE_OUT.attempt(
                             message, body, SENDER,
-                            lambda: runtime.SESSIONS.generation(session_id) == generation,
+                            lambda: (runtime.SESSIONS.generation(session_id) == generation
+                                     and (is_stale is None or not is_stale())),
                             tone=said.spec)
                     except Exception:
                         # 意外异常可能发生在 QQ 已收下语音之后：保守起见不再补发文字。
@@ -1385,7 +1518,7 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                                    medium="voice", status="unconfirmed")
                     if runtime.SESSIONS.generation(session_id) == generation:
                         runtime.SESSIONS.record(session_id, user_text,
-                                                as_recorded(expression.record(said, None)))
+                                                as_recorded(expression.record(said, None)), received_at=received_at)
                     return body, delta, DeliveryResult("unknown", body)
                 # 其余情况都确定没发出去（含合成被拒、念的和写的对不上）：同一句话改发文字。
                 # 这句本来就是小王写给群里看的，语音没成不等于这句话不能说。
@@ -1396,16 +1529,23 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
             return await _reply_with_image(
                 message, session_id, user_text, said, media, generation, delta,
                 commit=commit, interaction=interaction, prepare=prepare,
-                owner_hint_group=owner_hint_group, history=history)
+                owner_hint_group=owner_hint_group, history=history, received_at=received_at,
+                as_recorded=as_recorded)
+        if is_stale is not None and is_stale():
+            return "", delta, None
         result = await safe_reply(
             message, body, on_delivered=commit,
             interaction=interaction,
             is_current=lambda: (runtime.SESSIONS.generation(session_id) == generation
+                                and (is_stale is None or not is_stale())
                                 and (not remind_applied or reminder_revision == _reminder_revisions[media.group])),
             retry_lock=runtime.SESSIONS.lock(session_id),
             send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
             prepare=prepare if owner_hint_group else None,
             quote=_quote_if_moved_on(message))
+        if pending_lookup and runtime.SESSIONS.generation(session_id) == generation:
+            _queue_lookup(message, session_id, user_text, "search", pending_lookup,
+                          context, media, received_at=received_at)
         return body, delta, result
 
 
@@ -1547,7 +1687,7 @@ async def reply_unprompted(message, session_id, user_text, *, callback_note="", 
     # （2026-11-04「你发的啥」「截图看看」两秒内各回了一句；前一句接歪了，后一句看见自己刚回过就接着歪）。
     await asyncio.sleep(max(0.0, config.BANTER_BURST_SECONDS - _waited(group_id, message_id)))
     async with _unprompted_locks[group_id]:
-        if _said_more(group_id, member, message_id):
+        if not owed and _said_more(group_id, member, message_id):
             runtime.INTERACTIONS.append(
                 "decision", group_id, user=member, actor="system",
                 source_message_id=message_id, route="banter",
@@ -1563,7 +1703,8 @@ async def reply_unprompted(message, session_id, user_text, *, callback_note="", 
         stale = {}
 
         def is_stale():
-            stale["hit"] = not owed and _spoke_since(group_id, message_id)
+            stale["hit"] = not owed and (_said_more(group_id, member, message_id)
+                                          or _spoke_since(group_id, message_id))
             return stale["hit"]
 
         outcome = await reply_in_session(message, session_id, user_text, is_stale=is_stale,
@@ -1601,7 +1742,8 @@ async def _drawing_declined(message, media, said, history):
 
 
 async def _reply_with_image(message, session_id, user_text, said, media, generation, delta, *,
-                            commit, interaction, prepare, owner_hint_group, history):
+                            commit, interaction, prepare, owner_hint_group, history, received_at=None,
+                            as_recorded=lambda text: text):
     """小王写了〔画〕：先把它那句话发出去，同时开画；图跟在后面，结果记进会话。
 
     这句话就是以前那句固定的「好，我画画看，稍等一下」—— 现在是小王照着这单自己说的，
@@ -1638,8 +1780,9 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
         outcome = False
     delivered_text = said.text if getattr(result, "status", None) == "delivered" else ""
     if current():
-        runtime.SESSIONS.record(session_id, user_text, expression.record(
-            expression.Said("image", said.spec, delivered_text, animated=said.animated), outcome))
+        runtime.SESSIONS.record(session_id, user_text, as_recorded(expression.record(
+            expression.Said("image", said.spec, delivered_text, animated=said.animated), outcome)),
+            received_at=received_at)
         runtime.STATE.mark_dirty()
     if outcome is True:
         image_note = f"[{'动图' if said.animated else '图'}：{said.spec}]"
@@ -2378,18 +2521,99 @@ async def await_images(message, own, others):
             logger.info("🖼 背景里的图没读完，先回话")
 
 
+async def _run_lookup(kind, query, *, seconds=None):
+    """Start/poll only; callers retain their own session lock and delivery path."""
+    job = slowwork.JOBS[kind]
+    deadline = time.monotonic() + seconds if seconds is not None else None
+    handle = (await job.start(query) if seconds is None else
+              await asyncio.wait_for(job.start(query), timeout=seconds))
+    if handle is None:
+        return slowwork.FAILED, None, None
+    wait = config.ASYNC_REPLY_SECONDS if job.wait_first else 0.0
+    if deadline is None:
+        state, result = await slowwork.wait(job, handle, wait)
+    else:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return slowwork.RUNNING, None, handle
+        try:
+            state, result = await asyncio.wait_for(
+                slowwork.wait(job, handle, min(wait, remaining)), timeout=remaining)
+        except asyncio.TimeoutError:
+            return slowwork.RUNNING, None, handle
+    return state, result, handle
+
+
+async def _model_lookup(message, query, media, *, seconds):
+    """One explicit search proposal, the existing quota and one backend request."""
+    group = getattr(message, "group_openid", None)
+    user = getattr(getattr(message, "author", None), "member_openid", None)
+    known = {group, user, getattr(message, "id", None)}
+    for row in group_buffers.get(group, ()):
+        known.update((row.get("sender"), row.get("message_id")))
+    query = (query or "").strip()
+    if (not query or len(query) > 240 or wordfilter.has_hit(query)
+            or reminder_review.task_blocked(query, known_ids=known)):
+        return slowwork.FAILED, "查询词不合适，本次没有发起查询", None
+    if seconds <= 0:
+        return slowwork.FAILED, "本轮等待时间已用完，没有发起查询", None
+    score = getattr(media, "score", None)
+    if score is None:
+        score = (runtime.RELATIONS.get(group, user, create=False) or {}).get("score", 0)
+    quota = _reserve_search(group, user, score)
+    if quota not in ("normal", "exception", "extra"):
+        return slowwork.FAILED, "本次查询额度或服务不可用，没有发起查询", None
+    async def run():
+        if providers.research_available():
+            state, result, handle = await _run_lookup("search", query, seconds=seconds)
+            note = search_mod.render_brief(result) if state == slowwork.DONE else ""
+            if state == slowwork.DONE and not note:
+                state = slowwork.FAILED
+        else:
+            result = await asyncio.wait_for(search_mod.search_web(query),
+                                            timeout=min(seconds, config.SEARCH_TIMEOUT_SECONDS))
+            state, handle = (slowwork.DONE if result else slowwork.FAILED), None
+            note = search_mod.render_note(result) if result else ""
+        return state, note, handle
+    try:
+        state, note, handle = await run()
+    except Exception as exc:
+        logger.warning("模型查询未完成 type=%s", type(exc).__name__)
+        state, note, handle = slowwork.FAILED, "", None
+    runtime.INTERACTIONS.append("lookup", group, user=user, actor="assistant",
+                                source_message_id=getattr(message, "id", None),
+                                job="search", status=state, source="reply_action")
+    return state, note or "本次没有取得可用资料，也没有可跟进的查询结果", handle
+
+
+def _queue_lookup(message, session_id, user_input, kind, handle, reply_kwargs, media,
+                  *, received_at=None):
+    job, now = slowwork.JOBS[kind], time.time()
+    member = getattr(getattr(message, "author", None), "member_openid", None)
+    runtime.SCHEDULER.at("followup", message.group_openid, now + job.poll_every, {
+        "job": kind, "handle": handle, "session": session_id, "question": user_input,
+        "member": member, "msg_id": message.id,
+        "msg_ts": str(getattr(message, "timestamp", "") or ""),
+        "msg_idx": (getattr(message, "_scene", None) or {}).get("msg_idx"),
+        "is_owner": bool(reply_kwargs.get("is_owner")), "started": now,
+        "received_at": received_at,
+        "history_snapshot": reply_kwargs.get("history_snapshot"),
+        "reply_context": reply_kwargs.get("reply_context", ""),
+        "context_hint": reply_kwargs.get("context_hint", ""),
+        "media": media is not None, "score": getattr(media, "score", 0)})
+    runtime.STATE.mark_dirty()
+    runtime.INTERACTIONS.append("lookup", message.group_openid, user=member, actor="assistant",
+                                source_message_id=message.id, job=kind, status="background")
+
+
 async def answer_with_lookup(message, session_id, user_input, kind, query, *, reply_kwargs, media=None):
     """先查再答。线上等得到就一条回复；等不到先回一句在查，把手交给定时任务跟进。
 
     media：这一轮认不认〔画〕（见 media_turn）。转后台时只记「这轮能画」和分值，跟进那一刻重新看额度。
     起不了头、或当场就失败了，返回 None：调用方照常回复（不带资料），别让人干等。
     """
-    job = slowwork.JOBS[kind]
-    handle = await job.start(query)
-    if handle is None:
-        return None
-    state, result = await slowwork.wait(
-        job, handle, config.ASYNC_REPLY_SECONDS if job.wait_first else 0.0)
+    reply_kwargs = dict(reply_kwargs, lookup_used=True)
+    state, result, handle = await _run_lookup(kind, query)
     if state == slowwork.DONE:
         logger.info("🌐 联网查询当场回来了（%s）", kind)
         return await reply_in_session(message, session_id, user_input,
@@ -2400,18 +2624,8 @@ async def answer_with_lookup(message, session_id, user_input, kind, query, *, re
     outcome = await reply_in_session(message, session_id, user_input,
                                      prepared=("我去查查，等我一会儿。", None),
                                      prepared_local=True, **reply_kwargs)
-    now = time.time()
-    member = getattr(getattr(message, "author", None), "member_openid", None)
-    runtime.SCHEDULER.at("followup", message.group_openid, now + job.poll_every, {
-        "job": kind, "handle": handle, "session": session_id, "question": user_input,
-        "member": member,
-        "msg_id": message.id, "msg_ts": str(getattr(message, "timestamp", "") or ""),
-        "is_owner": bool(reply_kwargs.get("is_owner")), "started": now,
-        "media": media is not None, "score": getattr(media, "score", 0)})
-    runtime.STATE.mark_dirty()
-    # 桌宠（regular/presence.py）看得到她在查资料；只记慢活种类，不记要查的话。
-    runtime.INTERACTIONS.append("lookup", message.group_openid, user=member, actor="assistant",
-                                source_message_id=message.id, job=kind, status="background")
+    _queue_lookup(message, session_id, user_input, kind, handle, reply_kwargs, media,
+                  received_at=reply_kwargs.get("received_at"))
     logger.info("⏳ %s转后台，先回了一句（%s）", "深度研究" if kind == "research" else "联网查询",
                 message.group_openid[-6:])
     return outcome
@@ -2430,7 +2644,8 @@ def _reply_target(group_id, payload):
     return SimpleNamespace(group_openid=group_id, id=payload["msg_id"],
                            timestamp=payload.get("msg_ts") or None,
                            author=SimpleNamespace(member_openid=payload.get("member")),
-                           reply=reply, _api=getattr(_bot_ref.get("client"), "api", None))
+                           reply=reply, _api=getattr(_bot_ref.get("client"), "api", None),
+                           _scene={"msg_idx": payload.get("msg_idx")})
 
 
 async def finish_lookup(task):
@@ -2462,6 +2677,9 @@ async def finish_lookup(task):
         owner_label=owner_label(gid),
         search_note=search_mod.render_brief(result) if completed else "",
         lookup_note=done_note if completed else "",
+        lookup_used=True, received_at=p.get("received_at"),
+        history_snapshot=p.get("history_snapshot"),
+        reply_context=p.get("reply_context", ""), context_hint=p.get("context_hint", ""),
         prepared=None if completed else ("这次没查成，等会儿再试试。", None),
         prepared_local=not completed,
         media=media, history=history)
@@ -2469,14 +2687,18 @@ async def finish_lookup(task):
     logger.info("🌐 慢活跟进（%s，%s，%.0f 秒）：%s", p["job"], state, now - p["started"], status)
     if status != "expired" or not body:
         return None   # 送达、排队补投、被拒，都到此为止
-    if await post_to_group(gid, body, model_generated=completed, history=history):
-        runtime.SESSIONS.record(p["session"], p["question"], body)
+    if await post_to_group(gid, body, model_generated=completed, history=history,
+                           semantic_source=_reply_target(gid, p)):
+        runtime.SESSIONS.record(p["session"], p["question"], body, received_at=p.get("received_at"))
         return None
     p["ready"] = body
+    p["ready_generated"] = completed
+    p["ready_history"] = history
     return now + 3600
 
 
 _carried_reminders = {}
+_carried_followups = {}
 _reminder_revisions = collections.defaultdict(int)
 
 
@@ -2559,10 +2781,46 @@ def _reminder_current(task, text=""):
 async def deliver_carried(message, group_id):
     """被动窗口和主动发言都没送出去的跟进和提醒，捎在群里下一条消息上发出去。"""
     for task in runtime.SCHEDULER.pending(kind="followup", group=group_id):
-        text = task["payload"].get("ready")
-        if text and runtime.SCHEDULER.cancel(task["id"]):
+        payload = task["payload"]
+        text = payload.get("ready")
+        if not text or _carried_followups.get(task["id"]) is task:
+            continue
+
+        def current(task=task, text=text):
+            p = task["payload"]
+            return (runtime.SCHEDULER.tasks.get(task["id"]) is task
+                    and p.get("ready") == text
+                    and time.time() - p["started"] <= 86400)
+
+        def commit(result, payload=payload):
+            runtime.SESSIONS.record(payload["session"], payload["question"], result.text,
+                                    received_at=payload.get("received_at"))
             runtime.STATE.mark_dirty()
-            await safe_reply(message, text, interaction={"route": "followup"})
+
+        def observe(result, task=task):
+            if result.status == "queued":
+                return
+            if _carried_followups.get(task["id"]) is task:
+                _carried_followups.pop(task["id"], None)
+            if result.delivered and runtime.SCHEDULER.tasks.get(task["id"]) is task:
+                runtime.SCHEDULER.cancel(task["id"])
+                runtime.STATE.mark_dirty()
+
+        _carried_followups[task["id"]] = task
+        lock = runtime.SESSIONS.lock(payload["session"])
+        source = _reply_target(group_id, payload)
+        meta = {"route": "followup", "generation": "model" if payload.get("ready_generated") else "local_fallback",
+                "history": payload.get("ready_history") or (),
+                "feedback_eligible": bool(payload.get("member") and payload.get("msg_id"))}
+        try:
+            async with lock:
+                await safe_reply(message, text, semantic_source=source, interaction=meta,
+                                 is_current=current, on_delivered=commit, on_outcome=observe,
+                                 retry_lock=lock, quote=payload.get("msg_idx"))
+        except Exception:
+            if _carried_followups.get(task["id"]) is task:
+                _carried_followups.pop(task["id"], None)
+            raise
     for task in runtime.SCHEDULER.pending(kind=reminders.KIND, group=group_id):
         text = task["payload"].get("ready")
         if not text or _carried_reminders.get(task["id"]) is task:
@@ -2688,7 +2946,8 @@ async def fire_reminder(task):
 # ── 承诺催债 ──
 
 async def post_to_group(group_id, text, *, model_generated=False, history=(), turn_id=None,
-                        mention_member=None, is_current=None, quote=None, quote_text=""):
+                        mention_member=None, is_current=None, quote=None, quote_text="",
+                        semantic_source=None):
     """主动往群里发一句话（不是回复）。催债、定时播报都要用它。
 
     原生反馈判过「收敛」的群，窗口内主动发言一律按住 —— 点名回复
@@ -2706,6 +2965,8 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
     # 主动广播也落观察日志：route=proactive、不可反馈；只记确认送达的全文，
     # 空回执/异常只算「未确认」（SDK 可能吞掉超时），不记正文。
     outgoing_id = uuid.uuid4().hex
+    member = getattr(getattr(semantic_source, "author", None), "member_openid", None)
+    source_id = getattr(semantic_source, "id", None)
     policy_id = config.INTERACTION_POLICY_ID   # 发起这一刻定版
     reference_mode = "native" if quote else "text" if quote_text else "none"
     if quote_text and not quote:
@@ -2713,9 +2974,9 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
 
     def journal(status, receipt=None, reason=""):
         try:
-            fields = {"outgoing_id": outgoing_id, "source_message_id": None,
-                      "status": status, "route": "proactive",
-                      "feedback_eligible": False,
+            fields = {"outgoing_id": outgoing_id, "source_message_id": source_id,
+                      "status": status, "route": "followup" if semantic_source is not None else "proactive",
+                      "feedback_eligible": bool(model_generated and member and source_id),
                       "policy_id": policy_id}
             if reference_mode != "none":
                 fields["reference_mode"] = reference_mode
@@ -2731,7 +2992,7 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
                     else getattr(receipt, "id", None)
                 if isinstance(rid, (str, int)):
                     fields["platform_message_id"] = str(rid)
-            runtime.INTERACTIONS.append("delivery", group_id, user=None,
+            runtime.INTERACTIONS.append("delivery", group_id, user=member,
                                         actor="assistant", **fields)
         except Exception:
             # 观察记录失败不许反过来把已确认的发送说成失败，也不许补记一笔冤枉账。
@@ -2763,12 +3024,12 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
             return False
         logger.info("📢 [主动发言] 群 %s | %s", group_id[-6:], text.replace("\n", " ")[:150])
         _remember_sent(group_id, sent, text)
-        _note_own_line(group_id, text)
+        _note_own_line(group_id, text, user=member)
         # 确认送达的模型生成群发才登记反馈缓存：静态模式播报/本地文案不算。
         if model_generated:
             try:
                 runtime.FEEDBACK.remember(
-                    group_id, None, text, route="proactive",
+                    group_id, member, text, route="reply" if semantic_source is not None else "proactive",
                     outgoing_id=outgoing_id, history=history)
             except Exception:
                 logger.exception("⚠️ 主动发言反馈登记失败（%s）", group_id[-6:])
@@ -3017,6 +3278,12 @@ class GroupBot(botpy.Client):
         raw_content = message.content or ""
         group_id = message.group_openid
         sender_openid = message.author.member_openid
+        receipt_time = time.time()
+        session_at_receipt = runtime.SESSIONS.snapshot(f"{group_id}_{sender_openid}", now=receipt_time)
+        feedback_at_receipt = runtime.FEEDBACK.reply_snapshot(group_id, now=receipt_time)
+        history_at_receipt = [row for row in group_buffers.get(group_id, ())
+                              if 0 <= receipt_time - float(row.get("time") or 0)
+                              <= config.GROUP_BUFFER_TTL_SECONDS]
         reminder_revision_at_receipt = _reminder_revisions[group_id]
         voices = getattr(message, "_voice_attachments", ())
         if voices:
@@ -3135,9 +3402,6 @@ class GroupBot(botpy.Client):
                 message, group_id, bool(runtime.OWNER_OPENID and sender_openid == runtime.OWNER_OPENID))
             return
 
-        # 3.45 慢活跟进没送出去（被动窗口过了、主动发言也被拒）：捎在这条消息上。
-        await deliver_carried(message, group_id)
-
         # 3.5 显式反馈命令：在进背景缓存/好感度/模型之前处理 —— 它是给系统的
         #     记账，不是聊天内容，进了 buffer 就会变成下轮「群聊背景」。
         # 3.5 写入群聊滑动窗口背景缓存。
@@ -3149,18 +3413,15 @@ class GroupBot(botpy.Client):
         buf = group_buffers[group_id]
         if (not buf or image_url or voices or buf[-1]["sender"] != sender_openid
                 or buf[-1]["text"] != heard):
-            row = {"sender": sender_openid, "text": heard, "time": time.time(), "message_id": message.id}
+            row = {"sender": sender_openid, "text": heard, "time": receipt_time, "message_id": message.id}
             if scene.get("msg_idx"):
                 row["msg_idx"] = scene["msg_idx"]
             buf.append(row)
             runtime.STATE.data["buffers"][group_id] = list(buf)
-        # 记录消息到达时已存在的近期上下文，后续异步处理不把更晚消息倒插到这轮。
-        receipt_time = time.time()
-        history_at_receipt = [row for row in buf
-                              if row.get("message_id") != message.id
-                              and 0 <= receipt_time - float(row.get("time") or 0)
-                              <= config.GROUP_BUFFER_TTL_SECONDS]
         media.remember(group_id, message.id, sender_openid, image_url)
+        # Slow carried results may themselves deliver a reply. They happened after
+        # receipt and belong in the late-event view, never the frozen source context.
+        await deliver_carried(message, group_id)
 
         if voices:
             transcript = await _recognize_voices(
@@ -3196,6 +3457,7 @@ class GroupBot(botpy.Client):
                         (quote_note + (user_input or (f"@{naming.bot_name()}" if at_bot else ""))).strip(),
                         message_id=message.id, is_direct=bool(at_bot), named=named,
                         history=history_at_receipt[-4:],
+                        reply_snapshot=feedback_at_receipt, now=receipt_time,
                         nick_candidate=nick_candidate,
                         want_recall=config.MEMORY_RECALL_ENABLED,
                         want_lookup=(config.SEARCH_ENABLED
@@ -3581,7 +3843,7 @@ class GroupBot(botpy.Client):
             rows += [(o["time"], "- 你：" + (proactive.own_text(o)
                       if o.get("medium", "text") != "text" or o.get("status", "delivered") != "delivered"
                       else o["text"])) for o in own_lines.get(group_id, ())
-                     if o["time"] <= now_ts
+                     if o["time"] <= receipt_time
                      and (rows[0][0] <= o["time"] or _own_recent_drawing(o, now_ts))]
             rows.sort(key=lambda row: row[0])
             context_hint = refresh_names(group_id, "\n".join(line for _, line in rows))
@@ -3682,7 +3944,9 @@ class GroupBot(botpy.Client):
                                  and not search_note),
             resource_note=resource_note,
             back_off=back_off, quip=quip,
-            history=list(buf or [])[-4:],
+            received_at=receipt_time, history_snapshot=session_at_receipt,
+            history=([*history_at_receipt, {"sender": sender_openid, "text": heard,
+                       "time": receipt_time, "message_id": message.id}])[-4:],
         )
         # 画不画、说不说语音由小王在回复里自己决定；这里只定它这一轮「能不能」。
         # 喊停这轮不画也不念：对方已经不想听了。先查再答的那轮能画、不念、不办提醒（见 media_turn）。

@@ -359,7 +359,9 @@ class LookupFlowTest(_Base):
             await bot.SENDER.drain()
             self.assertEqual(msg.reply.await_count, 2)
             history = sessions._sessions["lookup-session"]["messages"]
-            self.assertEqual([m["content"] for m in history], ["查一下", "（模型应答）"])
+            self.assertEqual(history[0]["content"], "查一下")
+            self.assertTrue(history[1]["content"].startswith("（模型应答）"))
+            self.assertIn("本轮已联网查询并取得资料", history[1]["content"])
             self.assertEqual(len(self.prompts_seen), 1)
 
     async def test_expired_window_tries_a_post_then_rides_the_next_message(self):

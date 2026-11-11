@@ -38,6 +38,7 @@ class _Fixture(unittest.IsolatedAsyncioTestCase):
         self.sender = delivery.Sender(clock=lambda: NOW)
         self.feedback = SimpleNamespace(
             quiet=Mock(return_value=False), quiet_seconds=180,
+            reply_snapshot=Mock(return_value=None),
             remember=Mock(), assess=AsyncMock(side_effect=AssertionError("unexpected triage")))
         self.review = AsyncMock(return_value="allow")
         self.response_check = AsyncMock(return_value=True)

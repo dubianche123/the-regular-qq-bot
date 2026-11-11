@@ -496,12 +496,17 @@ async def start_research(query, *, instructions, deep=False):
         _reserve_attempt()
     except _BudgetExhausted:
         return None
-    data = await _research_http("POST", body={
+    body = {
         "model": config.RESEARCH_MODEL, "instructions": instructions, "input": query,
         "background": True, "store": True,
+        "max_output_tokens": config.REASONING_MAX_TOKENS,
         "tools": [{"type": "web_search",
                    "search_context_size": "high" if deep else "medium"}],
-        "reasoning": {"effort": "high" if deep else "low"}})
+        "reasoning": {"effort": "high" if deep else "low"}}
+    if not deep:
+        body["max_tool_calls"] = 1
+        body["tool_choice"] = "required"
+    data = await _research_http("POST", body=body)
     rid = (data or {}).get("id")
     return rid if isinstance(rid, str) and rid else None
 

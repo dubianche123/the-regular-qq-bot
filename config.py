@@ -420,11 +420,11 @@ KNOWLEDGE_MAX_ITEMS = _env_int("KNOWLEDGE_MAX_ITEMS", 2)
 KNOWLEDGE_MAX_CHARS = _env_int("KNOWLEDGE_MAX_CHARS", 360)
 
 # 联网搜索（见 search.py）。配了 RESEARCH_PROVIDER 就走它的联网查询（OpenAI Responses 的
-# web_search），并且分诊判断说「这句得先查」时自动查；没配就只有「搜索 关键词」命令查 DuckDuckGo。
+# web_search），支持分诊、命令和回复模型〔搜索〕触发；没配时命令及模型动作查 DuckDuckGo。
 SEARCH_ENABLED = _env_bool("SEARCH_ENABLED", True)
 SEARCH_MAX_RESULTS = _env_int("SEARCH_MAX_RESULTS", 3)
 SEARCH_TIMEOUT_SECONDS = _env_float("SEARCH_TIMEOUT_SECONDS", 8.0)
-# 冷却只管「搜索」命令；判断触发的自动查询不受冷却，只算进每日上限 ——
+# 冷却只管「搜索」命令；判断或回复模型提出的查询不受冷却，仍受个人和群每日上限 ——
 # 有人连着问几个要查的问题时，第二个不该因为冷却变成瞎答。
 SEARCH_COOLDOWN_SECONDS = _env_float("SEARCH_COOLDOWN_SECONDS", 60.0)
 SEARCH_DAILY_CAP = _env_int("SEARCH_DAILY_CAP", 60)

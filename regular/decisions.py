@@ -293,6 +293,9 @@ def _alias_map(senders):
             for i, sender in enumerate(dict.fromkeys(s for s in senders if s))}
 
 
+_LIVE_REPLY = object()
+
+
 class FeedbackTracker:
     """按群一份的临时观察：最近一条真正发出去的模型回复 + 几条人类上下文。
 
@@ -370,9 +373,20 @@ class FeedbackTracker:
                               "message_id": row.get("message_id"),
                               "text": _bound(row["text"], 240),
                               "ts": row.get("time")})
-        self._slot(group)["reply"] = {
+        slot = self._slot(group)
+        slot_token = slot.setdefault("_token", object())
+        slot["reply"] = {
             "user": user, "text": text, "route": route,
-            "outgoing_id": outgoing_id, "ts": now, "history": human}
+            "outgoing_id": outgoing_id, "ts": now, "history": human,
+            "_slot_token": slot_token}
+
+    def reply_snapshot(self, group, *, now=None):
+        """收到消息时冻结反馈对象；后来的送达不能替换这条消息看到的原句。"""
+        now = time.time() if now is None else now
+        reply = (self._groups.get(group) or {}).get("reply")
+        if reply and 0 <= now - reply["ts"] <= self.window_seconds:
+            return reply
+        return None
 
     def quiet(self, group, *, now=None):
         """原生反馈判过「收敛一下」之后，插嘴暂停窗内还有没有剩。"""
@@ -404,7 +418,8 @@ class FeedbackTracker:
 
     async def assess(self, group, user, text, *, message_id="", is_direct=False,
                      named=False, history=None, nick_candidate=None,
-                     want_recall=False, want_lookup=False, now=None):
+                     want_recall=False, want_lookup=False,
+                     reply_snapshot=_LIVE_REPLY, now=None):
         """一条人类消息的**分诊**：本机先决定要问哪几题，然后最多一次原生调用。
 
         为什么是一次调用带一串题（2026-10-31）：这个接口按输入计费、输出不要钱，
@@ -425,13 +440,17 @@ class FeedbackTracker:
         即使请求失败也不许为同一条消息再发一次。`asked` 记下这次实际问了哪些题。
 
         私聊不走这里：私聊原文是最私密的那一路，不为它新开一条第三方数据流。
+
+        reply_snapshot 由接收消息时的 reply_snapshot() 提供；显式 None 表示当时没有
+        可反馈的回复，不在等待期间追认后来送达的新句。不传则保留读取最新回复的旧行为。
         """
         if not config.DECISION_ENABLED:
             return {}
         now = time.time() if now is None else now
         slot = self._groups.get(group) or {}
-        reply = slot.get("reply")
-        if reply and now - reply["ts"] > self.window_seconds:
+        frozen_reply = reply_snapshot is not _LIVE_REPLY
+        reply = reply_snapshot if frozen_reply else slot.get("reply")
+        if not frozen_reply and reply and now - reply["ts"] > self.window_seconds:
             reply = None
         calls_bot = bool(is_direct or named)
         if reply and not is_direct and self.quiet(group, now=now):
@@ -521,10 +540,14 @@ class FeedbackTracker:
                           source_route=reply["route"])
         body = await providers.call_decision(
             json.dumps(payload, ensure_ascii=False), questions)
-        # 等结果期间这条回复已被新的送达顶掉：机会已过时，只给保守的安静动作，
-        # 不写暂停窗、不给修正话术。分诊里与那条回复无关的题照常作数。
-        current_reply = (self._groups.get(group) or {}).get("reply")
-        stale = bool(reply) and current_reply is not reply
+        # 未冻结的旧调用方仍以最新送达为准。收到消息时冻结过的原句则保留反馈语义，
+        # 但整组缓存被清空/逐出后，旧结果不能重新创建暂停窗。
+        current_slot = self._groups.get(group) or {}
+        current_reply = current_slot.get("reply")
+        stale = bool(reply) and (
+            (not current_reply or not reply.get("_slot_token")
+             or current_slot.get("_token") is not reply["_slot_token"])
+            if frozen_reply else current_reply is not reply)
         choices, scores = usable_choices(body, questions)
         self._log_scores(group, "feedback" if reply else "triage", scores,
                          user=user, source_message_id=message_id,

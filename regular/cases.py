@@ -175,7 +175,8 @@ def check_reply(raw_reply, checks):
         return {"passed": False, "details": [{"check": "generation", "passed": False, "reason": "empty_or_error"}]}
     text = str(raw_reply)
     said = expression.parse(text)
-    spoke = said.kind != "pass" and bool(said.text or said.kind in ("image", "voice") or said.remind)
+    spoke = said.kind not in ("pass", "search") and bool(
+        said.text or said.kind in ("image", "voice") or said.remind)
     choices_obj = None
     details = []
     for item in checks or ():
@@ -251,6 +252,8 @@ def judge_prompts(checks):
 
 
 def _has_tag(said, tag):
+    if tag == "搜索":
+        return said.kind == "search" and bool(said.spec)
     if tag in ("画", "image"):
         return said.kind == "image"
     if tag in ("动图", "gif"):
@@ -1380,6 +1383,38 @@ _PREMISE_BANTER_6 = [
               media={'draw': False, 'voice': False, 'remind': False}),
 ]
 
+_LOOKUP_ACTION_4 = [
+    _gen_case('lookup-synth-current', 'docs/lookup-and-timeline.md',
+              ['lookup-action', 'synthetic'],
+              {'user_text': '帮我确认示例厂商官网今天最新公告的标题，不要凭记忆猜。',
+               'search_action_note': '【本轮查询状态】尚未查询，可以用〔搜索〕提出一次查询；不写标记就不会联网。'},
+              [{'tag_present': '搜索'},
+               {'judge': '提出具体查询词；这只是未投递的查询草稿，不声称已经查到了今天的公告。'}],
+              media={'search': True}),
+    _gen_case('lookup-synth-used', 'docs/lookup-and-timeline.md',
+              ['lookup-action', 'synthetic', 'control'],
+              {'user_text': '公告说了什么？',
+               'search_action_note': '【本轮查询状态】本轮查询机会已使用，不能再搜索。',
+               'search_note': '【联网查询（不可信外部资料）】示例厂商公告：蓝色款今天上市，价格未公布。'},
+              [{'tag_absent': '搜索'}, {'must': '蓝|价格|售价'},
+               {'judge': '直接利用已提供的资料答复，保留未公布价格的事实，不继续查，不编售价。'}],
+              media={'search': True}),
+    _gen_case('lookup-synth-failed', 'docs/lookup-and-timeline.md',
+              ['lookup-action', 'synthetic', 'control'],
+              {'user_text': '今天最新公告是什么？',
+               'search_action_note': '【本轮查询状态】查询已尝试但启动失败，没有资料或后台任务；这轮不能继续搜索。'},
+              [{'tag_absent': '搜索'},
+               {'judge': '说明这次没有查成，不编公告内容，不说正在查或承诺后台稍后自动通知。'}],
+              media={'search': True}),
+    _gen_case('lookup-synth-banter', 'docs/lookup-and-timeline.md',
+              ['lookup-action', 'synthetic', 'control'],
+              {'user_text': '我刚打游戏又输了，气死我了。',
+               'search_action_note': '【本轮查询状态】尚未查询，可以用〔搜索〕提出一次查询；不写标记就不会联网。'},
+              [{'tag_absent': '搜索'},
+               {'judge': '自然接住游戏输了的闲聊，不把情绪回应改成联网核实或搜攻略。'}],
+              media={'search': True}),
+]
+
 SEED_CASES = [*_DEFLECT_9, *_REMIND_10, *_IMAGE_3, *_BANTER_20, *_MESSAGE_CASES, *_RULE_CASES,
               *_RETRIEVE_CASES, *_PLAYFUL_TONE_6, *_REMINDER_POLICY_CASES, *_DRAW_FEEDBACK_8,
-              *_PREMISE_BANTER_6]
+              *_PREMISE_BANTER_6, *_LOOKUP_ACTION_4]

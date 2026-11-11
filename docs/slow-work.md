@@ -40,16 +40,21 @@ bot 的编排（`bot.answer_with_lookup` / `bot.finish_lookup`）：
 response id，重启以后接着问。以后本地的慢计算照这个接口接：把手找不回时 `poll` 报
 `failed`，话照样能圆上。
 
-“在查”和失败提示都使用本地短句，不单独调用回复模型；只有查到资料后的正式回答需要生成。
-早期实测中的“边等边写”会额外消耗一次回复模型调用，现已取消。
+“在查”和失败提示都使用本地短句，不单独调用回复模型；查询结果由回复模型写成正式回答。
+回复模型现在也可以用 `〔搜索〕` 提出一次查询：前面已有一次未投递的提议草稿，查完再写结果，
+不会额外调用判断模型。原问题、收件时会话及回应对象随任务保存；转后台、主动投递或借新消息
+捎带，都仍归原请求者，确认送达后才提交原会话。详见[查询动作与消息时序](lookup-and-timeline.md)。
 
 ---
 
 ## 二、联网查询（`providers.start_research` / `poll_research`）
 
-查资料的是 OpenAI `gpt-6-luna`（Responses API 的 `web_search` 工具，后台模式），
-回话的仍是 `glm-5.3-flash`：查到的要点作为「不可信外部资料」进小团团的提示词末尾
+查询使用 `RESEARCH_PROVIDER` / `RESEARCH_MODEL` 配置的 Responses 服务（`web_search`，后台模式），
+回话使用聊天服务：查到的要点作为「不可信外部资料」进小团团的提示词末尾
 （`search.render_brief`），**链接全部去掉、只留出处名字** —— 群里发不出链接。
+
+普通查询现在要求实际调用一次工具（`tool_choice=required`、`max_tool_calls=1`），
+输出与思考合计受 `REASONING_MAX_TOKENS` 限制。下面的多轮耗时数据是 11 月 1 日旧实现的历史记录。
 
 本机 openai SDK 1.99 的 responses 模块一导入就报错，所以和判断一样直接发 HTTP。
 

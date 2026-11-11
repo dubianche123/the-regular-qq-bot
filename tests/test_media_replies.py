@@ -103,8 +103,13 @@ class HeadTest(unittest.TestCase):
         self.assertNotIn("〔语音〕", rules)
         with patch.object(bot.image_generation, "available", return_value=False), \
              patch.object(bot._VOICE_OUT, "ready", return_value=False), \
-             patch.object(bot.config, "REMINDER_ENABLED", False):
+             patch.object(bot.config, "REMINDER_ENABLED", False), \
+             patch.object(bot.config, "SEARCH_ENABLED", False):
             self.assertEqual(bot.media_rules(), "")
+
+    def test_search_protocol_is_a_stable_capability(self):
+        self.assertIn(prompts.PROMPT_SEARCH_RULES, bot.media_rules({"search": True}))
+        self.assertNotIn(prompts.PROMPT_SEARCH_RULES, bot.media_rules({"search": False}))
 
     def test_rules_say_it_can_and_records_are_true(self):
         """两句话是对着事故写的：别说「画不了」；会话里的系统记录就是实际发生的事。"""
