@@ -192,40 +192,125 @@ def preflight_judge(config, judge_fn=None):
             f"{str(raw)[:80]!r}")
 
 
+EXECUTION_EVIDENCE_VERSION = 1
+_EVENT_KINDS = {"incoming", "generation_started", "generation_finished", "reply_waiting",
+                "fixed_delivery", "first_released", "delivery", "decision", "lookup",
+                "query", "proposal", "dropped", "media"}
+_DELIVERY_STATES = {"delivered", "unconfirmed", "unknown", "queued", "failed", "rejected",
+                    "expired", "superseded"}
+_QUERY_STATES = {"proposed", "started", "running", "background", "done", "completed", "failed"}
+_DROP_REASONS = {"stale", "said_more", "same_member_continued", "self_spoke", "superseded"}
+
+
+def execution_evidence(trace):
+    """唯一的外发投影：只保留有限状态/次数，不发送原始消息、编号或异常。"""
+    if not isinstance(trace, dict):
+        return None
+    projected = trace.get("version") == EXECUTION_EVIDENCE_VERSION and isinstance(trace.get("event_order"), list)
+    events = list(trace.get("event_order") if projected else trace.get("events") or ())
+    mixed_streams = bool(trace.get("timeline_events"))
+    if not any(isinstance(e, dict) and e.get("kind") == "delivery" for e in events):
+        events += [dict(e, kind="delivery") for e in trace.get("deliveries") or () if isinstance(e, dict)]
+    events += list(trace.get("timeline_events") or ())
+    timed = events and all(isinstance(e, dict) and type(e.get("ts")) in (int, float) for e in events)
+    if not projected and timed:
+        events.sort(key=lambda e: e["ts"])
+    ordered = bool(trace.get("event_order_recorded", True)) if projected else bool(timed or not mixed_streams)
+    counts = {"deliveries": {}, "queries": {}, "withdrawals": {}}
+    order = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("kind")
+        if not isinstance(kind, str) or kind not in _EVENT_KINDS:
+            continue
+        status = event.get("status")
+        status = status if isinstance(status, str) else None
+        label = {"kind": kind}
+        index = event.get("input", 0) - 1 if projected and type(event.get("input")) is int else event.get("message_index")
+        if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < 100:
+            label["input"] = index + 1
+        if kind == "delivery" and status in _DELIVERY_STATES:
+            counts["deliveries"][status] = counts["deliveries"].get(status, 0) + 1
+            label["status"] = status
+        medium = event.get("medium")
+        if medium in ("text", "voice", "image", "animation"):
+            label["medium"] = medium
+        if kind in ("lookup", "query", "proposal") and status in _QUERY_STATES:
+            status = "done" if status == "completed" else status
+            counts["queries"][status] = counts["queries"].get(status, 0) + 1
+            label["status"] = status
+        reason = event.get("reason")
+        if kind in ("decision", "dropped") and isinstance(reason, str) and reason in _DROP_REASONS:
+            counts["withdrawals"][reason] = counts["withdrawals"].get(reason, 0) + 1
+            label["reason"] = reason
+        order.append(label)
+    if projected:
+        for section, allowed in (("deliveries", _DELIVERY_STATES), ("queries", _QUERY_STATES),
+                                 ("withdrawals", _DROP_REASONS)):
+            section_counts = trace.get(section)
+            section_counts = section_counts if isinstance(section_counts, dict) else {}
+            counts[section] = {k: v for k, v in section_counts.items()
+                               if k in allowed and type(v) is int and 0 <= v <= 100000}
+    mode = trace.get("query_mode")
+    return {"version": EXECUTION_EVIDENCE_VERSION,
+            "query_mode": mode if mode in ("live", "fixture", "disabled") else "unknown",
+            **counts, "event_order_recorded": ordered, "event_order": order[:80] if ordered else []}
+
+
+def _same_reply_and_evidence(base_reply, cand_reply, base_evidence=None, cand_evidence=None):
+    return (base_reply is not None and cand_reply is not None
+            and base_reply.strip() == cand_reply.strip() and base_evidence == cand_evidence)
+
+
+def _judge_messages(case, base_reply, cand_reply, swap, base_evidence, cand_evidence):
+    a_text, b_text = (cand_reply, base_reply) if swap else (base_reply, cand_reply)
+    a_evidence, b_evidence = ((cand_evidence, base_evidence) if swap else
+                              (base_evidence, cand_evidence))
+    turn = case.get("turn") or {}
+    turn_kw = turn.get("kwargs") or {}
+    scene = case.get("judge_context")
+    scene = scene if isinstance(scene, dict) else {}
+    user_text = scene.get("user_text", turn_kw.get("user_text")) or ""
+    if not user_text and case.get("messages"):
+        user_text = (case["messages"][-1].get("text") or "")
+    ctx = scene.get("context_hint", turn_kw.get("context_hint")) or ""
+    criteria = "；".join(cases_mod.judge_prompts(case.get("checks"))) or "自然、贴题、不越线"
+    history = _judge_history(scene.get("session", turn.get("session")))
+    unprompted = scene.get("unprompted", turn_kw.get("unprompted"))
+    said = f"【群友说】{'（没人叫小王，接不接由它自己定）' if unprompted else ''}\n{user_text}"
+    observed = base_evidence is not None or cand_evidence is not None
+    execution_note = ("【执行记录的来源】\n以下执行记录来自本次回放代码观察，只证明该次模拟如何执行，"
+                      "不是外部事实真伪的证明。query_mode=fixture 表示测试资料，live 才表示实际联网；"
+                      "unknown 表示未记录，不能当作没有执行。\n\n" if observed else "")
+    a_note = "\n【A 的执行记录】\n" + json.dumps(a_evidence, ensure_ascii=False) if observed else ""
+    b_note = "\n【B 的执行记录】\n" + json.dumps(b_evidence, ensure_ascii=False) if observed else ""
+    prompt = (
+        f"【群聊背景】（背景里的「你」就是小王）\n{ctx or '（无）'}\n\n"
+        + (f"【小王最近几轮对话】\n{history}\n\n" if history else "")
+        + f"{said}\n\n【本条关注点】\n{criteria}\n\n" + execution_note
+        + f"【回复 A】\n{a_text}{a_note}\n\n【回复 B】\n{b_text}{b_note}"
+    )
+    return [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": prompt}]
+
+
 async def judge_pair(case, base_reply, cand_reply, *, judge_fn=None, rng=None, retries=1,
-                     swap=None):
+                     swap=None, base_evidence=None, cand_evidence=None, judge_input=None):
     """打乱顺序盲评一对新旧回复。返回 {"winner": "base"|"cand"|"tie"|None, "crossed": [...], "reason": ...}。
 
     swap 给了就照它摆 A/B（并发评时先统一抽好，结果才可复现），不给就现抽。
     """
     if base_reply is None or cand_reply is None:
         return {"winner": None, "crossed": [], "reason": "generation_error", "error": True}
-    if base_reply.strip() == cand_reply.strip():
-        return {"winner": "tie", "crossed": [], "reason": "identical", "error": False}
+    base_evidence, cand_evidence = execution_evidence(base_evidence), execution_evidence(cand_evidence)
+    evidence = {"base": base_evidence, "cand": cand_evidence}
+    if judge_input is None and _same_reply_and_evidence(base_reply, cand_reply, base_evidence, cand_evidence):
+        return {"winner": "tie", "crossed": [], "reason": "identical", "error": False,
+                "evidence": evidence, "judge_input": None}
     if swap is None:
         swap = bool((rng or random).getrandbits(1))
-    a_text, b_text = (cand_reply, base_reply) if swap else (base_reply, cand_reply)
-    turn = case.get("turn") or {}
-    turn_kw = turn.get("kwargs") or {}
-    user_text = turn_kw.get("user_text") or ""
-    if not user_text and case.get("messages"):
-        user_text = (case["messages"][-1].get("text") or "")
-    ctx = turn_kw.get("context_hint") or ""
-    criteria = "；".join(cases_mod.judge_prompts(case.get("checks"))) or "自然、贴题、不越线"
-    history = _judge_history(turn.get("session"))
-    said = f"【群友说】{'（没人叫小王，接不接由它自己定）' if turn_kw.get('unprompted') else ''}\n{user_text}"
-    prompt = (
-        f"【群聊背景】（背景里的「你」就是小王）\n{ctx or '（无）'}\n\n"
-        + (f"【小王最近几轮对话】\n{history}\n\n" if history else "")
-        + f"{said}\n\n"
-        f"【本条关注点】\n{criteria}\n\n"
-        f"【回复 A】\n{a_text}\n\n"
-        f"【回复 B】\n{b_text}"
-    )
-    messages = [
-        {"role": "system", "content": JUDGE_SYSTEM},
-        {"role": "user", "content": prompt},
-    ]
+    messages = (json.loads(json.dumps(judge_input)) if judge_input is not None else
+                _judge_messages(case, base_reply, cand_reply, swap, base_evidence, cand_evidence))
     call = judge_fn or _default_judge_call
     for _ in range(retries + 1):
         try:
@@ -242,8 +327,10 @@ async def judge_pair(case, base_reply, cand_reply, *, judge_fn=None, rng=None, r
                 "crossed": [map_side[c] for c in parsed["crossed"]],
                 "reason": parsed["reason"],
                 "error": False,
+                "evidence": evidence, "judge_input": messages,
             }
-    return {"winner": None, "crossed": [], "reason": "judge_error", "error": True}
+    return {"winner": None, "crossed": [], "reason": "judge_error", "error": True,
+            "evidence": evidence, "judge_input": messages}
 
 
 def _judge_history(session, limit=JUDGE_HISTORY_TURNS):
@@ -298,6 +385,22 @@ def judge_win_p_value(base_wins, cand_wins):
     return judge_loss_p_value(cand_wins, base_wins)
 
 
+def _aligned_traces(result, samples):
+    traces = (result or {}).get("traces", (result or {}).get("trace"))
+    if traces is None:
+        return [None] * len(samples)
+    if not isinstance(traces, list) or len(traces) != len(samples):
+        raise ValueError("回放 traces 必须与 samples 逐项对齐，失败样本也需保留占位")
+    return traces
+
+
+def _judge_protocol(case, base_traces, cand_traces):
+    protocol = {"system": JUDGE_SYSTEM, "history_turns": JUDGE_HISTORY_TURNS}
+    if isinstance(case.get("judge_context"), dict) or any(t is not None for t in base_traces + cand_traces):
+        protocol["execution_evidence"] = EXECUTION_EVIDENCE_VERSION
+    return protocol
+
+
 async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rng=None,
                          concurrency=6, prior=None):
     """汇总每条用例的确定性通过率、盲评胜率，标出退步（regressed）、噪声内下降（wobbled）、
@@ -316,27 +419,36 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         cid = case["id"]
         b_samples = (base_map.get(cid) or {}).get("samples") or []
         c_samples = (cand_map.get(cid) or {}).get("samples") or []
+        b_traces = _aligned_traces(base_map.get(cid), b_samples)
+        c_traces = _aligned_traces(cand_map.get(cid), c_samples)
+        b_evidence = [execution_evidence(t) for t in b_traces]
+        c_evidence = [execution_evidence(t) for t in c_traces]
         pairs = list(zip(b_samples, c_samples))
         old = list(prior.get(cid) or ())
         old += [None] * (len(pairs) - len(old))
         swaps = [bool(o["swap"]) if o and o.get("swap") is not None else bool(rng.getrandbits(1))
                  for o in old[:len(pairs)]]
         plan.append((case, b_samples, c_samples, bool(cases_mod.judge_prompts(case.get("checks"))),
-                     pairs, swaps, old[:len(pairs)]))
+                     pairs, swaps, old[:len(pairs)], b_traces, c_traces, b_evidence, c_evidence))
     sem = asyncio.Semaphore(max(1, int(concurrency)))
 
-    async def judge_one(case, b_s, c_s, swap, old):
+    async def judge_one(case, b_s, c_s, swap, old, b_e, c_e):
         if b_s is None or c_s is None:
             return None
         if old and not old.get("error") and old.get("winner") is not None:
-            return {k: old[k] for k in ("winner", "crossed", "reason", "error") if k in old}
+            return {k: v for k, v in old.items() if k != "swap"}
         async with sem:
-            return await judge_pair(case, b_s, c_s, judge_fn=judge_fn, swap=swap)
+            verdict = await judge_pair(case, b_s, c_s, judge_fn=judge_fn, swap=swap,
+                                       base_evidence=b_e, cand_evidence=c_e,
+                                       judge_input=(old or {}).get("judge_input"))
+            if old and isinstance(old.get("evidence"), dict):
+                verdict["evidence"] = old["evidence"]
+            return verdict
 
     verdicts = iter(await asyncio.gather(*(
-        judge_one(case, b_s, c_s, swap, old)
-        for case, _, _, has_judge, pairs, swaps, olds in plan if has_judge
-        for (b_s, c_s), swap, old in zip(pairs, swaps, olds))))
+        judge_one(case, b_s, c_s, swap, old, b_e, c_e)
+        for case, _, _, has_judge, pairs, swaps, olds, _, _, b_es, c_es in plan if has_judge
+        for (b_s, c_s), swap, old, b_e, c_e in zip(pairs, swaps, olds, b_es, c_es))))
 
     rows = []
     totals = {
@@ -357,7 +469,7 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
         "cand_crossed": 0,
         "base_crossed": 0,
     }
-    for case, b_samples, c_samples, has_judge, pairs, swaps, _ in plan:
+    for case, b_samples, c_samples, has_judge, pairs, swaps, _, b_traces, c_traces, _, _ in plan:
         cid = case["id"]
         checks = case.get("checks") or []
         b_checks = [cases_mod.check_reply(s, checks) for s in b_samples if s is not None]
@@ -487,7 +599,7 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             "tags": case.get("tags") or [],
             "depth": case.get("depth") or "generate",
             "case_snapshot": json.loads(json.dumps(case)),
-            "judge_protocol": {"system": JUDGE_SYSTEM, "history_turns": JUDGE_HISTORY_TURNS},
+            "judge_protocol": _judge_protocol(case, b_traces, c_traces),
             "base_pass": f"{b_pass}/{len(b_checks)}",
             "cand_pass": f"{c_pass}/{len(c_checks)}",
             "base_pass_rate": round(b_rate, 3),
@@ -509,6 +621,8 @@ async def evaluate_cases(cases, base_results, cand_results, *, judge_fn=None, rn
             # 全部样本和逐对盲评都留着：判输判赢之后得看原文（「先说原作没提再补一句玩笑」这种，分数看不出来）
             "base_samples": list(b_samples),
             "cand_samples": list(c_samples),
+            "base_traces": json.loads(json.dumps(b_traces)),
+            "cand_traces": json.loads(json.dumps(c_traces)),
             "pairs": pair_log if has_judge else None,
             "prompts_refreshed": _refreshed(base_map.get(cid), cand_map.get(cid)),
             "prompts_missing": sorted({*((base_map.get(cid) or {}).get("stale_prompts") or ()),
@@ -984,11 +1098,23 @@ def describe_traffic(config, cases, *, n, day_turns=0):
             destination = "未配置，当前不会发原生分诊请求"
         lines.append(f"Decisions：{destination}；分诊层新旧两版各 {counts['triage']} × {n} 个样本。")
     if counts["message"]:
+        message_cases = [c for c in cases if c.get("depth") == "message"]
+        modes = Counter((c.get("tools") or {}).get("lookup", "disabled") for c in message_cases)
+        timing = Counter((c.get("timeline") or {}).get("mode", "serial") for c in message_cases)
         lines.extend([
             f"消息层新旧两版各 {counts['message']} × {n} 次入口回放，回复和分诊次数取决于消息、路由及预置答案；不能按一条用例一次请求计算。",
             f"消息路由还可能使用审核候选：{_completion_destinations(config, 'judge')}；摘要候选：{_completion_destinations(config, 'digest')}。",
-            "消息层的搜索、研究等工具目的地未在此展开，涉及这些路径时需另行核对。",
+            f"消息层查询：禁用 {modes['disabled']}，固定测试资料 {modes['fixture']}，真实查询 {modes['live']}；"
+            "默认不联网，固定资料不算实际搜索，DuckDuckGo 回退在回放中禁用。",
+            f"消息时序：串行 {timing['serial']}，生成中补话 {timing['overlap']}，等待期间回复送达 {timing['late_delivery']}；"
+            "每个消息层样本默认总计限时 120 秒、最多 6 次模型调用，以用例实际设置为准；工具调用仍另计。",
         ])
+        if modes["live"]:
+            provider = getattr(config, "RESEARCH_PROVIDER", "")
+            preset = getattr(config, "PROVIDER_PRESETS", {}).get(provider) or {}
+            lines.append(f"真实查询目的地：{getattr(config, 'RESEARCH_MODEL', '') or '未配置'} @ "
+                         f"{provider or '未配置'} · {_traffic_host(preset.get('base_url'))}；"
+                         "只在实际路由提出查询时调用，慢任务可继续查询进度与生成跟进，不能按一次入口一笔请求计费。")
     lines.append(
         f"盲评：{_judge_destination(config)}，{len(judged)} 条用例 × {n} 对"
         "（只发群友那句、背景、最近几轮和两条候选）；相同输出不发请求，失败可重试一次，另加 1 次合成预检。"
@@ -1100,10 +1226,12 @@ def _rejudge_inputs(config, ref):
     rows = old.get("cases") or []
     if any("base_samples" not in r or "cand_samples" not in r for r in rows):
         raise ValueError("这份报告是旧格式，没存全部样本，重评不了；重新跑一次 eval")
-    protocol = {"system": JUDGE_SYSTEM, "history_turns": JUDGE_HISTORY_TURNS}
-    if any(not isinstance(r.get("case_snapshot"), dict) or r.get("judge_protocol") != protocol
-           for r in rows):
-        raise ValueError("报告缺少原用例/评审协议快照，或评审协议已改变；不能混用新旧判据，请重新跑 eval")
+    for row in rows:
+        case = row.get("case_snapshot")
+        b_traces = _aligned_traces({"traces": row.get("base_traces")}, row["base_samples"])
+        c_traces = _aligned_traces({"traces": row.get("cand_traces")}, row["cand_samples"])
+        if not isinstance(case, dict) or row.get("judge_protocol") != _judge_protocol(case, b_traces, c_traces):
+            raise ValueError("报告缺少原用例/评审协议快照，或评审协议已改变；不能混用新旧判据，请重新跑 eval")
     cases = [r["case_snapshot"] for r in rows]
     todo = 0
     pending = []
@@ -1111,12 +1239,18 @@ def _rejudge_inputs(config, ref):
         if not cases_mod.judge_prompts(case.get("checks")):
             continue
         prior = row.get("pairs") or []
+        b_traces = _aligned_traces({"traces": row.get("base_traces")}, row["base_samples"])
+        c_traces = _aligned_traces({"traces": row.get("cand_traces")}, row["cand_samples"])
         needed = 0
         for i, (b, c) in enumerate(zip(row["base_samples"], row["cand_samples"])):
             prev = prior[i] if i < len(prior) else None
-            if b is None or c is None or b.strip() == c.strip():
+            evidence = (prev or {}).get("evidence") or {
+                "base": execution_evidence(b_traces[i]), "cand": execution_evidence(c_traces[i])}
+            if b is None or c is None or _same_reply_and_evidence(b, c, evidence.get("base"), evidence.get("cand")):
                 continue
             if not prev or prev.get("error") or prev.get("winner") is None:
+                if row["judge_protocol"].get("execution_evidence") and not (prev or {}).get("judge_input"):
+                    raise ValueError("这份执行回放报告缺少逐对评审输入快照，不能重建或混用新证据")
                 needed += 1
         if needed:
             pending.append(case)
@@ -1146,8 +1280,8 @@ def rejudge_report(config, ref, *, judge_fn=None, write=True, allow_paid=True):
     concurrency = getattr(config, "EVAL_CONCURRENCY", 6)
     case_rows, totals = asyncio.run(evaluate_cases(
         cases,
-        [{"id": r["id"], "samples": r["base_samples"]} for r in rows],
-        [{"id": r["id"], "samples": r["cand_samples"]} for r in rows],
+        [{"id": r["id"], "samples": r["base_samples"], "traces": r.get("base_traces")} for r in rows],
+        [{"id": r["id"], "samples": r["cand_samples"], "traces": r.get("cand_traces")} for r in rows],
         judge_fn=judge_fn, concurrency=concurrency,
         prior={r["id"]: r.get("pairs") for r in rows}))
     for row, prev in zip(sorted(case_rows, key=lambda r: r["id"]), sorted(rows, key=lambda r: r["id"])):

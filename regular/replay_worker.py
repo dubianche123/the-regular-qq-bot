@@ -30,6 +30,16 @@ from unittest.mock import patch
 _QUOTE_PREFIX = re.compile(r"^\[回复[^\]]*：「[^」]*」\]\s*")
 _LOOP_GATES: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _MSG_CTX: contextvars.ContextVar = contextvars.ContextVar("_MSG_CTX", default=None)
+_MSG_ROW: contextvars.ContextVar = contextvars.ContextVar("_MSG_ROW", default=None)
+
+
+def _load_timeline_module():
+    # The driver also runs against releases predating replay_timeline.py.
+    path = Path(__file__).resolve().with_name("replay_timeline.py")
+    spec = importlib.util.spec_from_file_location("_regular_replay_timeline", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class _ReplayGate:
@@ -270,7 +280,8 @@ async def _no_image(*args, **kwargs):
 
 
 async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset_quotes=(),
-                            self_openid=None):
+                            self_openid=None, timeline=None, trace=None, followup_wait_seconds=0,
+                            tools=None, max_model_calls=6):
     """preset_quotes / self_openid 见 regular/cases.create_case_from_message：窗口外被引用的原句、
     线上已认出的小王的 @，回放开始前预置进这份临时状态。"""
     import archive as archive_mod
@@ -278,6 +289,24 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
     import providers as providers_mod
     import storage
     from regular import decisions
+    timeline_module = _load_timeline_module() if timeline is not None else None
+    if timeline_module is not None:
+        timeline_module.validate_timeline(timeline, messages)
+    if not isinstance(followup_wait_seconds, (int, float)) or not 0 <= followup_wait_seconds <= 120:
+        raise ValueError("followup_wait_seconds must be in [0, 120]")
+    if isinstance(max_model_calls, bool) or not isinstance(max_model_calls, int) or not 1 <= max_model_calls <= 12:
+        raise ValueError("max_model_calls must be in [1, 12]")
+    if tools is not None and not isinstance(tools, dict):
+        raise ValueError("message tools must be an object")
+    lookup_mode = (tools or {}).get("lookup", "disabled")
+    if lookup_mode not in ("disabled", "live", "fixture"):
+        raise ValueError("tools.lookup must be disabled, live or fixture")
+    fixture = (tools or {}).get("lookup_result")
+    if lookup_mode == "fixture" and (not isinstance(fixture, dict) or not fixture.get("text")):
+        raise ValueError("fixture lookup requires tools.lookup_result.text")
+    trace = {} if trace is None else trace
+    trace.update(generations=[], deliveries=[], events=[], timeline_events=[])
+    trace["query_mode"] = lookup_mode
 
     # 消息层回放会改写 runtime.STATE / bot.SENDER / bot.call_model / call_decision，
     # 走 gate.exclusive() 独占门控，并额外绑定 ContextVar，确保与分诊层/生成层混合回放时绝不互相串扰。
@@ -296,17 +325,40 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
                 model_is_mocked = real_call is not getattr(providers_mod, "call_model", None)
                 decision_is_mocked = real_decision is not getattr(providers_mod, "call_decision", None)
                 active_row = {"row": {}}
+                controller = (timeline_module.Timeline(timeline, messages, bot, runtime, gid, trace, _MSG_ROW)
+                              if timeline_module is not None else None)
 
                 async def tracked_model(msgs, max_tokens, **kw):
-                    out = await real_call(msgs, max_tokens, **kw)
+                    if len(trace["generations"]) >= max_model_calls:
+                        failed["err"] = True
+                        trace["error"] = "model_call_limit"
+                        return None
+                    row = _MSG_ROW.get() or {}
+                    reply_trace = (bot._reply_trace.get() or {}) if hasattr(bot, "_reply_trace") else {}
+                    sample = {"source_message_id": row.get("message_id") or reply_trace.get("message_id"),
+                              "message_index": row.get("index"), "messages": [dict(m) for m in msgs]}
+                    trace["generations"].append(sample)
+                    if controller is not None:
+                        controller.model_started(row.get("index"))
+                    try:
+                        out = await real_call(msgs, max_tokens, **kw)
+                    except BaseException as exc:
+                        sample["error"] = type(exc).__name__
+                        trace["error"] = type(exc).__name__
+                        failed["err"] = True
+                        raise
+                    sample.update(raw=out, completion=providers_mod.completion_meta())
                     if out is None and _MSG_CTX.get() is active_row:
                         failed["err"] = True
+                        trace["error"] = "generation_error"
+                    if controller is not None:
+                        await controller.model_finished(row.get("index"))
                     return out
 
                 async def tracked_decision(text, questions, **kw):
                     if _MSG_CTX.get() is not active_row:
                         return await real_decision(text, questions, **kw)
-                    row_now = active_row["row"] or {}
+                    row_now = (_MSG_ROW.get() or {}).get("row") or active_row["row"] or {}
                     if isinstance(row_now.get("decision_body"), dict):
                         return row_now["decision_body"]
                     if isinstance(row_now.get("triage_choices"), dict):
@@ -322,6 +374,12 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
                 try:
                     with ExitStack() as stack:
                         stack.enter_context(patch.object(runtime, "STATE", state))
+                        import scheduler
+                        from regular.resource_quota import ResourceQuotas
+                        stack.enter_context(patch.object(runtime, "SCHEDULER", scheduler.Scheduler()))
+                        if hasattr(runtime, "RESOURCE_QUOTAS"):
+                            stack.enter_context(patch.object(runtime, "RESOURCE_QUOTAS",
+                                ResourceQuotas({}, state.mark_dirty, lambda: None)))
                         stack.enter_context(patch.object(
                             runtime, "SESSIONS",
                             storage.SessionStore(
@@ -340,11 +398,13 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
                                 bot, "_recent_at_ids", collections.OrderedDict()
                             ))
                         if hasattr(runtime, "INTERACTIONS"):
-                            import interactions as interactions_mod
-                            stack.enter_context(patch.object(
-                                runtime, "INTERACTIONS",
-                                interactions_mod.InteractionLog(os.path.join(tmp, "interactions"), enabled=False),
-                            ))
+                            def record_event(kind, group, user=None, **fields):
+                                event = {"kind": kind, "group": group, "user": user,
+                                         "ts": time.time(), **fields}
+                                trace["events"].append(event)
+                                return event
+                            stack.enter_context(patch.object(runtime, "INTERACTIONS",
+                                SimpleNamespace(append=record_event, close=lambda: None)))
                         if hasattr(runtime, "TURNS"):
                             stack.enter_context(patch.object(
                                 runtime, "TURNS",
@@ -365,6 +425,24 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
                                                                              config.GROUP_RATE_REFILL_SECONDS)))
                         stack.enter_context(patch.object(runtime.KNOWLEDGE, "render", lambda *a, **k: ""))
                         stack.enter_context(patch.object(bot, "call_model", tracked_model))
+                        stack.enter_context(patch.object(config, "SEARCH_ENABLED", lookup_mode != "disabled"))
+                        # The replay plan exposes this destination explicitly. Never
+                        # fall through to an unlisted public search engine.
+                        import search as search_mod
+                        async def no_ddg(*args, **kwargs):
+                            return None
+                        stack.enter_context(patch.object(search_mod, "search_web", no_ddg))
+                        if lookup_mode == "fixture":
+                            import slowwork
+                            async def fixture_start(query):
+                                trace["events"].append({"kind": "lookup", "status": "started",
+                                    "query_mode": "fixture", "ts": time.time()})
+                                return "replay-fixture-lookup"
+                            async def fixture_poll(handle):
+                                return slowwork.DONE, dict(fixture)
+                            stack.enter_context(patch.object(providers_mod, "research_available", lambda: True))
+                            stack.enter_context(patch.dict(slowwork.JOBS, {"search": slowwork.Job(
+                                "search", fixture_start, fixture_poll, poll_every=1, give_up_after=1)}))
                         # 它写了〔语音〕〔画〕也不真合成、不真画：那会花钱，语音还会记进部署目录里
                         # 线上那份语音额度（voice-outbound-budget.sqlite3）。回放里一律当没发成。
                         if hasattr(bot, "_VOICE_OUT"):
@@ -383,8 +461,20 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
                         try:
                             fake_self = SimpleNamespace(
                                 robot=SimpleNamespace(id="REPLAY_BOT_ID", name="regular"))
-                            for idx, row in enumerate(messages):
-                                is_last = idx == len(messages) - 1
+                            all_replies = []
+                            async def reply_from_background(**payload):
+                                text = payload.get("content") or ""
+                                all_replies.append(text)
+                                trace["deliveries"].append({"text": text, "status": "delivered",
+                                    "source_message_id": payload.get("msg_id"), "ts": time.time(),
+                                    "background": True})
+                                return {"id": f"replay-background-{len(all_replies)}"}
+                            if hasattr(bot, "_bot_ref"):
+                                stack.enter_context(patch.object(bot, "_bot_ref", {"client":
+                                    SimpleNamespace(api=SimpleNamespace(post_group_message=reply_from_background))}))
+
+                            async def drive(idx):
+                                row = messages[idx]
                                 if row.get("bot"):
                                     text = str(row.get("text") or "")
                                     ref = row.get("ref_idx") or f"REF_BOT_{idx}"
@@ -392,19 +482,52 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
                                         bot._remember_sent(gid, {"id": f"b{idx}", "ext_info": {"ref_idx": ref}}, text)
                                     if hasattr(bot, "_note_own_line"):
                                         bot._note_own_line(gid, text)
-                                    continue
+                                    return []
                                 replies = []
-
-                                async def reply_cb(replies=replies, idx=idx, **payload):
-                                    replies.append(payload.get("content") or "")
+                                source_id = str(row.get("message_id") or f"replay-msg-{idx}")
+                                async def reply_cb(**payload):
+                                    text = payload.get("content") or ""
+                                    replies.append(text)
+                                    all_replies.append(text)
+                                    trace["deliveries"].append({"message_index": idx,
+                                        "source_message_id": source_id, "text": text,
+                                        "status": "delivered", "ts": time.time()})
                                     return {"id": f"rcpt-{idx}", "ext_info": {"ref_idx": f"REF_OUT_{idx}"}}
-
                                 active_row["row"] = row
-                                msg = archive_row_to_message(row, gid, reply_cb)
+                                msg = archive_row_to_message({**row, "message_id": source_id}, gid, reply_cb)
                                 is_at = bool(row["is_at"]) if "is_at" in row else bool(row.get("at"))
-                                await bot.GroupBot.handle_group_msg(fake_self, msg, is_at=is_at)
-                                if is_last:
-                                    sent_last = replies
+                                row_token = _MSG_ROW.set({"row": row, "index": idx, "message_id": source_id})
+                                try:
+                                    await bot.GroupBot.handle_group_msg(fake_self, msg, is_at=is_at)
+                                finally:
+                                    _MSG_ROW.reset(row_token)
+                                return replies
+
+                            if controller is not None:
+                                timeline_text = await controller.run(drive)
+                                sent_last = [timeline_text]
+                            else:
+                                for idx in range(len(messages)):
+                                    replies = await drive(idx)
+                                    if idx == len(messages) - 1:
+                                        sent_last = replies
+                            if followup_wait_seconds:
+                                deadline = time.monotonic() + followup_wait_seconds
+                                while time.monotonic() < deadline:
+                                    pending = list(runtime.SCHEDULER.pending(kind="followup", group=gid))
+                                    if not pending:
+                                        break
+                                    task = pending[0]
+                                    if task["payload"].get("ready"):
+                                        break
+                                    next_due = await bot.finish_lookup(task)
+                                    if next_due is None:
+                                        runtime.SCHEDULER.cancel(task["id"])
+                                    else:
+                                        await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
+                                trace["pending_followups"] = list(runtime.SCHEDULER.pending(kind="followup", group=gid))
+                                if controller is None:
+                                    sent_last = all_replies
                         finally:
                             arch.close()
                             bot.group_buffers.pop(gid, None)
@@ -413,7 +536,7 @@ async def _run_message_once(bot, runtime, config, messages, retries=1, *, preset
                                 bot.own_lines.pop(gid, None)
                 finally:
                     _MSG_CTX.reset(token)
-                if failed["err"] and not sent_last:
+                if failed["err"]:
                     continue
                 return "\n".join(sent_last) if sent_last else "〔不接〕"
         return None
@@ -521,6 +644,8 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
     """对单条用例（或单轮输入）抽样 n 次，返回 {"id": ..., "samples": [...], "errors": int}。
 
     生成层用例另带 refreshed / stale_prompts：回放前换成受测版本措辞的提示词常量、受测版本里已经没有的。
+    消息层一律附带逐样本 trace，保存真实输入、工具状态与投递证据；串行用例也不能省略，
+    否则已执行查询的回复会在评审时丢失其证据。samples 的旧返回语义保持不变。
     """
     depth = item.get("depth") or ("triage" if item.get("kind") == "triage" else "generate")
     if depth == "retrieve":
@@ -535,6 +660,7 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
         import runtime as _runtime
         bot, runtime, config = _bot, _runtime, _config
     samples = []
+    traces = []
     errors = 0
     refreshed = stale = ()
     if depth == "generate":
@@ -542,9 +668,21 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
         turn, refreshed, stale = refresh_frozen_prompts(getattr(bot, "prompts", None), turn)
     for _ in range(max(1, int(n))):
         if depth == "message":
-            out = await _run_message_once(bot, runtime, config, item.get("messages") or (),
-                                          retries=retries, preset_quotes=item.get("quotes") or (),
-                                          self_openid=item.get("self_openid"))
+            trace = {}
+            timeout = item.get("timeout_seconds", 120)
+            if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not 0 < timeout <= 120:
+                raise ValueError("message timeout_seconds must be in (0, 120]")
+            try:
+                out = await asyncio.wait_for(_run_message_once(
+                    bot, runtime, config, item.get("messages") or (), retries=retries,
+                    preset_quotes=item.get("quotes") or (), self_openid=item.get("self_openid"),
+                    timeline=item.get("timeline"), trace=trace,
+                    followup_wait_seconds=item.get("followup_wait_seconds", 0),
+                    tools=item.get("tools"), max_model_calls=item.get("max_model_calls", 6)), timeout=timeout)
+            except asyncio.TimeoutError:
+                trace["error"] = "timeout"
+                out = None
+            traces.append(trace)
         elif depth == "triage":
             spec = item.get("triage") or item.get("turn") or item
             out = await _run_triage_once(runtime, config, spec, retries=retries)
@@ -556,6 +694,8 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
     result = {"id": item.get("id") or item.get("turn_id"), "samples": samples, "errors": errors}
     if refreshed or stale:
         result.update(refreshed=list(refreshed), stale_prompts=list(stale))
+    if depth == "message":
+        result["trace"] = traces
     return result
 
 

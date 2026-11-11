@@ -42,3 +42,32 @@ flowchart LR
 ## 验证
 
 合成用例走实际群消息入口，用事件控制生成与发送的先后，覆盖同人补话、跨人并行、语音等待、冻结反馈来源、后续历史顺序与过时插嘴。查询测试覆盖 Decision 未安排而模型主动查、重复查询、失败/额度、慢活、查询后画图、提醒隔离和好感只结算一次。相关测试位于 `test_group_timeline.py`、`test_session_timeline.py`、`test_feedback_receipt.py`、`test_model_lookup.py` 与 `test_research_limits.py`。
+
+## 时序回放用例
+
+`regular eval` 的消息层现在支持两种固定屏障，默认串行用法保留。屏障依赖“生成已开始”“下一句已进入回复等待”等实际事件，不靠睡几秒碰运气。下面是公开合成示例：
+
+```json
+{
+  "schema": "regular.case.v1",
+  "id": "timeline-followup-synthetic",
+  "depth": "message",
+  "messages": [
+    {"sender": "A", "message_id": "first", "text": "再说清楚一点"},
+    {"sender": "A", "message_id": "second", "text": "我再补一个条件"}
+  ],
+  "timeline": {"mode": "overlap", "first": 0, "second": 1},
+  "tools": {"lookup": "disabled"},
+  "timeout_seconds": 120,
+  "max_model_calls": 6,
+  "checks": [{"judge": "结合连续补充接话，不连续输出已经过时的插嘴"}]
+}
+```
+
+`late_delivery` 改为指定 `target` 和 `delivery: {sender, question, text}`：当前句已收、仍在等待生成锁时，提交那条确认送达的历史答复，再释放锁。用 `initial_sessions`、`initial_context`、`initial_reply` 恢复收件前历史与反馈来源；它们位于 `timeline` 内。固定送达对照不等同于新版本完整闭环，后者可能已经撤掉这条稿。
+
+每个消息样本默认返回 `trace`，包含真正送给模型的输入、查询、撤稿和假 QQ 确认投递。生成失败、超时或超出调用上限记为失败，不伪装成正常不接。正式回放不发 QQ、不真实画图或合成语音，状态和调度器隔离。
+
+查询默认禁止外发。需要测查询时显式用 `tools.lookup=live`；`fixture` 需提供 `lookup_result`，并明确标成测试资料。`followup_wait_seconds` 可在整轮期限内等待慢查询跟进；未完成任务保留为 pending。先跑 `eval --plan` 核对目的地和可能增加的请求。
+
+原始 trace 只存本地。Kimi 等裁判仅收到匿名状态和次数，正文与执行事实一起交换 A/B；编号、完整提示词、模型名、接口地址和原始异常不外发。`judge_context` 用来提供共同真实时序，避免把旧版错误历史继续当成评分依据。补评沿用首次原样输入；修正证据另出报告。
