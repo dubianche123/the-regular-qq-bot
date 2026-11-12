@@ -66,6 +66,30 @@ class ModelLookupTest(_Base):
         self.assertIn("已联网查询", self._session()[-1]["content"])
         self.assertNotIn("我已经查到了", self._session()[-1]["content"])
 
+    async def test_followup_sees_original_material_even_when_first_reply_omitted_it(self):
+        self.fake.result = {"text": "示例厂商公告：新机为蓝色，价格3999元。", "sources": [{"title": "厂商公告"}]}
+        self.script("〔搜索〕示例新机", "新机是蓝色的。", "公告里写的是3999元。")
+        await self._drive("小王 新机是什么颜色", is_at=True)
+        await self._drive("小王 那多少钱", is_at=True)
+        tail = self.prompts_seen[-1][-1]["content"]
+        self.assertIn("【此前查询的资料", tail)
+        self.assertIn("3999", tail)
+        self.assertIn("厂商公告", tail)
+        self.assertIn(prompts.PROMPT_SEARCH_AVAILABLE, tail)
+        self.assertNotIn("本轮已联网查询并取得资料", self._session()[-1]["content"])
+        self.assertNotIn("3999", self.prompts_seen[-1][0]["content"])
+        self.assertEqual(len(self.fake.started), 1)
+
+    async def test_prior_evidence_does_not_consume_a_new_turns_query(self):
+        self.fake.states = [slowwork.DONE, slowwork.DONE]
+        self.script("〔搜索〕示例新机颜色", "是蓝色的。", "〔搜索〕示例新机发售日期", "今天发售。")
+        await self._drive("小王 新机什么颜色", is_at=True)
+        await self._drive("小王 那什么时候发售", is_at=True)
+        self.assertEqual(len(self.fake.started), 2)
+        self.assertEqual(self.reserve.call_count, 2)
+        self.assertIn(prompts.PROMPT_SEARCH_AVAILABLE, self.prompts_seen[2][-1]["content"])
+        self.assertIn(prompts.PROMPT_SEARCH_USED, self.prompts_seen[3][-1]["content"])
+
     async def test_second_query_never_executes_or_sends_a_promise(self):
         self.script("〔搜索〕最新新机", "〔搜索〕再看另一页\n我继续去查")
         msg = await self._drive("小王 新机是什么", is_at=True)
@@ -90,6 +114,7 @@ class ModelLookupTest(_Base):
         self.assertEqual(self.sched.tasks, {})
         self.assertIn("没有取得可用资料", self._last_prompt())
         self.assertNotIn("等我", msg.reply.await_args.kwargs["content"])
+        self.assertIsNone(runtime.SESSIONS.lookup_snapshot(f"{G}_{A}"))
 
     async def test_denied_quota_starts_no_job(self):
         self.reserve.return_value = "quota"
@@ -205,3 +230,17 @@ class ModelLookupTest(_Base):
         await bot.finish_lookup(task)
         self.assertIn("红色", self.prompts_seen[-1][-1]["content"])
         self.assertNotIn("中途回答", [row["content"] for row in self.prompts_seen[-1][:-1]])
+        self.assertIn("售价尚未确认", runtime.SESSIONS.lookup_snapshot(f"{G}_{A}")["material"])
+
+    async def test_sincere_request_signal_survives_background_lookup(self):
+        self.calls.side_effect = answer({'request_kind': 'sincere', 'addressed': 'answer',
+                                         'lookup': 'none', 'reminder_request': 'none'})
+        self.fake.states = [slowwork.RUNNING]
+        self.script('〔搜索〕新机价格', '公告还没说价格。')
+        await self._drive('小王 新机多少钱', is_at=True)
+        task = next(iter(self.sched.tasks.values()))
+        self.assertTrue(task['payload']['sincere_request'])
+        self.fake.states = [slowwork.DONE]
+        await bot.finish_lookup(task)
+        self.assertIn(prompts.PROMPT_SINCERE_REQUEST, self.prompts_seen[-1][-1]['content'])
+        self.assertNotIn(prompts.PROMPT_PLAYFUL_REQUEST, self.prompts_seen[-1][-1]['content'])

@@ -561,11 +561,13 @@ class FeedbackTracker:
                       recall=choices.get("recall"),
                       lookup=choices.get("lookup"),
                       reminder_request=choices.get("reminder_request"))
-        # 只用「低真心」的一侧；必须确实选了 playful、三项概率完整且有可比边际。
-        # 题面来自本地实验；线上语境和样本不同，不把它当成真实意图的定论。
+        # 已过可用性闸的认真结论也交给回复层；它与玩笑线索互斥，不改变接话门控。
+        # 玩笑仍沿用原来的「低真心」边界，不把题面当作真实意图的定论。
         request_score = scores.get("request_kind") or {}
         probs = request_score.get("probabilities") or {}
-        if (not stale and choices.get("request_kind") == "playful"
+        if not stale and choices.get("request_kind") == "sincere":
+            result["sincere_request"] = True
+        elif (not stale and choices.get("request_kind") == "playful"
                 and request_score.get("margin") is not None
                 and request_score["margin"] >= 0
                 and set(probs) == {"sincere", "playful", "not_request"}

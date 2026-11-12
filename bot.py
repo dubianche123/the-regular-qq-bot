@@ -827,7 +827,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        callback_approved=False, back_off=None, quip=False,
                        lookup_note="", playful_note="", resource_note="",
                        media_note="", unprompted_hint="", playful_request=False, raw_reply_filter=None,
-                       history_snapshot=None, timeline_note="", search_action_note=""):
+                       history_snapshot=None, timeline_note="", search_action_note="", prior_search_note="",
+                       sincere_request=False):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
     返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签（协议关了，
@@ -895,6 +896,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         if search_note and not feedback_note:
             # 搜索结果是用户明确要的，喊停时也保留；它只是资料，不参与玩笑。
             bits.append(search_note)
+        if prior_search_note and not back_off:
+            bits.append(prior_search_note)
         if state_note:
             # 激活度（2026-10-19）：作息 + 心情的实时状态自述——深夜被吵醒/有点烦，
             # 模型顺着这个体感说话。放最后一段，随轮次变化的内容一律压末尾。
@@ -922,7 +925,9 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
             # 原生反馈的即时话术（收敛/短修）：压在本层尾部、关系档案之后；
             # 出现它时个人原话与知识/旧账材料同轮不建（调用方已拦）。
             bits.append(feedback_note)
-        if (playful_request or playful_note) and not back_off and not feedback_note:
+        if sincere_request and not back_off and not feedback_note:
+            bits.append(prompts.PROMPT_SINCERE_REQUEST)
+        elif (playful_request or playful_note) and not back_off and not feedback_note:
             # 记录语义结论，措辞由当前版本提供；旧调用方传入的 note 仍兼容。
             bits.append(prompts.PROMPT_PLAYFUL_REQUEST if playful_request else playful_note)
         if resource_note:
@@ -1180,7 +1185,7 @@ def media_turn(group_id, user_id, score, *, asked, remind=False, voice=True):
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                            owner_hint_group=None, prepared=None, prepared_local=False,
                            media=None, is_stale=None, reply_filter=None, raw_reply_filter=None,
-                           received_at=None, lookup_used=False, **context):
+                           received_at=None, lookup_used=False, lookup_acquired_at=None, **context):
     """Serialize generation and send; queued delivery commits through the same callback.
 
     prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
@@ -1205,6 +1210,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                                          prompts.PROMPT_SEARCH_UNAVAILABLE)
         pending_lookup = None
         lookup_record = "本轮已联网查询并取得资料" if context.get("search_note") else ""
+        if context.get("search_note") and lookup_acquired_at is None:
+            lookup_acquired_at = time.time()
         lookup_delta_locked, lookup_delta = False, None
         media_notes = [context.get("media_note"), getattr(media, "note", "")]
         unavailable = []
@@ -1303,6 +1310,8 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                     lookup_record = "联网查询任务已启动，仍在等待结果"
                 else:
                     context["search_note"] = note if state == slowwork.DONE else ""
+                    if state == slowwork.DONE:
+                        lookup_acquired_at = time.time()
                     lookup_record = "本轮已联网查询并取得资料" if state == slowwork.DONE else note
                     context["search_action_note"] += ("\n【查询实际结果】查询已完成，资料见下方，直接回答原问题。"
                                                        if state == slowwork.DONE else
@@ -1439,12 +1448,21 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
         def prepare():
             return hinted if generated and owner_hint_pending(owner_hint_group) else body
 
+        evidence = (_lookup_evidence_for(message, user_text, context["search_note"],
+                                         acquired_at=lookup_acquired_at)
+                    if context.get("search_note") else None)
+
+        def retain_lookup():
+            if evidence and runtime.SESSIONS.generation(session_id) == generation:
+                runtime.SESSIONS.remember_lookup(session_id, evidence)
+
         def commit(result):
             if runtime.SESSIONS.generation(session_id) != generation:
                 return  # a reset action invalidated this old pending reply
             if said.kind != "image":   # 画图那轮等图的结果出来再一起记
                 runtime.SESSIONS.record(session_id, user_text, as_recorded(recorded["as"] or result.text),
                                         received_at=received_at)
+            retain_lookup()
             if generated and result.text in (body, hinted):
                 if result.text == hinted:
                     runtime.STATE.data.setdefault("groups", {}).setdefault(owner_hint_group, {})["owner_hint"] = True
@@ -1529,11 +1547,14 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                     logger.info("🔈 语音没发成（%s），改发文字", status)
                 recorded["as"] = expression.record(said, False)
         if said.kind == "image":
-            return await _reply_with_image(
+            outcome = await _reply_with_image(
                 message, session_id, user_text, said, media, generation, delta,
                 commit=commit, interaction=interaction, prepare=prepare,
                 owner_hint_group=owner_hint_group, history=history, received_at=received_at,
                 as_recorded=as_recorded)
+            if getattr(outcome[2], "delivered", False):
+                retain_lookup()
+            return outcome
         if is_stale is not None and is_stale():
             return "", delta, None
         result = await safe_reply(
@@ -2474,6 +2495,15 @@ def _lookup_query(user_input, buf, message_id=None, *, sender_openid=None):
     return f"{context}现在有人问群里的机器人：{user_input}"
 
 
+def _lookup_evidence_for(message, question, note, *, acquired_at=None):
+    group = getattr(message, "group_openid", None)
+    member = getattr(getattr(message, "author", None), "member_openid", None)
+    known = {group, member, getattr(message, "id", None)}
+    for row in group_buffers.get(group, ()):
+        known.update((row.get("sender"), row.get("message_id")))
+    return search_mod.lookup_evidence(question, note, acquired_at=acquired_at, known=known)
+
+
 def _reserve_search(group_id, user_id, score, *, deep=False, cooldown=False):
     """先检查个人额度和群级限流，再同步持久化本次搜索额度。"""
     state = runtime.RESOURCE_QUOTAS.check("search", group_id, user_id, score)
@@ -2601,6 +2631,8 @@ def _queue_lookup(message, session_id, user_input, kind, handle, reply_kwargs, m
         "is_owner": bool(reply_kwargs.get("is_owner")), "started": now,
         "received_at": received_at,
         "history_snapshot": reply_kwargs.get("history_snapshot"),
+        "prior_search_note": reply_kwargs.get("prior_search_note", ""),
+        "sincere_request": bool(reply_kwargs.get("sincere_request")),
         "reply_context": reply_kwargs.get("reply_context", ""),
         "context_hint": reply_kwargs.get("context_hint", ""),
         "media": media is not None, "score": getattr(media, "score", 0)})
@@ -2681,7 +2713,10 @@ async def finish_lookup(task):
         search_note=search_mod.render_brief(result) if completed else "",
         lookup_note=done_note if completed else "",
         lookup_used=True, received_at=p.get("received_at"),
+        lookup_acquired_at=now if completed else None,
         history_snapshot=p.get("history_snapshot"),
+        prior_search_note=p.get("prior_search_note", ""),
+        sincere_request=bool(p.get("sincere_request")),
         reply_context=p.get("reply_context", ""), context_hint=p.get("context_hint", ""),
         prepared=None if completed else ("这次没查成，等会儿再试试。", None),
         prepared_local=not completed,
@@ -2690,13 +2725,22 @@ async def finish_lookup(task):
     logger.info("🌐 慢活跟进（%s，%s，%.0f 秒）：%s", p["job"], state, now - p["started"], status)
     if status != "expired" or not body:
         return None   # 送达、排队补投、被拒，都到此为止
+    evidence_generation = runtime.SESSIONS.generation(p["session"])
     if await post_to_group(gid, body, model_generated=completed, history=history,
                            semantic_source=_reply_target(gid, p)):
         runtime.SESSIONS.record(p["session"], p["question"], body, received_at=p.get("received_at"))
+        if completed and runtime.SESSIONS.generation(p["session"]) == evidence_generation:
+            evidence = _lookup_evidence_for(_reply_target(gid, p), p["question"],
+                                             search_mod.render_brief(result), acquired_at=now)
+            runtime.SESSIONS.remember_lookup(p["session"], evidence)
         return None
     p["ready"] = body
     p["ready_generated"] = completed
     p["ready_history"] = history
+    if completed:
+        p["ready_lookup_evidence"] = _lookup_evidence_for(
+            _reply_target(gid, p), p["question"], search_mod.render_brief(result), acquired_at=now)
+        p["ready_lookup_generation"] = evidence_generation
     return now + 3600
 
 
@@ -2796,8 +2840,13 @@ async def deliver_carried(message, group_id):
                     and time.time() - p["started"] <= 86400)
 
         def commit(result, payload=payload):
+            retain_evidence = (payload["session"] in runtime.SESSIONS._sessions
+                               and runtime.SESSIONS.generation(payload["session"])
+                               == payload.get("ready_lookup_generation"))
             runtime.SESSIONS.record(payload["session"], payload["question"], result.text,
                                     received_at=payload.get("received_at"))
+            if retain_evidence and payload.get("ready_lookup_evidence"):
+                runtime.SESSIONS.remember_lookup(payload["session"], payload["ready_lookup_evidence"])
             runtime.STATE.mark_dirty()
 
         def observe(result, task=task):
@@ -3283,6 +3332,9 @@ class GroupBot(botpy.Client):
         sender_openid = message.author.member_openid
         receipt_time = time.time()
         session_at_receipt = runtime.SESSIONS.snapshot(f"{group_id}_{sender_openid}", now=receipt_time)
+        prior_search_at_receipt = search_mod.render_prior_lookup(
+            runtime.SESSIONS.lookup_snapshot(f"{group_id}_{sender_openid}", now=receipt_time),
+            known=(group_id, sender_openid, message.id))
         feedback_at_receipt = runtime.FEEDBACK.reply_snapshot(group_id, now=receipt_time)
         history_at_receipt = [row for row in group_buffers.get(group_id, ())
                               if 0 <= receipt_time - float(row.get("time") or 0)
@@ -3943,11 +3995,14 @@ class GroupBot(botpy.Client):
             personal_note=personal_note,
             callback_approved=bool(callback_note),
             feedback_note=feedback_note, reply_context=reply_context,
-            playful_request=bool(feedback_result.get("playful_request") and not lookup
+            sincere_request=bool(feedback_result.get("sincere_request")),
+            playful_request=bool(feedback_result.get("playful_request")
+                                 and not feedback_result.get("sincere_request") and not lookup
                                  and not search_note),
             resource_note=resource_note,
             back_off=back_off, quip=quip,
             received_at=receipt_time, history_snapshot=session_at_receipt,
+            prior_search_note=prior_search_at_receipt,
             history=([*history_at_receipt, {"sender": sender_openid, "text": heard,
                        "time": receipt_time, "message_id": message.id}])[-4:],
         )

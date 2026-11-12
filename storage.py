@@ -11,6 +11,7 @@
 
 import asyncio
 import json
+import math
 import os
 import tempfile
 import time
@@ -255,8 +256,43 @@ class SessionStore:
             # 静默太久，当作换了话题，别把陈年旧账串进来
             sess["messages"] = []
             sess["message_times"] = []
+            sess.pop("lookup_evidence", None)
             return sess
         return sess
+
+    @staticmethod
+    def _lookup_evidence(value):
+        if not isinstance(value, dict):
+            return None
+        question, material, acquired = (value.get("question"), value.get("material"),
+                                        value.get("acquired_at"))
+        if (not isinstance(question, str) or not isinstance(material, str) or not material.strip()
+                or type(acquired) not in (int, float) or not math.isfinite(acquired)):
+            return None
+        return {"question": question[:500], "material": material[:5000],
+                "acquired_at": float(acquired)}
+
+    def remember_lookup(self, session_id, evidence, now=None):
+        """Only the caller's confirmed-delivery callback may retain completed evidence."""
+        now = time.time() if now is None else now
+        sess = self._live(session_id, now)
+        evidence = self._lookup_evidence(evidence)
+        if sess is None or evidence is None or not 0 <= now - evidence["acquired_at"] <= self.ttl:
+            return False
+        old = sess.get("lookup_evidence")
+        if old and old["acquired_at"] > evidence["acquired_at"]:
+            return False  # a late older result must not replace newer materials
+        sess["lookup_evidence"] = evidence
+        return True
+
+    def lookup_snapshot(self, session_id, now=None):
+        """Freeze already-delivered materials visible when this next request arrived."""
+        now = time.time() if now is None else now
+        sess = self._live(session_id, now)
+        evidence = self._lookup_evidence((sess or {}).get("lookup_evidence"))
+        if evidence is None or not 0 <= now - evidence["acquired_at"] <= self.ttl:
+            return None
+        return evidence
 
     def _trim_session(self, sess, *, keep=1.0):
         """问答仍成对保存，时间旁表跟着同一段尾部一起裁剪。"""
@@ -429,6 +465,9 @@ class SessionStore:
                 "message_times": sess.get("message_times") or [],
                 "last_time": float(sess.get("last_time") or 0),
             }
+            evidence = self._lookup_evidence(sess.get("lookup_evidence"))
+            if evidence:
+                restored_session["lookup_evidence"] = evidence
             self._trim_session(restored_session)
             self._sessions[sid] = restored_session
             restored += 1
@@ -440,7 +479,9 @@ class SessionStore:
         data["sessions"] = {
             sid: {"messages": s["messages"],
                   "message_times": s.get("message_times", []),
-                  "last_time": s["last_time"]}
+                  "last_time": s["last_time"],
+                  **({"lookup_evidence": dict(s["lookup_evidence"])}
+                     if s.get("lookup_evidence") else {})}
             for sid, s in self._sessions.items()
         }
 

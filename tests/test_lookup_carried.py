@@ -70,10 +70,16 @@ class CarriedLookupTest(_Base):
 
     async def test_queued_result_waits_for_receipt_and_is_not_enqueued_again(self):
         task = self.task()
+        self.sessions.begin_turn(f"{G}_{A}")
+        task["payload"]["ready_lookup_evidence"] = {
+            "question": "查查这件事", "material": "完整资料：蓝色，3999元。出处：厂商公告",
+            "acquired_at": time.time()}
+        task["payload"]["ready_lookup_generation"] = self.sessions.generation(f"{G}_{A}")
         carrier = self.carrier([None, None, {"id": "late-confirmation"}])
         await bot.deliver_carried(carrier, G)
         self.assertIn(task["id"], self.sched.tasks)
         self.assertEqual(self._session(A), [])
+        self.assertIsNone(self.sessions.lookup_snapshot(f"{G}_{A}"))
         self.assertIsNone(self.feedback.reply_snapshot(G))
         self.assertEqual(len(bot.SENDER.pending), 1)
         next_carrier = self.carrier(msg_id="another-carrier")
@@ -83,8 +89,23 @@ class CarriedLookupTest(_Base):
         await bot.SENDER.drain()
         self.assertEqual(self.sched.tasks, {})
         self.assertEqual(len(self._session(A)), 2)
+        self.assertIn("3999", self.sessions.lookup_snapshot(f"{G}_{A}")["material"])
+        self.assertIsNone(self.sessions.lookup_snapshot(f"{G}_{B}"))
         self.assertEqual(bot._carried_followups, {})
         self.assertEqual({call.kwargs["msg_seq"] for call in carrier.reply.await_args_list}, {1})
+
+    async def test_reset_during_pending_delivery_does_not_restore_old_lookup_evidence(self):
+        task = self.task()
+        sid = f"{G}_{A}"
+        self.sessions.begin_turn(sid)
+        task["payload"].update(
+            ready_lookup_evidence={"question": "q", "material": "旧资料", "acquired_at": time.time()},
+            ready_lookup_generation=self.sessions.generation(sid))
+        carrier = self.carrier([None, None, {"id": "late-confirmation"}])
+        await bot.deliver_carried(carrier, G)
+        self.sessions.drop_session(sid)
+        await bot.SENDER.drain()
+        self.assertIsNone(self.sessions.lookup_snapshot(sid))
 
     async def test_rejection_keeps_result_for_a_later_carrier_without_recording(self):
         task = self.task()
