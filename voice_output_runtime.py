@@ -91,18 +91,31 @@ class VoiceOutputRuntime:
 
         它决定稳定头里写不写「你会发语音」（bot.media_rules），所以只看配置，不看额度和在途。
         """
+        return self.unavailable_reason() is None
+
+    def unavailable_reason(self):
+        """Local readiness only; safe diagnostic codes, no keys or dependency paths."""
         c = self.config
-        if not capabilities.enabled(c, "voice_output") or not c.SSL_VERIFY or not self.key:
-            return False
+        if not capabilities.enabled(c, "voice_output"):
+            return "disabled"
+        if not c.SSL_VERIFY:
+            return "tls"
+        if not self.key:
+            return "credentials"
         try:
             endpoint = urlsplit(getattr(c, 'VOICE_BASE_URL', None) or c.PROVIDER_PRESETS['openai']['base_url'] or 'https://api.openai.com/v1')
             if (endpoint.scheme != 'https' or endpoint.hostname != 'api.openai.com'
                     or endpoint.port not in (None, 443) or endpoint.username is not None
                     or endpoint.password is not None or endpoint.query or endpoint.fragment):
-                return False
+                return "endpoint"
         except (KeyError, TypeError, ValueError):
-            return False
-        return all(capabilities.dependencies(c.VOICE_OUTPUT_NODE, c.VOICE_OUTPUT_SILK_ENTRY).values())
+            return "endpoint"
+        dependencies = capabilities.dependencies(c.VOICE_OUTPUT_NODE, c.VOICE_OUTPUT_SILK_ENTRY)
+        return next((name for name, available in dependencies.items() if not available), None)
+
+    def status(self):
+        reason = self.unavailable_reason()
+        return {"available": reason is None, "reason": reason}
 
     def busy(self):
         return self._lock.locked()

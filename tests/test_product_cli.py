@@ -412,8 +412,45 @@ assert not any(name in sys.modules for name in ('config', 'bot', 'runtime', 'pro
         data = plistlib.loads(plistlib.dumps(service.launchd(directory, python)))
         self.assertEqual(data["WorkingDirectory"], str(Path(directory).resolve()))
         self.assertEqual(data["ProgramArguments"][0], python)
-        self.assertEqual(data["EnvironmentVariables"], {"PYTHONUNBUFFERED": "1"})
+        self.assertEqual(set(data["EnvironmentVariables"]), {"PYTHONUNBUFFERED", "PATH"})
+        self.assertEqual(data["EnvironmentVariables"]["PYTHONUNBUFFERED"], "1")
         self.assertNotIn("proxy", repr(data).lower())
+
+    def test_service_keeps_node_available_without_the_interactive_shell_path(self):
+        with tempfile.TemporaryDirectory(prefix="regular service node ") as directory:
+            directory = Path(directory)
+            node = directory / "custom runtime" / "node"
+            node.parent.mkdir()
+            node.write_text("#!/bin/sh\nexit 0\n")
+            node.chmod(0o700)
+            with patch.dict(os.environ, {"PATH": "/developer/private/bin"}), \
+                 patch.object(service.shutil, "which", return_value=str(node)):
+                definition = service.launchd(directory, sys.executable)
+            env = definition["EnvironmentVariables"]
+            self.assertNotIn("/developer/private/bin", env["PATH"])
+            self.assertEqual(env["PATH"].split(os.pathsep)[0], str(node.parent))
+            actual = config_json(directory, "VOICE_OUTPUT_NODE", env=env)
+            self.assertEqual(actual["VOICE_OUTPUT_NODE"], str(node))
+
+            # PATH discovery must not override a path explicitly saved by the user.
+            explicit = directory / "chosen node"
+            (directory / ".env").write_text(f"VOICE_OUTPUT_NODE='{explicit}'\n")
+            self.assertEqual(config_json(directory, "VOICE_OUTPUT_NODE", env=env)["VOICE_OUTPUT_NODE"], str(explicit))
+
+    def test_services_remain_available_without_optional_node(self):
+        with patch.object(service.shutil, "which", return_value=None):
+            env = service.launchd("/tmp/instance", sys.executable)["EnvironmentVariables"]
+            unit = service.systemd("/tmp/instance", sys.executable)
+        self.assertIn("/usr/bin", env["PATH"].split(os.pathsep))
+        self.assertNotIn("VOICE_OUTPUT_NODE", env)
+        self.assertIn('Environment="PATH=', unit)
+
+    def test_systemd_quotes_the_detected_node_directory(self):
+        node = '/tmp/a user/100%"runtime/bin/node'
+        with patch.object(service.shutil, "which", return_value=node):
+            text = service.systemd("/tmp/instance", sys.executable)
+        self.assertIn('Environment="PATH=/tmp/a user/100%%\\"runtime/bin:', text)
+        self.assertNotIn("VOICE_OUTPUT_NODE=", text)
 
     def test_systemd_quotes_spaces_percent_and_quotes(self):
         text = service.systemd('/tmp/space name/100%"x$HOME', '/tmp/venv $name/bin/python')

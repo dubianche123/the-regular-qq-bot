@@ -51,6 +51,19 @@ class HealthTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(images["available"])
         self.assertFalse(images["animation_available"])
 
+    async def test_runtime_voice_reports_missing_dependency_instead_of_only_the_switch(self):
+        import bot
+        import voice_output_runtime
+        from types import SimpleNamespace
+
+        cfg = SimpleNamespace(VOICE_OUTPUT_ENABLED=True, SSL_VERIFY=True,
+                              VOICE_OUTPUT_NODE="", VOICE_OUTPUT_SILK_ENTRY="",
+                              PROVIDER_PRESETS={"openai": {"base_url": "https://api.openai.com/v1"}})
+        voice = voice_output_runtime.VoiceOutputRuntime(cfg, "private-key")
+        with patch.object(bot, "_VOICE_OUT", voice):
+            status = bot._runtime_status_details()["voice_output"]
+        self.assertEqual(status, {"available": False, "reason": "node"})
+
     async def test_failed_task_is_visible_in_atomic_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             health = Health()

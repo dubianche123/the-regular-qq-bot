@@ -1,11 +1,22 @@
 """Generate service definitions from resolved paths; never install/start a service."""
 from __future__ import annotations
 import argparse
+import os
 from pathlib import Path
 import plistlib
+import shutil
 import sys
 
 LABEL = "io.github.the-regular"
+
+
+def _service_path():
+    # Background services do not inherit an interactive shell's Node installation.
+    # Keep the detected bin directory, not the rest of the developer's environment.
+    node = shutil.which("node")
+    directories = [str(Path(node).absolute().parent)] if node else []
+    directories.extend(("/usr/local/bin", "/usr/bin", "/bin", "/usr/local/sbin", "/usr/sbin", "/sbin"))
+    return os.pathsep.join(dict.fromkeys(directories))
 
 
 def launchd(directory, python):
@@ -14,7 +25,7 @@ def launchd(directory, python):
         "Label": LABEL,
         "ProgramArguments": [str(Path(python).expanduser().absolute()), "-m", "regular", "--directory", str(directory), "run"],
         "WorkingDirectory": str(directory),
-        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1"},
+        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1", "PATH": _service_path()},
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 10,
@@ -41,6 +52,7 @@ Type=simple
 WorkingDirectory={_systemd_quote(directory)}
 ExecStart=:{command}
 Environment=PYTHONUNBUFFERED=1
+Environment={_systemd_quote('PATH=' + _service_path())}
 Restart=on-failure
 RestartSec=10
 KillSignal=SIGINT

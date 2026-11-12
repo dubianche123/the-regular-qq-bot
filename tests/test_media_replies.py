@@ -421,6 +421,18 @@ class MediaTurnTest(unittest.TestCase):
         self.assertFalse(t.voice)
         self.assertIn(prompts.PROMPT_VOICE_TIRED, t.note)
 
+    def test_enabled_but_unavailable_voice_has_an_honest_dynamic_note(self):
+        with patch.object(bot.image_generation, "available", return_value=False), \
+             patch.object(bot._VOICE_OUT, "ready", return_value=False), \
+             patch.object(bot.capabilities, "enabled", return_value=True):
+            turn = bot.media_turn("group", "member", 0, asked=True)
+            lookup = bot.media_turn("group", "member", 0, asked=True, voice=False)
+        self.assertFalse(turn.voice)
+        self.assertIn("本机发语音暂时不可用", turn.note)
+        self.assertNotIn("Node", turn.note)
+        self.assertNotIn("SILK", turn.note)
+        self.assertNotIn("语音暂时", lookup.note)
+
 
 class MediaProgressRowTest(_Reply):
     """桌宠在画图、录语音的过程中就要演（regular/presence.py）：开始和没发成各记一行交互日志，只有媒介和状态。"""

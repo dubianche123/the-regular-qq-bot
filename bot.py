@@ -1161,6 +1161,9 @@ def media_turn(group_id, user_id, score, *, asked, remind=False, voice=True):
             notes.append(prompts.PROMPT_VOICE_TIRED)
         else:
             voice = True
+    elif speak and capabilities.enabled(config, "voice_output"):
+        notes.append("【语音】本机发语音暂时不可用，这轮只能打字。有人要听时简短说明语音暂时没准备好，"
+                     "不要把文字说成已经唱了或发了语音。")
     # 提醒：有人在跟它说话才认（remind=True，没叫它的那几轮不认）。现在几点、TA 记着哪条，
     # 每轮都写 —— 它得照着算时间，被问「我那条还在吗」也答得上来。
     remind = remind and config.REMINDER_ENABLED and bool(group_id and user_id)
@@ -4085,6 +4088,7 @@ def _runtime_status_details():
                              "available": bool(image_generation.available()),
                              "gif_enabled": capabilities.enabled(config, "gif"),
                              "animation_available": bool(image_generation.animation_available())},
+        "voice_output": _VOICE_OUT.status(),
         "reminders": {"review_policy": reminder_review.POLICY_VERSION,
                       "paused": sum(bool(t["payload"].get("paused"))
                                     for t in runtime.SCHEDULER.pending(kind=reminders.KIND))},

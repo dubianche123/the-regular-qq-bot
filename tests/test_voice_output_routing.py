@@ -124,6 +124,23 @@ class RuntimeLockTests(unittest.IsolatedAsyncioTestCase):
             VOICE_OUTPUT_NODE=str(node), VOICE_OUTPUT_SILK_ENTRY=str(silk),
             DATA_DIR=directory, VOICE_OUTPUT_DAILY_LIMIT=10)
 
+    async def test_missing_node_is_reported_even_when_voice_is_enabled(self):
+        import voice_output_runtime as runtime
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = self.config(directory)
+            cfg.VOICE_OUTPUT_NODE = ''  # launchd's system PATH cannot find an installed Node.
+            voice = runtime.VoiceOutputRuntime(cfg, 'private-key')
+            self.assertFalse(voice.ready())
+            self.assertEqual(voice.status(), {'available': False, 'reason': 'node'})
+            self.assertNotIn(directory, repr(voice.status()))
+            self.assertNotIn('private-key', repr(voice.status()))
+
+            cfg.VOICE_OUTPUT_NODE = str(Path(directory) / 'node')
+            self.assertTrue(voice.ready())
+            self.assertEqual(voice.status(), {'available': True, 'reason': None})
+            Path(cfg.VOICE_OUTPUT_SILK_ENTRY).unlink()
+            self.assertEqual(voice.status(), {'available': False, 'reason': 'silk'})
+
     async def test_busy_process_lock_skips_before_billing_or_synthesis(self):
         import voice_output_runtime as runtime
         with tempfile.TemporaryDirectory() as directory, \
