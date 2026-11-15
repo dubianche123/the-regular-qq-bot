@@ -2295,7 +2295,10 @@ async def run_digest(group_id, reason=""):
                 mode_proposals.extend(copy.deepcopy(new_rows) or [])
                 return await decisions_mod.curate_people(
                     group_id, new_rows, old_rows, entries=entries, now=now,
-                    log=runtime.INTERACTIONS)
+                    log=runtime.INTERACTIONS,
+                    record=lambda payload, asked, choices: runtime.TURNS.append(
+                        "triage", group=group_id, site="memory", payload=payload,
+                        asked=asked, choices=choices, release=code_release()))
 
             result = await digest_mod.compress_group(
                 runtime.DIGESTS, group_id, entries, ask_digest,

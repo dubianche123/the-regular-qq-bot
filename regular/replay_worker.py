@@ -201,9 +201,18 @@ async def _run_generate_once(bot, runtime, config, turn, retries=1):
         runtime.SESSIONS._sessions.pop(sid, None)
 
 
-def _questions_for_asked(decision_prompts, asked):
-    """按分诊记录里的 asked 题名列表，从当前代码版本的 decision_prompts 取出题目定义。"""
+def _questions_for_asked(decision_prompts, asked, payload=None):
+    """按分诊记录里的 asked 题名列表，从当前代码版本的 decision_prompts 取出题目定义。
+
+    个人原话的去留题是按候选现编题名的（c0_memory_kind…），不在固定题库里：
+    记录里带着 candidates 时，用受测版本的 memory_questions 照同一份候选重建。
+    """
     pool = {}
+    candidates = (payload or {}).get("candidates")
+    build_memory = getattr(decision_prompts, "memory_questions", None)
+    if isinstance(candidates, dict) and callable(build_memory):
+        for q in build_memory(candidates):
+            pool[q["name"]] = q
     for fn_name in ("feedback_questions", "addressed_questions", "recall_questions",
                     "lookup_questions", "request_kind_questions", "nickname_questions",
                     "callback_questions", "draw_questions", "reminder_questions", "reminder_response_questions",
@@ -250,7 +259,7 @@ async def _run_triage_once(runtime, config, triage_spec, retries=1):
 
     payload = triage_spec.get("payload") or {}
     asked = list(triage_spec.get("asked") or ())
-    questions = _questions_for_asked(decision_prompts, asked)
+    questions = _questions_for_asked(decision_prompts, asked, payload)
     if not questions:
         return "{}"
     payload_json = json.dumps(payload, ensure_ascii=False)

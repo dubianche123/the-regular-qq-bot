@@ -759,8 +759,11 @@ def _entry_context(entries, group_id, aliases, known=()):
 
 
 async def curate_people(group_id, new_rows, old_rows, *, entries=(), now=None,
-                        log=None):
+                        log=None, record=None):
     """一批新原话的去留 + 耐久旧条目的续存；一次合并请求，失败退回保守口径。
+
+    record(payload, asked, choices)：把这次判断的原样输入交给调用方留档（data/turns 的
+    triage 记录），题面才能像主分诊一样存成用例、换版本回放。输入已经是脱敏后的代号。
 
     只对「新的、还没裁决过的、来源合格」的条目问一次原生；
     失败/关闭/答案不合规：新条目照旧短时效收录，任何旧条目都不许被撤下。
@@ -900,6 +903,11 @@ async def curate_people(group_id, new_rows, old_rows, *, entries=(), now=None,
     choices, scores = usable_choices(body, questions)
     if log is not None:
         _log_scores(log, group_id, "memory", scores)
+    if record is not None:
+        try:
+            record({"candidates": candidates}, [q["name"] for q in questions], choices or {})
+        except Exception:          # 留档永远不许拖垮判断路径
+            pass
     if choices is None:
         return _merge_people(
             [row for row, _ in fresh], [row for row, _ in carry],
