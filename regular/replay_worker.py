@@ -582,15 +582,12 @@ class _RowArchive:
         return [r for r in self._rows if not since_ts or float(r.get("ts") or 0) >= since_ts][:limit]
 
 
-async def _run_retrieve_once(config, spec, policy=None):
-    return run_retrieve(config, spec, policy=policy)
+async def _run_retrieve_once(config, spec):
+    return run_retrieve(config, spec)
 
 
-def run_retrieve(config, spec, policy=None):
-    """重跑一条检索用例（depth=retrieve）：纯本地计算，返回 {"picked", "promise", "skipped"} 的 JSON。
-
-    调参器（regular/tune.py）在本进程里直接调它，回放子进程走 _run_retrieve_once —— 同一份逻辑。
-    """
+def run_retrieve(config, spec):
+    """重跑一条检索用例（depth=retrieve）：纯本地计算，返回 {"picked", "promise", "skipped"} 的 JSON。"""
     import recall as recall_mod
 
     rows = [dict(r) for r in spec.get("rows") or ()]
@@ -599,15 +596,13 @@ def run_retrieve(config, spec, policy=None):
                   exclude_text=spec.get("exclude_text") or "")
     promises = _PromiseList(spec.get("promises"))
     with ExitStack() as stack:
-        # 环境默认值也是现场的一部分；策略内的显式 max_items/lookback_days 仍可覆盖它们。
+        # 环境默认值也是现场的一部分。
         defaults = spec.get("defaults") or {}
         for key, attr in (("max_items", "MEMORY_RECALL_MAX_ITEMS"),
                           ("lookback_days", "MEMORY_RECALL_LOOKBACK_DAYS")):
             if key in defaults:
                 stack.enter_context(patch.object(recall_mod.config, attr, defaults[key]))
         if hasattr(recall_mod, "select"):
-            if policy is not None:
-                kwargs["policy"] = policy
             sel = recall_mod.select("REPLAY_GROUP", spec.get("query") or "", rows=rows,
                                     promises=promises, **kwargs)
             out = {"picked": [str(i["row"].get("message_id")) for i in sel["picked"]],

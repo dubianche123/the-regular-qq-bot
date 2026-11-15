@@ -7,7 +7,7 @@
   - 要人味判断的写 {"judge": "..."}，交给 regular/eval.py 的盲评模型（kimi-k3.1-pro）两两对比。
   - 检索用例（depth=retrieve）只考旧账召回挑了哪几条：retrieved / not_retrieved（消息编号）、
     retrieved_none（什么都不该给）、promise（该不该带上承诺账本那一行）、max_picked。
-    纯本地计算、不调模型，`regular tune recall` 拿它们离线搜检索策略。
+    纯本地计算、不调模型，`regular eval --cases retrieve` 拿它们比新旧检索。
 
 真实群聊存出来的用例都在部署目录 data/cases/<id>.json，不进版本库；
 这里自带一份从事故文档搬过来的种子用例（SEED_CASES），不带隐私 ID，测试和首次初始化共用。

@@ -32,7 +32,7 @@ description: 小团团（The Regular，QQ 群机器人）的自迭代流程：�
 
 - **每日体检**：`checkup --day today`（只读，不联网）列出可疑时刻：叫了没回、同一句问好几遍、被纠正、
   群里的反应不对、说了不做、口头禅、碰敏感词、说看不见图。每条带前后文和 `turn_id`。
-  逐条判断是不是真问题，标上：`checkup --label <finding_id> yes|no --note "原因"`。标注攒够了 `tune checkup` 才会给调参提案。
+  逐条判断是不是真问题，标上：`checkup --label <finding_id> yes|no --note "原因"`。确认比例低的信号，改 `regular/checkup.py` 的阈值或词表。
 - **截图来的**：拿截图里一句原话找当轮记录：
   ```bash
   .venv/bin/python .agents/skills/regular-iterate/scripts/find_turn.py "那只龙周一会装睡吗" --directory "$DEPLOY"
@@ -97,8 +97,7 @@ description: 小团团（The Regular，QQ 群机器人）的自迭代流程：�
 - 同时比几版措辞：`--cand` 也可以给一个目录（比如 `git archive HEAD` 解出来再改的那份）。
 - 用例里冻着的提示词原文（玩梗线索、「你刚开过口」这类注记）回放前会自动换成各受测版本自己的；
   报告里有一行列出换了哪些。受测版本里已经没有的常量，那几条测不到你的改动。
-- 体检和旧账检索策略的离线调参（0 token，只出提案，`policy apply` 后才生效）：
-  `tune checkup`、`tune checkup --benchmark <完整独立标注集.json>`、`eval --cases retrieve -n 1`、`tune recall`、`policy show`。
+- 旧账检索改动用 `eval --cases retrieve -n 1` 对比（0 token，纯本地重跑）。
 
 ### 6. 读报告（`$DEPLOY/data/evals/<时间>.md`，同名 `.json` 存全部原文）
 

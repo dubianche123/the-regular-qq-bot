@@ -124,8 +124,8 @@ Decisions 收到的是**现场 `input` + 一组 `questions`**。`input` 装当�
 | Decisions 的题面、选项描述与语义例子 | [`regular/decision_prompts.py`](../regular/decision_prompts.py) | 分诊层按待测版本重新取题，检查期望选项 |
 | 分诊阈值与选项处理 | [`regular/decisions.py`](../regular/decisions.py) | 分诊层检查有效选择；收敛等后续状态用消息层 |
 | 输入字段、上下文裁剪、@ / 引用与路由 | [`regular/decisions.py`](../regular/decisions.py)、[`bot.py`](../bot.py)、[`storage.py`](../storage.py)、[`quotes.py`](../quotes.py) | 消息层回放与直接相关的离线测试 |
-| 本地体检的信号、阈值与时间窗 | [`regular/checkup.py`](../regular/checkup.py)、[`regular/tune.py`](../regular/tune.py) | 冻结日志和独立正负标注，对比误报、漏报；训练与验证分开 |
-| 旧账检索的匹配、排序与时效 | [`recall.py`](../recall.py)、[`regular/tune.py`](../regular/tune.py) | 检索层重跑冻结语料，对照完整相关消息集合；承诺另用专门判据 |
+| 本地体检的信号、阈值与时间窗 | [`regular/checkup.py`](../regular/checkup.py) | 冻结日志和独立正负标注，对比误报、漏报 |
+| 旧账检索的匹配、排序与时效 | [`recall.py`](../recall.py) | 检索层重跑冻结语料，对照完整相关消息集合；承诺另用专门判据 |
 | 记忆与其他资料的选择、注入 | [`digest.py`](../digest.py)、[`knowledge.py`](../knowledge.py) | 消息层与定向测试；摘要生成和真实工具执行另做验证 |
 | 模型、推理参数和任务配置 | [`config.py`](../config.py)、[`providers.py`](../providers.py) | 控制实验配置做对照，回放与任务探针各有覆盖范围 |
 
@@ -133,7 +133,7 @@ Decisions 收到的是**现场 `input` + 一组 `questions`**。`input` 装当�
 
 **体检器和旧账检索器本身也接受考核。** 新旧策略在同一份独立完整标注上比较：误报是多报了问题或选入无关证据，漏报是没找到已标明的问题或相关证据。报告给出 TP / FP / FN / TN、查准率与召回率，并列出具体错误。只给已检出候选标 `yes/no`、只指定某条证据必须取到，都不足以计算总体漏报率；未标注、快照不全和分母为空会单列，避免把“没有证据”写成“零漏报”。
 
-`tune checkup` 和 `tune recall` 在本地搜索有界的策略参数，0 token；评测与搜索使用的标注保持独立，验证集用于核对改动效果。它们只出报告与提案，维护者执行 `policy apply` 后策略才生效，旧策略保留供回退。范围和数据格式见[本地策略评测](self-iteration.md#local-strategy-evaluation)。
+阈值和打分权重写在代码里，改动走评审，用上面的标注和检索用例验证。范围和数据格式见[本地策略评测](self-iteration.md#local-strategy-evaluation)。
 
 消息用例若预置了 `triage_choices`，会固定那些选择；验证分诊整条链要使用没有预置答案的用例。消息回放也替换了部分资料渲染和媒体执行，不能代替真实服务的 smoke。
 
@@ -153,14 +153,11 @@ DEPLOY=/path/to/regular-bot
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
 
-# 本地策略评测和调参：不请求模型
-.venv/bin/python -m regular --directory "$DEPLOY" tune checkup --benchmark docs/examples/checkup-benchmark.example.json
+# 本地检索评测：不请求模型
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases retrieve -n 1
-.venv/bin/python -m regular --directory "$DEPLOY" tune recall
-.venv/bin/python -m regular --directory "$DEPLOY" policy show
 ```
 
-没有 `turn_id` 时可用 `case add --message <message_id> --id <case_id>`；分诊用例要用 `--choice addressed=answer` 这类判据写明应该怎样。`checkup` 只读本地日志、不调模型；标注另由独立评审模型完成。生成、分诊、盲评等会调用模型的 `eval` 需要 `--allow-paid`；仅含本地检索且没有模型评审的评测无需授权付费。上面的体检示例是合成数据，用来体验命令，不代表线上效果。
+没有 `turn_id` 时可用 `case add --message <message_id> --id <case_id>`；分诊用例要用 `--choice addressed=answer` 这类判据写明应该怎样。`checkup` 只读本地日志、不调模型；标注另由独立评审模型完成。生成、分诊、盲评等会调用模型的 `eval` 需要 `--allow-paid`；仅含本地检索且没有模型评审的评测无需授权付费。
 
 生成与盲评的下降要过单侧检验才算退步，够不上的单列「噪声内下降」，可加大 `-n` 再看；越线一次就算退步。检索是确定性计算，判据通过率下降或完整标注下 FP / FN 增加直接记退步，不用重复抽样消噪。规则消融给出「可删除 / 仍需保留 / 说不准 / 判断不了」四种结论，缺用例或没跑完都不能建议删除。人设和规则的修改不会自动上线。
 

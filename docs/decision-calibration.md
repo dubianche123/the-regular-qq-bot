@@ -465,8 +465,8 @@ payload 和返回都能进 `tools.verify_locks` 那套哈希锁。
 `parse_answers` 硬要求 answers 是数组、概率是数组；`providers.call_decision`
 更早一步就把 answers 不是数组的返回挡掉了。**换供应商要写适配层，不是改 base_url。**
 `/v1/decisions` 在 Jev 那边只是第三方网关（OpenRouter、NanoGPT、AIMLAPI 等）给的别名，
-各家的密钥、模型名、额外字段都不同。适配层已经写在
-[`tools/compare_decision_vendors.py`](../tools/compare_decision_vendors.py) 里，只用于对比。
+各家的密钥、模型名、额外字段都不同。当时的对比适配层（`tools/compare_decision_vendors.py`）已在 2026-11-15
+随一次性对比结束删除，需要重跑时从 git 历史取回。
 
 ### OpenAI 一侧已量完（200 条留出，缓存在 `data/vendor_compare_cache.json`）
 

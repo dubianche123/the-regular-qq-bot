@@ -9,16 +9,12 @@
 并且能从中提取出人名或具体内容词。只有线索没有内容（「你还记得吗」）不查；
 命中敏感词的查询和片段直接放弃 —— 宁可不召回，也不把旧雷翻出来。
 
-检索策略本身也是可迭代对象（docs/self-iteration.md「体检与检索策略的自迭代」）：
-打分权重、时效、条数等数值集中在 DEFAULT_POLICY，`regular tune recall` 拿检索用例
-离线搜更好的一组，交维护者 `regular policy apply` 后写进 data/policies/recall.json。
-搜索只动有界数值和开关、不加词表；敏感词、指令行、机器编号这些硬边界不在策略里，搜不掉。
+打分权重、时效、条数等数值集中在 DEFAULT_POLICY；敏感词、指令行、机器编号这些硬边界不在策略里。
 """
 
 import hashlib
 import json
 import logging
-import os
 import re
 import time
 
@@ -57,7 +53,7 @@ WORD_RUN = re.compile(r"[A-Za-z0-9]{2,12}")
 QUOTED = re.compile(r"[「“\"《]([^」”\"》]{2,12})[」”\"》]")
 MACHINE_ID = re.compile(r"<@!?[0-9A-Fa-f]{16,}>|(?<![0-9A-Fa-f])[0-9A-Fa-f]{16,}(?![0-9A-Fa-f])")
 
-# ── 检索策略（可离线调参的数值；默认值就是 2026-11-04 之前写死的那一套）──
+# ── 检索策略（打分用的数值集中在这里）──
 # max_items / lookback_days 为 None 时跟 .env 的 MEMORY_RECALL_MAX_ITEMS / _LOOKBACK_DAYS 走。
 DEFAULT_POLICY = {
     "ngram_max": 4,                 # 中文内容词切到几字
@@ -79,95 +75,10 @@ DEFAULT_POLICY = {
     "body_chars": 80,               # 每条证据最多给模型看多少字
 }
 
-# 调参器的搜索空间：每个可调项给一组候选值。范围就是允许的边界 ——
-# 策略文件里超出这组值范围的数一律拒收（见 validate_policy），自动搜索不能把边界放宽。
-POLICY_SPACE = {
-    "ngram_max": (3, 4, 5),
-    "min_text_chars": (2, 4, 6, 8),
-    "term_base": (4, 6, 8, 10),
-    "name_bonus": (0, 1, 2, 3, 4),
-    "extra_term_cap": (0, 1, 2, 3, 5),
-    "require_term_when_terms": (True, False),
-    "name_only_min_chars": (8, 10, 12, 16, 20),
-    "name_only_base": (1, 2, 3, 4, 5),
-    "name_only_cap": (0, 1, 2, 3),
-    "fresh_days": (3, 7, 14),
-    "fresh_bonus": (0, 1, 2, 3),
-    "warm_days": (7, 14, 30),
-    "warm_bonus": (0, 1, 2),
-    "long_text_chars": (10, 15, 20, 30),
-    "long_bonus": (0, 1, 2),
-    "min_score": (1, 4, 6, 8, 9, 10, 11, 12),
-    "distinct_senders_first": (True, False),
-    "max_items": (None, 1, 2, 3),
-    "lookback_days": (None, 7, 14, 30, 60, 90),
-    "body_chars": (60, 80, 120),
-}
-
-
-def validate_policy(raw):
-    """把一份策略（dict）规整成完整策略；未知键、类型不对、超出 POLICY_SPACE 范围的值抛 ValueError。"""
-    if not isinstance(raw, dict):
-        raise ValueError("recall policy must be a JSON object")
-    out = dict(DEFAULT_POLICY)
-    for key, value in raw.items():
-        if key not in DEFAULT_POLICY:
-            raise ValueError(f"unknown recall policy key: {key!r}")
-        space = POLICY_SPACE[key]
-        if value is None:
-            if None not in space:
-                raise ValueError(f"recall policy {key} cannot be null")
-        elif isinstance(DEFAULT_POLICY[key], bool) or all(isinstance(v, bool) for v in space):
-            if not isinstance(value, bool):
-                raise ValueError(f"recall policy {key} must be true/false")
-        else:
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(f"recall policy {key} must be a number")
-            if key in {"ngram_max", "min_text_chars", "extra_term_cap", "name_only_min_chars",
-                       "name_only_cap", "long_text_chars", "max_items", "body_chars"}:
-                if not isinstance(value, int):
-                    raise ValueError(f"recall policy {key} must be an integer")
-            nums = [v for v in space if v is not None and not isinstance(v, bool)]
-            if not min(nums) <= value <= max(nums):
-                raise ValueError(f"recall policy {key}={value} outside [{min(nums)}, {max(nums)}]")
-        out[key] = value
-    return out
-
-
 def policy_sha(policy):
     """策略的短指纹，写进每轮检索记录，回头知道当时用的是哪一套。"""
     blob = json.dumps(policy, ensure_ascii=False, sort_keys=True, default=list)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10]
-
-
-_POLICY_CACHE = {"key": None, "policy": None}
-
-
-def active_policy(path=None):
-    """线上生效的策略：data/policies/recall.json（维护者 `regular policy apply` 写的）覆盖默认值。
-
-    按文件 mtime 缓存，跟知识库一样改完下一轮生效。文件坏了或越界就退回默认值并告警 ——
-    策略文件出错不能让旧账召回整个停掉，更不能带着越界的数跑。
-    """
-    path = path or getattr(config, "RECALL_POLICY_FILE", "")
-    try:
-        stat = os.stat(path) if path else None
-    except OSError:
-        stat = None
-    key = (path, stat.st_mtime_ns, stat.st_size) if stat else None
-    if key is not None and _POLICY_CACHE["key"] == key:
-        return _POLICY_CACHE["policy"]
-    policy = dict(DEFAULT_POLICY)
-    if stat is not None:
-        try:
-            with open(path, encoding="utf-8") as stream:
-                doc = json.load(stream)
-            policy = validate_policy(doc.get("policy", doc) if isinstance(doc, dict) else doc)
-        except (OSError, ValueError) as exc:
-            logger.warning("旧账召回策略文件不可用，退回默认值: %s", exc)
-            policy = dict(DEFAULT_POLICY)
-    _POLICY_CACHE.update(key=key, policy=policy)
-    return policy
 
 
 def _strip_phrases(text, phrases):
@@ -331,7 +242,7 @@ def select(group_id, text, *, archive=None, rows=None, promises=None, names=(), 
     返回 {"picked": [{"score", "row"}], "promise": dict|None, "terms": [...],
           "query_names": [...], "policy": {...}, "skipped": 原因或 ""}。
     """
-    p = validate_policy(policy) if policy is not None else active_policy()
+    p = {**DEFAULT_POLICY, **(policy or {})}
     out = {"picked": [], "promise": None, "terms": [], "query_names": [], "policy": p,
            "skipped": "", "promises": [], "promises_complete": promises is None,
            "defaults": {"max_items": config.MEMORY_RECALL_MAX_ITEMS,

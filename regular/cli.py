@@ -424,15 +424,14 @@ def checkup(config, *, day=None, as_json=False, write=True, label=None, note="",
         out = checkup_mod.incident_coverage(
             cases_mod.load_cases(config.CASES_DIR), interaction_dir=config.INTERACTION_LOG_DIR,
             turn_dir=config.TURN_LOG_DIR, archive_dir=config.ARCHIVE_DIR,
-            state_file=config.STATE_FILE, policy=checkup_mod.load_policy(config.CHECKUP_POLICY_FILE))
+            state_file=config.STATE_FILE)
         print(json.dumps(out, ensure_ascii=False, indent=2) if as_json
               else checkup_mod.render_coverage(out))
         return 0
     out = checkup_mod.report(
         checkup_mod.resolve_day(day), interaction_dir=config.INTERACTION_LOG_DIR,
         turn_dir=config.TURN_LOG_DIR, archive_dir=config.ARCHIVE_DIR,
-        state_file=config.STATE_FILE, checkup_dir=config.CHECKUP_DIR,
-        policy=checkup_mod.load_policy(config.CHECKUP_POLICY_FILE))
+        state_file=config.STATE_FILE, checkup_dir=config.CHECKUP_DIR)
     path = checkup_mod.write(out, config.CHECKUP_DIR) if write else None
     if as_json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
@@ -691,54 +690,6 @@ def nightly_command(config, args):
     return 0
 
 
-def tune_command(config, args):
-    """离线调参：体检阈值/词表（靠标注）或旧账检索策略（靠检索用例）。只读、不联网、不调模型。"""
-    from regular import tune as tune_mod
-    if args.target == "checkup":
-        out = tune_mod.tune_checkup(config, min_labels=args.min_labels, min_no=args.min_no,
-                                    write=not args.no_write, benchmark=args.benchmark)
-        render = tune_mod.render_checkup
-    else:
-        out = tune_mod.tune_recall(config, selector=args.cases, folds=args.folds,
-                                   drift_days=args.drift_days, write=not args.no_write)
-        render = tune_mod.render_recall
-    if args.json:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-    else:
-        print(render(out))
-        if out.get("report_path"):
-            print(f"Report written to {out['report_path']}")
-    return 0
-
-
-def policy_command(config, args):
-    """查看、批准（apply）或重置 data/policies/ 下的体检 / 检索策略文件。"""
-    from regular import tune as tune_mod
-    if args.policy_action == "show":
-        targets = ("checkup", "recall") if args.name == "all" else (args.name,)
-        rows = [tune_mod.show_policy(config, name) for name in targets]
-        if args.json:
-            print(json.dumps(rows[0] if len(rows) == 1 else rows, ensure_ascii=False, indent=2))
-        else:
-            for r in rows:
-                src = f"applied {r.get('applied_at')} from {r.get('source')}" if r["file"] else "defaults"
-                print(f"{r['name']}: {src} ({r['path']})")
-                for k, v in r["overrides"].items():
-                    print(f"  {k} = {json.dumps(v, ensure_ascii=False)}")
-        return 0
-    if args.policy_action == "apply":
-        res = tune_mod.apply_proposal(config, args.report)
-        print(f"Applied {res['name']} policy -> {res['path']}"
-              + (f" (previous archived to {res['previous']})" if res.get("previous") else ""))
-        return 0
-    if args.policy_action == "reset":
-        prev = tune_mod.reset_policy(config, args.name)
-        print(f"Reset {args.name} policy to defaults"
-              + (f" (archived {prev})" if prev else " (was already default)"))
-        return 0
-    return 1
-
-
 def manage_command(config, args, parser):
     """The maintainer's controls as data: switches, one-line states, today's numbers. No model, no network."""
     from regular import capabilities, presence
@@ -884,25 +835,6 @@ def main(argv=None):
     ng.add_argument("--port", type=int, default=8765, help="local settings service port for --pet (default: 8765)")
     ng.add_argument("--no-write", action="store_true", help="print only; do not write data/nightly or data/checkups")
     ng.add_argument("--json", action="store_true")
-    tn = sub.add_parser("tune", help="read-only offline tuning for checkup thresholds or recall policy; no network or inference")
-    tn.add_argument("target", choices=("checkup", "recall"), help="which local policy to tune")
-    tn.add_argument("--cases", default="retrieve", help="recall: case selector (default: retrieve)")
-    tn.add_argument("--folds", type=int, default=5, help="recall: holdout folds (default: 5)")
-    tn.add_argument("--drift-days", type=int, default=7, help="recall: days of live recall turns to compare (default: 7)")
-    tn.add_argument("--min-labels", type=int, default=6, help="checkup: minimum labels per signal before tuning (default: 6)")
-    tn.add_argument("--min-no", type=int, default=2, help="checkup: minimum 'no' labels per signal before tuning (default: 2)")
-    tn.add_argument("--benchmark", help="checkup: independently labeled frozen benchmark JSON")
-    tn.add_argument("--no-write", action="store_true", help="do not write report files to data/evals")
-    tn.add_argument("--json", action="store_true")
-    pol = sub.add_parser("policy", help="inspect, apply, or reset local checkup / recall policies in data/policies")
-    pol_sub = pol.add_subparsers(dest="policy_action", required=True)
-    pol_show = pol_sub.add_parser("show", help="show effective policy and active overrides")
-    pol_show.add_argument("name", nargs="?", default="all", choices=("all", "checkup", "recall"))
-    pol_show.add_argument("--json", action="store_true")
-    pol_apply = pol_sub.add_parser("apply", help="apply a tune proposal JSON into data/policies")
-    pol_apply.add_argument("report", help="path to tune-*.json report (or archived policy JSON)")
-    pol_reset = pol_sub.add_parser("reset", help="reset policy to code defaults (archives current file)")
-    pol_reset.add_argument("name", choices=("checkup", "recall"))
     panel = sub.add_parser("panel", help="serve the local maintenance panel on loopback")
     panel.add_argument("--host", default="127.0.0.1", help="loopback address (default: 127.0.0.1)")
     panel.add_argument("--port", type=int, default=8765, help="local port (default: 8765)")
@@ -999,16 +931,6 @@ def main(argv=None):
             except (KeyError, ValueError) as error:
                 print(str(error.args[0] if error.args else error), file=sys.stderr)
                 return 1
-        if args.command == "tune":
-            if args.target != "checkup" and args.benchmark:
-                parser.error("--benchmark is only supported by tune checkup")
-            if args.target == "checkup" and (args.min_labels < 1 or args.min_no < 0):
-                parser.error("--min-labels must be positive and --min-no must be non-negative")
-            if args.target == "recall" and (args.folds < 2 or args.drift_days < 1):
-                parser.error("--folds must be at least 2 and --drift-days must be positive")
-            return tune_command(config, args)
-        if args.command == "policy":
-            return policy_command(config, args)
         if args.command == "panel":
             if args.host not in ("127.0.0.1", "localhost", "::1"):
                 parser.error("panel only binds to loopback; use --host 127.0.0.1")

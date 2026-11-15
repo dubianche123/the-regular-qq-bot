@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1498" viewBox="0 0 1280 1498" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="zh-CN">
-<title id="iteration-title">一个问题，怎样变成下一版的改进</title><desc id="iteration-desc">线上记录原样输入、分诊、检索与实际送达。独立评审标注回复用例，以及包含未检出问题和无关证据的完整正负基准。编码代理修改代码与提示词，本地tune只在训练集搜索体检和旧账策略；验证集保持独立。相同输入分别运行基线与候选，判据留在评测侧。生成与判断按需盲评，本地策略用完整混淆矩阵比较误报漏报；缺标注与不全语料单列。报告反馈修改，维护者批准代码部署或policy apply；历史策略、用例和经验保留。</desc>
+<title id="iteration-title">一个问题，怎样变成下一版的改进</title><desc id="iteration-desc">线上记录原样输入、分诊、检索与实际送达。独立评审标注回复用例，以及包含未检出问题和无关证据的完整正负基准。编码代理修改代码与提示词，包括体检阈值和旧账排序。相同输入分别运行基线与候选，判据留在评测侧。生成与判断按需盲评，体检和旧账检索用完整混淆矩阵比较误报漏报；缺标注与不全语料单列。报告反馈修改，维护者批准代码部署；历史版本、用例和经验保留。</desc>
 <defs>
 <marker id="arrow-line" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
 <marker id="arrow-purple" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#7962A7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -22,22 +22,22 @@
 <text x="88" y="480" font-size="18" fill="#56677E" font-weight="400">保留正常样本、未检出问题与无关证据</text>
 <text x="88" y="512" font-size="16" fill="#56677E">只标候选 yes/no，不能计算总体漏报</text>
 <rect x="696" y="320" width="520" height="226" rx="17" fill="#F0EBF8" stroke="#DCD2EE"/>
-<text x="720" y="348" font-size="14" fill="#7962A7" font-weight="700">候选改法 · 外接编码代理 / 本地调参</text>
-<text x="720" y="384" font-size="23" fill="#213249" font-weight="650">代码改法与本地策略一起比较</text>
+<text x="720" y="348" font-size="14" fill="#7962A7" font-weight="700">候选改法 · 外接编码代理</text>
+<text x="720" y="384" font-size="23" fill="#213249" font-weight="650">代码与提示词改法一起比较</text>
 <text x="720" y="418" font-size="19" fill="#56677E" font-weight="400">代理改代码、提示词、题面与输入</text>
-<text x="720" y="450" font-size="18" fill="#56677E" font-weight="400">tune 搜体检阈值、旧账排序，0 token</text>
-<text x="720" y="480" font-size="18" fill="#56677E" font-weight="400">策略调参只看 train；validation 留出验收</text>
-<text x="720" y="512" font-size="16" fill="#56677E">候选提案待批准后生效，旧策略可回退</text>
+<text x="720" y="450" font-size="18" fill="#56677E" font-weight="400">体检阈值、旧账排序也在代码里改</text>
+<text x="720" y="480" font-size="18" fill="#56677E" font-weight="400">本地重跑 0 token，判据留在评测侧</text>
+<text x="720" y="512" font-size="16" fill="#56677E">候选待批准后上线，旧版本可回退</text>
 <rect x="64" y="610" width="1152" height="476" rx="19" fill="#EAF0F6" stroke="#D5DFEB"/>
 <text x="88" y="647" font-size="20" fill="#213249" font-weight="650">固定命令 · 新旧同条件回放</text>
 <rect x="350" y="672" width="580" height="42" rx="11" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="640" y="699" font-size="19" fill="#5375A1" font-weight="600" text-anchor="middle">相同现场输入与冻结语料；验证数据不参与搜索</text>
 <rect x="120" y="756" width="440" height="116" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="144" y="796" font-size="25" fill="#5375A1" font-weight="700">基线版</text>
-<text x="144" y="835" font-size="18" fill="#56677E" font-weight="400">原代码 / 原提示词 / 原本地策略</text>
+<text x="144" y="835" font-size="18" fill="#56677E" font-weight="400">原代码 / 原提示词</text>
 <rect x="720" y="756" width="440" height="116" rx="17" fill="#F8F5FC" stroke="#DCD2EE"/>
 <text x="744" y="796" font-size="25" fill="#7962A7" font-weight="700">候选版</text>
-<text x="744" y="835" font-size="18" fill="#56677E" font-weight="400">待测代码 / 提示词 / 题面 / 本地策略</text>
+<text x="744" y="835" font-size="18" fill="#56677E" font-weight="400">待测代码 / 提示词 / 题面</text>
 <rect x="120" y="914" width="1040" height="148" rx="15" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="144" y="949" font-size="21" fill="#213249" font-weight="650">两类评测：期望判据留在评测侧</text>
 <text x="144" y="982" font-size="19" fill="#56677E" font-weight="400">回复 / 判断：代码判据 + 按需独立盲评</text>
@@ -46,16 +46,16 @@
 <rect x="64" y="1140" width="688" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="88" y="1175" font-size="23" fill="#213249" font-weight="650">对比报告：改善与代价</text>
 <text x="88" y="1213" font-size="20" fill="#397D70" font-weight="600">改善 · 退步 · 误报漏报 · 覆盖缺口</text>
-<text x="88" y="1244" font-size="18" fill="#56677E" font-weight="400">生成差异看噪声；本地策略确定性对照</text>
+<text x="88" y="1244" font-size="18" fill="#56677E" font-weight="400">生成差异看噪声；体检与检索确定性对照</text>
 <rect x="816" y="1140" width="400" height="126" rx="17" fill="#FFF4E4" stroke="#EAD6B8"/>
 <text x="840" y="1175" font-size="22" fill="#A7783E" font-weight="700">维护者批准后生效</text>
 <text x="840" y="1213" font-size="19" fill="#56677E" font-weight="400">代码 / 提示词：人工部署</text>
-<text x="840" y="1244" font-size="19" fill="#56677E" font-weight="400">策略：policy apply，历史可回退</text>
+<text x="840" y="1244" font-size="19" fill="#56677E" font-weight="400">发布：固定快照，历史可回退</text>
 <rect x="64" y="1322" width="688" height="92" rx="15" fill="#EAF4EF" stroke="#C9DFD5"/>
 <text x="88" y="1357" font-size="21" fill="#397D70" font-weight="650">留下来的资产：用例 + 完整标注集 + 事故经验</text>
 <text x="88" y="1392" font-size="18" fill="#56677E" font-weight="400">冻结输入与标注继续留存，下次改动重跑历史问题</text>
 <text x="64" y="1433" font-size="19" fill="#A7783E" font-weight="600">发布后的新反馈，回到线上记录</text>
-<text x="64" y="1478" font-size="18" fill="#56677E" font-weight="400">命令复现与比较，代理和本地调参提出候选；维护者批准，现场与经验继续积累。</text>
+<text x="64" y="1478" font-size="18" fill="#56677E" font-weight="400">命令复现与比较，代理提出候选；维护者批准，现场与经验继续积累。</text>
 <path d="M324 280v32" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M592 412h96" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <text x="640" y="396" font-size="14" fill="#56677E" font-weight="500" text-anchor="middle">证据与判据</text>
@@ -63,7 +63,7 @@
 <path d="M640 714v20H340v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M640 734h300v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M1184 546v268h-16" fill="none" stroke="#7962A7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-purple)"/>
-<text x="1184" y="585" font-size="15" fill="#7962A7" font-weight="600" text-anchor="end">候选代码 / 策略</text>
+<text x="1184" y="585" font-size="15" fill="#7962A7" font-weight="600" text-anchor="end">候选代码</text>
 <path d="M340 872v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M940 872v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M340 1062v70" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>

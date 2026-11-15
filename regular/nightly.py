@@ -36,7 +36,7 @@ def run(config, *, day=None, allow_paid=False, judge_fn=None, worker_fn=None, wr
     report = checkup_mod.report(
         day, interaction_dir=config.INTERACTION_LOG_DIR, turn_dir=config.TURN_LOG_DIR,
         archive_dir=config.ARCHIVE_DIR, state_file=config.STATE_FILE,
-        checkup_dir=config.CHECKUP_DIR, policy=checkup_mod.load_policy(config.CHECKUP_POLICY_FILE))
+        checkup_dir=config.CHECKUP_DIR)
     if write:
         checkup_mod.write(report, config.CHECKUP_DIR)
     reactions = outcomes_mod.day_summary(config.INTERACTION_LOG_DIR, config.TURN_LOG_DIR, day)

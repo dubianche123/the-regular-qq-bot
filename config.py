@@ -475,11 +475,6 @@ CASES_DIR = data_path("CASES_DIR", "cases")
 EVAL_DIR = data_path("EVAL_DIR", "evals")
 NIGHTLY_DIR = data_path("NIGHTLY_DIR", "nightly")   # 每晚汇总页（regular/nightly.py）
 SHADOW_DIR = data_path("SHADOW_DIR", "shadow")   # 影子回放的累计账与裁判核对（regular/shadow.py）
-# 体检信号与旧账检索的策略文件（docs/self-iteration.md「体检与检索策略的自迭代」）：
-# `regular tune` 离线搜出来、维护者 `regular policy apply` 才写进来；没有文件就用代码里的默认值。
-POLICY_DIR = data_path("POLICY_DIR", "policies")
-CHECKUP_POLICY_FILE = str(Path(POLICY_DIR) / "checkup.json")
-RECALL_POLICY_FILE = str(Path(POLICY_DIR) / "recall.json")
 # 盲评：不参赛的评审模型。kimi-k3.1-pro 只在本机网关上有（模型名带 cn: 前缀），
 # 网关是 ZHIPU_BASE_URL 指向的 127.0.0.1:17863，所以走 zhipu 这一家的地址和凭据。
 # 2026-11-04 实测：发到 api.openai.com 的 kimi-k3.1-pro 一律超时，盲评整批被剔掉。

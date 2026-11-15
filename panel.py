@@ -1365,30 +1365,19 @@ def _checkup(cfg, request, csrf):
     if day not in days:
         days = [day, *days]
         report_counts.setdefault(day, None)
-    policy_error = False
-    try:
-        policy = checkup_mod.load_policy(getattr(cfg, "CHECKUP_POLICY_FILE", ""))
-    except ValueError:
-        policy = None
-        policy_error = True
-    out = checkup_mod.report(day, **dirs, policy=policy)
+    out = checkup_mod.report(day, **dirs)
     report_counts[day] = len(out["findings"])
     if not explicit_day and not any(out["inputs"].get(name) for name in
                                     ("incoming", "delivered", "turns", "triage")):
         previous = next((d for d in days if d < day and report_counts.get(d)), None)
         if previous:
             day = previous
-            out = checkup_mod.report(day, **dirs, policy=policy)
+            out = checkup_mod.report(day, **dirs)
             report_counts[day] = len(out["findings"])
-    if not policy_error:
-        try:
-            checkup_mod.write(out, dirs["checkup_dir"])
-        except OSError:
-            pass
-    warning = ('<p class="bad">体检设置暂时无法读取，本次使用默认设置。</p>'
-               '<details class="wx-disclosure"><summary>查看处理方法</summary><p>修复体检策略文件，或由维护者执行 '
-               '<code>regular policy reset checkup</code>。已有报告保持不变。</p></details>'
-               if policy_error else "")
+    try:
+        checkup_mod.write(out, dirs["checkup_dir"])
+    except OSError:
+        pass
     options = "".join(
         f'<option value="{_esc(d)}"{" selected" if d == day else ""}>{_esc(d)}</option>'
         for d in days)
@@ -1438,7 +1427,6 @@ def _checkup(cfg, request, csrf):
             if day != today else "")
     body = f"""
 <header class="wx-heading"><div><h1>让她更好</h1><p>体检会挑出可能接偏的话；确认是问题，就交给编码 Agent 去改。</p></div></header>
-{warning}
 {_handoff_section(cfg)}
 {day_strip}
 {note}

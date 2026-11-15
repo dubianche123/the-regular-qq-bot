@@ -114,8 +114,7 @@ class RetrievalStrategyTest(unittest.TestCase):
                 {"group": "G", "query": "上次阿强说的那件事", "names": ["阿强", "老李"],
                  "now": NOW, **trace}, "promise-replay", archive_dir=directory,
                 checks=[{"promise": True}])
-        replayed = json.loads(replay_worker.run_retrieve(config, case["retrieve"],
-                                                       policy=recall.DEFAULT_POLICY))
+        replayed = json.loads(replay_worker.run_retrieve(config, case["retrieve"]))
         self.assertEqual(replayed["promise"], selection["promise"]["what"])
         self.assertTrue(case["retrieve"]["coverage"]["complete"])
 
@@ -155,15 +154,12 @@ class RetrievalStrategyTest(unittest.TestCase):
             result = json.loads(replay_worker.run_retrieve(config, fixture(corpus)["retrieve"]))
         self.assertEqual(result["picked"], ["m1", "m2"])
 
-    def test_replay_keeps_recorded_defaults_but_allows_candidate_policy_overrides(self):
+    def test_replay_keeps_recorded_environment_defaults(self):
         spec = fixture([row("a", "奶茶一号", sender="u1"),
                         row("b", "奶茶二号", sender="u2")])["retrieve"]
         spec["defaults"] = {"max_items": 1, "lookback_days": 30}
-        result = json.loads(replay_worker.run_retrieve(config, spec, policy=recall.DEFAULT_POLICY))
+        result = json.loads(replay_worker.run_retrieve(config, spec))
         self.assertEqual(len(result["picked"]), 1)
-        policy = {**recall.DEFAULT_POLICY, "max_items": 2}
-        result = json.loads(replay_worker.run_retrieve(config, spec, policy=policy))
-        self.assertEqual(len(result["picked"]), 2)
 
     def test_pure_retrieval_batch_never_imports_live_bot_or_runtime(self):
         original_import = builtins.__import__
@@ -171,16 +167,10 @@ class RetrievalStrategyTest(unittest.TestCase):
             if name in ("bot", "runtime"):
                 raise AssertionError("local retrieval imported " + name)
             return original_import(name, *args, **kwargs)
-        with patch("builtins.__import__", side_effect=guarded), \
-                patch.object(recall, "active_policy", return_value=dict(recall.DEFAULT_POLICY)):
+        with patch("builtins.__import__", side_effect=guarded):
             results = asyncio.run(replay_worker.replay_batch([fixture([row("a", "奶茶内容")])], n=2))
         self.assertEqual(len(results[0]["samples"]), 2)
         self.assertEqual(json.loads(results[0]["samples"][0])["picked"], ["a"])
-
-    def test_fractional_count_policy_is_rejected_before_execution(self):
-        for key in ("max_items", "body_chars", "ngram_max"):
-            with self.subTest(key=key), self.assertRaises(ValueError):
-                recall.validate_policy({key: 1.5 if key == "max_items" else 80.5 if key == "body_chars" else 3.5})
 
 
 if __name__ == "__main__":

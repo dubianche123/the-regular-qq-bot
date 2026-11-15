@@ -88,7 +88,6 @@ launchctl bootout gui/$(id -u)/io.github.the-regular; launchctl bootstrap gui/$(
 | `regular/outcomes.py` | 只读反应账本：每条送达之后群友的实际反应（分诊的 `natural_feedback`），按版本 / 模型 / 路径 / 日期汇总 |
 | `regular/checkup.py` | 每日只读体检信号、上下文提取与标注结果统计 |
 | `regular/cases.py` / `regular/eval.py` | 事故用例库（生成/分诊/检索/消息四层）、双版本子进程回放、盲评、整天回放、窄口子措辞搜索 |
-| `regular/tune.py` | 体检信号阈值/词表与旧账检索策略的离线自迭代（坐标搜索、留出验证、漂移对比、`data/policies/` 提案与回退） |
 | `regular/rules.py` | `prompts.py` 规则账本解析与单条消融（`--ablate`） |
 | `tests/` | 离线回归测试 |
 

@@ -35,11 +35,9 @@ class NightlyTest(unittest.TestCase):
             patcher = patch.object(config, name, path)
             patcher.start()
             self.addCleanup(patcher.stop)
-        for name, value in (("STATE_FILE", os.path.join(tmp.name, "state.json")),
-                            ("CHECKUP_POLICY_FILE", os.path.join(tmp.name, "policy.json"))):
-            patcher = patch.object(config, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = patch.object(config, "STATE_FILE", os.path.join(tmp.name, "state.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def spoke(self, turn_id, action=None):
         base = {"schema": interactions_mod.SCHEMA, "group": "G_NIGHT", "user": "U_NIGHT"}

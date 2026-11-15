@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1498" viewBox="0 0 1280 1498" role="img" aria-labelledby="iteration-title iteration-desc" xml:lang="en">
-<title id="iteration-title">From a live failure to the next version</title><desc id="iteration-desc">Record live inputs, triage, recall and delivery. Independent labels cover reply cases and full positive and negative benchmarks, including missed issues and irrelevant evidence. A coding agent edits code and prompts; local tune searches checkup and archive-recall policies on train only, keeping validation separate. Baseline and candidate receive identical inputs while expectations stay with the evaluator. Generation and triage use checks and optional blind judging; local policies use full confusion matrices. Unknown labels and incomplete corpora stay explicit. Maintainers approve code deployment or policy apply, retaining rollback history and accumulated evidence.</desc>
+<title id="iteration-title">From a live failure to the next version</title><desc id="iteration-desc">Record live inputs, triage, recall and delivery. Independent labels cover reply cases and full positive and negative benchmarks, including missed issues and irrelevant evidence. A coding agent edits code and prompts, including checkup thresholds and archive-recall ranking. Baseline and candidate receive identical inputs while expectations stay with the evaluator. Generation and triage use checks and optional blind judging; checkup and recall use full confusion matrices. Unknown labels and incomplete corpora stay explicit. Maintainers approve code deployment, retaining rollback history and accumulated evidence.</desc>
 <defs>
 <marker id="arrow-line" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#8290A3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
 <marker id="arrow-purple" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1l6 3-6 3" fill="none" stroke="#7962A7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -23,21 +23,21 @@
 <text x="88" y="512" font-size="16" fill="#56677E">Candidate-only yes/no cannot establish recall</text>
 <rect x="696" y="320" width="520" height="226" rx="17" fill="#F0EBF8" stroke="#DCD2EE"/>
 <text x="720" y="348" font-size="13" fill="#7962A7" font-weight="700">CANDIDATES · CODING AGENT / LOCAL TUNING</text>
-<text x="720" y="384" font-size="23" fill="#213249" font-weight="650">Code edits and policy candidates</text>
+<text x="720" y="384" font-size="23" fill="#213249" font-weight="650">Code and prompt candidates</text>
 <text x="720" y="418" font-size="17" fill="#56677E" font-weight="400">Agent: code, prompts, questions and inputs</text>
-<text x="720" y="450" font-size="16.5" fill="#56677E" font-weight="400">tune: checkup thresholds / recall ranking; 0 tokens</text>
-<text x="720" y="480" font-size="17" fill="#56677E" font-weight="400">Search train only; keep validation for acceptance</text>
-<text x="720" y="512" font-size="15" fill="#56677E">Approval required; keep policies for rollback</text>
+<text x="720" y="450" font-size="16.5" fill="#56677E" font-weight="400">Checkup thresholds and recall ranking live in code</text>
+<text x="720" y="480" font-size="17" fill="#56677E" font-weight="400">Local reruns cost 0 tokens; checks stay with the eval</text>
+<text x="720" y="512" font-size="15" fill="#56677E">Approval required; keep releases for rollback</text>
 <rect x="64" y="610" width="1152" height="476" rx="19" fill="#EAF0F6" stroke="#D5DFEB"/>
 <text x="88" y="647" font-size="18" fill="#213249" font-weight="650">FIXED COMMANDS · CONTROLLED REPLAY</text>
 <rect x="350" y="672" width="580" height="42" rx="11" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="640" y="699" font-size="17" fill="#5375A1" font-weight="600" text-anchor="middle">Same scene inputs and frozen corpus; validation is held out</text>
 <rect x="120" y="756" width="440" height="116" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="144" y="796" font-size="25" fill="#5375A1" font-weight="700">Baseline</text>
-<text x="144" y="835" font-size="18" fill="#56677E" font-weight="400">Original code / prompts / local policy</text>
+<text x="144" y="835" font-size="18" fill="#56677E" font-weight="400">Original code / prompts</text>
 <rect x="720" y="756" width="440" height="116" rx="17" fill="#F8F5FC" stroke="#DCD2EE"/>
 <text x="744" y="796" font-size="25" fill="#7962A7" font-weight="700">Candidate</text>
-<text x="744" y="835" font-size="18" fill="#56677E" font-weight="400">Tested code / prompts / questions / policy</text>
+<text x="744" y="835" font-size="18" fill="#56677E" font-weight="400">Tested code / prompts / questions</text>
 <rect x="120" y="914" width="1040" height="148" rx="15" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="144" y="949" font-size="21" fill="#213249" font-weight="650">Two evaluations; expected outcomes stay on this side</text>
 <text x="144" y="982" font-size="17" fill="#56677E" font-weight="400">Replies / triage: code checks and optional independent judging</text>
@@ -46,16 +46,16 @@
 <rect x="64" y="1140" width="688" height="126" rx="17" fill="#FFFFFF" stroke="#D7E0EB"/>
 <text x="88" y="1175" font-size="23" fill="#213249" font-weight="650">Comparison report: gains and costs</text>
 <text x="88" y="1213" font-size="18" fill="#397D70" font-weight="600">Gains · regressions · false alarms / misses · coverage gaps</text>
-<text x="88" y="1244" font-size="18" fill="#56677E" font-weight="400">Generation: check noise; local policies: deterministic</text>
+<text x="88" y="1244" font-size="18" fill="#56677E" font-weight="400">Generation: check noise; checkup and recall: deterministic</text>
 <rect x="816" y="1140" width="400" height="126" rx="17" fill="#FFF4E4" stroke="#EAD6B8"/>
 <text x="840" y="1175" font-size="22" fill="#A7783E" font-weight="700">Maintainer approves activation</text>
 <text x="840" y="1213" font-size="16.5" fill="#56677E" font-weight="400">Code / prompts: manual deployment</text>
-<text x="840" y="1244" font-size="17" fill="#56677E" font-weight="400">Policy: policy apply; keep rollback history</text>
+<text x="840" y="1244" font-size="17" fill="#56677E" font-weight="400">Release: fixed snapshot; keep rollback history</text>
 <rect x="64" y="1322" width="688" height="92" rx="15" fill="#EAF4EF" stroke="#C9DFD5"/>
 <text x="88" y="1357" font-size="21" fill="#397D70" font-weight="650">Accumulated assets: cases + labels + incident lessons</text>
 <text x="88" y="1392" font-size="17" fill="#56677E" font-weight="400">Keep frozen inputs and labels for the next regression run</text>
 <text x="64" y="1433" font-size="17" fill="#A7783E" font-weight="600">New feedback returns to live records</text>
-<text x="64" y="1478" font-size="16.5" fill="#56677E" font-weight="400">Commands compare; agents and local tuning propose. Maintainers approve, and evidence accumulates.</text>
+<text x="64" y="1478" font-size="16.5" fill="#56677E" font-weight="400">Commands compare; agents propose. Maintainers approve, and evidence accumulates.</text>
 <path d="M324 280v32" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M592 412h96" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <text x="640" y="396" font-size="12" fill="#56677E" font-weight="500" text-anchor="middle">Evidence &amp; checks</text>
@@ -63,7 +63,7 @@
 <path d="M640 714v20H340v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M640 734h300v14" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M1184 546v268h-16" fill="none" stroke="#7962A7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-purple)"/>
-<text x="1184" y="585" font-size="15" fill="#7962A7" font-weight="600" text-anchor="end">Candidate code / policy</text>
+<text x="1184" y="585" font-size="15" fill="#7962A7" font-weight="600" text-anchor="end">Candidate code</text>
 <path d="M340 872v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M940 872v34" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>
 <path d="M340 1062v70" fill="none" stroke="#8290A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-line)"/>

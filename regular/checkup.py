@@ -18,9 +18,7 @@
 | sensitive     | 它的输出碰了敏感词表，或被平台拒收换成了兜底话                     | |
 | recall_empty  | 分诊说要翻旧账，检索却一条没挑到（kind=recall 的检索记录）          | 检索策略自迭代 |
 
-阈值和词表集中在 DEFAULT_POLICY。体检本身也是可迭代对象：`regular tune checkup` 拿标过的候选
-在记录过的日子上重放，只在「不丢任何一条已确认的候选」前提下收紧阈值、删掉只报错的词，
-维护者 `regular policy apply` 之后写进 data/policies/checkup.json（见 docs/self-iteration.md）。
+阈值和词表集中在 DEFAULT_POLICY；改它们走代码评审，标注结果用来判断哪条信号该收紧。
 """
 from __future__ import annotations
 
@@ -86,91 +84,6 @@ DEFAULT_POLICY = {
     "catchphrase_min_talks": 2,
     "blind_markers": list(BLIND_MARKERS),
 }
-
-# 调参器的搜索空间。数值给一组候选值，候选值的范围就是边界；
-# 词表只能删、不能加（"subset"）—— 新说法要靠编码代理按事故补，不让自动搜索堆同义词。
-POLICY_SPACE = {
-    "unanswered_seconds": (60, 90, 120, 180, 300),
-    "repeat_window_seconds": (120, 180, 300, 600),
-    "repeat_similarity": (0.5, 0.6, 0.7, 0.8),
-    "repeat_min_chars": (3, 4, 6, 8),
-    "reaction_seconds": (20, 30, 45, 60, 90, 120),
-    "confused_min_qmarks": (1, 2, 3),
-    "confused_markers": "subset",
-    "lookup_promise_markers": "subset",
-    "remind_promise_markers": "subset",
-    "lookup_window_seconds": (120, 300, 600),
-    "catchphrase_min": (3, 4, 5, 6),
-    "catchphrase_ratio": (1.5, 2.0, 3.0, 4.0),
-    "catchphrase_min_talks": (2, 3),
-    "blind_markers": "subset",
-}
-
-# 每个参数只影响哪些信号：调参按信号分开调，互不牵连。
-PARAM_SIGNALS = {
-    "unanswered_seconds": ("unanswered",),
-    "repeat_window_seconds": ("repeated",),
-    "repeat_similarity": ("repeated",),
-    "repeat_min_chars": ("repeated",),
-    "reaction_seconds": ("bad_reaction",),
-    "confused_min_qmarks": ("bad_reaction",),
-    "confused_markers": ("bad_reaction",),
-    "lookup_promise_markers": ("promised",),
-    "remind_promise_markers": ("promised",),
-    "lookup_window_seconds": ("promised",),
-    "catchphrase_min": ("catchphrase",),
-    "catchphrase_ratio": ("catchphrase",),
-    "catchphrase_min_talks": ("catchphrase",),
-    "blind_markers": ("blind",),
-}
-
-
-def validate_policy(raw):
-    """把一份策略规整成完整策略；未知键、越界数值、往词表里加新词都抛 ValueError。"""
-    if not isinstance(raw, dict):
-        raise ValueError("checkup policy must be a JSON object")
-    out = {k: (list(v) if isinstance(v, list) else v) for k, v in DEFAULT_POLICY.items()}
-    for key, value in raw.items():
-        if key not in DEFAULT_POLICY:
-            raise ValueError(f"unknown checkup policy key: {key!r}")
-        space = POLICY_SPACE[key]
-        if space == "subset":
-            if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
-                raise ValueError(f"checkup policy {key} must be a list of strings")
-            extra = [v for v in value if v not in DEFAULT_POLICY[key]]
-            if extra:
-                raise ValueError(f"checkup policy {key} may only drop markers, not add {extra}")
-            out[key] = [v for v in DEFAULT_POLICY[key] if v in value]
-            continue
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"checkup policy {key} must be a number")
-        if not min(space) <= value <= max(space):
-            raise ValueError(f"checkup policy {key}={value} outside [{min(space)}, {max(space)}]")
-        out[key] = value
-    return out
-
-
-def policy_id(policy):
-    """报告里写明用的哪套口径：默认值写 default，否则写指纹（换了口径的两天不能直接比条数）。"""
-    if policy == validate_policy({}):
-        return "default"
-    blob = json.dumps(policy, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10]
-
-
-def load_policy(path):
-    """读 data/policies/checkup.json（维护者 apply 过的那份）；没有就是默认值。坏文件直接报错，
-    不悄悄退回默认 —— 体检是给人看的，用错了口径比报错更难发现。"""
-    if not path:
-        return validate_policy({})
-    try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return validate_policy({})
-    except (OSError, ValueError) as err:
-        raise ValueError(f"checkup policy file {path} unreadable: {err}") from None
-    return validate_policy(doc.get("policy", doc) if isinstance(doc, dict) else doc)
-
 
 LABELS = {
     "unanswered": "叫了没回",
@@ -780,7 +693,7 @@ def find_recall_empty(data, timeline, names):
     """分诊判了要翻旧账（才会有 kind=recall 的记录），检索却一条没挑到。
 
     可能是归档里本来就没有，也可能是检索策略切词 / 打分漏了 —— 后者标 yes 以后
-    用 `regular case add --turn <检索记录> --relevant <消息编号>` 存成检索用例，交给 `regular tune recall`。
+    用 `regular case add --turn <检索记录> --relevant <消息编号>` 存成检索用例，交给 `regular eval --layer retrieve` 回放。
     """
     out = []
     for turn in data.get("turns") or ():
@@ -906,11 +819,11 @@ _DETECTORS = {
 }
 
 
-def detect(ctx, policy=None, *, now=None, signals=None):
-    """在 prepare 好的原料上按给定策略跑信号；signals 给了就只跑这几种（调参时按信号分开跑）。"""
-    p = validate_policy(policy or {})
+def detect(ctx, policy=None, *, now=None):
+    """在 prepare 好的原料上跑全部信号；policy 只给测试覆盖个别阈值。"""
+    p = {**DEFAULT_POLICY, **(policy or {})}
     findings = []
-    for signal in (signals or LABELS):
+    for signal in LABELS:
         findings += _DETECTORS[signal](ctx, p, now)
     order = list(LABELS)
     findings.sort(key=lambda f: (order.index(f["signal"]), f["ts"]))
@@ -922,7 +835,6 @@ def report(day, *, interaction_dir, turn_dir, archive_dir=None, state_file=None,
     ctx = prepare(day, interaction_dir=interaction_dir, turn_dir=turn_dir,
                   archive_dir=archive_dir, state_file=state_file)
     data, baseline = ctx["data"], ctx["baseline"]
-    policy = validate_policy(policy or {})
     findings = detect(ctx, policy, now=now)
     labelled = read_labels(checkup_dir) if checkup_dir else {}
     for f in findings:
@@ -936,7 +848,6 @@ def report(day, *, interaction_dir, turn_dir, archive_dir=None, state_file=None,
                        "triage": sum(1 for t in data["turns"] if t.get("kind") == "triage"),
                        "baseline_days": len(baseline)},
             "counts": counts, "findings": findings,
-            "policy": policy_id(policy),
             "precision": precision(checkup_dir) if checkup_dir else {}}
 
 
@@ -1039,8 +950,6 @@ def render(out):
                  f"每轮输入 {i['turns']} 轮 / 分诊 {i['triage']} 次；口头禅基线 {i['baseline_days']} 天。")
     lines.append("")
     lines.append("这些是候选，不是结论。标注：`regular checkup --label <id> yes|no`。")
-    if out.get("policy") and out["policy"] != "default":
-        lines.append(f"体检口径：`{out['policy']}`（data/policies/checkup.json，`regular policy show checkup` 查看）。")
     lines.append("")
     lines.append("| 信号 | 条数 | 已标候选确认率 |")
     lines.append("| --- | --- | --- |")

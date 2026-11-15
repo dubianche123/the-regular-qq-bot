@@ -440,7 +440,7 @@ class CheckupSignalsTest(unittest.TestCase):
         self.assertEqual(out["findings"], [])
         self.assertIn("没有可疑", checkup.render(out))
 
-    def test_recall_empty_signal_and_policy_validation(self):
+    def test_recall_empty_signal(self):
         self.write([
             _incoming(0, "LAOREN", "小王 阿强之前说的奶茶是什么来着", "m_empty", at=True),
             _incoming(20, "LAOREN", "小王 之前说的显卡怎么了", "m_hit", at=True),
@@ -459,13 +459,6 @@ class CheckupSignalsTest(unittest.TestCase):
         self.assertEqual(len(rec_findings), 1)
         self.assertEqual(rec_findings[0]["turn_ids"], ["rec_empty"])
         self.assertIn("一条都没翻到", rec_findings[0]["detail"])
-        # 策略边界校验：不许越界数值，不许往词表里加新词
-        with self.assertRaises(ValueError):
-            checkup.validate_policy({"reaction_seconds": 9999})
-        with self.assertRaises(ValueError):
-            checkup.validate_policy({"confused_markers": [*checkup.CONFUSED_MARKERS, "新加的词"]})
-        with self.assertRaises(ValueError):
-            checkup.validate_policy({"unknown_key": 1})
 
 
 class CheckupCliTest(unittest.TestCase):

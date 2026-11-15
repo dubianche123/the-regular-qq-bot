@@ -122,8 +122,8 @@ Wording is only one editable surface. The replay needed depends on where the cha
 | Decisions instructions, choice descriptions and semantic examples | [`regular/decision_prompts.py`](../regular/decision_prompts.py) | triage replay loads the tested version's questions and checks intended choices |
 | Triage thresholds and choice handling | [`regular/decisions.py`](../regular/decisions.py) | triage checks usable choices; message replay covers later behavior such as quiet windows |
 | Input fields, context trimming, @ / quotes and routing | [`regular/decisions.py`](../regular/decisions.py), [`bot.py`](../bot.py), [`storage.py`](../storage.py), [`quotes.py`](../quotes.py) | message replay and directly related offline tests |
-| Local checkup signals, thresholds and time windows | [`regular/checkup.py`](../regular/checkup.py), [`regular/tune.py`](../regular/tune.py) | frozen logs with independent positive and negative labels; compare false alarms and misses with separate training and validation |
-| Archive recall matching, ranking and recency | [`recall.py`](../recall.py), [`regular/tune.py`](../regular/tune.py) | retrieval replay over frozen evidence and a complete relevant-message set; promises have separate checks |
+| Local checkup signals, thresholds and time windows | [`regular/checkup.py`](../regular/checkup.py) | frozen logs with independent positive and negative labels; compare false alarms and misses |
+| Archive recall matching, ranking and recency | [`recall.py`](../recall.py) | retrieval replay over frozen evidence and a complete relevant-message set; promises have separate checks |
 | Memory and other evidence selection and injection | [`digest.py`](../digest.py), [`knowledge.py`](../knowledge.py) | message replay plus focused tests; summary generation and actual tool execution need separate validation |
 | Models, reasoning parameters and task configuration | [`config.py`](../config.py), [`providers.py`](../providers.py) | comparisons with controlled configuration; replay and task probes have different coverage |
 
@@ -131,7 +131,7 @@ The four replay depths are **generation**, which reruns recorded arguments; **tr
 
 **Checkup and archive recall are themselves evaluated.** Both versions use the same independently labeled set. A false positive flags a non-issue or selects irrelevant evidence; a false negative misses a labeled issue or relevant evidence. Reports show TP / FP / FN / TN, precision, recall and the actual errors. Labeling only detected findings, or requiring only one relevant item, cannot establish overall recall. Unknown labels, incomplete snapshots and empty denominators remain explicit instead of becoming zero misses.
 
-`tune checkup` and `tune recall` search bounded policy parameters locally with zero model tokens. Labels remain independent of the policy being searched, and validation data checks the resulting change. These commands produce reports and proposals; a maintainer applies a policy with `policy apply`, retaining its predecessor for rollback. See [local strategy evaluation](self-iteration.md#local-strategy-evaluation) for scope and data formats.
+Thresholds and scoring weights live in code and change through review, validated against the labels and retrieval cases above. See [local strategy evaluation](self-iteration.md#local-strategy-evaluation) for scope and data formats.
 
 A message case with preset `triage_choices` freezes those choices; use cases without preset answers to test the full decision path. Message replay also replaces some evidence rendering and media execution, so it does not replace a real-service smoke check.
 
@@ -151,14 +151,11 @@ DEPLOY=/path/to/regular-bot
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases all -n 4 --allow-paid
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --day today --allow-paid
 
-# Local strategy evaluation and tuning: no model requests
-.venv/bin/python -m regular --directory "$DEPLOY" tune checkup --benchmark docs/examples/checkup-benchmark.example.json
+# Local retrieval evaluation: no model requests
 .venv/bin/python -m regular --directory "$DEPLOY" eval --base HEAD --cand . --cases retrieve -n 1
-.venv/bin/python -m regular --directory "$DEPLOY" tune recall
-.venv/bin/python -m regular --directory "$DEPLOY" policy show
 ```
 
-Without a `turn_id`, use `case add --message <message_id> --id <case_id>`. Triage cases need an intended choice such as `--choice addressed=answer`. `checkup` reads local logs without model calls; a separate judge model performs labeling. Model-based generation, triage and judging require `--allow-paid`; retrieval-only evaluation without a model judge does not. The checkup benchmark above is synthetic command-demo data, not a measurement of live quality.
+Without a `turn_id`, use `case add --message <message_id> --id <case_id>`. Triage cases need an intended choice such as `--choice addressed=answer`. `checkup` reads local logs without model calls; a separate judge model performs labeling. Model-based generation, triage and judging require `--allow-paid`; retrieval-only evaluation without a model judge does not.
 
 Generation and judging drops must pass a one-sided test to count as regressions; smaller drops are listed as within noise and can be rerun with a larger `-n`. A single boundary violation counts as a regression. Retrieval is deterministic: a drop in checks or an increase in fully labeled FP / FN counts is a regression without repeated sampling. Ablation gives one of four verdicts: delete, keep, unsure, or cannot tell. Missing cases or incomplete runs cannot support deletion. Prompt or rule changes do not ship automatically.
 
