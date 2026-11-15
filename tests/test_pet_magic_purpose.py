@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from regular.pet_actions_magic_daily import ACTIONS as MAGIC
-from regular.pet_brain import CLIPS, DRAGON_COOLDOWN, PetBrain, Step
+from regular.pet_brain import CLIPS, DRAGON_COOLDOWN, PAUSE_CLIPS, PetBrain, Step
 from regular.pet_repertoire import clips, curated_actions
 from regular.pet_routines import DAILY_MAGIC, EPISODES, choose_routine
 
@@ -163,14 +163,17 @@ def test_recent_daily_magic_family_yields_to_another_complete_story(with_magic):
     ("magic_daily_mend", (1.75, 2.0, 1.75, 1.0)),
 ])
 @pytest.mark.parametrize("entry", ["story", "manual"])
-def test_each_daily_performance_holds_its_beats_then_returns_to_idle(with_magic, name, dwell, entry):
+def test_each_daily_performance_holds_its_beats_then_pauses(with_magic, name, dwell, entry):
     b = with_magic
     b.repertoire.actions = {name: MAGIC[name]}
     b._last_story_at, b._rests_since_story = -180, 2
     if entry == "story":
+        b._spell = "standing"            # a standing show inside a standing spell stays on its feet
         with patch.object(b.rng, "random", return_value=0):
             steps = b._routine_steps(0)
-        assert [step.clip for step in steps] == [name, "idle"]
+        # One performance, then a one-second breath in whatever posture this spell keeps.
+        assert [step.clip for step in steps][0] == name and len(steps) == 2
+        assert steps[1].clip in PAUSE_CLIPS and steps[1].duration == 1
         b._queue(*steps, now=0, interrupt=True)
     else:
         assert b.magic(0, kind=name)
@@ -189,7 +192,8 @@ def test_each_daily_performance_holds_its_beats_then_returns_to_idle(with_magic,
     assert b._now == pytest.approx(sum(dwell), abs=1 / 60)
     assert MAGIC[name]["duration"] == sum(dwell)
     assert CLIPS[name][2:4] == (4, False)
-    assert b.clip == "idle" and b.posture() == "stand" and not b.plan
+    after = PAUSE_CLIPS[1:] if entry == "story" else ("idle",)
+    assert b.clip in after and b.posture() == "stand" and not b.plan
     if entry == "story":
         assert b._last_story_at == 0 and b._rests_since_story == 0
 

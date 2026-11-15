@@ -214,9 +214,35 @@ def activity_sequence(rng, actions, clip, duration, *, mood=0.0, energy=1.0, qui
     return main + _choose_ending(rng, playable, recent_clips, empty_cue=clip)
 
 
+SEATED_POSTURES = frozenset({"sit", "lie"})
+POSTURE_PREFERENCE = 3.0
+
+
+def _matches(actions, entry, prefer_posture):
+    """Does this group start in the preferred posture? Entries are clip names or (clip, duration) branches."""
+    head = entry[0]
+    if isinstance(head, (list, tuple)):
+        head = head[0][0]
+    seated = actions.get(head, {}).get("posture") in SEATED_POSTURES
+    return seated == (prefer_posture in SEATED_POSTURES)
+
+
+def _pick_family(rng, families, groups, actions, prefer_posture):
+    if prefer_posture is None:
+        return rng.choice(families)
+    weights = [POSTURE_PREFERENCE if any(_matches(actions, [entry], prefer_posture) for entry in groups[family])
+               else 1.0 for family in families]
+    return rng.choices(families, weights=weights)[0]
+
+
 def choose_routine(rng, actions, recent_families=(), *, mode="rest", quiet=False,
-                   mood=0.0, energy=1.0, sleepy=False, recent_clips=(), allow_furniture=True):
+                   mood=0.0, energy=1.0, sleepy=False, recent_clips=(), allow_furniture=True,
+                   prefer_posture=None):
     """Return (family, [(clip, duration), ...]), or None when no clip fits.
+
+    prefer_posture ("sit" / "lie" / "stand") makes routines that start in that posture more
+    likely, so a settled spell does not stand up for one beat and sit down again. None keeps
+    the plain uniform choice.
 
     mode is 'rest' (a long stationary activity) or 'story' (ordered beats).
     Missing story beats disqualify that story. Non-loop clips use duration None
@@ -280,7 +306,8 @@ def choose_routine(rng, actions, recent_families=(), *, mode="rest", quiet=False
     candidates = fresh or list(groups)
     scenes = [name for name in candidates if name.startswith(("scene:", "home:"))]
     # Whole scenes are the occasional treat between quieter activities, not every other pick.
-    family = rng.choice(scenes if scenes and rng.random() < 0.35 else candidates)
+    family = _pick_family(rng, scenes if scenes and rng.random() < 0.35 else candidates,
+                          groups, actions, prefer_posture)
     if family.startswith(("scene:", "home:")):
         branches = groups[family]
         if family == "scene:fire":
@@ -295,7 +322,10 @@ def choose_routine(rng, actions, recent_families=(), *, mode="rest", quiet=False
         return family, [(name, rng.uniform(*duration) if isinstance(duration, tuple) else duration)
                         for name, duration in branch]
     if mode == "rest":
-        return family, [(rng.choice(groups[family]), rng.uniform(45, 90))]
+        names = groups[family]
+        if prefer_posture is not None:
+            names = [name for name in names if _matches(actions, [name], prefer_posture)] or names
+        return family, [(rng.choice(names), rng.uniform(45, 90))]
     beats = []
     names = (rng.choice(groups[family]),) if family.startswith("once:") else groups[family]
     for name in names:

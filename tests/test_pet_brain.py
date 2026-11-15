@@ -223,6 +223,7 @@ class MotionRepertoireTest(unittest.TestCase):
     def test_reading_and_laptop_keep_their_objects_and_reading_gets_an_ending(self):
         b = PetBrain(rng=random.Random(1), now=0)
         b.last_agent_event = 0
+        b._spell, b._spell_until = "seated", 1e9      # settled in: reading is a seated pastime
         saw_comic = False
         for _ in range(12):
             with patch.object(b, "_weighted", return_value="book"):
@@ -694,11 +695,17 @@ class ShippedSpritesTest(unittest.TestCase):
 
 
 class AmbientLifeTest(unittest.TestCase):
-    def test_stretching_unfolds_her_wings_then_settles_back_down(self):
+    def test_stretching_unfolds_her_wings_then_follows_the_spell(self):
         b = brain()
+        b._spell, b._spell_until = "seated", 1000.0          # settled: she sits back down afterwards
         with patch.object(b, "_weighted", return_value="stretch"):
             steps = b._choose(0.0)
         self.assertEqual([step.clip for step in steps], ["stretch", "wing_stretch", "sit_swing"])
+        b._spell = "standing"                                 # up and about: she stays on her feet
+        with patch.object(b, "_weighted", return_value="stretch"):
+            steps = b._choose(0.0)
+        self.assertEqual([step.clip for step in steps][:2], ["stretch", "wing_stretch"])
+        self.assertIn(steps[-1].clip, ("think", "lookaround"))
         self.assertIn("wing_stretch", CUE_ACTIONS)
         self.assertFalse(CLIPS["wing_stretch"][3])
 
@@ -2085,7 +2092,8 @@ class SpellTest(unittest.TestCase):
     def warp(self, via, x=1100):
         b = spelled()
         b._warp_request = {"x": x, "via": via, "cause": "spell"}
-        b._queue(Step("warp_cast"), Step("idle", 2), now=0.0, interrupt=True)
+        # A long tail: what she does next by herself is not part of the trick.
+        b._queue(Step("warp_cast"), Step("idle", 30), now=0.0, interrupt=True)
         self.assertEqual((b.mode, b.warp["phase"]), ("ground", "cast"))
         seen = {"clips": [], "clip_sides": set(), "below": False, "xs": set(), "portals": 0}
 
@@ -2166,7 +2174,8 @@ class SpellTest(unittest.TestCase):
             b.observe(1.0, ready(events=[{"kind": "mention", "ts": 10.0}]))
         self.assertEqual(b.clip, "warp_cast")
         self.assertIn(b.bubble.text, LINES["warp_called"])
-        _, clips = run(b, 1.0, 10, fps=60)
+        with patch.object(b, "_choose", return_value=[Step("idle", 30)]):   # no new routine after the hello
+            _, clips = run(b, 1.0, 10, fps=60)
         self.assertAlmostEqual(b.x, 1200, delta=1)
         self.assertTrue(any(b._role(clip) == "greet" or clip == "phone" for clip in clips))
 
