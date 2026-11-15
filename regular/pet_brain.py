@@ -38,6 +38,10 @@ CLIPS = {
     "hop": ("hop", [0, 1, 2, 3], 7, False, "stand"),
     "sit_down": ("sit", [0, 1], 5, False, "sit"),
     "sit_swing": ("sit", [1, 2], 1.6, True, "sit"),
+    # 静静坐着歇：和 sit_swing 第一帧同一张画，只换眼睛（眨眼、朝光标那边看），腿不动。
+    "sit_rest": ("sit_rest", [0], 1, True, "sit"),
+    "sit_look_left": ("sit_rest", [3], 1, True, "sit"),
+    "sit_look_right": ("sit_rest", [4], 1, True, "sit"),
     "stand_up": ("sit", [1, 0], 5, False, "stand"),
     "sit_up": ("wake", [1, 2], 2.2, False, "sit"),
     "doze": ("sleep", [0, 1, 0, 1], 0.8, False, "sit"),
@@ -231,7 +235,16 @@ PAUSE_CLIPS = ("sit_swing", "think", "lookaround")   # 两件事之间歇口气�
 # 所以她做完一件事，就在原来的姿势里歇一阵，不马上找下一件。越没精神歇得越久，群里热闹时短一点。
 REST_SPAN = (75.0, 180.0)
 LIVELY_REST = 0.75
-RESTING = frozenset({"idle", "look_left", "look_right", "sit_swing", "lie_chin"})
+RESTING = frozenset({"idle", "look_left", "look_right", "sit_swing", "lie_chin",
+                     "sit_rest", "sit_look_left", "sit_look_right"})
+BLINKING = frozenset({"idle", "sit_rest"})     # 这两张画带眨眼帧（第 1 帧半闭、第 2 帧全闭）
+TURN_OVER = (360.0, 840.0)     # 睡长觉时隔这么久翻个身，换一个睡姿
+# 留意你的节奏，依据仍只是「键盘鼠标多久没动」这一个数。
+WORK_PAUSE = 60.0              # 空闲超过这么久，这一段连续干活就算结束
+WORK_STRETCH = 900.0           # 连续干了这么久……
+PAUSE_LOOK = 45.0              # ……停下来这么久，她抬头看你一眼
+PAUSE_LOOK_GAP = 1800.0        # 半小时最多一次
+COWORK_AFTER = 600.0           # 你连续干活十分钟以上，她也多挑陪你干活的事
 NAP_GAP = 480.0           # 醒来之后至少这么久才会再睡（夜里 300 秒）
 AWAY_DOZE = 0.6           # 你不在时，该歇的时候有这么大的机会直接睡过去
 AMBIENT_LINE_GAP = 600.0  # 日常里她自己冒的小台词最多十分钟一句；被叫、被戳、你点「换一个」不受这个限制
@@ -570,6 +583,10 @@ class PetBrain:
         self._spell = "seated"                   # 这一段日常是坐着过还是起来活动；到点就换
         self._spell_until = now
         self._owes_rest = False                  # 刚做完一件自己挑的事：下一拍先歇着
+        self._turn_at = None                     # 睡长觉时下一次翻身的时刻
+        self._work_since = None                  # 你这一段连续干活从什么时候开始
+        self._pause_seen = False                 # 这一次停顿她已经抬头看过了
+        self._pause_look_at = now - PAUSE_LOOK_GAP
         self._ambient_line_at = now - AMBIENT_LINE_GAP
         self._mood_said = {1: now - MOOD_SHIFT_GAP, -1: now - MOOD_SHIFT_GAP}
         self._mood_mark_at = now
@@ -733,7 +750,7 @@ class PetBrain:
             else:
                 frame = seq[0]
         mirrored = self.facing < 0
-        if self.clip == "idle" and self.motion:
+        if self.clip in BLINKING and self.motion:
             t = now - self.blink_started
             if 0 <= t < 0.05 or 0.13 <= t < 0.2:
                 frame = 1
@@ -1057,15 +1074,21 @@ class PetBrain:
 
     def _rest_steps(self, vitals):
         """歇着：就在当前的姿势里待一阵，不为了歇站起来或坐下。站着就眨眨眼、看看光标，
-        中途张望一下或者活动活动肩膀；坐着就荡荡腿或者抱着尾巴歇会儿；趴着就继续托腮。"""
+        中途张望一下或者活动活动肩膀；坐着就静静坐着眨眼、拿眼睛跟光标，偶尔荡几下腿，
+        或者抱着尾巴歇会儿；趴着就继续托腮。"""
         seconds = (self.rng.uniform(*REST_SPAN) * (1.0 + max(0.0, DAY_PEP - vitals.pep))
                    * (LIVELY_REST if vitals.room == "lively" else 1.0))
         posture = self._end_posture()
         if posture == "lie":
             return [Step("lie_chin", seconds)]
         if posture == "sit":
-            clip = self._pick("rest", "sit_swing", posture="sit") if self.rng.random() < 0.35 else "sit_swing"
-            return [Step(clip, seconds)]
+            tail = self._pick("rest", None, posture="sit") if self.rng.random() < 0.25 else None
+            if tail:
+                return [Step(tail, seconds)]
+            if self.rng.random() < 0.5:
+                return [Step("sit_rest", seconds)]
+            first, swing = seconds * self.rng.uniform(0.35, 0.65), self.rng.uniform(3, 6)
+            return [Step("sit_rest", first), Step("sit_swing", swing), Step("sit_rest", max(1.0, seconds - first - swing))]
         first = seconds * self.rng.uniform(0.35, 0.65)
         loosen = self._pick("rest", None, posture="stand") if self.rng.random() < 0.4 else None
         middle = (Step(loosen, self.rng.uniform(8, 16)) if loosen
@@ -1113,6 +1136,12 @@ class PetBrain:
                               and min(self.x - self.left, self.right - self.x) <= self.figure * 2
                               and self.right - self.left > self.figure * 3) else 0.0,
         }
+        if self.owner_working(now):
+            # 你在埋头干活：她也多陪你干点安静的活，少在旁边蹦跶。
+            for name in ("laptop", "book", "sketch"):
+                weights[name] *= 2.0
+            for name in PLAY_CHOICES - {"sketch"}:
+                weights[name] *= 0.6
         if self.owner_away and weights["nap"]:
             # 没人在，她也歇了：很快会找个地方睡下。其余日常在对得上的段落里放大了 SPELL_BIAS 倍，
             # 这里同样放大，保持「走开十来分钟多半睡着」的相对概率。
@@ -1508,7 +1537,8 @@ class PetBrain:
             if now >= self._notice_at:
                 self._notice_at = now + NOTICE_EVERY
                 self._notice(now)
-        if self.clip == "idle" and now >= self.blink_at:
+        self._sleep_turns(now)
+        if self.clip in BLINKING and now >= self.blink_at:
             self.blink_started = now
             self.blink_at = now + (0.3 if self.rng.random() < 0.15 else self.rng.uniform(2.4, 6.0))
         self._particles(now, dt)
@@ -1627,6 +1657,9 @@ class PetBrain:
 
     def _look(self, now):
         """Idle glances follow a nearby cursor; a lingering cursor gets a wave."""
+        if self.step is not None and self.step.clip == "sit_rest":
+            self._seated_look(now)
+            return
         if self.step is None or self.step.clip != "idle":
             return
         if not (self.pointer.near and now - self.pointer.since > 0.35):
@@ -1647,6 +1680,30 @@ class PetBrain:
             self._queue(Step(self._hello_clip()), Step("idle", 2.0), now=now, interrupt=True)
             lines = LINES["late"] if self.vitals().phase in ("night", "late") else LINES["greet"]
             self.say(self.rng.choice(lines), now=now, seconds=3.5)
+
+    def _sleep_turns(self, now):
+        """睡长觉时隔一阵翻个身：换一种躺着的睡姿，慢慢叠化过去，不冒话。短盹到不了这么久。"""
+        if not (self.mode == "ground" and self.clip in ASLEEP and self._role(self.clip) == "sleep"
+                and self.posture() == "lie" and self.step is not None and self.step.clip == self.clip):
+            self._turn_at = None
+            return
+        if self._turn_at is None:
+            self._turn_at = now + self.rng.uniform(*TURN_OVER)
+        elif now >= self._turn_at:
+            self._turn_at = now + self.rng.uniform(*TURN_OVER)
+            other = self._pick("sleep", None, posture="lie")
+            if other and other != self.clip:
+                self.step.clip = other
+                self._set_clip(other, now)
+
+    def _seated_look(self, now):
+        """坐着歇的时候，光标过来她就拿眼睛跟一下：不转身、不站起来招手，光标走了就收回目光。"""
+        p = self.pointer
+        if not (p.near and now - p.since > 0.35) or abs(p.x - self.x) <= self.figure * 0.12:
+            self._set_clip("sit_rest", now)
+            return
+        # 画是朝右的；她朝左时整张画是镜像的，眼睛看画面右边就成了看屏幕左边。
+        self._set_clip("sit_look_right" if (p.x > self.x) != (self.facing < 0) else "sit_look_left", now)
 
     def _fall(self, now, dt):
         if self._ceiling_until and now >= self._ceiling_until:
@@ -2571,6 +2628,7 @@ class PetBrain:
 
     def owner_idle(self, now, seconds):
         """The shell reports how long the keyboard and mouse have been untouched: one number, no content."""
+        self._work_rhythm(now, seconds)
         if seconds >= OWNER_AWAY:
             self.owner_away, self._owner_gone = True, seconds
         elif self.owner_away:
@@ -2579,6 +2637,42 @@ class PetBrain:
             self._welcome_back(now, self._owner_gone)
         elif self._owner_since is None:
             self._owner_since = self._sit_mark = now
+
+    def _work_rhythm(self, now, seconds):
+        """你连着干活、停下来歇口气：她只从空闲秒数里看出这两件事。"""
+        if seconds < WORK_PAUSE:
+            if self._work_since is None:
+                self._work_since = now - seconds
+            if seconds < PAUSE_LOOK:
+                self._pause_seen = False
+                return
+            if (not self._pause_seen and now - seconds - self._work_since >= WORK_STRETCH
+                    and now - self._pause_look_at >= PAUSE_LOOK_GAP):
+                self._pause_seen = True
+                self._look_up(now)
+            return
+        self._work_since = None
+
+    def owner_working(self, now):
+        """你正连续干着活（十分钟以上，中间没停过一分钟）。"""
+        return (not self.owner_away and self._work_since is not None
+                and now - self._work_since >= COWORK_AFTER)
+
+    def _look_up(self, now):
+        """你埋头干了一阵、停下来了：她正歇着的话，抬头朝你那边看一眼，不说话。在忙、在睡就算了。"""
+        if (not self._at_ease(now) or self.chat_pending or self.step is None or self.step.hold is not None
+                or self.step.clip not in RESTING or self.clip in ASLEEP):
+            return
+        self._pause_look_at = now
+        rest = self._rest_steps(self.vitals())
+        if self.posture() == "stand":
+            if self.pointer.seen and abs(self.pointer.x - self.x) > self.figure * 0.12:
+                self.facing = 1 if self.pointer.x > self.x else -1
+            self._queue(Step("peek"), *rest, now=now, interrupt=True)
+        elif self.posture() == "sit":
+            toward = self.pointer.x if self.pointer.seen else self.x + self.facing
+            clip = "sit_look_right" if (toward > self.x) != (self.facing < 0) else "sit_look_left"
+            self._queue(Step(clip, 2.5), *rest, now=now, interrupt=True)
 
     def _welcome_back(self, now, away):
         """You touched the machine again after `away` seconds: the longer you were gone, the bigger the hello."""
@@ -2703,9 +2797,12 @@ class PetBrain:
         for _ in range(count):
             inward = kind == "z" and self.mode == "hidden" and self.hidden_asleep and self.hidden_edge == "right"
             top = kind == "z" and self.mode == "hidden" and self.hidden_asleep and self.hidden_edge == "top"
+            # 躺着睡时头低：z 从头顶冒出来，不悬在站着时的头顶高度。
+            head = (min(0.95, self._head_clearance() / self.figure + 0.05)
+                    if kind == "z" and self.mode == "ground" and self.posture() == "lie" else 0.95)
             self.particles.append(Particle(
                 kind, (-0.2 if inward else 0.2) if kind == "z" else self.rng.uniform(-0.14, 0.14),
-                0.15 if top else -0.95 if kind in ("z", "note", "heart", "sweat", "!", "puff") else -0.55,
+                0.15 if top else -head if kind in ("z", "note", "heart", "sweat", "!", "puff") else -0.55,
                 (-0.07 if inward else 0.07 if kind == "z" else 0.0) + self.rng.uniform(-0.04, 0.04),
                 -self.rng.uniform(0.16, 0.3), now, 1.0 if kind in ("!", "puff") else 1.7))
 
@@ -2713,11 +2810,13 @@ class PetBrain:
         self._spell_particles(now)
         kind = {"sleep": "z", "sing": "note", "shy": "heart", "cheer": "sparkle",
                 "hop": "sparkle", "eat": "crumb"}.get(self.clip)
+        if self.mode == "ground" and self._role(self.clip) == "sleep":
+            kind = "z"                     # 动作库里的每种睡姿都冒 z，不只最早那一张
         if self.mode == "hidden" and self.hidden_asleep:
             kind = "z"
         if kind and self.motion and now >= self._emit_at:
             self._emit(kind, now)
-            self._emit_at = now + {"z": 1.3, "note": 0.7, "heart": 0.5}.get(kind, 0.45)
+            self._emit_at = now + {"z": 2.2, "note": 0.7, "heart": 0.5}.get(kind, 0.45)
         if (self.motion and now >= self._mood_mark_at and self.mode == "ground"
                 and self.clip not in ASLEEP and (band := self._mood_band())):
             # 心情外显：好的时候头顶不时飘个音符，烦的时候嘴边叹出一小团气。

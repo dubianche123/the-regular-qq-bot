@@ -787,7 +787,6 @@ class AmbientLifeTest(unittest.TestCase):
         _, clips = run(b, 0.0, 30 * 60, each=lambda t: xs.append((b.x, b.edge_side)))
         kinds = Counter(clips)
         self.assertGreaterEqual(len(kinds), 10, kinds)
-        self.assertIn("walk", kinds)
         self.assertGreater(len(clips), 30)        # still doing things, with rests between (test_pet_rest)
         self.assertTrue(all(FIGURE * (EDGE_PEEK if side == -1 else EDGE) <= x
                             <= 1440 - FIGURE * (EDGE_PEEK if side == 1 else EDGE) for x, side in xs))

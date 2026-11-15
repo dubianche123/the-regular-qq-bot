@@ -13,7 +13,7 @@
 import random
 from unittest.mock import patch
 
-from regular.pet_brain import AMBIENT_LINE_GAP, CLIPS, REST_SPAN, PetBrain, Step
+from regular.pet_brain import AMBIENT_LINE_GAP, CLIPS, REST_SPAN, RESTING, PetBrain, Step
 
 
 def brain(seed=7, *, adopted=False):
@@ -65,7 +65,7 @@ def test_she_rests_in_the_posture_she_is_already_in():
     seated.observe(0.0, ready())
     seated._queue(Step("tea", 5), now=0.0, interrupt=True)       # sit_down, then tea
     seated._queue(*seated._rest_steps(seated.vitals()), now=0.0)
-    assert [CLIPS[step.clip][4] for step in seated.plan] == ["sit", "sit"]   # tea, then a seated rest: no stand_up
+    assert {CLIPS[step.clip][4] for step in seated.plan} == {"sit"}   # tea, then a seated rest: no stand_up
 
 
 def test_low_pep_rests_longer_and_a_lively_room_shorter():
@@ -118,7 +118,6 @@ def test_her_own_little_lines_come_at_most_once_in_ten_minutes():
 
 
 def test_an_hour_at_the_desk_is_mostly_resting_but_not_still():
-    calm = {"idle", "look_left", "look_right", "sit_swing", "lie_chin"}
     for seed in range(3):
         b = brain(seed, adopted=True)
         b.observe(0.0, ready())
@@ -128,7 +127,7 @@ def test_an_hour_at_the_desk_is_mostly_resting_but_not_still():
             t += 0.25
             b.owner_idle(t, 0.0)
             b.tick(t)
-            resting += b.clip in calm or b.repertoire.actions.get(b.clip, {}).get("role") == "rest"
+            resting += b.clip in RESTING or b.repertoire.actions.get(b.clip, {}).get("role") == "rest"
             changes += b.clip != last
             last = b.clip
         assert 40 < changes < 200, (seed, changes)            # was ~300 an hour before resting was the default
