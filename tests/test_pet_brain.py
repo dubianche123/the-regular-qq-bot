@@ -11,7 +11,7 @@ from regular.pet_repertoire import ACTIONS, curated_actions
 from regular.pet_brain import (ASLEEP, CARE_COOL_LINES, CARE_FULL_LINES, CARE_GAIN,
                                CARE_LINES, CARE_MAX, CLIPS, CUE_ACTIONS, EDGE, EDGE_PEEK, FIGURE, LINES, PLAY,
                                PLAY_CANCEL, PLAY_GAP, PLAY_MAX_STREAK, PLAY_START, PLAY_WINDOW,
-                               TAP_POOL, WALK_SPEED, DRAGON_TRICKS, PetBrain, Step)
+                               RESTING, TAP_POOL, WALK_SPEED, DRAGON_TRICKS, PetBrain, Step)
 
 LEGAL = {("stand", "stand"), ("sit", "sit"), ("lie", "lie"), ("air", "air"),
          ("stand", "sit"), ("sit", "stand"), ("sit", "lie"), ("lie", "sit"),
@@ -25,6 +25,12 @@ def brain(seed=7, **kwargs):
     b.set_ground(0, 1440, 860)
     b.place(700)
     return b
+
+
+def pastime(b, now):
+    """One of her own pastimes: skip the rest she takes after the previous one (see test_pet_rest)."""
+    b._owes_rest = False
+    return b._choose(now)
 
 
 def run(b, start, seconds, fps=30, each=None):
@@ -190,7 +196,7 @@ class MotionRepertoireTest(unittest.TestCase):
             self.skipTest("no adopted work variants")
         with (patch.object(b, "_weighted", return_value="library"),
               patch("regular.pet_brain.choose_routine", return_value=("ambient:work", [(group[0], 30)]))):
-            selected = [b._choose(i)[0].clip for i in range(len(group))]
+            selected = [pastime(b, i)[0].clip for i in range(len(group))]
         self.assertEqual(set(selected), set(group))
         b.repertoire.recent.clear()
         b._queue(Step(group[0], 1), Step(group[1], 1), now=3, interrupt=True)
@@ -227,7 +233,7 @@ class MotionRepertoireTest(unittest.TestCase):
         saw_comic = False
         for _ in range(12):
             with patch.object(b, "_weighted", return_value="book"):
-                steps = b._choose(1)
+                steps = pastime(b, 1)
             self.assertEqual(b.repertoire.actions[steps[0].clip]["family"], "reading")
             self.assertFalse(any(b.repertoire.actions.get(step.clip, {}).get("family") == "work"
                                  for step in steps))
@@ -237,19 +243,19 @@ class MotionRepertoireTest(unittest.TestCase):
                                     for step in steps))
         self.assertTrue(saw_comic)
         with patch.object(b, "_weighted", return_value="laptop"):
-            self.assertEqual(b.repertoire.actions[b._choose(1)[0].clip]["family"], "work")
+            self.assertEqual(b.repertoire.actions[pastime(b, 1)[0].clip]["family"], "work")
 
     def test_sketch_keeps_its_selected_result_without_an_extra_reveal(self):
         b = PetBrain(rng=random.Random(1), now=0)
         for result in ("scene_paint_proud", "scene_paint_cheek"):
             with (patch.object(b, "_weighted", return_value="sketch"),
                   patch.object(b, "_activity_steps", return_value=[Step("paint", 12), Step(result)])):
-                clips = [step.clip for step in b._choose(1)]
+                clips = [step.clip for step in pastime(b, 1)]
             self.assertEqual(clips[-1], result)
             self.assertNotIn("paint_reveal", clips)
         with (patch.object(b, "_weighted", return_value="sketch"),
               patch.object(b, "_activity_steps", return_value=[Step("paint", 12)])):
-            self.assertEqual([step.clip for step in b._choose(1)][-2:], ["paint_reveal", "nod"])
+            self.assertEqual([step.clip for step in pastime(b, 1)][-2:], ["paint_reveal", "nod"])
 
     def test_dragon_avoids_recent_tricks_and_does_not_reenter_its_nap(self):
         b = PetBrain(rng=random.Random(2), now=0)
@@ -295,7 +301,7 @@ class MotionRepertoireTest(unittest.TestCase):
         b = PetBrain(rng=random.Random(7), now=0)
         b.set_ground(0, 1440, 860, 0)
         with patch.object(b, "_weighted", return_value="bottom"):
-            steps = b._choose(1)
+            steps = pastime(b, 1)
         step = steps[0]
         self.assertEqual(step.target_y, b._bottom_target(step.clip))
         b._queue(*steps, now=1, interrupt=True)
@@ -311,7 +317,7 @@ class MotionRepertoireTest(unittest.TestCase):
             with (patch.object(b, "_weighted", return_value="library"),
                   patch.object(b.rng, "random", return_value=0),
                   patch("regular.pet_brain.choose_routine", side_effect=selected) as choose):
-                steps = b._choose(now)
+                steps = pastime(b, now)
             self.assertEqual(choose.call_args.kwargs["mode"], expected)
             self.assertEqual(steps[0].duration, 20 if expected == "story" else 60)
 
@@ -390,7 +396,7 @@ class MotionRepertoireTest(unittest.TestCase):
         natural, pending = (PetBrain(rng=random.Random(7), now=0) for _ in range(2))
         pending._next_pending = True
         pending.set_attention(True, 10)
-        self.assertEqual(pending._choose(10), natural._routine_steps(10))
+        self.assertEqual(pastime(pending, 10), natural._routine_steps(10))
         self.assertFalse(pending._next_pending)
 
     def test_prop_feedback_and_return_do_not_change_relationship_state(self):
@@ -503,12 +509,12 @@ class MotionRepertoireTest(unittest.TestCase):
         chosen = set()
         for now in (1, 482, 963, 1444):
             with patch.object(b, "_weighted", return_value="nap"):
-                step = b._choose(now)[0]
+                step = pastime(b, now)[0]
             chosen.add(step.clip)
             self.assertEqual(b._role(step.clip), "sleep")
             self.assertLessEqual(step.duration, 25)
             with patch.object(b, "_weighted", return_value="idle") as choose:
-                b._choose(now + 1)
+                pastime(b, now + 1)
             self.assertEqual(choose.call_args.args[0].get("nap", 0), 0)
         self.assertGreater(len(chosen), 1)
 
@@ -573,12 +579,14 @@ class MotionRepertoireTest(unittest.TestCase):
             b.tick((i + 1) * 0.1)
             counts[b.clip] += 1
             travel[b.mode] += abs(b.x - x) + abs(b.y - y)
-        # Quiet catalog activities remain substantial, with actual walking and
-        # flight between them. An empty desktop need not produce a teleport.
-        self.assertGreater(sum(n for clip, n in counts.items() if clip in b.repertoire.actions), 12000)
+        # What she does comes mostly from the catalog, with actual walking between
+        # things. She rests in place after each one (test_pet_rest), so an hour
+        # holds a score of pastimes, not a guaranteed flight. An empty desktop
+        # need not produce a teleport.
+        doing = sum(n for clip, n in counts.items() if clip not in RESTING)
+        self.assertGreater(sum(n for clip, n in counts.items() if clip in b.repertoire.actions), doing * 0.6)
         self.assertGreater(travel["ground"], b.figure)
-        self.assertGreater(travel["fly"], b.figure)
-        self.assertGreaterEqual(sum(clip in b.repertoire.actions for clip in counts), 30)
+        self.assertGreaterEqual(sum(clip in b.repertoire.actions for clip in counts), 20)
         self.assertLess(sum(n for clip, n in counts.items() if clip in ASLEEP), 1800)
 
         # A requested, adopted daily spell must be reachable and finish its
@@ -699,11 +707,11 @@ class AmbientLifeTest(unittest.TestCase):
         b = brain()
         b._spell, b._spell_until = "seated", 1000.0          # settled: she sits back down afterwards
         with patch.object(b, "_weighted", return_value="stretch"):
-            steps = b._choose(0.0)
+            steps = pastime(b, 0.0)
         self.assertEqual([step.clip for step in steps], ["stretch", "wing_stretch", "sit_swing"])
         b._spell = "standing"                                 # up and about: she stays on her feet
         with patch.object(b, "_weighted", return_value="stretch"):
-            steps = b._choose(0.0)
+            steps = pastime(b, 0.0)
         self.assertEqual([step.clip for step in steps][:2], ["stretch", "wing_stretch"])
         self.assertIn(steps[-1].clip, ("think", "lookaround"))
         self.assertIn("wing_stretch", CUE_ACTIONS)
@@ -714,7 +722,7 @@ class AmbientLifeTest(unittest.TestCase):
         b.observe(0.0, ready())
         for name in ("tea_time", "book", "sketch", "observe", "patrol"):
             with self.subTest(routine=name), patch.object(b, "_weighted", return_value=name):
-                steps = b._choose(1.0)
+                steps = pastime(b, 1.0)
                 self.assertGreater(len(steps), 1)
                 self.assertNotEqual(steps[-1].clip, "idle")
                 self.assertNotIn("pout", [step.clip for step in steps])
@@ -725,7 +733,7 @@ class AmbientLifeTest(unittest.TestCase):
         b.observe(0.0, ready(chatter=20))
         recent = []
         for _ in range(120):
-            b._choose(1.0)
+            pastime(b, 1.0)
             choice = b._ambient_recent[-1]
             self.assertNotIn(choice, recent[-3:])
             recent.append(choice)
@@ -734,7 +742,7 @@ class AmbientLifeTest(unittest.TestCase):
         b = brain()
         b.external_care = True
         with patch.object(b, "_weighted", return_value="tea_time"):
-            b._queue(*b._choose(0.0), now=0.0, interrupt=True)
+            b._queue(*pastime(b, 0.0), now=0.0, interrupt=True)
         self.assertEqual(b.clip, "eat")
         run(b, 0.0, 5)
         self.assertEqual(b.warmth, 0.0)
@@ -746,7 +754,7 @@ class AmbientLifeTest(unittest.TestCase):
         b.observe(0.0, ready(chatter=20))
         for name in ("popcorn", "headphones", "gamepad", "tail_care", "lie_chin"):
             with self.subTest(activity=name), patch.object(b, "_weighted", return_value=name):
-                step = next(step for step in b._choose(0.0) if step.clip == name)
+                step = next(step for step in pastime(b, 0.0) if step.clip == name)
                 self.assertGreaterEqual(step.duration, 24.0)
                 self.assertLessEqual(CLIPS[name][2], 1.1)
 
@@ -754,7 +762,7 @@ class AmbientLifeTest(unittest.TestCase):
         def count(chatter):
             b = brain(seed=16)
             b.observe(0.0, ready(chatter=chatter))
-            return sum(any(step.clip == "popcorn" for step in b._choose(1.0)) for _ in range(200))
+            return sum(any(step.clip == "popcorn" for step in pastime(b, 1.0)) for _ in range(200))
         self.assertEqual(count(0), 0)
         self.assertGreater(count(30), 10)
 
@@ -766,7 +774,7 @@ class AmbientLifeTest(unittest.TestCase):
         t, clips = run(b, 1.0, 10)
         self.assertEqual(b.clip, "lie_chin")
         self.assertFalse(set(clips) & ASLEEP)
-        self.assertLess(b.energy, 0.5)
+        self.assertLessEqual(b.energy, 0.5)       # awake: no sleep recovery (and resting costs nothing)
         b.poke(t)
         self.assertEqual(b.clip, "lie_chin")
         b.chat_sent(t + 1)
@@ -780,7 +788,7 @@ class AmbientLifeTest(unittest.TestCase):
         kinds = Counter(clips)
         self.assertGreaterEqual(len(kinds), 10, kinds)
         self.assertIn("walk", kinds)
-        self.assertGreater(len(clips), 60)        # ~2 changes a minute or more
+        self.assertGreater(len(clips), 30)        # still doing things, with rests between (test_pet_rest)
         self.assertTrue(all(FIGURE * (EDGE_PEEK if side == -1 else EDGE) <= x
                             <= 1440 - FIGURE * (EDGE_PEEK if side == 1 else EDGE) for x, side in xs))
         for before, after in zip(clips, clips[1:]):
@@ -830,7 +838,7 @@ class ScreenEdgeTest(unittest.TestCase):
         b.set_ground(left, right, 860, 20)
         b.place(left + b.figure if side == -1 else right - b.figure)
         with patch.object(b, "_weighted", return_value="edge"):
-            b._queue(*b._choose(0.0), now=0.0, interrupt=True)
+            b._queue(*pastime(b, 0.0), now=0.0, interrupt=True)
         return b
 
     def test_both_edges_approach_peek_and_return_without_position_jumps(self):
@@ -899,7 +907,7 @@ class ScreenEdgeTest(unittest.TestCase):
         for side in (-1, 1):
             b = brain()
             b.place(b.left + b.figure * EDGE if side == -1 else b.right - b.figure * EDGE)
-            steps = b._choose(0.0)
+            steps = pastime(b, 0.0)
             self.assertIn("edge_peek", [step.clip for step in steps])
             self.assertEqual(steps[0].edge_side, side)
             self.assertNotIn("edge_peek", CUE_ACTIONS)
@@ -910,17 +918,17 @@ class ScreenEdgeTest(unittest.TestCase):
             b.place(b.left + b.figure * EDGE)
             b.pointer.near = near
             for _ in range(15):
-                self.assertNotIn("edge_peek", [step.clip for step in b._choose(0.0)])
+                self.assertNotIn("edge_peek", [step.clip for step in pastime(b, 0.0)])
 
     def test_edge_visits_have_a_cooldown_even_after_other_routines(self):
         b = brain()
         b.place(b.left + b.figure * EDGE)
-        self.assertIn("edge_peek", [step.clip for step in b._choose(0.0)])
+        self.assertIn("edge_peek", [step.clip for step in pastime(b, 0.0)])
         for name in ("book", "tea_time", "headphones"):
             with patch.object(b, "_weighted", return_value=name):
-                b._choose(10.0)
-        self.assertNotIn("edge_peek", [step.clip for step in b._choose(120.0)])
-        self.assertIn("edge_peek", [step.clip for step in b._choose(241.0)])
+                pastime(b, 10.0)
+        self.assertNotIn("edge_peek", [step.clip for step in pastime(b, 120.0)])
+        self.assertIn("edge_peek", [step.clip for step in pastime(b, 241.0)])
 
 
 class InteractionTest(unittest.TestCase):
@@ -1883,7 +1891,8 @@ class AgentPresenceTest(unittest.TestCase):
         def naps(event, seed):
             b = brain(seed=seed)
             b.observe(1.0, ready(circadian="午后有点困", events=[event] if event else []))
-            _, clips = run(b, 1.0, 170, fps=10)
+            with patch("regular.pet_brain.REST_SPAN", (1.0, 2.0)):   # about engagement, not about pacing
+                _, clips = run(b, 1.0, 170, fps=10)
             return bool({"doze", "lie_down", "sleep"} & set(clips))
         quiet = sum(naps(None, seed) for seed in range(30))
         busy = sum(naps({"kind": "said", "ts": 10.0}, seed) for seed in range(30))
@@ -1952,7 +1961,7 @@ class AgentPresenceTest(unittest.TestCase):
             b = brain(seed=11)
             b.observe(0.0, ready(**presence))
             with patch.object(b, "_weighted", return_value="idle") as choose:
-                b._choose(1)
+                pastime(b, 1)
             return choose.call_args.args[0]
         happy = weights(mood=0.9)
         grumpy_night = weights(mood=-0.9, circadian="熬到半夜")
@@ -2065,7 +2074,7 @@ class CareMoodTest(unittest.TestCase):
             b.warmth = warmth
             counts = Counter()
             for _ in range(400):
-                counts[b._choose(0.0)[0].clip] += 1
+                counts[pastime(b, 0.0)[0].clip] += 1
             return counts
         calm, happy = tally(0.0), tally(CARE_MAX)
         lively = ("hop", "sing", "cheer")
@@ -2264,4 +2273,4 @@ class SpellTest(unittest.TestCase):
         still.place(300)
         self.assertFalse(still.magic(1.0))
         with patch.object(still, "_weighted", side_effect=lambda w: max(w, key=w.get)):
-            self.assertEqual(still._choose(10.0)[0].clip != "warp_cast", True)
+            self.assertEqual(pastime(still, 10.0)[0].clip != "warp_cast", True)

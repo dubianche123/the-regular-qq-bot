@@ -153,7 +153,7 @@ def test_a_settled_spell_favours_seated_pastimes_and_pauses_seated():
     standing = sum(v for n, v in seen.items() if n not in SEATED_CHOICES and n != "library")
     assert seated > 2 * standing
     assert steps[-1].clip == "sit_swing"
-    b._spell = "standing"
+    b._spell, b._owes_rest = "standing", False   # skip the rest after the headphones (test_pet_rest)
     with patch.object(b, "_weighted", return_value="wander"):
         steps = b._choose(2.0)
     assert steps[-1].clip in PAUSE_CLIPS[1:] and CLIPS[steps[-1].clip][4] == "stand"

@@ -227,6 +227,14 @@ SEATED_SPELL = (240.0, 600.0)
 STANDING_SPELL = (90.0, 240.0)
 SPELL_BIAS = 3.0
 PAUSE_CLIPS = ("sit_swing", "think", "lookaround")   # 两件事之间歇口气：坐段荡腿，站段托腮或张望
+# 歇着是常态。常见桌宠平时就是待机、眨眼，偶尔张望一下；自己起意做件事要隔上几分钟。
+# 所以她做完一件事，就在原来的姿势里歇一阵，不马上找下一件。越没精神歇得越久，群里热闹时短一点。
+REST_SPAN = (75.0, 180.0)
+LIVELY_REST = 0.75
+RESTING = frozenset({"idle", "look_left", "look_right", "sit_swing", "lie_chin"})
+NAP_GAP = 480.0           # 醒来之后至少这么久才会再睡（夜里 300 秒）
+AWAY_DOZE = 0.6           # 你不在时，该歇的时候有这么大的机会直接睡过去
+AMBIENT_LINE_GAP = 600.0  # 日常里她自己冒的小台词最多十分钟一句；被叫、被戳、你点「换一个」不受这个限制
 # 这些日常一开始就坐着或躺着；其余从站着开始。
 SEATED_CHOICES = frozenset({"book", "tea_time", "laptop", "sit", "headphones", "gamepad",
                             "tail_care", "lie_chin", "popcorn", "nap"})
@@ -459,7 +467,7 @@ class PetBrain:
         self._hide_origin = (0.0, 0.0)
         self._hide_started = now
         self._hide_duration = 1.0
-        self._nap_at = now - 480.0
+        self._nap_at = now - NAP_GAP
         self.bottom_peek = False
         self._state_switch_at = now
         self._ceiling_until = 0.0
@@ -561,6 +569,8 @@ class PetBrain:
         self._mood_shown = 0                     # 她上一次表现出来的心情档：-1 烦 / 0 平 / 1 好
         self._spell = "seated"                   # 这一段日常是坐着过还是起来活动；到点就换
         self._spell_until = now
+        self._owes_rest = False                  # 刚做完一件自己挑的事：下一拍先歇着
+        self._ambient_line_at = now - AMBIENT_LINE_GAP
         self._mood_said = {1: now - MOOD_SHIFT_GAP, -1: now - MOOD_SHIFT_GAP}
         self._mood_mark_at = now
         self._calm_at = float("-inf")            # 群里上一次冷清是什么时候
@@ -1005,13 +1015,12 @@ class PetBrain:
         return [Step(clip, hold="state"), Step("idle", 1)]
 
     def _choose(self, now):
-        """Pick a little routine, with long quiet poses between its small beats."""
+        """What comes next: real work first, then her own pastimes, each followed by a rest."""
         p = self.presence
         vitals = self.vitals()
         offline = p.known and p.bot != "ready"
         engaged = not offline and now - self.last_agent_event < ENGAGED_SECONDS
         mood = self.effective_mood
-        r = self.rng.uniform
         # 状态层最优先：系统此刻在做的事，比「刚才发生过什么」和随机卖萌都准。
         # 被打断（戳一下、拖一下、聊一句）之后还能回到这个动作，直到心跳停掉。
         if self.state_clip and now < self.state_until:
@@ -1036,6 +1045,47 @@ class PetBrain:
         if vitals.sleepy and self.owner_away and not engaged:
             return self._nap_steps(now)
         spell = self._spell_kind(now, vitals)
+        if self._owes_rest:
+            self._owes_rest = False
+            # 你不在，她歇着歇着就睡过去了（刚睡醒的那几分钟除外）。
+            if (self.owner_away and not engaged and now - self._nap_at >= NAP_GAP
+                    and self.rng.random() < AWAY_DOZE):
+                return self._nap_steps(now)
+            return self._rest_steps(vitals)
+        self._owes_rest = True
+        return self._hush(self._pastime(now, vitals, spell, engaged=engaged, offline=offline, mood=mood), now)
+
+    def _rest_steps(self, vitals):
+        """歇着：就在当前的姿势里待一阵，不为了歇站起来或坐下。站着就眨眨眼、看看光标，
+        中途张望一下或者活动活动肩膀；坐着就荡荡腿或者抱着尾巴歇会儿；趴着就继续托腮。"""
+        seconds = (self.rng.uniform(*REST_SPAN) * (1.0 + max(0.0, DAY_PEP - vitals.pep))
+                   * (LIVELY_REST if vitals.room == "lively" else 1.0))
+        posture = self._end_posture()
+        if posture == "lie":
+            return [Step("lie_chin", seconds)]
+        if posture == "sit":
+            clip = self._pick("rest", "sit_swing", posture="sit") if self.rng.random() < 0.35 else "sit_swing"
+            return [Step(clip, seconds)]
+        first = seconds * self.rng.uniform(0.35, 0.65)
+        loosen = self._pick("rest", None, posture="stand") if self.rng.random() < 0.4 else None
+        middle = (Step(loosen, self.rng.uniform(8, 16)) if loosen
+                  else Step(self.rng.choice(("look_left", "look_right")), self.rng.uniform(1.5, 3.0)))
+        return [Step("idle", first), middle, Step("idle", max(1.0, seconds - first - middle.duration))]
+
+    def _hush(self, steps, now):
+        """她自己冒的小台词隔一阵才有一句：一段日常里的几句算一回，十分钟内的下一段就只演不说。"""
+        if any(step.line for step in steps):
+            if now - self._ambient_line_at < AMBIENT_LINE_GAP:
+                for step in steps:
+                    step.line = None
+            else:
+                self._ambient_line_at = now
+        return steps
+
+    def _pastime(self, now, vitals, spell, *, engaged, offline, mood):
+        """Pick one thing to do by herself, weighted by how she feels, the room and this spell."""
+        p = self.presence
+        r = self.rng.uniform
         night = vitals.phase in ("night", "late")
         weights = {
             "idle": 0.65, "wander": 1.1,
@@ -1044,7 +1094,7 @@ class PetBrain:
             "phone": 0.45 + min(1.4, p.chatter * 0.18),
             # 深夜困了打盹更勤（你还在电脑前熬夜，她也会坐着坐着睡过去）；午后偶尔眯一会儿。
             # 白天只是有点累不算困：累了去歇着、喝茶看书，不是一累就睡。
-            "nap": (0.0 if engaged or now - self._nap_at < (300 if night else 480)
+            "nap": (0.0 if engaged or now - self._nap_at < (300 if night else NAP_GAP)
                     else 0.3 if night else 0.08 if vitals.sleepy or vitals.phase == "drowsy" else 0.015),
             # 静态道具库只做穿插：整段动起来的法术、扑跃、散步才是主角。
             "library": 2.6 if self.repertoire.actions else 0.0,
@@ -1143,7 +1193,7 @@ class PetBrain:
             reading = (self._pick("study", None, family="reading", posture=posture)
                        or self._pick("study", "read", family="reading"))
             steps = self._activity_steps(reading, r(24, 42))
-            if not engaged and now - self._nap_at >= 480 and self.rng.random() < 0.04:
+            if not engaged and now - self._nap_at >= NAP_GAP and self.rng.random() < 0.04:
                 self._nap_at = now
                 steps += [Step("doze"), Step(self._pick("sleep", "sleep"), r(12, 18))]
             return [*steps, self._pause(r(4, 7))]
@@ -1431,9 +1481,12 @@ class PetBrain:
         self.props.tick(now, self.left, self.right, self.ceiling, self.floor)
         asleep = self.clip in ASLEEP or self.hidden_asleep
         spec = self.repertoire.actions.get(self.clip, {})
-        restful = (spec.get("restful", False) and CLIPS[self.clip][3] and self.mode == "ground"
-                   and not self._busy(now))
-        self.energy = max(0.0, min(1.0, self.energy + (dt / 240 if asleep else dt / 600 if restful else -dt / 2400)))
+        settled = self.mode == "ground" and not self._busy(now)
+        restful = spec.get("restful", False) and CLIPS[self.clip][3] and settled
+        # 做事才累：干站着、坐着荡腿、趴着托腮不掉体力，也不像睡觉那样回体力。
+        idle = self.clip in RESTING and settled
+        gain = dt / 240 if asleep else dt / 600 if restful else 0.0 if idle else -dt / 2400
+        self.energy = max(0.0, min(1.0, self.energy + gain))
         if self.mode == "air":
             self._fall(now, dt)
         elif self.mode == "drag":
