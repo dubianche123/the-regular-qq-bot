@@ -74,6 +74,7 @@ launchctl bootout gui/$(id -u)/io.github.the-regular; launchctl bootstrap gui/$(
 | `config.py` | 配置默认值与路径；`.env` 覆盖 |
 | `prompts.py` | 人设、共享硬规则、动态注入块 |
 | `storage.py` / `runtime.py` | 状态持久化、会话锁、单例组装 |
+| `turntaking.py` | 群里的话筒：一个群同一时刻只写、只发一句，欠着的先说，插嘴让给叫它的人 |
 | `relations.py` / `affinity.py` | 关系档案、分级、衰减、称呼台账 |
 | `digest.py` | 滚动摘要、承诺账本、表达学习 |
 | `archive.py` | 原始消息 JSONL 与每日 Markdown |

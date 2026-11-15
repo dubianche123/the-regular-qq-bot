@@ -51,6 +51,7 @@ import scheduler as scheduler_mod
 import search as search_mod
 import slowwork
 import storage
+import turntaking
 import wordfilter
 import voice_event
 import voice_runtime
@@ -1287,20 +1288,63 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
     is_stale：写好以后、发出去之前再问一次「时机过没过」，过了就不发（见 reply_unprompted）。
     reply_filter：本地文字渠道可在执行和送达前整理候选，历史只记录整理后的实际正文。
     raw_reply_filter：可选本地渠道清理，在通用标签清理之前移除完整内部块。
+
+    群里的回话先拿这个群的话筒（turntaking.py）：同一时刻只有一轮在写、在发。群消息那一轮在
+    handle_group_msg 里排过号；后台跟进这类没排号的，这里临时排一个，说完就交回。
     """
-    async with runtime.SESSIONS.lock(session_id):
-        rt = ReplyTurn(message=message, session_id=session_id, user_text=user_text, context=context,
-                       media=media, on_delivered=on_delivered, owner_hint_group=owner_hint_group,
-                       prepared=prepared, prepared_local=prepared_local, is_stale=is_stale,
-                       reply_filter=reply_filter, raw_reply_filter=raw_reply_filter,
-                       received_at=received_at, lookup_used=lookup_used,
-                       lookup_acquired_at=lookup_acquired_at)
-        _reply_begin(rt)
-        for stage in (_reply_draft, _reply_lookup, _reply_media, _reply_reminder):
-            outcome = await stage(rt)
-            if outcome is not None:
-                return outcome
-        return await _reply_deliver(rt)
+    group_id = getattr(message, "group_openid", None)
+    claim = turntaking.CURRENT.get()
+    own = token = None
+    if group_id and (claim is None or claim.group != group_id or claim.state == turntaking.DONE):
+        own = claim = runtime.FLOOR.claim(
+            group_id, getattr(getattr(message, "author", None), "member_openid", None),
+            owed=not context.get("unprompted"),
+            arrived=time.time() if received_at is None else received_at)
+        token = turntaking.CURRENT.set(own)
+    elif not group_id:
+        claim = None
+    lock = runtime.SESSIONS.lock(session_id)
+    try:
+        await _take_turn(claim, lock)
+        try:
+            rt = ReplyTurn(message=message, session_id=session_id, user_text=user_text, context=context,
+                           media=media, on_delivered=on_delivered, owner_hint_group=owner_hint_group,
+                           prepared=prepared, prepared_local=prepared_local, is_stale=is_stale,
+                           reply_filter=reply_filter, raw_reply_filter=raw_reply_filter,
+                           received_at=received_at, lookup_used=lookup_used,
+                           lookup_acquired_at=lookup_acquired_at)
+            _reply_begin(rt)
+            for stage in (_reply_draft, _reply_lookup, _reply_media, _reply_reminder):
+                outcome = await stage(rt)
+                if outcome is not None:
+                    return outcome
+            return await _reply_deliver(rt)
+        finally:
+            lock.release()
+    finally:
+        if own is not None:
+            runtime.FLOOR.release(own)
+            turntaking.CURRENT.reset(token)
+
+
+async def _take_turn(claim, lock):
+    """先拿话筒，再拿这个人的会话锁。claim 为 None（私聊、本机聊天）只拿会话锁。
+
+    拿着话筒时绝不排队等会话锁：这个人上一轮可能还在等图（_reply_with_image 一直持着他的会话锁），
+    全群不该陪着等 —— 先把话筒放下，等他那轮完了再回来排队。持着会话锁的那一轮从不回头等话筒
+    （画图那轮放下话筒以后只等图），所以两把锁不会互相卡死。
+    """
+    if claim is None:
+        await lock.acquire()
+        return
+    while True:
+        await runtime.FLOOR.take(claim)
+        if not lock.locked():
+            await lock.acquire()
+            return
+        runtime.FLOOR.step_down(claim, spoke=False)
+        async with lock:
+            pass
 
 
 def _reply_begin(rt):
@@ -1314,6 +1358,9 @@ def _reply_begin(rt):
     # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
     # 从这里摘走，别漏进 get_ai_reply 的关键字里。
     history = context.pop("history", ())
+    if callable(context.get("unprompted_hint")):
+        # 「刚开过口」要在拿到话筒以后再看：排在前面那句接没接，这时才算数（reply_unprompted）。
+        context["unprompted_hint"] = context["unprompted_hint"]()
     lookup_used = lookup_used or bool(context.get("search_note"))
     lookup_allowed = bool(config.SEARCH_ENABLED and getattr(message, "group_openid", None)
                           and not context.get("private") and not context.get("back_off"))
@@ -1817,9 +1864,6 @@ async def reply_locally(text, *, care=None):
     return {"text": result.text, "action": message.action}
 
 
-_unprompted_locks = collections.defaultdict(asyncio.Lock)
-
-
 def _waited(group_id, message_id):
     """这条消息进群聊背景缓存到现在过了多久；找不到就当刚到。"""
     for row in reversed(group_buffers.get(group_id, ())):
@@ -1880,6 +1924,10 @@ async def reply_unprompted(message, session_id, user_text, *, callback_note="", 
     kimi-k3.1-pro 盲评四天里会被扔的 43 句：它自己在中间说过话的 20 句里 17 句该咽回去；
     只有别人说过话的 23 句里 16 句发出来也合适（见 docs/when-to-reply.md）。
     owed=True（分诊判了这句是冲它刚才那句来的，回它的「？」、接它的话）照发。
+
+    一个群一次只写一句由群里的话筒管（turntaking.py，以前是这里单独一把插嘴锁）：排在前面那句接了，
+    这句拿到话筒时就知道自己刚开过口（PROMPT_BANTER_RECENT）。写好以后期间有人叫了它，这句也不发，
+    让给叫它的人（2026-11-16：线上它正写着插嘴时有人点名，两句前后脚发出去）。
     """
     group_id = getattr(message, "group_openid", None)
     member = getattr(getattr(message, "author", None), "member_openid", None)
@@ -1887,44 +1935,53 @@ async def reply_unprompted(message, session_id, user_text, *, callback_note="", 
     # 同一个人连着发的几句只问最后一句：先等他说完，后面还有话就这句不问 —— 后面那句的背景里有它
     # （2026-11-04「你发的啥」「截图看看」两秒内各回了一句；前一句接歪了，后一句看见自己刚回过就接着歪）。
     await asyncio.sleep(max(0.0, config.BANTER_BURST_SECONDS - _waited(group_id, message_id)))
-    async with _unprompted_locks[group_id]:
-        if not owed and _said_more(group_id, member, message_id):
-            runtime.INTERACTIONS.append(
-                "decision", group_id, user=member, actor="system",
-                source_message_id=message_id, route="banter",
-                selected=False, reason="said_more")
-            return "", None, None
-        now = time.time()
-        hints = []
-        if now - group_last_random_reply.get(group_id, 0) < config.BANTER_COOLDOWN_SECONDS:
-            hints.append(prompts.PROMPT_BANTER_RECENT)
-        # 接纳度只在有把握地读出「这人不爱被搭话」时低于 1（见 receptive.py 的声明门槛）
-        if config.RECEPTIVE_ENABLED and runtime.RECEPTIVE.multiplier(group_id, member, now=now) < 1:
-            hints.append(prompts.PROMPT_BANTER_UNWELCOME)
-        stale = {}
-
-        def is_stale():
-            stale["hit"] = not owed and (_said_more(group_id, member, message_id)
-                                          or _spoke_since(group_id, message_id))
-            return stale["hit"]
-
-        outcome = await reply_in_session(message, session_id, user_text, is_stale=is_stale,
-                                         unprompted_hint="\n".join(hints), **context)
-        spoke = outcome[2] is not None
+    if not owed and _said_more(group_id, member, message_id):
         runtime.INTERACTIONS.append(
             "decision", group_id, user=member, actor="system",
-            source_message_id=getattr(message, "id", None), route="banter",
-            selected=spoke,
-            reason="spoke" if spoke else "stale" if stale.get("hit") else "declined",
-            callback=bool(callback_note))
-        if spoke:
-            logger.info("💬 没叫它，它接了（%s）", (member or "")[-4:])
-            group_last_random_reply[group_id] = time.time()
-            runtime.STATE.data.setdefault("cooldowns", {})[group_id] = group_last_random_reply[group_id]
-            if callback_note:
-                runtime.RECEPTIVE.mark_callback(group_id, member, now=now)
-                logger.info("🫧 居然记得：端出 1 条旧话（%s）", (member or "")[-4:])
-            runtime.STATE.mark_dirty()
+            source_message_id=message_id, route="banter",
+            selected=False, reason="said_more")
+        return "", None, None
+    claim = turntaking.CURRENT.get()
+    now = time.time()
+    stale = {}
+
+    def hints():
+        now = time.time()
+        out = []
+        if now - group_last_random_reply.get(group_id, 0) < config.BANTER_COOLDOWN_SECONDS:
+            out.append(prompts.PROMPT_BANTER_RECENT)
+        # 接纳度只在有把握地读出「这人不爱被搭话」时低于 1（见 receptive.py 的声明门槛）
+        if config.RECEPTIVE_ENABLED and runtime.RECEPTIVE.multiplier(group_id, member, now=now) < 1:
+            out.append(prompts.PROMPT_BANTER_UNWELCOME)
+        return "\n".join(out)
+
+    def is_stale():
+        if owed:
+            return False
+        stale["hit"] = _said_more(group_id, member, message_id) or _spoke_since(group_id, message_id)
+        stale["yield"] = not stale["hit"] and runtime.FLOOR.owed_pending_after(claim)
+        return stale["hit"] or stale["yield"]
+
+    outcome = await reply_in_session(message, session_id, user_text, is_stale=is_stale,
+                                     unprompted_hint=hints, **context)
+    spoke = outcome[2] is not None
+    runtime.INTERACTIONS.append(
+        "decision", group_id, user=member, actor="system",
+        source_message_id=getattr(message, "id", None), route="banter",
+        selected=spoke,
+        reason=("spoke" if spoke else "stale" if stale.get("hit")
+                else "yielded" if stale.get("yield") else "declined"),
+        callback=bool(callback_note))
+    if spoke:
+        logger.info("💬 没叫它，它接了（%s）", (member or "")[-4:])
+        group_last_random_reply[group_id] = time.time()
+        runtime.STATE.data.setdefault("cooldowns", {})[group_id] = group_last_random_reply[group_id]
+        if callback_note:
+            runtime.RECEPTIVE.mark_callback(group_id, member, now=now)
+            logger.info("🫧 居然记得：端出 1 条旧话（%s）", (member or "")[-4:])
+        runtime.STATE.mark_dirty()
+    elif stale.get("yield"):
+        logger.info("🎙️ 写好的插嘴没发：期间有人叫了它（%s）", (member or "")[-4:])
     return outcome
 
 
@@ -1974,6 +2031,8 @@ async def _reply_with_image(message, session_id, user_text, said, media, generat
                 quote=_quote_if_moved_on(message))
     finally:
         said_first.set()
+    # 话已经说出去了：等图的这段不占着群里的话筒，别人叫它照常回（turntaking.py）。
+    runtime.FLOOR.step_down(turntaking.CURRENT.get())
     try:
         outcome = await task
     except Exception:
@@ -3896,6 +3955,19 @@ async def _triage(turn):
     turn.callback_note = callback_note
 
 
+def _claim_floor(turn):
+    """排号（turntaking.py）：分诊说要接、或是「搜索」命令，就在群里的话筒前排上。
+
+    分诊一完就排，不等备料：它正写着一句没人叫的插嘴时，得知道后面有人叫了它。
+    owed = 欠着这一句：被 @、点名该答、短接、修正，或者没叫它但在回它刚才那句。
+    """
+    if not (turn.should_reply or turn.search_query is not None):
+        return None
+    owed = not turn.unprompted or turn.feedback.get("target") == "bot_response"
+    return runtime.FLOOR.claim(turn.group_id, turn.sender_openid,
+                               owed=owed, arrived=turn.receipt_time)
+
+
 async def _plan_lookup(turn):
     """计划 · 联网：这一轮查不查、查什么，额度在这里占。假值 = 已经用一句本地话交代过，不再往下。"""
     message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
@@ -4262,7 +4334,7 @@ def _settle(turn, outcome):
 
 # 这一轮经过的全部函数，按顺序。源码级守卫照这张表查群聊路径（tests/test_owner_claim.py、
 # tests/test_no_raw_ids.py）：往这一节加新的一段，也加到这里。
-GROUP_TURN_STAGES = (_receive, _admit, _assess, _local_command, _triage,
+GROUP_TURN_STAGES = (_receive, _admit, _assess, _local_command, _triage, _claim_floor,
                      _plan_lookup, _plan_scene, _plan_notes, _plan, _respond, _settle)
 
 
@@ -4392,8 +4464,14 @@ class GroupBot(botpy.Client):
         if turn is None or not await _admit(turn) or await _local_command(turn):
             return
         await _triage(turn)
-        if await _plan(turn):
-            _settle(turn, await _respond(turn))
+        claim = _claim_floor(turn)
+        token = turntaking.CURRENT.set(claim)
+        try:
+            if await _plan(turn):
+                _settle(turn, await _respond(turn))
+        finally:
+            turntaking.CURRENT.reset(token)
+            runtime.FLOOR.release(claim)
 
     async def on_c2c_message_create(self, message: Message):
         """私聊。以前这里连去重都没有，重复投递会重复扣额度。"""

@@ -115,7 +115,7 @@ class GroupTurnStagesTest(unittest.IsolatedAsyncioTestCase):
 
     def test_stage_table_lists_the_stages_in_order(self):
         self.assertEqual([stage.__name__ for stage in bot.GROUP_TURN_STAGES], [
-            "_receive", "_admit", "_assess", "_local_command", "_triage",
+            "_receive", "_admit", "_assess", "_local_command", "_triage", "_claim_floor",
             "_plan_lookup", "_plan_scene", "_plan_notes", "_plan", "_respond", "_settle"])
 
     def test_receive_drops_duplicates_and_unreadable_messages(self):

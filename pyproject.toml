@@ -26,7 +26,7 @@ desktop-build = ["PySide6-Essentials>=6.10,<7", "sounddevice>=0.5,<1", "pywebrtc
 
 [tool.setuptools]
 packages = ["regular", "regular.assets", "regular.assets.pet"]
-py-modules = ["activation", "affinity", "archive", "bot", "config", "digest", "knowledge", "naming", "nicking", "panel", "proactive", "prompts", "providers", "qqtext", "quotes", "recall", "relations", "reminders", "runtime", "search", "storage", "turns", "wordfilter", "delivery", "media", "health", "interactions", "receptive", "scheduler", "slowwork", "image_generation", "expression", "voice_input", "voice_event", "voice_runtime", "voice_amr", "realtime_synth", "voice_budget", "voice_outbound", "voice_output_runtime"]
+py-modules = ["activation", "affinity", "archive", "bot", "config", "digest", "knowledge", "naming", "nicking", "panel", "proactive", "prompts", "providers", "qqtext", "quotes", "recall", "relations", "reminders", "runtime", "search", "storage", "turns", "turntaking", "wordfilter", "delivery", "media", "health", "interactions", "receptive", "scheduler", "slowwork", "image_generation", "expression", "voice_input", "voice_event", "voice_runtime", "voice_amr", "realtime_synth", "voice_budget", "voice_outbound", "voice_output_runtime"]
 
 [tool.setuptools.dynamic]
 version = {attr = "regular.__version__"}

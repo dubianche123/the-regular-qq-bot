@@ -21,6 +21,7 @@ import scheduler as scheduler_mod
 import relations
 import storage
 import turns as turns_mod
+import turntaking
 import logging
 logger = logging.getLogger("qqbot")   # 与 bot.py 同一个命名 logger，共享 handler
 
@@ -93,6 +94,9 @@ PROMISES = digest_mod.PromiseBook(
 PROMISES.hydrate(STATE.data.get("promises", {}),
                  finished=STATE.data.get("promises_finished", {}))
 STATE.register_collector(PROMISES.dump_into)
+
+# 群里的话筒（2026-11-16，turntaking.py）：一个群同一时刻只写、只发一句。纯内存，不落盘。
+FLOOR = turntaking.Floor()
 
 # 定时任务（2026-11-01）：到点主动做的事统一走这里，催债是第一个用户。
 # 任务只是闹钟，真相在各自的账本里；处理函数在 bot.py 启动时按 kind 注册。

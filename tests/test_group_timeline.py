@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import bot
 import config
 import runtime
+import turntaking
 from storage import SessionStore
 from test_feedback_receipt import answer
 from test_when_to_intervene import A, B, G, _Base
@@ -25,7 +26,7 @@ class GroupTimelineTest(_Base):
         super().setUp()
         self.tasks = []
         self._patch(runtime, "SESSIONS", SessionStore())
-        self._patch(bot, "_unprompted_locks", defaultdict(asyncio.Lock))
+        self._patch(runtime, "FLOOR", turntaking.Floor())
         self._patch(bot, "owner_hint_pending", lambda *args, **kwargs: False)
         for name, value in (("BANTER_BURST_SECONDS", 0.0),
                             ("DECISION_CALLBACK_ENABLED", False),
@@ -124,22 +125,29 @@ class GroupTimelineTest(_Base):
         self.assertEqual(self._ordinary_history(self._prompt_for(THIRD)),
                          [FIRST, SECOND, FIRST_REPLY, SECOND_REPLY])
 
-    async def test_different_members_generate_concurrently_and_quote_own_sources(self):
-        first_started, release_first, second_started, release_second = (
-            asyncio.Event(), asyncio.Event(), asyncio.Event(), asyncio.Event())
-        self._model(first_started, release_first, second_started=second_started,
-                    release_second=release_second)
+    async def test_different_members_take_turns_and_the_later_reply_sees_the_earlier(self):
+        """两个人先后叫它（2026-11-16，turntaking.py）：后一句等前一句送达再写，写的时候看得见前一句。
+
+        11-11 起不同成员并发生成，两句各写各的、前后脚发出去 —— 群主：「A 说话之后它觉得该接还没回复完，
+        B 又说了它觉得该接的话，那就立马发两句」。
+        """
+        first_started, release_first, second_waiting = (
+            asyncio.Event(), asyncio.Event(), asyncio.Event())
+        self._model(first_started, release_first)
+        self._watch_reply("reply_in_session", {SECOND: second_waiting})
         first = self._spawn(self._drive(FIRST, is_at=True, msg_id="parallel-a",
                                         scene={"msg_idx": "quote-a"}))
         await self._wait(first_started)
         second = self._spawn(self._drive(SECOND, sender=B, is_at=True, msg_id="parallel-b",
                                          scene={"msg_idx": "quote-b"}))
-        await self._wait(second_started)
-        self.assertFalse(first.done(), "不同成员没有被改成全群串行")
+        await self._wait(second_waiting)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.prompts_seen), 1, "B 那句应等 A 那句送达再写")
         release_first.set()
-        first_message = await first
-        release_second.set()
-        second_message = await second
+        first_message, second_message = await asyncio.gather(first, second)
+        dynamic = self._prompt_for(SECOND)[-1]["content"]
+        self.assertIn("本句到达之后发生的事", dynamic)
+        self.assertIn(FIRST_REPLY, dynamic)
         self.assertEqual(first_message.reply.await_args.kwargs["message_reference"]["message_id"],
                          "quote-a")
         self.assertEqual(second_message.reply.await_args.kwargs["message_reference"]["message_id"],
@@ -148,6 +156,24 @@ class GroupTimelineTest(_Base):
                          [FIRST, FIRST_REPLY])
         self.assertEqual([message["content"] for message in self._session(B)],
                          [SECOND, SECOND_REPLY])
+
+    async def test_optional_reply_yields_when_someone_calls_her_meanwhile(self):
+        """它正写着一句没人叫的插嘴，另一个人叫了它：插嘴不发，先回叫它的人（turntaking.py）。"""
+        first_started, release_first, second_waiting = (
+            asyncio.Event(), asyncio.Event(), asyncio.Event())
+        self._model(first_started, release_first)
+        self._watch_reply("reply_in_session", {SECOND: second_waiting})
+        first = self._spawn(self._drive(FIRST, msg_id="yield-a"))
+        await self._wait(first_started)
+        second = self._spawn(self._drive(SECOND, sender=B, is_at=True, msg_id="yield-b"))
+        await self._wait(second_waiting)
+        release_first.set()
+        first_message, second_message = await asyncio.gather(first, second)
+        first_message.reply.assert_not_awaited()
+        second_message.reply.assert_awaited_once()
+        gate = next(row for row in self.log.gates()
+                    if row.get("source_message_id") == "yield-a")
+        self.assertEqual((gate["selected"], gate["reason"]), (False, "yielded"))
 
     async def test_optional_reply_is_cancelled_if_same_member_continues_during_generation(self):
         first_started, release_first, second_waiting = (
@@ -175,12 +201,15 @@ class GroupTimelineTest(_Base):
         self._watch_reply("reply_unprompted", {FIRST: first_waiting, SECOND: second_waiting},
                           owed=owed)
         self.reply_text = "这句必须接上"
-        async with bot._unprompted_locks[G]:
-            first = self._spawn(self._drive(FIRST, msg_id="owed-before-a"))
-            await self._wait(first_waiting)
-            second = self._spawn(self._drive(SECOND, msg_id="owed-before-b"))
-            await self._wait(second_waiting)
-            self.assertEqual(self.prompts_seen, [])
+        # 别人拿着这个群的话筒：两句都排在后面等（以前是单独一把插嘴锁）
+        holder = runtime.FLOOR.claim(G, "someone-else", owed=True, arrived=0)
+        await runtime.FLOOR.take(holder)
+        first = self._spawn(self._drive(FIRST, msg_id="owed-before-a"))
+        await self._wait(first_waiting)
+        second = self._spawn(self._drive(SECOND, msg_id="owed-before-b"))
+        await self._wait(second_waiting)
+        self.assertEqual(self.prompts_seen, [])
+        runtime.FLOOR.release(holder)
         first_message, second_message = await asyncio.gather(first, second)
         self.assertEqual(owed, {FIRST: True, SECOND: True})
         first_message.reply.assert_awaited_once()
