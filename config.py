@@ -235,6 +235,9 @@ AI_TEMPERATURE = _env_float("AI_TEMPERATURE", 0.9)
 #   on          —— 允许推理的写法：审核用（认谐音靠推理）。没登记 on 就当这个模型不推理。
 #   effort      —— 推理强度的字段名（gpt-6-luna 是 reasoning_effort，认 none/low/medium/high/xhigh）。
 #                  登记了它，各档就能用 *_REASONING 单独定强度（见下面 TIER_REASONING）。
+#   cache_ttl   —— 稳定头的长时缓存（2026-11-16 实测 gpt-6-luna：Chat Completions 只认 30m，
+#                  Responses 认 12h）。登记了它，回复档在官方端点、纯文本请求时改走 Responses，
+#                  稳定头打一个这么长的缓存点，本轮动态不进缓存（providers._responses_create）。
 # 没登记的模型照旧：max_tokens + 温度 + 供应商预设的 extra_body。网关模型名的「cn:」前缀查表时去掉。
 MODEL_PROFILES = {
     "glm-5.3-flash": {"off": {"thinking": {"type": "disabled"}}},
@@ -242,7 +245,7 @@ MODEL_PROFILES = {
     "hy4-preview": {"off": {"reasoning_effort": "none"}, "on": {}},
     "gpt-6-luna": {"token_param": "max_completion_tokens", "temperature": False,
                    "effort": "reasoning_effort",
-                   "off": {"reasoning_effort": "none"}, "on": {}},
+                   "off": {"reasoning_effort": "none"}, "on": {}, "cache_ttl": "12h"},
     "gpt-6.1-terra": {"token_param": "max_completion_tokens", "temperature": False,
                       "effort": "reasoning_effort",
                       "off": {"reasoning_effort": "none"}, "on": {}},

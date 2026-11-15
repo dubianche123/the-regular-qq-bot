@@ -191,10 +191,110 @@ def _reserve_attempt(budget=None):
         _on_usage()
 
 
-async def _request_completion(client, **kwargs):
+async def _request_completion(client, *, responses_ttl=None, **kwargs):
     """One SDK call = one reserved physical attempt, including failures."""
     _reserve_attempt()
+    if responses_ttl:
+        return await _responses_create(client, responses_ttl, **kwargs)
     return await client.chat.completions.create(**kwargs)
+
+
+# ── 稳定头的长时缓存（2026-11-16）──
+# gpt-6-luna 的前缀缓存默认至少留 30 分钟，写入按 1.25 倍输入计价，读按 0.1 倍。线上群聊一静下来
+# 超过半小时，下一句就得把五千多 token 的稳定头整段重写一遍（11-01~11-16 有 92 次，约占调用的 9%）；
+# 每一轮还把只用一次的本轮动态也写进缓存。Responses API 可以给稳定头单独打一个 12 小时的缓存点
+# （Chat Completions 对这个模型只认 30m，实测 400），本轮动态不写缓存。
+# 只在回复档、官方端点、纯文本请求时走这条路；其余照旧走 Chat Completions。
+
+def _long_cache_ttl(client, model, tier, messages):
+    ttl = (model_profile(model) or {}).get("cache_ttl")
+    if not ttl or tier != "chat":
+        return None
+    from regular import openai_defaults
+    if not openai_defaults.official_base(getattr(client, "base_url", "")):
+        return None
+    if not all(isinstance(m.get("content"), str) for m in messages):
+        return None   # 带图的请求是另一种内容格式，不在这里换写法
+    return ttl
+
+
+def _responses_input(messages, ttl):
+    """Chat 消息换成 Responses 的 input：第一段 system（稳定头）打长时缓存点，其余 system 打默认点。"""
+    out, first = [], True
+    for message in messages:
+        role, text = message.get("role"), message["content"]
+        if role == "system":
+            block = {"type": "input_text", "text": text,
+                     "prompt_cache_breakpoint": ({"mode": "explicit", "ttl": ttl} if first
+                                                 else {"mode": "explicit"})}
+            out.append({"role": "developer", "content": [block]})
+            first = False
+        else:
+            out.append({"role": "assistant" if role == "assistant" else "user", "content": text})
+    return out
+
+
+async def _responses_create(client, ttl, *, model, messages, extra_body=None,
+                            max_completion_tokens=None, max_tokens=None, temperature=None):
+    """同一请求改走 /responses；返回的结果对象长得跟 Chat Completions 的一样，后面的读法不用变。
+
+    store=False：Responses 默认把请求存在 OpenAI 那边 30 天，群聊原文不该多这一份。
+    """
+    body = {"model": model, "store": False, "input": _responses_input(messages, ttl),
+            "prompt_cache_options": {"mode": "explicit"}}
+    limit = max_completion_tokens or max_tokens
+    if limit:
+        body["max_output_tokens"] = limit
+    extra = dict(extra_body or {})
+    effort = extra.pop("reasoning_effort", None)
+    if effort:
+        body["reasoning"] = {"effort": effort}
+    if temperature is not None:
+        body["temperature"] = temperature
+    body.update(extra)
+    url = str(client.base_url).rstrip("/") + "/responses"
+    request = httpx.Request("POST", url)
+    try:
+        response = await _llm_http.post(url, json=body,
+                                        headers={"Authorization": f"Bearer {client.api_key}"})
+    except httpx.HTTPError as exc:
+        raise APIConnectionError(message=type(exc).__name__, request=request) from exc
+    if response.status_code != 200:
+        raise APIStatusError(f"HTTP {response.status_code}", response=response, body=None)
+    return _responses_result(response.json())
+
+
+def _responses_result(data):
+    text = "".join(part.get("text") or ""
+                   for item in data.get("output") or () if item.get("type") == "message"
+                   for part in item.get("content") or () if part.get("type") == "output_text")
+    incomplete = (data.get("incomplete_details") or {}).get("reason")
+    finish = ("stop" if data.get("status") == "completed"
+              else "length" if incomplete == "max_output_tokens" else incomplete or data.get("status"))
+    usage = data.get("usage") or {}
+    inputs = usage.get("input_tokens_details") or {}
+    return _ResponsesResult(
+        choices=[_ResponsesChoice(message=_ResponsesMessage(content=text), finish_reason=finish)],
+        usage={"prompt_tokens": usage.get("input_tokens"),
+               "completion_tokens": usage.get("output_tokens"),
+               "prompt_tokens_details": {"cached_tokens": inputs.get("cached_tokens"),
+                                         "cache_write_tokens": inputs.get("cache_write_tokens")},
+               "completion_tokens_details": usage.get("output_tokens_details") or {}})
+
+
+class _ResponsesMessage:
+    def __init__(self, content):
+        self.content, self.reasoning_content = content, None
+
+
+class _ResponsesChoice:
+    def __init__(self, message, finish_reason):
+        self.message, self.finish_reason = message, finish_reason
+
+
+class _ResponsesResult:
+    def __init__(self, choices, usage):
+        self.choices, self.usage = choices, usage
 
 
 def _retry_after(response):
@@ -298,6 +398,7 @@ def _reply_metrics(result, choice):
         "prompt": data.get("prompt_tokens"),
         "completion": data.get("completion_tokens"),
         "cached": cached,
+        "written": (data.get("prompt_tokens_details") or {}).get("cache_write_tokens"),
         "thinking": details.get("reasoning_tokens"),
         "reasoning_chars": len(getattr(choice.message, "reasoning_content", None) or ""),
     }
@@ -306,9 +407,9 @@ def _reply_metrics(result, choice):
 def _log_reply(name, model, tier, attempt, elapsed, result, choice, text):
     m = _reply_metrics(result, choice)
     if text:
-        logger.info("✅ [%s] %s 应答 (%s, attempt %d, %.1fs, in=%s out=%s cached=%s thinking=%s finish=%s)",
+        logger.info("✅ [%s] %s 应答 (%s, attempt %d, %.1fs, in=%s out=%s cached=%s thinking=%s finish=%s written=%s)",
                     name, model, tier, attempt, elapsed, m["prompt"], m["completion"],
-                    m["cached"], m["thinking"], m["finish"])
+                    m["cached"], m["thinking"], m["finish"], m["written"])
     else:
         logger.warning("⚠️ [%s] %s 正文为空（%s, finish=%s, thinking=%s, reasoning_chars=%d）",
                        name, model, tier, m["finish"], m["thinking"], m["reasoning_chars"])
@@ -339,11 +440,13 @@ async def _complete(messages, max_tokens, tier, temperature, names, chains, *, t
             client = clients[_key_idx.get(name, 0) % len(clients)]
             attempts += 1
             started = time.monotonic()
+            params = _request_params(model, tier, max_tokens, temperature, preset)
+            ttl = _long_cache_ttl(client, model, tier, messages)
+            if ttl:
+                params["responses_ttl"] = ttl
             try:
                 result = await asyncio.wait_for(
-                    _request_completion(
-                        client, model=model, messages=messages,
-                        **_request_params(model, tier, max_tokens, temperature, preset)),
+                    _request_completion(client, model=model, messages=messages, **params),
                     timeout=min(left, per_attempt))
                 if result and result.choices:
                     choice = result.choices[0]
