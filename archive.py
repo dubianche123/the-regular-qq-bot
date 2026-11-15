@@ -24,6 +24,8 @@ import uuid
 
 DEFAULT_ARCHIVE_DIR = "archive"
 DEFAULT_MEMORY_DIR = "memory"
+# 每天那一页的名字（2026-11-16 以前叫「群史记」）：她记在小本本上的。面板标题、页头都用它。
+MEMORY_TITLE = "小本本"
 DATE_FMT = "%Y-%m-%d"
 _VOICE_PLACEHOLDER = "[语音]"
 _VOICE_TRANSCRIPT_KIND = "voice_transcript"
@@ -471,7 +473,7 @@ class MessageArchive:
         """
         day = day or day_key()
         path = self.memory_path(group_id, day)
-        lines = [f"# 群史记 · {day}", ""]
+        lines = [f"# {MEMORY_TITLE} · {day}", ""]
         lines.append(f"> 群 {_safe_tail(group_id)} ｜ 由模型对当天原始消息压缩生成，"
                      f"原文见 `archive/{day}.jsonl`")
         if meta:

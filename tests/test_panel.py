@@ -177,15 +177,16 @@ class PanelTest(unittest.IsolatedAsyncioTestCase):
             "# 群史记 · 2026-11-06\n\n## 摘要\n今天聊了炒饭。\n\n"
             "## 名场面\n- 「葱分三次」 —— 很认真。\n", encoding="utf-8")
         page = await (await self.client.get("/memory", headers=self.auth())).text()
-        self.assertIn("<h1>群史记</h1>", page)
+        self.assertIn("<h1>小本本</h1>", page)
         self.assertIn("今天聊了炒饭。", page)
         self.assertIn("葱分三次", page)
         self.assertIn('href="/memory?file=2026-11-06_g1.md"', page)
         self.assertNotIn("<pre>", page)
         detail = await (await self.client.get(
             "/memory?file=2026-11-06_g1.md", headers=self.auth())).text()
-        self.assertIn("<h2>群史记 · 2026-11-06</h2>", detail)
-        self.assertIn("← 全部群史记", detail)
+        # 11-16 以前存下的页头还写着「群史记」：照新名字显示
+        self.assertIn("<h2>小本本 · 2026-11-06</h2>", detail)
+        self.assertIn("← 小本本全部页", detail)
 
     async def test_checkup_opens_on_a_day_with_something_to_read(self):
         root = Path(self.cfg.DATA_DIR)

@@ -35,6 +35,7 @@ from regular import instance_settings
 from regular import weather
 from regular.panel_runtime import PanelRuntime
 
+import archive as archive_mod
 import knowledge as knowledge_mod
 import search as search_mod
 import storage
@@ -1124,7 +1125,7 @@ def _memory_date(name):
 
 
 def _memory_outline(content):
-    """Pull the summary and one or two quotable lines out of a 群史记 page for the index."""
+    """Pull the summary and one or two quotable lines out of a 小本本 page (archive.MEMORY_TITLE) for the index."""
     title, section, summary, scenes = "", "", [], []
     for line in content.splitlines():
         raw = line.strip()
@@ -1140,7 +1141,7 @@ def _memory_outline(content):
 
 
 def _memory_article(content):
-    """Render a 群史记 page as readable HTML instead of a dump of raw markdown."""
+    """Render a 小本本 page as readable HTML instead of a dump of raw markdown."""
     out, listing, quoted = [], False, False
 
     def close():
@@ -1158,7 +1159,8 @@ def _memory_article(content):
             close()
         elif raw.startswith("# "):
             close()
-            out.append(f"<h2>{_esc(raw[2:])}</h2>")
+            # 11-16 以前写下的页头是「群史记 · 日期」：照新名字显示，存着的文件不改
+            out.append(f"<h2>{_esc(raw[2:].replace('群史记', archive_mod.MEMORY_TITLE, 1))}</h2>")
         elif raw.startswith("## "):
             close()
             out.append(f"<h3>{_esc(raw[3:])}</h3>")
@@ -1193,7 +1195,7 @@ def _memory(cfg, request):
     detail = ""
     if name:
         content = _read_text(os.path.join(cfg.MEMORY_DIR, name))
-        detail = (f'<section class="kb-day-full"><a class="kb-back" href="/memory">← 全部群史记</a>'
+        detail = (f'<section class="kb-day-full"><a class="kb-back" href="/memory">← {archive_mod.MEMORY_TITLE}全部页</a>'
                   f'<article>{_memory_article(content)}</article></section>')
     cards = []
     for item in files:
@@ -1213,15 +1215,15 @@ def _memory(cfg, request):
             f'{f"<ul>{scene_html}</ul>" if scene_html else ""}'
             f'<a class="kb-day-more" href="{link}">读这一页 →</a></article>')
     index = (f'<div class="kb-days">{"".join(cards)}</div>' if cards else _empty_state(
-        "群史记还在慢慢攒", "每天聊完，她会自己整理出一页。", state="sleeping"))
+        f"{archive_mod.MEMORY_TITLE}还空着", "每天聊完，她会自己记上一页。", state="sleeping"))
     body = f"""
-<header class="kb-heading"><div><h1>群史记</h1><p>她每天自己整理的一页：那天在聊什么、哪句话最逗。想补充或纠正，写进「你告诉她的」。</p></div><a class="button" href="/knowledge">写点你告诉她的 →</a></header>
+<header class="kb-heading"><div><h1>{archive_mod.MEMORY_TITLE}</h1><p>她每天自己记的一页：那天在聊什么、哪句话最逗。想补充或纠正，写进「你告诉她的」。</p></div><a class="button" href="/knowledge">写点你告诉她的 →</a></header>
 {_knowledge_tabs("memory")}
 <div class="kb-toolbar"><span>已经攒下 {len(cards)} 页</span></div>
 {detail}
 {index}
 """
-    return _page("群史记", body, "memory", cfg=cfg)
+    return _page(archive_mod.MEMORY_TITLE, body, "memory", cfg=cfg)
 
 
 async def _search(cfg, request):

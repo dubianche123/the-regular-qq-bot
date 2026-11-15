@@ -764,8 +764,8 @@ def split_cmd(raw):
         # ⚠️ 容错第二层（2026-10-15 实测）：模型偶尔把标签**打坏**——群里出现过
         # 「想卖&*%"#$#想<CMD!卖了…」，`<CMD!` 连骨架都不全，整个漏进了群里。
         # 协议规定标签永远在最末尾，所以正文里残留任何 <CMD 片段，从那里砍到结尾，
-        # 并把原文记进日志——一次是模型抽风，两次以上就是新失败模式。
-        logger.warning("🧯 模型输出含打坏的协议标签，已截断。原文: %s", raw[:160])
+        # 并记一笔 —— 一次是模型抽风，两次以上就是新失败模式。原文在 turns/ 里（有保留期），日志只记长度。
+        logger.warning("🧯 模型输出含打坏的协议标签，已截断（原文 %d 字，见当轮 turns/ 记录）", len(raw))
         body = body[:stub.start()]
     body = _MARKUP.sub("", body)
     if not match:
@@ -1016,8 +1016,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         # 命中就重生成一次；两次都乱就照发并留痕——不在这里和模型无限拉扯。
         glitch = _garbage_run(body)
         if glitch:
-            logger.warning("🧯 模型输出疑似采样乱码（%s…），重生成一次。原文: %s",
-                           glitch[:10], raw[:140])
+            logger.warning("🧯 模型输出疑似采样乱码（%s…），重生成一次（原文 %d 字，见 turns/）",
+                           glitch[:10], len(raw))
             retried = True
             raw = await call_model(messages, max_tokens)
             body, payload = split_cmd(raw_reply_filter(raw) if raw_reply_filter is not None else raw)
@@ -2477,7 +2477,8 @@ async def judge_nick(nick):
     picks = re.findall(r"(?:^|\s)(OK|NG)(?:\s|$)", raw.upper())
     decision = picks[-1] if picks else ""
     if decision == "NG":
-        logger.info("🕵️ 称呼审核理由（NG）：%s", raw.replace("\n", " ")[:160])
+        # 理由里会照抄被审的称呼（群友打的字）：日志只记判了 NG 和长度
+        logger.info("🕵️ 称呼审核判了 NG（理由 %d 字）", len(raw))
         return False
     if decision == "OK":
         return True
@@ -2554,9 +2555,10 @@ async def run_digest(group_id, reason=""):
         runtime.DIGESTS.mark_compressed(
             group_id, ts=started, cursor=result.get("source_cursor", batch_cursor))
         runtime.STATE.mark_dirty()
-        logger.info("📜 群 %s 记忆已更新（%.1fs / %d 条）：%s",
+        # 只记长度：小本本那一页是从群聊里整理出来的，内容留在 memory/（同归档一起过保留期）
+        logger.info("📜 群 %s 记忆已更新（%.1fs / %d 条，小本本 %d 字）",
                     group_id[-6:], time.time() - started, result["entry_count"],
-                    (result.get("brief") or "")[:70])
+                    len(result.get("brief") or ""))
 
         # 承诺账本跟着摘要对齐：新出现的记上，摘要里消失的自动撤下
         if config.PROMISE_ENABLED:
@@ -4158,8 +4160,8 @@ def _plan_notes(turn):
 
     # 群聊长期记忆注入：**每日层只留共享的群表达参考**（口头禅/语气词）。
     # 个人材料不再进这层 —— 它随说话人与话题变化，属于本轮动态层（见下方
-    # personal_note）。简报/台账的独立出口照旧：群史记查询、催债定时任务、
-    # 查账触发词 —— 需要时查得到，不需要时不陪跑。
+    # personal_note）。简报/台账的独立出口照旧：面板的小本本、催债定时任务 ——
+    # 需要时查得到，不需要时不陪跑。
     summary = runtime.DIGESTS.get(group_id) if config.DIGEST_ENABLED else None
     group_memory = refresh_names(group_id, digest_mod.render_style(summary)) if summary else ""
 
