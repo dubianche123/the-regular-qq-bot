@@ -8,6 +8,7 @@ import asyncio
 import collections
 import contextvars
 import copy
+import dataclasses
 import hashlib
 import json
 from types import SimpleNamespace
@@ -452,6 +453,46 @@ def _who_label(group_id, oid):
     return ((r or {}).get("nick")
             or runtime.DISPLAY_NAMES.of(group_id, oid)
             or "一位群友")
+
+
+def _pick_background(history, sender, same, turns, now):
+    """挑哪些背景行：收件时冻结的群聊里还新鲜、又不是眼前这句（same）的最近 turns 条。
+
+    ⚠️ 必须按时间过滤（2026-10-06 实测）：buffer 是落盘的、跨重启保留，
+    机器睡了 12 天再醒来的第一条消息，配到的还是 12 天前的对话 ——
+    那不叫「最近背景」，叫考古。
+    这人刚发的图是他这句话的一部分：条数限的是能看多少别人的话，不该把他
+    递过来的图挤掉（2026-11-02 21:05 生人发图，隔两句问「这张怎么样」，图不在背景里）。
+    """
+    fresh = [b for b in history if 0 <= now - float(b.get("time") or 0)
+             <= config.GROUP_BUFFER_TTL_SECONDS]
+    earlier = [b for b in fresh if b["text"] != same]
+    return [b for b in earlier[:-turns] if _own_recent_image(b, sender, now)] + earlier[-turns:]
+
+
+def _render_background(group_id, sender, rows, own, *, until, now):
+    """把挑好的背景行渲染成 context_hint；own 是它自己说过的话（own_lines），until 是收件时刻。
+
+    必须标出发言人。之前只给一串裸文本，模型分不清哪句是谁说的，
+    于是把别人认领的名字安到了当前这位头上 —— 叫错人就是这么来的
+    （_who_label 已提为模块级：读图上下文共用，两处渲染不许漂移）。
+    """
+    if not rows:
+        return ""
+    lines = [(float(b.get("time") or 0),
+              f"- {'当前说话人' if b['sender'] == sender else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}")
+             for b in rows]
+    # 同一段时间里它自己说过的话按时间插进去（见 own_lines）；它自己刚画的图往前多看一段（_own_recent_drawing）
+    lines += [(o["time"], "- 你：" + (proactive.own_text(o)
+               if o.get("medium", "text") != "text" or o.get("status", "delivered") != "delivered"
+               else o["text"])) for o in own
+              if o["time"] <= until
+              and (lines[0][0] <= o["time"] or _own_recent_drawing(o, now))]
+    lines.sort(key=lambda line: line[0])
+    # ⚠️ 这行是对着「爱翻旧账的模型」写的（实测 Gemini 会把背景里别人的言行安到
+    # 当前说话人头上，一晚上把「当猫娘」安给了三个人）。所以要点名三件事：
+    # 每句都有主，当前说话人与其他人按 ID 区分，引用前先核对标记。
+    return _BG_PREAMBLE + "\n" + refresh_names(group_id, "\n".join(text for _, text in lines))
 
 
 def _vision_context(group_id):
@@ -1182,11 +1223,61 @@ def media_turn(group_id, user_id, score, *, asked, remind=False, voice=True):
                      note="\n".join(notes))
 
 
+@dataclasses.dataclass
+class ReplyTurn:
+    """持着会话锁的一轮回话。reply_in_session 的各段之间只传它。
+
+    上半是调用方交代的，一轮里不变；下半是这一轮写到哪儿了 —— 草稿、查询、提醒各自的进度，
+    哪一段写下的在字段旁边标着。
+    """
+    message: object
+    session_id: str
+    user_text: str
+    context: dict                 # get_ai_reply 的提示词参数；各段往里补本轮事实（media_note / search_*）
+    media: object = None          # MediaTurn：认不认〔画〕〔语音〕〔提醒〕；查询那轮会被收紧
+    on_delivered: object = None
+    owner_hint_group: str | None = None
+    prepared: tuple | None = None
+    prepared_local: bool = False
+    is_stale: object = None
+    reply_filter: object = None
+    raw_reply_filter: object = None
+    received_at: float | None = None
+    # ── 开场（_reply_begin）
+    generation: int = 0
+    deadline: float = 0.0
+    history: tuple = ()           # 观察 / 投递用的群聊快照，不进提示词
+    trace: dict = dataclasses.field(default_factory=dict)
+    reminder_revision: int = 0
+    reminder_intent: str | None = None
+    lookup_used: bool = False     # 这一轮的查询机会用掉没有（调用方查过也算）
+    lookup_allowed: bool = False
+    lookup_record: str = ""       # 记进会话的那句「查没查、查到没有」
+    lookup_acquired_at: float | None = None
+    # ── 草稿与动作（_reply_draft / _reply_lookup / _reply_media / _reply_reminder）
+    body: str | None = None
+    delta: int | None = None
+    completion: dict = dataclasses.field(default_factory=dict)
+    generated: bool = False       # 正文是不是模型这一轮写的（不是 prepared 的本地话、不是兜底）
+    said: object = None           # expression.Said：正文 + 它想做的动作
+    declined: bool = False        # 这张图判断说不画
+    pending_lookup: object = None   # 还在查的那个任务：投递以后转后台跟进
+    lookup_delta_locked: bool = False   # 查询那轮的好感方向以第一稿为准，重写不重复结算
+    lookup_delta: int | None = None
+    remind_note: str = ""
+    remind_applied: bool | None = None
+    recorded_remind: tuple | None = None
+    reminder_verdict: str | None = None
+
+
 async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
                            owner_hint_group=None, prepared=None, prepared_local=False,
                            media=None, is_stale=None, reply_filter=None, raw_reply_filter=None,
                            received_at=None, lookup_used=False, lookup_acquired_at=None, **context):
     """Serialize generation and send; queued delivery commits through the same callback.
+
+    开场 → 草稿 → 认动作（搜索 / 画图语音 / 提醒）→ 投递与落账，各段见下面的 _reply_*，段间只传 ReplyTurn。
+    中间哪一段返回了结果，这一轮就到那儿为止（没写出来、〔不接〕、时机过了）。
 
     prepared=(正文, 分值)：正文已经写好，只管发和记账；prepared_local 标记本地文案。
     media=MediaTurn：这一轮认不认小王写的〔画〕〔动图〕〔语音〕（见 media_turn）；None 时不执行媒介动作。
@@ -1195,382 +1286,457 @@ async def reply_in_session(message, session_id, user_text, *, on_delivered=None,
     raw_reply_filter：可选本地渠道清理，在通用标签清理之前移除完整内部块。
     """
     async with runtime.SESSIONS.lock(session_id):
-        generation = runtime.SESSIONS.begin_turn(session_id)
-        generation_deadline = time.monotonic() + config.AI_TOTAL_TIMEOUT
-        reminder_revision = getattr(media, "reminder_revision",
-                                    _reminder_revisions[getattr(media, "group", None)])
-        # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
-        # 从这里摘走，别漏进 get_ai_reply 的关键字里。
-        history = context.pop("history", ())
-        lookup_used = lookup_used or bool(context.get("search_note"))
-        lookup_allowed = bool(config.SEARCH_ENABLED and getattr(message, "group_openid", None)
-                              and not context.get("private") and not context.get("back_off"))
-        context["search_action_note"] = (prompts.PROMPT_SEARCH_USED if lookup_used else
-                                         prompts.PROMPT_SEARCH_AVAILABLE if lookup_allowed else
-                                         prompts.PROMPT_SEARCH_UNAVAILABLE)
-        pending_lookup = None
-        lookup_record = "本轮已联网查询并取得资料" if context.get("search_note") else ""
-        if context.get("search_note") and lookup_acquired_at is None:
-            lookup_acquired_at = time.time()
-        lookup_delta_locked, lookup_delta = False, None
-        media_notes = [context.get("media_note"), getattr(media, "note", "")]
-        unavailable = []
-        if not getattr(media, "draw", False):
-            unavailable.extend(("画图〔画〕", "动图〔动图〕"))
-        elif not getattr(media, "animate", False):
-            unavailable.append("动图〔动图〕")
-        if not getattr(media, "voice", False):
-            unavailable.append("发语音〔语音〕")
-        if unavailable:
-            media_notes.append("【本轮能力限制】这轮不执行" + "、".join(unavailable)
-                               + "；不要写这些动作标记，也不要承诺开始或正在做这些事。"
-                                 "仍可照常接话；具体原因以本轮提示为准。")
-        context["media_note"] = "\n".join(filter(None, media_notes))
-        reminder_intent = getattr(media, "reminder_intent", None)
-        if getattr(media, "remind", False) and reminder_intent in ("clarify", "decline"):
-            context["media_note"] = "\n".join(filter(None, (
-                context.get("media_note"), prompts.PROMPT_REMIND_OUTCOME[reminder_intent])))
-        elif getattr(media, "remind", False) and reminder_intent == "clear":
-            context["media_note"] = "\n".join(filter(None, (
-                context.get("media_note"), prompts.PROMPT_REMIND_CLEAR)))
-        # 本轮的注入痕迹 + 实际应答候选：都先重置再取，被 mock/失败的调用
-        # 不会带着上一轮的出处来冒充。
-        trace = {"personal_memory_used": False,
-                 # 每轮输入记录要的「谁、在哪、回的哪条」；get_ai_reply 记完把 turn_id 写回来
-                 "group": getattr(message, "group_openid", None),
-                 "user": getattr(getattr(message, "author", None), "member_openid", None),
-                 "message_id": getattr(message, "id", None)}
-        async def generate():
-            token = _reply_trace.set(trace)
-            providers.reset_completion_meta()
-            try:
-                generation_context = dict(context)
-                if received_at is not None:
-                    generation_context["timeline_note"] = _later_scene(
-                        trace["group"], trace["user"], received_at)
-                if raw_reply_filter is not None:
-                    generation_context["raw_reply_filter"] = raw_reply_filter
-                if prepared is not None:
-                    body, delta = prepared
-                    completion = providers.completion_meta()
-                else:
-                    remaining = generation_deadline - time.monotonic()
-                    if remaining <= 0:
-                        return None, None, {}
-                    try:
-                        async def complete():
-                            body, delta = await get_ai_reply(
-                                session_id, user_text, allow_fallback=False, **generation_context)
-                            # wait_for runs a child task: read its ContextVar here,
-                            # rather than losing actual model provenance in the parent.
-                            return body, delta, providers.completion_meta()
-                        body, delta, completion = await asyncio.wait_for(complete(), timeout=remaining)
-                    except asyncio.TimeoutError:
-                        return None, None, {}
-                if lookup_used and expression.parse(body).kind == "search":
-                    body = "这次的资料还不足以确认，先不下结论。"
-                return body, delta, completion
-            finally:
-                _reply_trace.reset(token)
+        rt = ReplyTurn(message=message, session_id=session_id, user_text=user_text, context=context,
+                       media=media, on_delivered=on_delivered, owner_hint_group=owner_hint_group,
+                       prepared=prepared, prepared_local=prepared_local, is_stale=is_stale,
+                       reply_filter=reply_filter, raw_reply_filter=raw_reply_filter,
+                       received_at=received_at, lookup_used=lookup_used,
+                       lookup_acquired_at=lookup_acquired_at)
+        _reply_begin(rt)
+        for stage in (_reply_draft, _reply_lookup, _reply_media, _reply_reminder):
+            outcome = await stage(rt)
+            if outcome is not None:
+                return outcome
+        return await _reply_deliver(rt)
 
-        body, delta, completion = await generate()
-        if body and reply_filter is not None:
-            body = reply_filter(body)
-        generated = bool(body) and not prepared_local
-        if not generated and prepared is None and context.get("unprompted"):
-            return "", delta, None   # 没叫它的这轮没生成出来：不说，不拿兜底话凑一句
-        said = expression.parse(body) if generated else expression.Said(None, "", body or "")
-        if said.kind == "pass" and not (getattr(media, "remind", False)
-                                        and reminder_intent in ("clarify", "decline")):
-            logger.info("🤐 这句不接（%s）", session_id[-12:])
-            return "", delta, None
-        if is_stale is not None and is_stale():
-            logger.info("⌛ 写好了没发：群里已经接着聊了（%s）", session_id[-12:])
-            return "", delta, None
-        if said.kind == "search":
-            # The proposal is private. Only a result draft may execute other actions.
-            original_delta = delta
-            lookup_delta_locked, lookup_delta = True, delta
-            if media is not None:
-                media = MediaTurn(**(vars(media) | {"remind": False, "voice": False}))
-            reminder_intent = None
-            context["media_note"] += "\n【查询轮能力】这轮不发语音、不保存或取消提醒；查到资料后仍可按原有规则画图。"
-            if lookup_used or not lookup_allowed:
-                said = expression.Said(None, "", "这轮没法再查了，暂时还不能确认。")
+
+def _reply_begin(rt):
+    """开场：起一轮生成，把这一轮「能查吗、能画能念吗、提醒办到哪了」写进本轮动态层的参数。"""
+    message, session_id, media, context = rt.message, rt.session_id, rt.media, rt.context
+    lookup_used, lookup_acquired_at = rt.lookup_used, rt.lookup_acquired_at
+    generation = runtime.SESSIONS.begin_turn(session_id)
+    deadline = time.monotonic() + config.AI_TOTAL_TIMEOUT
+    reminder_revision = getattr(media, "reminder_revision",
+                                _reminder_revisions[getattr(media, "group", None)])
+    # 观察/投递用的群聊上下文快照是投递元数据，不是提示词参数 ——
+    # 从这里摘走，别漏进 get_ai_reply 的关键字里。
+    history = context.pop("history", ())
+    lookup_used = lookup_used or bool(context.get("search_note"))
+    lookup_allowed = bool(config.SEARCH_ENABLED and getattr(message, "group_openid", None)
+                          and not context.get("private") and not context.get("back_off"))
+    context["search_action_note"] = (prompts.PROMPT_SEARCH_USED if lookup_used else
+                                     prompts.PROMPT_SEARCH_AVAILABLE if lookup_allowed else
+                                     prompts.PROMPT_SEARCH_UNAVAILABLE)
+    lookup_record = "本轮已联网查询并取得资料" if context.get("search_note") else ""
+    if context.get("search_note") and lookup_acquired_at is None:
+        lookup_acquired_at = time.time()
+    media_notes = [context.get("media_note"), getattr(media, "note", "")]
+    unavailable = []
+    if not getattr(media, "draw", False):
+        unavailable.extend(("画图〔画〕", "动图〔动图〕"))
+    elif not getattr(media, "animate", False):
+        unavailable.append("动图〔动图〕")
+    if not getattr(media, "voice", False):
+        unavailable.append("发语音〔语音〕")
+    if unavailable:
+        media_notes.append("【本轮能力限制】这轮不执行" + "、".join(unavailable)
+                           + "；不要写这些动作标记，也不要承诺开始或正在做这些事。"
+                             "仍可照常接话；具体原因以本轮提示为准。")
+    context["media_note"] = "\n".join(filter(None, media_notes))
+    reminder_intent = getattr(media, "reminder_intent", None)
+    if getattr(media, "remind", False) and reminder_intent in ("clarify", "decline"):
+        context["media_note"] = "\n".join(filter(None, (
+            context.get("media_note"), prompts.PROMPT_REMIND_OUTCOME[reminder_intent])))
+    elif getattr(media, "remind", False) and reminder_intent == "clear":
+        context["media_note"] = "\n".join(filter(None, (
+            context.get("media_note"), prompts.PROMPT_REMIND_CLEAR)))
+    # 本轮的注入痕迹 + 实际应答候选：都先重置再取，被 mock/失败的调用
+    # 不会带着上一轮的出处来冒充。
+    trace = {"personal_memory_used": False,
+             # 每轮输入记录要的「谁、在哪、回的哪条」；get_ai_reply 记完把 turn_id 写回来
+             "group": getattr(message, "group_openid", None),
+             "user": getattr(getattr(message, "author", None), "member_openid", None),
+             "message_id": getattr(message, "id", None)}
+
+    rt.generation, rt.deadline, rt.reminder_revision = generation, deadline, reminder_revision
+    rt.history, rt.trace, rt.reminder_intent = history, trace, reminder_intent
+    rt.lookup_used, rt.lookup_allowed = lookup_used, lookup_allowed
+    rt.lookup_record, rt.lookup_acquired_at = lookup_record, lookup_acquired_at
+
+
+async def _reply_generate(rt):
+    """照 rt.context 此刻的样子生成一次（prepared 的那轮不调模型）。返回 (正文, 好感方向, 实际应答的候选)。
+
+    一轮里可能调几次：查完资料再写、被拒画后重写、提醒没过审重写 —— 每次都看得到前面各段补进去的事实。
+    """
+    token = _reply_trace.set(rt.trace)
+    providers.reset_completion_meta()
+    try:
+        generation_context = dict(rt.context)
+        if rt.received_at is not None:
+            generation_context["timeline_note"] = _later_scene(
+                rt.trace["group"], rt.trace["user"], rt.received_at)
+        if rt.raw_reply_filter is not None:
+            generation_context["raw_reply_filter"] = rt.raw_reply_filter
+        if rt.prepared is not None:
+            body, delta = rt.prepared
+            completion = providers.completion_meta()
+        else:
+            remaining = rt.deadline - time.monotonic()
+            if remaining <= 0:
+                return None, None, {}
+            try:
+                async def complete():
+                    body, delta = await get_ai_reply(
+                        rt.session_id, rt.user_text, allow_fallback=False, **generation_context)
+                    # wait_for runs a child task: read its ContextVar here,
+                    # rather than losing actual model provenance in the parent.
+                    return body, delta, providers.completion_meta()
+                body, delta, completion = await asyncio.wait_for(complete(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return None, None, {}
+        if rt.lookup_used and expression.parse(body).kind == "search":
+            body = "这次的资料还不足以确认，先不下结论。"
+        return body, delta, completion
+    finally:
+        _reply_trace.reset(token)
+
+
+async def _reply_draft(rt):
+    """草稿：生成第一稿并读出它想做什么（expression.parse）。没写出来、写了〔不接〕、时机过了，这一轮到此为止。"""
+    session_id, context, media, reminder_intent = rt.session_id, rt.context, rt.media, rt.reminder_intent
+    prepared, prepared_local, reply_filter, is_stale = rt.prepared, rt.prepared_local, rt.reply_filter, rt.is_stale
+    body, delta, completion = await _reply_generate(rt)
+    if body and reply_filter is not None:
+        body = reply_filter(body)
+    generated = bool(body) and not prepared_local
+    if not generated and prepared is None and context.get("unprompted"):
+        return "", delta, None   # 没叫它的这轮没生成出来：不说，不拿兜底话凑一句
+    said = expression.parse(body) if generated else expression.Said(None, "", body or "")
+    if said.kind == "pass" and not (getattr(media, "remind", False)
+                                    and reminder_intent in ("clarify", "decline")):
+        logger.info("🤐 这句不接（%s）", session_id[-12:])
+        return "", delta, None
+    if is_stale is not None and is_stale():
+        logger.info("⌛ 写好了没发：群里已经接着聊了（%s）", session_id[-12:])
+        return "", delta, None
+    rt.body, rt.delta, rt.completion, rt.generated, rt.said = body, delta, completion, generated, said
+
+
+async def _reply_lookup(rt):
+    """动作 · 〔搜索〕：这一轮唯一的一次查询机会。查到了带着资料重写；还在查就先应一句、转后台跟进。"""
+    message, session_id, user_text, context = rt.message, rt.session_id, rt.user_text, rt.context
+    media, reminder_intent, said, body = rt.media, rt.reminder_intent, rt.said, rt.body
+    delta, completion, generated = rt.delta, rt.completion, rt.generated
+    reply_filter, is_stale, received_at = rt.reply_filter, rt.is_stale, rt.received_at
+    lookup_record, lookup_acquired_at, pending_lookup = rt.lookup_record, rt.lookup_acquired_at, rt.pending_lookup
+    if said.kind == "search":
+        # The proposal is private. Only a result draft may execute other actions.
+        original_delta = delta
+        rt.lookup_delta_locked, rt.lookup_delta = True, delta
+        if media is not None:
+            media = MediaTurn(**(vars(media) | {"remind": False, "voice": False}))
+        reminder_intent = None
+        context["media_note"] += "\n【查询轮能力】这轮不发语音、不保存或取消提醒；查到资料后仍可按原有规则画图。"
+        if rt.lookup_used or not rt.lookup_allowed:
+            said = expression.Said(None, "", "这轮没法再查了，暂时还不能确认。")
+        else:
+            rt.lookup_used = True  # failure and quota denial also exhaust this turn
+            context["search_action_note"] = prompts.PROMPT_SEARCH_USED
+            state, note, handle = await _model_lookup(
+                message, said.spec, media, seconds=max(0, rt.deadline - time.monotonic()))
+            if state == slowwork.RUNNING:
+                pending_lookup = handle
+                said = expression.Said(None, "", "我去查查，等我一会儿。")
+                body = said.text
+                generated = False
+                lookup_record = "联网查询任务已启动，仍在等待结果"
             else:
-                lookup_used = True  # failure and quota denial also exhaust this turn
-                context["search_action_note"] = prompts.PROMPT_SEARCH_USED
-                state, note, handle = await _model_lookup(
-                    message, said.spec, media, seconds=max(0, generation_deadline - time.monotonic()))
-                if state == slowwork.RUNNING:
-                    pending_lookup = handle
-                    said = expression.Said(None, "", "我去查查，等我一会儿。")
+                context["search_note"] = note if state == slowwork.DONE else ""
+                if state == slowwork.DONE:
+                    lookup_acquired_at = time.time()
+                lookup_record = "本轮已联网查询并取得资料" if state == slowwork.DONE else note
+                context["search_action_note"] += ("\n【查询实际结果】查询已完成，资料见下方，直接回答原问题。"
+                                                   if state == slowwork.DONE else
+                                                   "\n【查询实际结果】" + note + "；这轮不再查询，不要说正在查或已经查到。")
+                body, _, completion = await _reply_generate(rt)
+                if body and reply_filter is not None:
+                    body = reply_filter(body)
+                generated = bool(body)
+                said = expression.parse(body) if body else expression.Said(None, "", "这次没能整理出可靠的答复，先不乱说。")
+                if said.kind == "search":
+                    said = expression.Said(None, "", "这次的资料还不足以确认，先不下结论。")
+                if not generated:
                     body = said.text
-                    generated = False
-                    lookup_record = "联网查询任务已启动，仍在等待结果"
-                else:
-                    context["search_note"] = note if state == slowwork.DONE else ""
-                    if state == slowwork.DONE:
-                        lookup_acquired_at = time.time()
-                    lookup_record = "本轮已联网查询并取得资料" if state == slowwork.DONE else note
-                    context["search_action_note"] += ("\n【查询实际结果】查询已完成，资料见下方，直接回答原问题。"
-                                                       if state == slowwork.DONE else
-                                                       "\n【查询实际结果】" + note + "；这轮不再查询，不要说正在查或已经查到。")
-                    body, _, completion = await generate()
-                    if body and reply_filter is not None:
-                        body = reply_filter(body)
-                    generated = bool(body)
-                    said = expression.parse(body) if body else expression.Said(None, "", "这次没能整理出可靠的答复，先不乱说。")
-                    if said.kind == "search":
-                        said = expression.Said(None, "", "这次的资料还不足以确认，先不下结论。")
-                    if not generated:
-                        body = said.text
-                delta = original_delta
-            if is_stale is not None and is_stale():
-                if pending_lookup:
-                    _queue_lookup(message, session_id, user_text, "search", pending_lookup,
-                                  context, media, received_at=received_at)
-                return "", delta, None
-            if said.kind == "pass":
-                return "", delta, None
-        if said.kind == "image" and not (media is not None and media.draw
-                and (not said.animated or getattr(media, "animate", False))):
-            logger.info("🎨 这一轮不执行作图标记，交代未执行（%s）", session_id[-12:])
-            # 动作和承诺是一起生成的，不能只摘掉动作、把「我这就画」照发出去。
-            reason = ("animation_unavailable" if getattr(media, "draw", False)
-                      else getattr(media, "draw_unavailable_reason", None) or "unavailable")
-            said = expression.Said(None, "", expression.image_failed_line(reason), said.remind)
-        declined = said.kind == "image" and await _drawing_declined(message, media, said, history)
-        if declined:
-            # 这张不画（见 _drawing_declined）：带着 PROMPT_DRAW_DECLINED 重写一遍，让它用自己的话推掉；
-            # 重写的还想画、或者没写出话来，就用本地那句。
-            context["media_note"] = "\n".join(
-                part for part in (context.get("media_note"), prompts.PROMPT_DRAW_DECLINED) if part)
-            body, delta, completion = await generate()
-            said = expression.parse(body) if body else expression.PASS
-            if said.kind in ("image", "pass") or not said.text:
-                said = expression.Said(None, "", expression.image_failed_line("declined"), said.remind)
-        if said.kind == "voice" and not (media is not None and media.voice):
-            said = expression.Said(None, "", said.text, said.remind)
-        body = said.text if generated else (body or _pick_fallback())
-        # 〔提醒 …〕：发出去之前就登记，记不上的原因补在它那句话后面（它已经答应了，得说实话）
-        remind_note = ""
-        remind_applied = None
-        recorded_remind = said.remind
-        reminder_verdict = None
-        if getattr(media, "remind", False) and (
-                said.remind or reminder_intent in ("clarify", "decline")):
-            proposed = said.remind
+            delta = original_delta
+        if is_stale is not None and is_stale():
+            if pending_lookup:
+                _queue_lookup(message, session_id, user_text, "search", pending_lookup,
+                              context, media, received_at=received_at)
+            return "", delta, None
+        if said.kind == "pass":
+            return "", delta, None
+    rt.media, rt.reminder_intent, rt.said, rt.body = media, reminder_intent, said, body
+    rt.delta, rt.completion, rt.generated = delta, completion, generated
+    rt.lookup_record, rt.lookup_acquired_at, rt.pending_lookup = lookup_record, lookup_acquired_at, pending_lookup
+
+
+async def _reply_media(rt):
+    """动作 · 〔画〕〔动图〕〔语音〕：这一轮不认的、判断说不该画的，改成一句交代；定下要发的正文。"""
+    message, session_id, context, history = rt.message, rt.session_id, rt.context, rt.history
+    media, said, body, delta = rt.media, rt.said, rt.body, rt.delta
+    completion, generated = rt.completion, rt.generated
+    if said.kind == "image" and not (media is not None and media.draw
+            and (not said.animated or getattr(media, "animate", False))):
+        logger.info("🎨 这一轮不执行作图标记，交代未执行（%s）", session_id[-12:])
+        # 动作和承诺是一起生成的，不能只摘掉动作、把「我这就画」照发出去。
+        reason = ("animation_unavailable" if getattr(media, "draw", False)
+                  else getattr(media, "draw_unavailable_reason", None) or "unavailable")
+        said = expression.Said(None, "", expression.image_failed_line(reason), said.remind)
+    declined = said.kind == "image" and await _drawing_declined(message, media, said, history)
+    if declined:
+        # 这张不画（见 _drawing_declined）：带着 PROMPT_DRAW_DECLINED 重写一遍，让它用自己的话推掉；
+        # 重写的还想画、或者没写出话来，就用本地那句。
+        context["media_note"] = "\n".join(
+            part for part in (context.get("media_note"), prompts.PROMPT_DRAW_DECLINED) if part)
+        body, delta, completion = await _reply_generate(rt)
+        said = expression.parse(body) if body else expression.PASS
+        if said.kind in ("image", "pass") or not said.text:
+            said = expression.Said(None, "", expression.image_failed_line("declined"), said.remind)
+    if said.kind == "voice" and not (media is not None and media.voice):
+        said = expression.Said(None, "", said.text, said.remind)
+    body = said.text if generated else (body or _pick_fallback())
+    rt.said, rt.body, rt.delta, rt.completion, rt.declined = said, body, delta, completion, declined
+
+
+async def _reply_reminder(rt):
+    """动作 · 〔提醒〕：发出去之前登记；没过审就带着真实结果重写一次。只写了标记没写话的，这一轮不说。"""
+    session_id, user_text, context, history = rt.session_id, rt.user_text, rt.context, rt.history
+    trace, media, reminder_intent, reminder_revision = rt.trace, rt.media, rt.reminder_intent, rt.reminder_revision
+    said, body, delta, completion = rt.said, rt.body, rt.delta, rt.completion
+    # 〔提醒 …〕：发出去之前就登记，记不上的原因补在它那句话后面（它已经答应了，得说实话）
+    remind_note = ""
+    remind_applied = None
+    recorded_remind = said.remind
+    reminder_verdict = None
+    if getattr(media, "remind", False) and (
+            said.remind or reminder_intent in ("clarify", "decline")):
+        proposed = said.remind
+        ids = (media.group, media.user, trace.get("message_id"), runtime.OWNER_OPENID,
+               *(row.get("sender") for row in history if isinstance(row, dict)))
+        if proposed is None:
+            reminder_verdict = reminder_intent
+        elif proposed[0] == "set":
+            proposed = ("set", proposed[1], (proposed[2] or "").strip()[:100])
             ids = (media.group, media.user, trace.get("message_id"), runtime.OWNER_OPENID,
                    *(row.get("sender") for row in history if isinstance(row, dict)))
-            if proposed is None:
+            review_kwargs = {
+                "context": "\n".join(filter(None, (context.get("context_hint"),
+                                        context.get("reply_context"), context.get("media_note")))),
+                "history": runtime.SESSIONS._sessions.get(session_id, {}).get("messages", ())[-4:],
+                "known_ids": ids}
+            if reminder_revision != _reminder_revisions[media.group]:
+                reminder_verdict = "superseded"
+            elif reminder_intent in ("clarify", "decline"):
                 reminder_verdict = reminder_intent
-            elif proposed[0] == "set":
-                proposed = ("set", proposed[1], (proposed[2] or "").strip()[:100])
-                ids = (media.group, media.user, trace.get("message_id"), runtime.OWNER_OPENID,
-                       *(row.get("sender") for row in history if isinstance(row, dict)))
-                review_kwargs = {
-                    "context": "\n".join(filter(None, (context.get("context_hint"),
-                                            context.get("reply_context"), context.get("media_note")))),
-                    "history": runtime.SESSIONS._sessions.get(session_id, {}).get("messages", ())[-4:],
-                    "known_ids": ids}
-                if reminder_revision != _reminder_revisions[media.group]:
-                    reminder_verdict = "superseded"
-                elif reminder_intent in ("clarify", "decline"):
-                    reminder_verdict = reminder_intent
-                else:
-                    reminder_verdict = await reminder_review.review_reminder(
-                        user_text, proposed[2], proposed[1], **review_kwargs)
-                    _record_reminder_review(trace, user_text, proposed, review_kwargs, reminder_verdict)
-                if reminder_revision != _reminder_revisions[media.group]:
-                    reminder_verdict = "superseded"
-            if reminder_verdict in (None, "allow"):
-                remind_note, remind_line = reminders.apply(
-                    runtime.SCHEDULER, media.group, media.user, proposed, time.time(),
-                    blocked=reminder_review.task_blocked)
-                remind_applied = bool(
-                    remind_note.startswith("提醒记下了：") or remind_note.startswith("提醒取消了"))
-                if remind_applied and proposed[0] == "set":
-                    payload = runtime.SCHEDULER.tasks[reminders.task_id(media.group, media.user)]["payload"]
-                    payload.update(review_policy=reminder_review.POLICY_VERSION,
-                                   reviewed_what=payload["what"], reviewed_daily=payload["daily"])
-                recorded_remind = proposed
             else:
-                # 先前答应的正文不能继续用；只重写一次，仍写功能标记则落准确的本地说明。
-                old = runtime.SCHEDULER.tasks.get(reminders.task_id(media.group, media.user))
-                note = prompts.PROMPT_REMIND_OUTCOME[reminder_verdict]
-                if old is not None:
-                    note += "\n已有提醒保持原状，不要声称取消或改了它。"
-                context["media_note"] = "\n".join(filter(None, (context.get("media_note"), note)))
-                if proposed is None:
-                    parsed = said   # 前置分诊已约束过第一次生成；不再为无动作的回复循环改写。
-                else:
-                    rewritten, delta, completion = await generate()
-                    parsed = expression.parse(rewritten)
-                valid = bool(parsed.kind is None and parsed.remind is None and parsed.text)
-                if valid:
-                    valid = await reminder_review.check_response(
-                        parsed.text, reminder_verdict, request=user_text, known_ids=ids)
-                    _record_reminder_response(trace, parsed.text, reminder_verdict, user_text, ids, valid)
-                body = parsed.text if valid else _reminder_not_saved_line(reminder_verdict)
-                said = expression.Said(None, "", body)
-                recorded_remind = None
-                remind_applied = False
-                remind_note = _reminder_not_saved_line(reminder_verdict)
-                old = runtime.SCHEDULER.tasks.get(reminders.task_id(media.group, media.user))
-                remind_line = f"（{remind_note}{'；原来的提醒没改' if old is not None else ''}）"
-                if body == remind_note:
-                    remind_line = "（原来的提醒没改）" if old is not None else ""
-            runtime.STATE.mark_dirty()
-            logger.info("⏰ %s（%s）", remind_note, session_id[-12:])
-            body = "\n".join(part for part in (body, remind_line) if part) or remind_note
-        elif said.remind:
+                reminder_verdict = await reminder_review.review_reminder(
+                    user_text, proposed[2], proposed[1], **review_kwargs)
+                _record_reminder_review(trace, user_text, proposed, review_kwargs, reminder_verdict)
+            if reminder_revision != _reminder_revisions[media.group]:
+                reminder_verdict = "superseded"
+        if reminder_verdict in (None, "allow"):
+            remind_note, remind_line = reminders.apply(
+                runtime.SCHEDULER, media.group, media.user, proposed, time.time(),
+                blocked=reminder_review.task_blocked)
+            remind_applied = bool(
+                remind_note.startswith("提醒记下了：") or remind_note.startswith("提醒取消了"))
+            if remind_applied and proposed[0] == "set":
+                payload = runtime.SCHEDULER.tasks[reminders.task_id(media.group, media.user)]["payload"]
+                payload.update(review_policy=reminder_review.POLICY_VERSION,
+                               reviewed_what=payload["what"], reviewed_daily=payload["daily"])
+            recorded_remind = proposed
+        else:
+            # 先前答应的正文不能继续用；只重写一次，仍写功能标记则落准确的本地说明。
+            old = runtime.SCHEDULER.tasks.get(reminders.task_id(media.group, media.user))
+            note = prompts.PROMPT_REMIND_OUTCOME[reminder_verdict]
+            if old is not None:
+                note += "\n已有提醒保持原状，不要声称取消或改了它。"
+            context["media_note"] = "\n".join(filter(None, (context.get("media_note"), note)))
+            if proposed is None:
+                parsed = said   # 前置分诊已约束过第一次生成；不再为无动作的回复循环改写。
+            else:
+                rewritten, delta, completion = await _reply_generate(rt)
+                parsed = expression.parse(rewritten)
+            valid = bool(parsed.kind is None and parsed.remind is None and parsed.text)
+            if valid:
+                valid = await reminder_review.check_response(
+                    parsed.text, reminder_verdict, request=user_text, known_ids=ids)
+                _record_reminder_response(trace, parsed.text, reminder_verdict, user_text, ids, valid)
+            body = parsed.text if valid else _reminder_not_saved_line(reminder_verdict)
+            said = expression.Said(None, "", body)
+            recorded_remind = None
             remind_applied = False
-        if lookup_delta_locked:
-            delta = lookup_delta
-        if not body and said.kind != "image":
-            return body, delta, None   # 只写了个标记、没写话：当它这轮不说
-        hinted = f"{body}\n{OWNER_CLAIM_HINT}"
-        # 会话里记的那条：默认就是发出去的字；画了图、发了语音，换成带标记和结果的那条
-        # （expression.record）—— 下一轮小王看见的是自己实际做了什么，而不是只看见一句话。
-        # 记了提醒的，再把提醒那行和记没记上包在外面（expression.record_reminder）。
-        recorded = {"as": expression.record_declined(body) if declined else None}
+            remind_note = _reminder_not_saved_line(reminder_verdict)
+            old = runtime.SCHEDULER.tasks.get(reminders.task_id(media.group, media.user))
+            remind_line = f"（{remind_note}{'；原来的提醒没改' if old is not None else ''}）"
+            if body == remind_note:
+                remind_line = "（原来的提醒没改）" if old is not None else ""
+        runtime.STATE.mark_dirty()
+        logger.info("⏰ %s（%s）", remind_note, session_id[-12:])
+        body = "\n".join(part for part in (body, remind_line) if part) or remind_note
+    elif said.remind:
+        remind_applied = False
+    if rt.lookup_delta_locked:
+        delta = rt.lookup_delta
+    if not body and said.kind != "image":
+        return body, delta, None   # 只写了个标记、没写话：当它这轮不说
+    rt.said, rt.body, rt.delta, rt.completion = said, body, delta, completion
+    rt.remind_note, rt.remind_applied = remind_note, remind_applied
+    rt.recorded_remind, rt.reminder_verdict = recorded_remind, reminder_verdict
 
-        def as_recorded(text):
-            if lookup_record:
-                text = f"{text}\n（系统：{lookup_record}）"
-            if not remind_note:
-                return text
-            if recorded_remind is not None:
-                return expression.record_reminder(text, recorded_remind, remind_note)
-            return f"{text}\n（系统：{remind_note}）"
 
-        def prepare():
-            return hinted if generated and owner_hint_pending(owner_hint_group) else body
+async def _reply_deliver(rt):
+    """投递与落账：语音、图、文字三种发法；确认送达了才记进会话、留查询证据、消费里程碑（commit）。"""
+    message, session_id, user_text, context = rt.message, rt.session_id, rt.user_text, rt.context
+    history, trace, media, generation = rt.history, rt.trace, rt.media, rt.generation
+    on_delivered, owner_hint_group, is_stale, received_at = rt.on_delivered, rt.owner_hint_group, rt.is_stale, rt.received_at
+    said, body, delta, completion = rt.said, rt.body, rt.delta, rt.completion
+    generated, declined = rt.generated, rt.declined
+    lookup_record, lookup_acquired_at, pending_lookup = rt.lookup_record, rt.lookup_acquired_at, rt.pending_lookup
+    remind_note, remind_applied, reminder_revision = rt.remind_note, rt.remind_applied, rt.reminder_revision
+    recorded_remind, reminder_verdict = rt.recorded_remind, rt.reminder_verdict
+    hinted = f"{body}\n{OWNER_CLAIM_HINT}"
+    # 会话里记的那条：默认就是发出去的字；画了图、发了语音，换成带标记和结果的那条
+    # （expression.record）—— 下一轮小王看见的是自己实际做了什么，而不是只看见一句话。
+    # 记了提醒的，再把提醒那行和记没记上包在外面（expression.record_reminder）。
+    recorded = {"as": expression.record_declined(body) if declined else None}
 
-        evidence = (_lookup_evidence_for(message, user_text, context["search_note"],
-                                         acquired_at=lookup_acquired_at)
-                    if context.get("search_note") else None)
+    def as_recorded(text):
+        if lookup_record:
+            text = f"{text}\n（系统：{lookup_record}）"
+        if not remind_note:
+            return text
+        if recorded_remind is not None:
+            return expression.record_reminder(text, recorded_remind, remind_note)
+        return f"{text}\n（系统：{remind_note}）"
 
-        def retain_lookup():
-            if evidence and runtime.SESSIONS.generation(session_id) == generation:
-                runtime.SESSIONS.remember_lookup(session_id, evidence)
+    def prepare():
+        return hinted if generated and owner_hint_pending(owner_hint_group) else body
 
-        def commit(result):
-            if runtime.SESSIONS.generation(session_id) != generation:
-                return  # a reset action invalidated this old pending reply
-            if said.kind != "image":   # 画图那轮等图的结果出来再一起记
-                runtime.SESSIONS.record(session_id, user_text, as_recorded(recorded["as"] or result.text),
-                                        received_at=received_at)
-            retain_lookup()
-            if generated and result.text in (body, hinted):
-                if result.text == hinted:
-                    runtime.STATE.data.setdefault("groups", {}).setdefault(owner_hint_group, {})["owner_hint"] = True
-                if on_delivered:
-                    on_delivered()
-            runtime.STATE.mark_dirty()
+    evidence = (_lookup_evidence_for(message, user_text, context["search_note"],
+                                     acquired_at=lookup_acquired_at)
+                if context.get("search_note") else None)
 
-        member = getattr(getattr(message, "author", None), "member_openid", None)
-        source_id = getattr(message, "id", None)
-        interaction = {
-            "history": history,
-            "route": "banter" if context.get("unprompted") else "reply",
-            "generation": "model" if generated else "local_fallback",
-            # supplied ≠ injected：这三个只说明上下文材料送到了组装口，
-            # 喊停等抑制路径下它们可能根本没进提示词。
-            "knowledge_supplied": bool(context.get("knowledge_note")),
-            "recall_supplied": bool(context.get("recall_note")),
-            "search_supplied": bool(context.get("search_note")),
-            "personal_memory_used": bool(trace.get("personal_memory_used")),
-            "personal_memory_enabled": bool(config.PERSONAL_MEMORY_ENABLED),
-        }
-        if completion:
-            interaction.update(completion)  # 真正答上来的 provider/model/tier/finish
-        if remind_applied is not None:
-            interaction["remind_applied"] = remind_applied
-        if reminder_verdict is not None:
-            interaction["reminder_review"] = reminder_verdict
-        if trace.get("turn_id"):
-            interaction["turn_id"] = trace["turn_id"]   # 这句话是哪一轮输入生成的（data/turns）
-        # 只有「本群 + 有源发言者 + 有源消息 ID」的 AI 会话回复才可被反馈绑定；
-        # 本地命令、主动广播、私聊都不在反馈口径里。
-        interaction["feedback_eligible"] = bool(
-            getattr(message, "group_openid", None) and member and source_id)
-        if is_stale is not None and is_stale():
-            return "", delta, None
-        if said.kind == "voice":
-            # 发语音持 owner-hint 锁：念出去的那句不能在合成途中被认主提示改掉。
-            async with owner_hint_lock(owner_hint_group):
-                voice_result = receipt = None
-                attempted = not owner_hint_pending(owner_hint_group)
-                if attempted:
-                    _note_media(message, member, "voice", "started")
-                    try:
-                        voice_result, receipt = await _VOICE_OUT.attempt(
-                            message, body, SENDER,
-                            lambda: (runtime.SESSIONS.generation(session_id) == generation
-                                     and (is_stale is None or not is_stale())),
-                            tone=said.spec)
-                    except Exception:
-                        # 意外异常可能发生在 QQ 已收下语音之后：保守起见不再补发文字。
-                        logger.warning("语音发送状态不明，停止本轮投递")
-                        _note_own_line(getattr(message, "group_openid", None), body,
-                                       medium="voice", status="unconfirmed")
-                        _note_media(message, member, "voice", "unconfirmed")
-                        return body, delta, DeliveryResult("unknown", body)
-                status = getattr(voice_result, "status", None)
-                if attempted and status != "sent":
-                    _note_media(message, member, "voice",
-                                "unconfirmed" if status == "delivery_unknown" else "failed")
-                if status == "sent":
-                    recorded["as"] = expression.record(said, True)
-                    meta = dict(interaction)
-                    meta["medium"] = "voice"
-                    meta.update(source_message_id=source_id, user=member,
-                                policy_id=config.INTERACTION_POLICY_ID)
-                    observer = _delivery_observer(uuid.uuid4().hex, getattr(message, "group_openid", None), meta, member)
-                    item = PendingSend(message, body, time.time(), on_delivered=commit,
-                                       on_outcome=observer)
-                    result = await SENDER._delivered(item, receipt)
-                    return body, delta, result
-                if status == "delivery_unknown":
-                    # 语音可能已经在群里了：不能再补一条文字，也不能记成确认送达。
+    def retain_lookup():
+        if evidence and runtime.SESSIONS.generation(session_id) == generation:
+            runtime.SESSIONS.remember_lookup(session_id, evidence)
+
+    def commit(result):
+        if runtime.SESSIONS.generation(session_id) != generation:
+            return  # a reset action invalidated this old pending reply
+        if said.kind != "image":   # 画图那轮等图的结果出来再一起记
+            runtime.SESSIONS.record(session_id, user_text, as_recorded(recorded["as"] or result.text),
+                                    received_at=received_at)
+        retain_lookup()
+        if generated and result.text in (body, hinted):
+            if result.text == hinted:
+                runtime.STATE.data.setdefault("groups", {}).setdefault(owner_hint_group, {})["owner_hint"] = True
+            if on_delivered:
+                on_delivered()
+        runtime.STATE.mark_dirty()
+
+    member = getattr(getattr(message, "author", None), "member_openid", None)
+    source_id = getattr(message, "id", None)
+    interaction = {
+        "history": history,
+        "route": "banter" if context.get("unprompted") else "reply",
+        "generation": "model" if generated else "local_fallback",
+        # supplied ≠ injected：这三个只说明上下文材料送到了组装口，
+        # 喊停等抑制路径下它们可能根本没进提示词。
+        "knowledge_supplied": bool(context.get("knowledge_note")),
+        "recall_supplied": bool(context.get("recall_note")),
+        "search_supplied": bool(context.get("search_note")),
+        "personal_memory_used": bool(trace.get("personal_memory_used")),
+        "personal_memory_enabled": bool(config.PERSONAL_MEMORY_ENABLED),
+    }
+    if completion:
+        interaction.update(completion)  # 真正答上来的 provider/model/tier/finish
+    if remind_applied is not None:
+        interaction["remind_applied"] = remind_applied
+    if reminder_verdict is not None:
+        interaction["reminder_review"] = reminder_verdict
+    if trace.get("turn_id"):
+        interaction["turn_id"] = trace["turn_id"]   # 这句话是哪一轮输入生成的（data/turns）
+    # 只有「本群 + 有源发言者 + 有源消息 ID」的 AI 会话回复才可被反馈绑定；
+    # 本地命令、主动广播、私聊都不在反馈口径里。
+    interaction["feedback_eligible"] = bool(
+        getattr(message, "group_openid", None) and member and source_id)
+    if is_stale is not None and is_stale():
+        return "", delta, None
+    if said.kind == "voice":
+        # 发语音持 owner-hint 锁：念出去的那句不能在合成途中被认主提示改掉。
+        async with owner_hint_lock(owner_hint_group):
+            voice_result = receipt = None
+            attempted = not owner_hint_pending(owner_hint_group)
+            if attempted:
+                _note_media(message, member, "voice", "started")
+                try:
+                    voice_result, receipt = await _VOICE_OUT.attempt(
+                        message, body, SENDER,
+                        lambda: (runtime.SESSIONS.generation(session_id) == generation
+                                 and (is_stale is None or not is_stale())),
+                        tone=said.spec)
+                except Exception:
+                    # 意外异常可能发生在 QQ 已收下语音之后：保守起见不再补发文字。
+                    logger.warning("语音发送状态不明，停止本轮投递")
                     _note_own_line(getattr(message, "group_openid", None), body,
                                    medium="voice", status="unconfirmed")
-                    if runtime.SESSIONS.generation(session_id) == generation:
-                        runtime.SESSIONS.record(session_id, user_text,
-                                                as_recorded(expression.record(said, None)), received_at=received_at)
+                    _note_media(message, member, "voice", "unconfirmed")
                     return body, delta, DeliveryResult("unknown", body)
-                # 其余情况都确定没发出去（含合成被拒、念的和写的对不上）：同一句话改发文字。
-                # 这句本来就是小王写给群里看的，语音没成不等于这句话不能说。
-                if status:
-                    logger.info("🔈 语音没发成（%s），改发文字", status)
-                recorded["as"] = expression.record(said, False)
-        if said.kind == "image":
-            outcome = await _reply_with_image(
-                message, session_id, user_text, said, media, generation, delta,
-                commit=commit, interaction=interaction, prepare=prepare,
-                owner_hint_group=owner_hint_group, history=history, received_at=received_at,
-                as_recorded=as_recorded)
-            if getattr(outcome[2], "delivered", False):
-                retain_lookup()
-            return outcome
-        if is_stale is not None and is_stale():
-            return "", delta, None
-        result = await safe_reply(
-            message, body, on_delivered=commit,
-            interaction=interaction,
-            is_current=lambda: (runtime.SESSIONS.generation(session_id) == generation
-                                and (is_stale is None or not is_stale())
-                                and (not remind_applied or reminder_revision == _reminder_revisions[media.group])),
-            retry_lock=runtime.SESSIONS.lock(session_id),
-            send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
-            prepare=prepare if owner_hint_group else None,
-            quote=_quote_if_moved_on(message))
-        if pending_lookup and runtime.SESSIONS.generation(session_id) == generation:
-            _queue_lookup(message, session_id, user_text, "search", pending_lookup,
-                          context, media, received_at=received_at)
-        return body, delta, result
+            status = getattr(voice_result, "status", None)
+            if attempted and status != "sent":
+                _note_media(message, member, "voice",
+                            "unconfirmed" if status == "delivery_unknown" else "failed")
+            if status == "sent":
+                recorded["as"] = expression.record(said, True)
+                meta = dict(interaction)
+                meta["medium"] = "voice"
+                meta.update(source_message_id=source_id, user=member,
+                            policy_id=config.INTERACTION_POLICY_ID)
+                observer = _delivery_observer(uuid.uuid4().hex, getattr(message, "group_openid", None), meta, member)
+                item = PendingSend(message, body, time.time(), on_delivered=commit,
+                                   on_outcome=observer)
+                result = await SENDER._delivered(item, receipt)
+                return body, delta, result
+            if status == "delivery_unknown":
+                # 语音可能已经在群里了：不能再补一条文字，也不能记成确认送达。
+                _note_own_line(getattr(message, "group_openid", None), body,
+                               medium="voice", status="unconfirmed")
+                if runtime.SESSIONS.generation(session_id) == generation:
+                    runtime.SESSIONS.record(session_id, user_text,
+                                            as_recorded(expression.record(said, None)), received_at=received_at)
+                return body, delta, DeliveryResult("unknown", body)
+            # 其余情况都确定没发出去（含合成被拒、念的和写的对不上）：同一句话改发文字。
+            # 这句本来就是小王写给群里看的，语音没成不等于这句话不能说。
+            if status:
+                logger.info("🔈 语音没发成（%s），改发文字", status)
+            recorded["as"] = expression.record(said, False)
+    if said.kind == "image":
+        outcome = await _reply_with_image(
+            message, session_id, user_text, said, media, generation, delta,
+            commit=commit, interaction=interaction, prepare=prepare,
+            owner_hint_group=owner_hint_group, history=history, received_at=received_at,
+            as_recorded=as_recorded)
+        if getattr(outcome[2], "delivered", False):
+            retain_lookup()
+        return outcome
+    if is_stale is not None and is_stale():
+        return "", delta, None
+    result = await safe_reply(
+        message, body, on_delivered=commit,
+        interaction=interaction,
+        is_current=lambda: (runtime.SESSIONS.generation(session_id) == generation
+                            and (is_stale is None or not is_stale())
+                            and (not remind_applied or reminder_revision == _reminder_revisions[media.group])),
+        retry_lock=runtime.SESSIONS.lock(session_id),
+        send_lock=owner_hint_lock(owner_hint_group) if owner_hint_group else None,
+        prepare=prepare if owner_hint_group else None,
+        quote=_quote_if_moved_on(message))
+    if pending_lookup and runtime.SESSIONS.generation(session_id) == generation:
+        _queue_lookup(message, session_id, user_text, "search", pending_lookup,
+                      context, media, received_at=received_at)
+    return body, delta, result
 
 
 _LOCAL_CHAT_NOTE = """【本机管家】
@@ -3201,6 +3367,893 @@ async def scheduler_loop():
 
 
 
+# ══════════════════════ 6. 一轮群消息：收件 → 分诊 → 计划 → 生成与投递 → 落账 ══════════════════════
+# 每段是模块级函数，段间只传 GroupTurn；GroupBot.handle_group_msg 只负责把它们串起来。
+
+
+@dataclasses.dataclass
+class GroupTurn:
+    """一轮群消息的状态。阶段之间只传它：字段按「哪个阶段写下」分组，后面的阶段只读前面的。
+
+    *_at_receipt 和 receipt_time 是收件那一刻冻结的现场，之后不再改：这一轮等锁、等图、
+    等查询期间群里新发生的事只进「后到事件」（_later_scene），不回头改写它当时面对的现场。
+    """
+    message: object
+    group_id: str
+    sender_openid: str
+    # ── 收件：冻结的现场
+    receipt_time: float
+    session_at_receipt: object
+    prior_search_at_receipt: str
+    feedback_at_receipt: object
+    history_at_receipt: list
+    reminder_revision_at_receipt: int
+    # ── 收件：这条说了什么、叫没叫到它（语音听成文字以后才定下来，见 _admit）
+    voices: tuple
+    image_url: str | None
+    scene: dict
+    raw_at_ids: list
+    listed_mentions: list
+    mentioned_others: list
+    quotes_self: bool
+    quote_note: str      # 回的是哪句；拼在前面给背景、分诊和小王看
+    heard: str           # quote_note + 他说的话：归档和背景里记的那条
+    user_input: str      # 他自己说的话：指令解析只看它
+    at_bot: bool         # 平台 @：显性信号，一定回
+    named: bool          # 没 @、正文里喊了名字或引用了它的话：接不接交给分诊
+    is_at: bool          # 「这条叫到了它」这个事实：归档 / 日志 / 剥称呼用
+    # ── 分诊
+    is_owner: bool = False
+    assessed: dict | None = None   # 判断题的结果，只问一次（_assess）
+    search_query: str | None = None   # 「搜索 关键词」命令带的词；None = 不是搜索命令
+    feedback: dict = dataclasses.field(default_factory=dict)   # 普通群聊文本的那份判断结果
+    feedback_note: str = ""
+    reply_context: str = ""   # 他这句回应的是它哪句实际送达的话
+    should_reply: bool = False
+    unprompted: bool = False   # 没 @、没叫名字：接不接交给小王自己
+    quip: bool = False         # 被点名逗 / 夸：短接一句
+    back_off: bool = False
+    callback_note: str = ""    # 「居然记得」：获批端出来的那条本人旧话
+    # ── 计划
+    lookup: tuple | None = None   # (慢活名, 要查的话)
+    search_note: str = ""
+    resource_note: str = ""
+    resource_score: int = 0
+    user_text: str = ""       # 给模型看的那句：引用 + 他说的话 + 图片说明
+    context_hint: str = ""
+    state_note: str = ""
+    reply_kwargs: dict = dataclasses.field(default_factory=dict)
+    media: object = None      # MediaTurn：这一轮认不认〔画〕〔语音〕〔提醒〕
+
+    @property
+    def session_id(self):
+        """每人每群一份独立 session，彻底隔离会话，绝不串台。"""
+        return f"{self.group_id}_{self.sender_openid}"
+
+
+def _receive(message, is_at, robot):
+    """收件：去重，冻结这条消息到达时的现场，认出它说了什么、叫没叫到小王。
+
+    返回 GroupTurn；重复投递、读不出人话的返回 None（这一轮不存在）。
+    """
+    # 1. 去重：同一条消息可能被多个事件重复投递
+    if message.id in processed_msg_ids:
+        if is_at:
+            _learn_self_from_late_at(message)
+        return None
+    processed_msg_ids.append(message.id)
+
+    raw_content = message.content or ""
+    group_id = message.group_openid
+    sender_openid = message.author.member_openid
+    receipt_time = time.time()
+    session_at_receipt = runtime.SESSIONS.snapshot(f"{group_id}_{sender_openid}", now=receipt_time)
+    prior_search_at_receipt = search_mod.render_prior_lookup(
+        runtime.SESSIONS.lookup_snapshot(f"{group_id}_{sender_openid}", now=receipt_time),
+        known=(group_id, sender_openid, message.id))
+    feedback_at_receipt = runtime.FEEDBACK.reply_snapshot(group_id, now=receipt_time)
+    history_at_receipt = [row for row in group_buffers.get(group_id, ())
+                          if 0 <= receipt_time - float(row.get("time") or 0)
+                          <= config.GROUP_BUFFER_TTL_SECONDS]
+    reminder_revision_at_receipt = _reminder_revisions[group_id]
+    voices = getattr(message, "_voice_attachments", ())
+    if voices:
+        suffix = "（附件过多，暂未识别）" if len(voices) > 3 else ""
+        raw_content = f"[语音]{suffix} {raw_content}".strip()
+
+    # 图片（2026-10-19，克制版读图）：群消息的图走 attachments 字段，content 往往是
+    # 空的——以前纯图消息在下面的「读不出人话」闸被整条丢弃，群友发的图它连看都没看过。
+    # 现在标记为 [图片] 进背景缓存，闸门放行时异步读一次图（glm-4v-flash，免费），
+    # 一句话描述替换标记——**读一次永久复用**（QQ 图床 URL 有时效，描述文本才是能存的）。
+    image_url = None
+    for att in (getattr(message, "attachments", None) or []):
+        if str(getattr(att, "content_type", "") or "").startswith("image") \
+                and getattr(att, "url", None):
+            image_url = att.url
+            break
+    if image_url:
+        raw_content = f"{raw_content} [图片]".strip()
+
+    # 2. 识别 @机器人 或直接喊它的名字
+    #    「要不要理这条」必须看**原始 content**：判定要趁 <@!openid> 还在的时候做。
+    #    被 @ 的其他群友优先信事件体的 mentions。
+    bot_id = getattr(robot, "id", "")
+    bot_name = getattr(robot, "name", "")
+    # 引用了哪条、@ 的是不是小王（2026-11-03，见 quotes.py）：群友引用小王的话时 QQ 自动 @ 它，
+    # 从这里认出小王在这个群的成员 openid，以后单点 @ 也认得。
+    scene = getattr(message, "_scene", None) or {}
+    quoted = runtime.QUOTES.find(group_id, scene.get("ref_msg_idx"))
+    if scene.get("ref_msg_idx") and quoted is None:
+        logger.info("🔗 引用了一条没记着的消息（%s）", scene["ref_msg_idx"][:16])
+    quotes_self = bool(quoted and quoted["who"] == quotes.SELF)
+    if quotes_self:
+        _learn_self(group_id, quotes.self_in(
+            raw_content, [getattr(u, "member_openid", None) for u in (getattr(message, "mentions", None) or ())],
+            scene.get("bots")), "群友引用它的话时带的 @")
+    me = _self_openids(group_id, bot_id)
+    raw_at_ids = quotes.at_ids(raw_content)
+    _recent_at_ids[message.id] = raw_at_ids
+    while len(_recent_at_ids) > config.DEDUP_MAX:
+        _recent_at_ids.popitem(last=False)
+    listed_mentions = [getattr(u, "member_openid", None)
+                       for u in (getattr(message, "mentions", None) or ())
+                       if getattr(u, "member_openid", None)]
+    mentioned_others = [m for m in extract_mentions(message, bot_id) if m not in me]
+    if mentioned_others:
+        logger.info("🔗 捕捉到艾特对象 %s", "、".join(m[-4:] for m in mentioned_others))
+        # 事件体只给 openid，正文里留下的明文 @昵称 是唯一能知道「群里怎么
+        # 显示他」的地方 —— 日常互相 @ 是大头，别只认群主命名那一种。
+        if learn_display_names(
+                group_id, mentioned_others, raw_content, naming.bot_names()):
+            runtime.STATE.mark_dirty()
+
+    # 规范化时把 @ 翻成人话（@ 了谁由档案回答）—— @ 不再被清掉，见 qqtext 的说明
+    user_input = qqtext.normalize(
+        raw_content, mention_label=mention_label_for(group_id, me, bot_name))
+    # 名字全部按当前配置取，代码里不写死任何人名（见 naming.py）
+    # 引用小王的话、又把自动带的 @ 删了：跟喊名字一样算叫到它，接不接交给分诊。
+    has_name_call = quotes_self or any(n and n in user_input for n in naming.bot_names())
+    bot_tags = tuple(tag for oid in me for tag in (f"<@{oid}>", f"<@!{oid}>"))
+    # 平台 @ 是显性信号，一定回。正文里出现名字只是**本地提议**：
+    # 「小王傻」「小王怎么样了」不等于欠它一句，要不要答交给分诊（decisions.assess）。
+    at_bot = is_at or any(tag in raw_content for tag in bot_tags)
+    named = has_name_call and not at_bot
+    is_at = at_bot or has_name_call   # 「这条叫到了它」这个事实：归档 / 日志 / 剥称呼照旧用它
+    if is_at:
+        user_input = strip_call(user_input)
+
+    # 读不出人话的消息（纯表情/纯链接）到这里就没了。整条丢弃：
+    # 不入库、不进背景缓存、不回复。只有「@了机器人却一个字没说」例外，
+    # 那还欠他一句「找我啥事」。
+    # 图片例外（2026-10-19）：纯图消息标记为 [图片] 照常进背景——闸门放行会异步补描述，
+    # 群友发的图从「整条蒸发」变成「至少留了个存在感」。
+    if not user_input and not is_at and not image_url:
+        return None
+    if not user_input and image_url:
+        user_input = "[图片]"
+    runtime.QUOTES.remember(group_id, scene.get("msg_idx"), sender_openid, user_input)
+    # 回的是哪句：拼在前面给背景、分诊和小王看；指令解析照旧只看他自己说的（user_input）
+    quote_note = ""
+    if quoted or scene.get("quoted"):
+        quote_note = quotes.render(
+            None if quoted is None else naming.bot_name() if quotes_self
+            else "自己" if quoted["who"] == sender_openid else _who_label(group_id, quoted["who"]),
+            (quoted or {}).get("text") or scene.get("quoted"))
+    heard = quote_note + user_input
+
+    logger.info("📩 [%s] %s | %s", "@艾特" if is_at else "群消息", sender_openid, heard)
+    return GroupTurn(
+        message=message, group_id=group_id, sender_openid=sender_openid,
+        receipt_time=receipt_time, session_at_receipt=session_at_receipt,
+        prior_search_at_receipt=prior_search_at_receipt, feedback_at_receipt=feedback_at_receipt,
+        history_at_receipt=history_at_receipt,
+        reminder_revision_at_receipt=reminder_revision_at_receipt,
+        voices=voices, image_url=image_url, scene=scene, raw_at_ids=raw_at_ids,
+        listed_mentions=listed_mentions, mentioned_others=mentioned_others,
+        quotes_self=quotes_self, quote_note=quote_note, heard=heard, user_input=user_input,
+        at_bot=at_bot, named=named, is_at=is_at)
+
+
+async def _admit(turn):
+    """入账：归档、记交互日志、进群聊背景，语音在这里听成文字。假值 = 这一轮到此为止。
+
+    「清空提醒」夹在归档和进背景之间办掉：它得留痕，但不能先让捎带把待取消的提醒发出去。
+    """
+    message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
+    scene, heard, image_url, voices = turn.scene, turn.heard, turn.image_url, turn.voices
+
+    # 3. 归档（这是查证用的底稿）
+    # ⚠️ 本地控制指令（「猫娘模式」这类）照样落盘留痕，但打上 cmd 标记 ——
+    #    压缩长期记忆时会跳过它们。它们是操作不是聊天，进了压缩就变成
+    #    「这人想变猫娘」这种人物事实（2026-09-21 实测事故）。
+    runtime.ARCHIVE.append(
+        group_id, sender_openid, heard, at=turn.is_at,
+        cmd=is_control_command(turn.user_input), message_id=message.id,
+        at_ids=turn.raw_at_ids, mentions=turn.listed_mentions,
+        msg_idx=scene.get("msg_idx"), ref_msg_idx=scene.get("ref_msg_idx"))
+    if config.DIGEST_ENABLED:
+        runtime.DIGESTS.touch(group_id)
+    # 记一下这个群最近有人说话：主动催债前要确认群里还活着。
+    # 就地更新而不是整块替换 —— 这个槽位还存着别的每群标记（比如群主认领提示有没有说过）。
+    observe_group(group_id)["last_seen"] = time.time()
+    runtime.STATE.mark_dirty()
+
+    # 3.4 交互观察：完整规范化输入落独立日志（只进不出，不进任何提示词路径）。
+    # call：at 是怎么叫到它的 —— 平台 @ / 引用它的话 / 正文里喊名字（桌宠据此说不同的话）。
+    runtime.INTERACTIONS.append(
+        "incoming", group_id, user=sender_openid, actor="user",
+        message_id=message.id, text=heard,
+        at=bool(turn.is_at), cmd=is_control_command(turn.user_input),
+        call="at" if turn.at_bot else "quote" if turn.quotes_self else "name" if turn.named else None)
+
+    # 清空命令先于捎带和任何模型判断；不能先把待取消的提醒发出去。
+    if is_cancel_all_reminders(turn.user_input):
+        await handle_cancel_all_reminders(
+            message, group_id, bool(runtime.OWNER_OPENID and sender_openid == runtime.OWNER_OPENID))
+        return False
+
+    # 3.5 显式反馈命令：在进背景缓存/好感度/模型之前处理 —— 它是给系统的
+    #     记账，不是聊天内容，进了 buffer 就会变成下轮「群聊背景」。
+    # 3.5 写入群聊滑动窗口背景缓存。
+    #     只挡「同一个人连着刷一模一样的内容」（复读机、表情三连），别让它把窗口占满；
+    #     其余照收。以前这里是「? / 6 / 草 / 哈哈」之类的白名单枚举，来一句新的
+    #     口头禅就得回来加一个词，而且把「？」这种真实的接话信号也一起挡掉了。
+    #     带图的不算复读：描述回填前两张图都是「[图片]」，第二张会被当成复读丢掉
+    #     （2026-11-01 12:31:53/55 连发两张，问「读这两张图」时背景里只剩一张）。
+    buf = group_buffers[group_id]
+    if (not buf or image_url or voices or buf[-1]["sender"] != sender_openid
+            or buf[-1]["text"] != heard):
+        row = {"sender": sender_openid, "text": heard, "time": turn.receipt_time, "message_id": message.id}
+        if scene.get("msg_idx"):
+            row["msg_idx"] = scene["msg_idx"]
+        buf.append(row)
+        runtime.STATE.data["buffers"][group_id] = list(buf)
+    media.remember(group_id, message.id, sender_openid, image_url)
+    # Slow carried results may themselves deliver a reply. They happened after
+    # receipt and belong in the late-event view, never the frozen source context.
+    await deliver_carried(message, group_id)
+
+    if voices:
+        transcript = await _recognize_voices(
+            voices, f"group:{group_id}:{message.id}" if message.id else None,
+            group=group_id)
+        row = None
+        if transcript:
+            row = runtime.ARCHIVE.attach_voice_transcript(
+                group_id, message.id, transcript, sender=sender_openid,
+                buffers=group_buffers, state=runtime.STATE,
+                at=bool(turn.is_at or any(n and n in transcript for n in naming.bot_names())))
+        if row:
+            turn.user_input = turn.user_input.replace("[语音]", row["text"], 1)
+            if not turn.at_bot and any(n and n in turn.user_input for n in naming.bot_names()):
+                turn.named = True
+                turn.is_at = True
+                turn.user_input = strip_call(turn.user_input)
+        elif not (message.content or "").strip():
+            if turn.at_bot:
+                await safe_reply(message, "这条语音我暂时听不清，能发文字吗？")
+            return False
+    return True
+
+
+async def _assess(turn, nick_candidate=None):
+    """分诊（2026-10-31）：这条消息要问判断的那几题，**第一次用到时**才问、只问一次，
+    之后各处复用同一份结果（见 decisions.FeedbackTracker.assess）。
+    起名候选在本地指令里才解析出来，所以第一次调用可能在那里，也可能在 _triage。
+    """
+    if turn.assessed is None:
+        try:
+            turn.assessed = await runtime.FEEDBACK.assess(
+                turn.group_id, turn.sender_openid,
+                (turn.quote_note + (turn.user_input or (f"@{naming.bot_name()}" if turn.at_bot else ""))).strip(),
+                message_id=turn.message.id, is_direct=bool(turn.at_bot), named=turn.named,
+                history=turn.history_at_receipt[-4:],
+                reply_snapshot=turn.feedback_at_receipt, now=turn.receipt_time,
+                nick_candidate=nick_candidate,
+                want_recall=config.MEMORY_RECALL_ENABLED,
+                want_lookup=(config.SEARCH_ENABLED
+                             and providers.research_available()))
+        except Exception:
+            logger.exception("⚠️ 分诊异常（%s）", turn.group_id[-6:])
+            # 异常不代表「没发起过」—— 标成已尝试，同一条消息不许补发第二次。
+            turn.assessed = {"decision_attempted": True}
+    return turn.assessed
+
+
+async def _local_command(turn):
+    """0 token 的本地指令：群主认领的指路、起名开关、改称呼。真值 = 这条是指令，已经办完。"""
+    message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
+    user_input, mentioned_others = turn.user_input, turn.mentioned_others
+    # 4. 群主认领 —— **群里永远不授权**，这里只负责把人指到私聊去。
+    #    以前这段真的会在群里认主（谁先喊谁得），等于把身份挂在大喇叭上招领；
+    #    现在群里说破天也只是收到一句「去私聊办」，权限一个字都不给。
+    if looks_like_claim_attempt(user_input):
+        if runtime.OWNER_OPENID is None:
+            # 每个群只正面回一次，免得有人反复喊就反复刷屏
+            if claim_redirect_pending(group_id):
+                def commit_redirect(_receipt):
+                    slot = observe_group(group_id)
+                    slot["claim_redirect"] = slot["owner_hint"] = True
+                    runtime.STATE.mark_dirty()
+                await safe_reply(message, OWNER_CLAIM_HINT, on_delivered=commit_redirect,
+                                 send_lock=owner_hint_lock(group_id),
+                                 is_current=lambda: claim_redirect_pending(group_id))
+            return True
+        await safe_reply(message, "已经认得你了，直接说就好。" if runtime.OWNER_OPENID == sender_openid
+                         else "这边已经有人认领过我了。")
+        return True
+
+    is_owner = turn.is_owner = runtime.OWNER_OPENID is not None and sender_openid == runtime.OWNER_OPENID
+
+    # 5.4 起名开关：群主一句话锁上/解开整个群的起名。0 token，纯本地。
+    #     排在昵称指令解析之前 —— 「锁起名」本身不含「叫我/叫X」，不会撞，
+    #     但万一撞了也要让开关先说话。
+    lock_cmd = relations.parse_nick_lock_command(user_input)
+    if lock_cmd:
+        await handle_nick_lock(message, group_id, lock_cmd, is_owner)
+        return True
+
+    # 5.5 昵称管理：本人随时认领或改（以最新一次为准），群主可以 @某人 给对方指定
+    #     「机器人名，叫 小满」这种带称呼前缀的要先剥掉前缀才认得出来
+    bot_names = naming.bot_names()
+    # mentioned_others 照传：它是「这人 @ 了别人」的事实，剥 @ 文本要用到，
+    # 否则「@阿澈 叫我阿强」连本人改名都会失效。能不能给别人起名是另一件事，
+    # 交给 allow_other 控制（只有群主才可能是在给别人起名）。
+    nick_cmd = relations.parse_nick_command(
+        user_input, bot_names=bot_names,
+        mentioned_others=mentioned_others, allow_other=is_owner)
+    nick_verdict = None
+    if nick_cmd and nick_cmd.get("nick"):
+        # 本地模式只是**提议**一个候选。判断有把握时可以否决（诱饵 / 误触发），
+        # 但不能单独批准 —— 拿不准就照旧走词表、节流和审核那几道底线。
+        # 2026-10-31 真实语料 32 个候选：谐音政治人名有把握拦下 6 个，
+        # 却也把「姚元文」有把握地放行了；普通的「老王」五次里四次拿不准。
+        # 所以它只配当否决票，不配当批准章。
+        nick_verdict = (await _assess(turn, nick_candidate=nick_cmd["nick"])).get("nickname")
+        if nick_verdict == "not_a_request":
+            logger.info("🙅 起名模式误触发，按普通消息处理（%s）", sender_openid[-4:])
+            nick_cmd = None
+    if nick_cmd:
+        await handle_nick_command(message, nick_cmd, group_id, sender_openid,
+                                  is_owner, mentioned_others, verdict=nick_verdict)
+        return True
+    # 解析不出命令 ≠ 没有这个意图：普通群友的「叫@某人 X」被 allow_other 吞掉了，
+    # 静默掉进闲聊会让人以为在商量、甚至以为改成了。带动词的是明确意图，必须给说法。
+    # 只认带动词的（不认「@老王 你好」那种任意短句），否则每句打招呼都要被回绝一次。
+    if not is_owner and relations.looks_like_other_nick(
+            user_input, bot_names=bot_names, mentioned_others=mentioned_others):
+        logger.info("🚫 非群主要给别人起名，已明说（%s）", sender_openid[-4:])
+        await safe_reply(message, NICK_OTHER_DENIED.format(owner=owner_label(group_id)))
+        return True
+    return False
+
+
+async def _triage(turn):
+    """分诊：这句是不是冲着它来的、带没带对它上一句的反馈、这一轮接不接、按哪条路接。
+
+    只下结论、记门控日志，不发话；结论写回 turn，后面的阶段照着办。
+    """
+    message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
+    user_input, at_bot, named = turn.user_input, turn.at_bot, turn.named
+
+    # 9. 判定这条要不要接
+    # 搜索查询先解析一次：_plan_lookup 与反馈评估共用同一判定，不重复解析。
+    search_query = search_mod.extract_query(user_input)
+
+    # 自然反馈评估：只评普通群聊文本，最多一次原生判断；指令和搜索绕过。
+    # 评估用的输入都是脱敏后的本地代号，群号/openid/消息 ID 不出本机。
+    feedback_result = {}
+    if not is_control_command(user_input) and search_query is None:
+        feedback_result = await _assess(turn)
+        if feedback_result.get("target") is not None:
+            # 只有解析出有效反馈才落账；内部 ID 只进本地日志。
+            runtime.INTERACTIONS.append(
+                "natural_feedback", group_id, user=sender_openid,
+                actor="system", source_message_id=message.id,
+                target=feedback_result.get("target"),
+                suggested_move=feedback_result.get("suggested_move"),
+                action=feedback_result.get("action"),
+                source_reply_id=feedback_result.get("source_reply_id"),
+                policy_id=config.INTERACTION_POLICY_ID)
+        # 「下一句骂你就是反馈」的跨天那一层：只收「没人请的插嘴」之后的
+        # 被嫌烦/被接着逗，折进本人的插嘴接纳度（receptive.py）。
+        # 内容对不对（repair_briefly / continue_normally）不算打扰的证据。
+        if (config.RECEPTIVE_ENABLED
+                and feedback_result.get("target") == "bot_response"
+                and runtime.RECEPTIVE.record(
+                    group_id, sender_openid,
+                    feedback_result.get("action"),
+                    route=feedback_result.get("source_route"))):
+            runtime.STATE.mark_dirty()
+    feedback_note = ""
+    reply_context = ""
+    if feedback_result.get("target") == "bot_response":
+        if feedback_result.get("action") == "back_off":
+            feedback_note = prompts.PROMPT_FEEDBACK_BACK_OFF
+        elif feedback_result.get("action") == "repair_briefly":
+            feedback_note = prompts.PROMPT_FEEDBACK_REPAIR
+    # 跨人续谈：判断看到的上一句可能不在本人的 session；只把实际送达的
+    # 原句作为本轮参考，不把反馈题的弃答改写成反馈或赋予新的回复资格。
+    bot_text = feedback_result.get("bot_reply_text")
+    if bot_text:
+        reply_context = prompts.PROMPT_PREVIOUS_BOT_REPLY.format(
+            recipient={
+                "current_member": "由本轮说话人触发的接话",
+                "another_member": "由另一位群友触发的接话",
+                "group": "群内主动发言",
+            }.get(feedback_result.get("bot_reply_to"),
+                  "由另一位群友触发的接话"),
+            quoted_text=json.dumps(bot_text, ensure_ascii=False))
+
+    should_reply = False
+    # 没 @、没叫名字的这一轮：接不接交给小王自己（见下面最后一个分支）
+    unprompted = False
+    # 「居然记得」：本轮端给它的那一条本人旧话（没获批就是空串）。
+    callback_note = ""
+    # 门控决策：记的是「这道门当时放没放人」。没叫它的那几轮要等小王答完才知道，
+    # 生成之后再记（见 reply_unprompted）。
+    gate_decision = None
+    # suggested_move 已过原生判断的格式/弃答闸，过期结论会被清空。已有结论时听
+    # 语义判断；缺失时才用本地词表，避免「没人吐槽反而不舒服」被裸词误认成喊停。
+    # 显式收敛仍优先，暂停窗的装卸继续由 FEEDBACK 管理。
+    back_off = bool(feedback_result.get("back_off")) or (
+        feedback_result.get("suggested_move") is None and looks_like_back_off(user_input))
+    addressed = feedback_result.get("addressed")
+    # 点了名：判断说「该答」就答；判断不可用也答（被叫到却被无视，比多答一句难受）——
+    # 唯一例外是判断有把握地读出「收敛」：被叫闭嘴不该回一句「好的我闭嘴」。
+    named_owed = named and (addressed == "answer"
+                            or (addressed is None
+                                and not feedback_result.get("back_off")))
+    quip = False
+    if at_bot or named_owed:
+        should_reply = True
+        gate_decision = {"route": "direct",
+                         "selected": True,
+                         "reason": ("direct_address" if at_bot
+                                    else "named_answer" if addressed == "answer"
+                                    else "named_fallback")}
+    elif named and addressed == "quip":
+        # 被点名逗 / 夸 / 说起：addressed 那题已经判过「短接一句接得上」（接不上的是
+        # let_it_pass），这里只决定怎么接 —— 短接，不是正经作答。暂停窗内一律不接。
+        # 2026-11-01 以前还要 intervention 说 join_briefly 才接：那题问的是「没人请时
+        # 插一句合不合适」，题面写明点名的消息另有人管，于是几乎总说 stay_quiet ——
+        # 群主一句「小王我真的好喜欢你啊」就这样被吞了。
+        quip = not runtime.FEEDBACK.quiet(group_id)
+        should_reply = quip
+        gate_decision = {"route": "reply", "selected": quip,
+                         "reason": "named_quip" if quip else "named_quip_quiet"}
+    elif (feedback_result.get("target") == "bot_response"
+            and feedback_result.get("action") == "repair_briefly"):
+        # 有效修正：不用点名也补一句简短修正（一条，不连环追发）。
+        should_reply = True
+        gate_decision = {"route": "reply", "selected": True,
+                         "reason": "feedback_repair"}
+    elif runtime.FEEDBACK.quiet(group_id):
+        # 原生反馈判过「收敛一下」：暂停窗内没叫它的一律不问。
+        gate_decision = {"route": "banter", "selected": False,
+                         "reason": "feedback_quiet"}
+    elif back_off:
+        # 「小王闭嘴」这类没被判成该答的：不问它，免得回一句「好的我闭嘴」
+        gate_decision = {"route": "banter", "selected": False,
+                         "reason": "back_off"}
+    elif search_query is None:
+        # 没 @、没叫名字（2026-11-02 起）：不掷骰子了，交给小王 —— 是不是冲它来的、
+        # 接不接，它自己看（prompts.PROMPT_BANTER_NOTE；不接就写〔不接〕）。
+        # 以前这里是 12% 的骰子 × 亲密度 × 作息 × 节奏先验 × 插嘴判断 × 接纳度，
+        # 冲着它说却没带名字的话（接着它刚才的话往下聊）也跟着掷 ——
+        # 群主：「老任说话很明显都是对小王的」。代码只留两道底线：上面的收敛暂停窗，
+        # 和下面 _unprompted_lock 一个群一次只问一句（「刚开过口」由它自己掂量）。
+        should_reply = unprompted = True
+        now = time.time()
+        # 「居然记得」（2026-10-31 群主：「有时候让人觉得意想不到居然
+        # 记得」）：本地话题闸先挑出本人旧话，再问一次原生判断 ——
+        # 此刻端出来是「居然记得」还是「翻档案」。判断不可用就不端，
+        # 新增的惊喜不许靠失败兜底。要稀才稀奇：每人冷却 + 每天上限。
+        if (config.DECISION_CALLBACK_ENABLED
+                and config.PERSONAL_MEMORY_ENABLED
+                and config.DIGEST_ENABLED
+                and runtime.RECEPTIVE.callback_allowed(
+                    group_id, sender_openid, now=now)):
+            who, sources = digest_mod.match_people(
+                runtime.DIGESTS.get(group_id), group_id=group_id,
+                sender=sender_openid, text=user_input,
+                resolver=_resolve_name(group_id))
+            if sources:
+                try:
+                    approved = await runtime.FEEDBACK.consider_callback(
+                        group_id, sender_openid,
+                        quote=sources[0]["quote"],
+                        quote_ts=sources[0]["ts"],
+                        history=list(group_buffers.get(group_id) or [])[-4:], now=now,
+                        source_message_id=message.id)
+                except Exception:
+                    logger.exception("⚠️ 回忆判断异常（%s）", group_id[-6:])
+                    approved = None
+                if approved:
+                    callback_note = refresh_names(
+                        group_id,
+                        digest_mod.render_matched(who, sources[:1]))
+    if gate_decision is not None:
+        runtime.INTERACTIONS.append(
+            "decision", group_id, user=sender_openid, actor="system",
+            source_message_id=message.id, **gate_decision)
+
+    turn.search_query, turn.feedback = search_query, feedback_result
+    turn.feedback_note, turn.reply_context = feedback_note, reply_context
+    turn.should_reply, turn.unprompted, turn.quip, turn.back_off = should_reply, unprompted, quip, back_off
+    turn.callback_note = callback_note
+
+
+async def _plan_lookup(turn):
+    """计划 · 联网：这一轮查不查、查什么，额度在这里占。假值 = 已经用一句本地话交代过，不再往下。"""
+    message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
+    user_input, quote_note, at_bot = turn.user_input, turn.quote_note, turn.at_bot
+    history_at_receipt, feedback_result = turn.history_at_receipt, turn.feedback
+    search_query, should_reply, search_note = turn.search_query, turn.should_reply, turn.search_note
+    unprompted, quip, back_off = turn.unprompted, turn.quip, turn.back_off
+
+    # 9.5 联网：显式「搜索」命令所有群友可用、按群限流；配了联网查询时，
+    #     分诊判断说「这句得先查」也会查（见下面 9.6）。lookup = (慢活名, 要查的话)。
+    lookup = None
+    resource_note = ""
+    resource_score = (runtime.RELATIONS.get(group_id, sender_openid, create=False) or {}).get("score", 0)
+    if search_query is not None:
+        if not config.SEARCH_ENABLED:
+            await safe_reply(message, "联网搜索没开。")
+            return False
+        if not search_query:
+            await safe_reply(message, "搜什么？把关键词带上。")
+            return False
+        if wordfilter.has_hit(search_query):
+            await safe_reply(message, "这个我不搜。")
+            return False
+        status = _reserve_search(group_id, sender_openid, resource_score, cooldown=True)
+        if status not in ("normal", "exception", "extra"):
+            await safe_reply(
+                message,
+                "刚搜过，让我缓一会儿再查。" if status == "cooldown"
+                else "这会儿没法查，等会儿再试试。" if status == "unavailable"
+                else "今天查得有点累啦，明天再帮你查吧。")
+            return False
+        if status == "exception":
+            resource_note = "【本轮状态】今天的基础查询次数已用完，这次实际用了额外次数。可以自然地说这次破例帮他查，不要声称以后无限破例。"
+        if providers.research_available():
+            lookup = ("search", search_query)
+            should_reply = True
+            runtime.INTERACTIONS.append(
+                "decision", group_id, user=sender_openid, actor="system",
+                source_message_id=message.id, route="search", selected=True,
+                reason="search_override")
+        else:
+            results = await search_mod.search_web(search_query)
+            if results is None:
+                await safe_reply(message, "搜索暂时连不上，稍后再试。")
+                return False
+            if not results:
+                await safe_reply(message, "（搜了一圈）没找到靠谱的结果，换个说法？")
+                return False
+            search_note = search_mod.render_note(results)
+            should_reply = True
+            logger.info("🌐 按需搜索：%d 条结果（%s）", len(results), group_id[-6:])
+            # 搜索成功会改写上面的门控结果 —— 单独记一条，而不是回头涂改插嘴记录。
+            runtime.INTERACTIONS.append(
+                "decision", group_id, user=sender_openid, actor="system",
+                source_message_id=message.id, route="search", selected=True,
+                reason="search_override")
+
+    # 9.6 判断触发的联网查询：只在本轮本来就要正经回话时才查（插嘴、短接、喊停都不查）。
+    #     research 是隐藏彩蛋：今天的次数用完或刚用过，就退回普通查询。
+    #     自动查询不吃「搜索」命令的冷却，只算进每日上限。
+    if (lookup is None and should_reply and not unprompted and not quip
+            and not back_off and config.SEARCH_ENABLED
+            and providers.research_available()
+            and not wordfilter.has_hit(user_input)):
+        kind = feedback_result.get("lookup")
+        status = None
+        if kind == "research":
+            status = (_reserve_search(group_id, sender_openid, resource_score, deep=True)
+                      if config.DEEP_RESEARCH_ENABLED else "disabled")
+            if status in ("disabled", "deep_cooldown", "deep_daily"):
+                kind = "search"
+        if kind == "search":
+            status = _reserve_search(group_id, sender_openid, resource_score)
+        if kind in ("search", "research") and status in ("quota", "daily", "unavailable"):
+            await safe_reply(message, "这会儿没法查，等会儿再试试。" if status == "unavailable"
+                             else "今天查得有点累啦，明天再帮你查吧。")
+            return False
+        if kind in ("search", "research") and status in ("normal", "exception", "extra"):
+            if status == "exception":
+                resource_note = "【本轮状态】今天的基础查询次数已用完，这次实际用了额外次数。可以自然地说这次破例帮他查，不要声称以后无限破例。"
+            lookup = (kind, _lookup_query(
+                (quote_note + (user_input or (f"@{naming.bot_name()}" if at_bot else ""))).strip(),
+                history_at_receipt, message.id, sender_openid=sender_openid))
+
+    turn.lookup, turn.search_note, turn.should_reply = lookup, search_note, should_reply
+    turn.resource_note, turn.resource_score = resource_note, resource_score
+    return True
+
+
+async def _plan_scene(turn):
+    """计划 · 现场：把这句话拼成给模型看的样子（引用、图片说明），挑出并渲染群聊背景。
+
+    读图是这里唯一的等待：他自己的图等不到先回一句在看（await_images）。
+    假值 = 没人问、又没读成的纯图，这一轮不问它。
+    """
+    message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
+    image_url, quote_note, unprompted = turn.image_url, turn.quote_note, turn.unprompted
+    history_at_receipt, receipt_time = turn.history_at_receipt, turn.receipt_time
+    user_text = turn.user_input   # 从他自己说的话起步，下面拼上图片说明和引用
+
+    current_read = None
+    if image_url and not unprompted:
+        # 这条自己带的图：读图先起着，跟背景里欠着的图一起等（见下面 await_images）
+        current_read = asyncio.ensure_future(media.caption_for(
+            group_id, message.id, sender_openid, image_url, foreground=True))
+    elif image_url:
+        # 没叫它的那一轮按后台口径读图（吃冷却）：没人问的图不值得破一次冷却，
+        # 读不成也不提示它「说明看不到」—— 没人在等它看这张图。
+        caption = await media.caption_for(
+            group_id, message.id, sender_openid, image_url, foreground=False)
+        if caption:
+            user_text = f"{user_text}\n[图片：{caption}]"
+        elif user_text == "[图片]":
+            # 没人问、又没读成的纯图：没有可接的东西，不问它。问了它只看见裸 [图片]，
+            # 就答「我这边看不到」—— 2026-11-02 21:04 群友连发几张图，张张这么答。
+            runtime.INTERACTIONS.append(
+                "decision", group_id, user=sender_openid, actor="system",
+                source_message_id=message.id, route="banter",
+                selected=False, reason="image_unread")
+            return False
+        else:
+            user_text += "\n（这张图你没看；没人问你，别提它。）"
+
+    # 回的是哪句拼到前面（指令都在上面认完了，这一截碍不着它们）
+    user_text = quote_note + user_text
+
+    # 11. 组装群聊背景
+    state_note = ""
+    prev = []
+    now_ts = time.time()
+    if history_at_receipt:
+        # 关注度（2026-10-19）：亲密度决定背景条数——越熟的人它记得越多，
+        # 生人没必要也没资格让它看到太多背景。条数表见 activation.context_turns。
+        _rec = runtime.RELATIONS.get(group_id, sender_openid, create=False)
+        _tier = relations.level_key((_rec or {}).get("score", 0))
+        _willingness, _turns, state_note = activation.profile(_tier)
+        # 带图的这条还没回填描述，别拿「[图片]」去比，把背景里别的没读的图也筛掉
+        prev = _pick_background(history_at_receipt, sender_openid,
+                                None if image_url else user_text, _turns, now_ts)
+    if not unprompted:
+        # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被冷却挡掉没读。
+        # 不然模型只看见裸 [图片]，答「没看到图」——2026-11-01 12:32 连着三次
+        # （实测见 docs/image-before-reply.md）。他自己的图等不到先回一句在看（await_images）。
+        # 没叫它的那一轮不补读：补读走前台、不吃冷却，每条闲聊都补就把冷却架空了
+        own = [b.get("message_id") for b in prev if _own_recent_image(b, sender_openid, now_ts)]
+        await await_images(
+            message, ([current_read] if current_read else []) + media.reads_owed(group_id, own),
+            media.reads_owed(group_id, [b.get("message_id") for b in prev
+                                        if b.get("message_id") not in own]))
+        if current_read is not None:
+            caption = (current_read.result()
+                       if current_read.done() and not current_read.cancelled() else None)
+            user_text += (f"\n[图片：{caption}]" if caption
+                          else "\n（本轮图片暂不可读；明确说明这一点，不猜测图中内容。）")
+    # 读图就地回填了 prev 里的条目，所以渲染排在等图之后
+    context_hint = _render_background(group_id, sender_openid, prev, own_lines.get(group_id, ()),
+                                      until=receipt_time, now=now_ts)
+
+    turn.user_text, turn.context_hint, turn.state_note = user_text, context_hint, state_note
+    return True
+
+
+def _plan_notes(turn):
+    """计划 · 材料：本轮动态层要带的称呼与关系、群表达参考、知识库、旧账、个人原话。
+
+    返回能直接并进 reply_kwargs 的那几项；待播报的里程碑送达以后才消费（on_delivered）。
+    """
+    message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
+    user_text, session_id, feedback_result = turn.user_text, turn.session_id, turn.feedback
+    # 正经回话才翻材料：没叫它的那句、短接、喊停、带着反馈提示的那轮都不给
+    answering = not (turn.unprompted or turn.quip or turn.back_off or turn.feedback_note)
+
+    # 称呼与游戏关系注入：称呼在好感开关之外也要给（不然 AFFINITY_ENABLED=false
+    # 时连名字都叫不出来）；游戏部分（档位/模式/里程碑）只在好感开着时写。
+    # 同时消费掉待播报的里程碑。
+    target_record = runtime.RELATIONS.get(group_id, sender_openid,
+                                          create=config.AFFINITY_ENABLED)
+    relation_note = relations.build_relation_note(
+        target_record, sender_openid,
+        other_names=_other_names(group_id, sender_openid),
+        include_game=config.AFFINITY_ENABLED)
+    pending_milestone = ((target_record or {}).get("pending_milestone")
+                         if config.AFFINITY_ENABLED else None)
+    def commit_milestone():
+        if pending_milestone and target_record.get("pending_milestone") == pending_milestone:
+            target_record["pending_milestone"] = None
+            target_record["told_day"] = time.strftime("%Y-%m-%d")
+
+    # 群聊长期记忆注入：**每日层只留共享的群表达参考**（口头禅/语气词）。
+    # 个人材料不再进这层 —— 它随说话人与话题变化，属于本轮动态层（见下方
+    # personal_note）。简报/台账的独立出口照旧：群史记查询、催债定时任务、
+    # 查账触发词 —— 需要时查得到，不需要时不陪跑。
+    summary = runtime.DIGESTS.get(group_id) if config.DIGEST_ENABLED else None
+    group_memory = refresh_names(group_id, digest_mod.render_style(summary)) if summary else ""
+
+    # 可编辑知识库：维护者改文件、下一轮即生效；只按关键词取少量进动态层。
+    knowledge_note = ""
+    if answering and config.KNOWLEDGE_ENABLED:
+        knowledge_note = refresh_names(
+            group_id, runtime.KNOWLEDGE.render(group_id, user_text))
+        if knowledge_note:
+            logger.info("📚 知识库命中：%d 条（%s）",
+                        knowledge_note.count("\n- "), session_id[-12:])
+
+    # 旧账召回：分诊判断「这句的回答要靠本群旧账」时才查本地归档；随机插嘴不翻旧账。
+    # 以前靠「上次 / 之前 / 答应」这类线索词触发，真实语料里点名消息上命中的 5 条全是误触发
+    # （「之前那个模型更有趣」「我叫王红闻你就要答应」），判断全判对了。
+    recall_note = ""
+    if (answering and config.MEMORY_RECALL_ENABLED
+            and feedback_result.get("recall") == "look_up"):
+        recall_names = _recall_names(group_id)
+        recall_now = time.time()
+        selection = recall_mod.select(
+            group_id, user_text,
+            archive=runtime.ARCHIVE, promises=runtime.PROMISES,
+            names=recall_names, now=recall_now, exclude_text=user_text)
+        recall_note = refresh_names(group_id, recall_mod.render(
+            selection, name_of=_resolve_name(group_id), now=recall_now))
+        _record_recall(group_id, sender_openid, message.id, user_text,
+                       recall_names, recall_now, selection)
+        if recall_note:
+            logger.info("🔎 旧账召回：%d 条本地证据（%s）",
+                        recall_note.count("\n- "), session_id[-12:])
+
+    # 个人原话：当前说话人、当前话题命中、来源与时间齐备才给，最多两条。
+    # 知识库/旧账/搜索已答了本轮要的东西时不再叠加；随机插嘴与喊停同样不给。
+    # 插嘴轮：只认门控里被原生判断放行的那一条（callback_note）；
+    # 普通接话轮照旧按本人 + 当前话题现挑。两条路都走同一道准入闸。
+    personal_note = turn.callback_note
+    if (summary and answering
+            and not any((knowledge_note, recall_note, turn.search_note, turn.lookup))):
+        personal_note = refresh_names(group_id, digest_mod.render_people(
+            summary, group_id=group_id, sender=sender_openid, text=user_text,
+            resolver=_resolve_name(group_id)))
+        if personal_note:
+            logger.info("🗣 个人原话：%d 条命中（%s）",
+                        personal_note.count("\n- "), session_id[-12:])
+
+    return dict(on_delivered=commit_milestone, relation_note=relation_note, group_memory=group_memory,
+                knowledge_note=knowledge_note, recall_note=recall_note, personal_note=personal_note)
+
+
+async def _plan(turn):
+    """计划：这一轮带什么材料、认哪些动作，产出 turn.reply_kwargs 和 turn.media。
+
+    假值 = 这一轮不回，或者已经用一句本地话交代过了。
+    """
+    if not await _plan_lookup(turn):
+        return False
+    message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
+    image_url, feedback_result = turn.image_url, turn.feedback
+    if not turn.should_reply:
+        if image_url:
+            task = asyncio.create_task(media.caption_for(
+                group_id, message.id, sender_openid, image_url))
+            _media_tasks.add(task)
+            task.add_done_callback(_media_tasks.discard)
+        return False
+
+    if (turn.is_at and not turn.user_input and not image_url and not turn.quote_note
+            and not turn.history_at_receipt):
+        await safe_reply(message, f"找{naming.bot_name()}啥事？直接说就行。")
+        return False
+    if not await BudgetGate.check(message, group_id):
+        runtime.INTERACTIONS.append(
+            "decision", group_id, user=sender_openid, actor="system",
+            source_message_id=message.id,
+            route="banter" if turn.unprompted else "reply",
+            selected=False, reason="budget_blocked")
+        return False
+    if not await _plan_scene(turn):
+        return False
+    notes = _plan_notes(turn)
+
+    unprompted = turn.unprompted
+    if (not turn.back_off and feedback_result.get("target") == "bot_response"
+            and feedback_result.get("source_route") == "reply"
+            and feedback_result.get("reminder_request") == "clear"):
+        # 这是在回答它刚问的具体事项，算正式办理提醒；仍须过实际提案审核。
+        # 只改这一轮怎么回（reply_kwargs）：前面的材料和读图照旧按「没叫它」办过了。
+        unprompted = False
+
+    turn.reply_kwargs = dict(
+        notes, owner_hint_group=group_id, is_owner=turn.is_owner,
+        context_hint=turn.context_hint, unprompted=unprompted,
+        owner_label=owner_label(group_id), state_note=turn.state_note,
+        callback_approved=bool(turn.callback_note),
+        feedback_note=turn.feedback_note, reply_context=turn.reply_context,
+        sincere_request=bool(feedback_result.get("sincere_request")),
+        playful_request=bool(feedback_result.get("playful_request")
+                             and not feedback_result.get("sincere_request") and not turn.lookup
+                             and not turn.search_note),
+        resource_note=turn.resource_note,
+        back_off=turn.back_off, quip=turn.quip,
+        received_at=turn.receipt_time, history_snapshot=turn.session_at_receipt,
+        prior_search_note=turn.prior_search_at_receipt,
+        history=([*turn.history_at_receipt, {"sender": sender_openid, "text": turn.heard,
+                   "time": turn.receipt_time, "message_id": message.id}])[-4:],
+    )
+    # 画不画、说不说语音由小王在回复里自己决定；这里只定它这一轮「能不能」。
+    # 喊停这轮不画也不念：对方已经不想听了。先查再答的那轮能画、不念、不办提醒（见 media_turn）。
+    researching = bool(turn.lookup or turn.search_note)
+    turn.media = (None if turn.back_off else
+                  media_turn(group_id, sender_openid, turn.resource_score, asked=not turn.quip,
+                             remind=not unprompted and not researching, voice=not researching))
+    if turn.media is not None:
+        turn.media.reminder_revision = turn.reminder_revision_at_receipt
+        turn.media.reminder_intent = feedback_result.get("reminder_request")
+    return True
+
+
+async def _respond(turn):
+    """生成与投递：先查再答、没叫它的那句、正经回话，三条路最后都落到 reply_in_session。
+
+    返回 (正文, 好感方向, 投递结果)；None = 没查成，已经交代过了。
+    """
+    message, session_id, kwargs = turn.message, turn.session_id, turn.reply_kwargs
+    if turn.lookup:
+        outcome = await answer_with_lookup(message, session_id, turn.user_text,
+                                           *turn.lookup, reply_kwargs=kwargs, media=turn.media)
+        if outcome is None:
+            await safe_reply(message, "这次没查成，等会儿再试试。")
+        return outcome
+    if kwargs["unprompted"]:
+        return await reply_unprompted(message, session_id, turn.user_text,
+                                      media=turn.media, callback_note=turn.callback_note,
+                                      owed=turn.feedback.get("target") == "bot_response",
+                                      **kwargs)
+    return await reply_in_session(message, session_id, turn.user_text,
+                                  search_note=turn.search_note, media=turn.media,
+                                  **kwargs)
+
+
+def _settle(turn, outcome):
+    """落账：这一轮真说出去了才结算好感和心情。
+
+    outcome 是 _respond 的返回；没查成、或模型行使了不说话的权利（没有投递结果），全部跳过。
+    """
+    if outcome is None or outcome[2] is None:
+        return
+    delta = outcome[1]
+    # 日内微调（2026-10-06 改）：
+    #   「被 @ 且没扣分就 +1」撤掉了 —— 那等于把好感度变成「被搭理次数」，
+    #   实测一天 100 多次记账里 108 次 +1，连一直骂人的也在涨。
+    # 现在是：模型判**方向**（-1/0/1，见 CMD_PROTOCOL），拿不到模型判定时退回本地词表，
+    #   最后统一过每日封顶。真正的印象结算仍在压缩里做（它看得到一整天，更准）。
+    if config.AFFINITY_ENABLED:
+        reason = "模型判方向" if delta is not None else "词表兜底"
+        if delta is None:
+            delta = relations.local_sentiment(turn.user_text)
+        # 有效原生反馈在场时，负向情绪不落账：被指出问题、嫌插话时机不对、
+        # 甚至玩笑式粗口都不该扣交情（正向与游戏结算照旧照记）。
+        if (delta or 0) < 0 and turn.feedback.get("target") in (
+                "bot_response", "another_person", "unclear"):
+            delta = 0
+        # reason 区分开是有用的：跑几天就能从日志里看出「模型判方向」和
+        # 「词表兜底」各自的占比与准头，再决定要不要把权重挪向压缩结算。
+        apply_affinity_delta_capped(turn.group_id, turn.sender_openid, delta, reason)
+        # 心情（2026-10-19）：跟着每轮结算漂移——被怼多了它会烦，被捧了会顺气。
+        # 零额外模型调用：方向值是现成的，心情只是它的指数移动平均。
+        if delta:
+            activation.note_mood(delta)
+
+
+# 这一轮经过的全部函数，按顺序。源码级守卫照这张表查群聊路径（tests/test_owner_claim.py、
+# tests/test_no_raw_ids.py）：往这一节加新的一段，也加到这里。
+GROUP_TURN_STAGES = (_receive, _admit, _assess, _local_command, _triage,
+                     _plan_lookup, _plan_scene, _plan_notes, _plan, _respond, _settle)
+
+
 # ══════════════════════ 7. 机器人主体 ══════════════════════
 
 
@@ -3322,746 +4375,13 @@ class GroupBot(botpy.Client):
         await self.handle_group_msg(message, is_at=True)
 
     async def handle_group_msg(self, message: GroupMessage, is_at: bool = False):
-
-        # 1. 去重：同一条消息可能被多个事件重复投递
-        if message.id in processed_msg_ids:
-            if is_at:
-                _learn_self_from_late_at(message)
+        """一轮群消息：收件 → 分诊 → 计划 → 生成与投递 → 落账（各段见上面第 6 节）。"""
+        turn = _receive(message, is_at, self.robot)
+        if turn is None or not await _admit(turn) or await _local_command(turn):
             return
-        processed_msg_ids.append(message.id)
-
-        raw_content = message.content or ""
-        group_id = message.group_openid
-        sender_openid = message.author.member_openid
-        receipt_time = time.time()
-        session_at_receipt = runtime.SESSIONS.snapshot(f"{group_id}_{sender_openid}", now=receipt_time)
-        prior_search_at_receipt = search_mod.render_prior_lookup(
-            runtime.SESSIONS.lookup_snapshot(f"{group_id}_{sender_openid}", now=receipt_time),
-            known=(group_id, sender_openid, message.id))
-        feedback_at_receipt = runtime.FEEDBACK.reply_snapshot(group_id, now=receipt_time)
-        history_at_receipt = [row for row in group_buffers.get(group_id, ())
-                              if 0 <= receipt_time - float(row.get("time") or 0)
-                              <= config.GROUP_BUFFER_TTL_SECONDS]
-        reminder_revision_at_receipt = _reminder_revisions[group_id]
-        voices = getattr(message, "_voice_attachments", ())
-        if voices:
-            suffix = "（附件过多，暂未识别）" if len(voices) > 3 else ""
-            raw_content = f"[语音]{suffix} {raw_content}".strip()
-
-        # 图片（2026-10-19，克制版读图）：群消息的图走 attachments 字段，content 往往是
-        # 空的——以前纯图消息在下面的「读不出人话」闸被整条丢弃，群友发的图它连看都没看过。
-        # 现在标记为 [图片] 进背景缓存，闸门放行时异步读一次图（glm-4v-flash，免费），
-        # 一句话描述替换标记——**读一次永久复用**（QQ 图床 URL 有时效，描述文本才是能存的）。
-        image_url = None
-        for att in (getattr(message, "attachments", None) or []):
-            if str(getattr(att, "content_type", "") or "").startswith("image") \
-                    and getattr(att, "url", None):
-                image_url = att.url
-                break
-        if image_url:
-            raw_content = f"{raw_content} [图片]".strip()
-
-        # 2. 识别 @机器人 或直接喊它的名字
-        #    「要不要理这条」必须看**原始 content**：判定要趁 <@!openid> 还在的时候做。
-        #    被 @ 的其他群友优先信事件体的 mentions。
-        bot_id = getattr(self.robot, "id", "")
-        bot_name = getattr(self.robot, "name", "")
-        # 引用了哪条、@ 的是不是小王（2026-11-03，见 quotes.py）：群友引用小王的话时 QQ 自动 @ 它，
-        # 从这里认出小王在这个群的成员 openid，以后单点 @ 也认得。
-        scene = getattr(message, "_scene", None) or {}
-        quoted = runtime.QUOTES.find(group_id, scene.get("ref_msg_idx"))
-        if scene.get("ref_msg_idx") and quoted is None:
-            logger.info("🔗 引用了一条没记着的消息（%s）", scene["ref_msg_idx"][:16])
-        quotes_self = bool(quoted and quoted["who"] == quotes.SELF)
-        if quotes_self:
-            _learn_self(group_id, quotes.self_in(
-                raw_content, [getattr(u, "member_openid", None) for u in (getattr(message, "mentions", None) or ())],
-                scene.get("bots")), "群友引用它的话时带的 @")
-        me = _self_openids(group_id, bot_id)
-        raw_at_ids = quotes.at_ids(raw_content)
-        _recent_at_ids[message.id] = raw_at_ids
-        while len(_recent_at_ids) > config.DEDUP_MAX:
-            _recent_at_ids.popitem(last=False)
-        listed_mentions = [getattr(u, "member_openid", None)
-                           for u in (getattr(message, "mentions", None) or ())
-                           if getattr(u, "member_openid", None)]
-        mentioned_others = [m for m in extract_mentions(message, bot_id) if m not in me]
-        if mentioned_others:
-            logger.info("🔗 捕捉到艾特对象 %s", "、".join(m[-4:] for m in mentioned_others))
-            # 事件体只给 openid，正文里留下的明文 @昵称 是唯一能知道「群里怎么
-            # 显示他」的地方 —— 日常互相 @ 是大头，别只认群主命名那一种。
-            if learn_display_names(
-                    group_id, mentioned_others, raw_content, naming.bot_names()):
-                runtime.STATE.mark_dirty()
-
-        # 规范化时把 @ 翻成人话（@ 了谁由档案回答）—— @ 不再被清掉，见 qqtext 的说明
-        user_input = qqtext.normalize(
-            raw_content, mention_label=mention_label_for(group_id, me, bot_name))
-        # 名字全部按当前配置取，代码里不写死任何人名（见 naming.py）
-        # 引用小王的话、又把自动带的 @ 删了：跟喊名字一样算叫到它，接不接交给分诊。
-        has_name_call = quotes_self or any(n and n in user_input for n in naming.bot_names())
-        bot_tags = tuple(tag for oid in me for tag in (f"<@{oid}>", f"<@!{oid}>"))
-        # 平台 @ 是显性信号，一定回。正文里出现名字只是**本地提议**：
-        # 「小王傻」「小王怎么样了」不等于欠它一句，要不要答交给分诊（decisions.assess）。
-        at_bot = is_at or any(tag in raw_content for tag in bot_tags)
-        named = has_name_call and not at_bot
-        is_at = at_bot or has_name_call   # 「这条叫到了它」这个事实：归档 / 日志 / 剥称呼照旧用它
-        if is_at:
-            user_input = strip_call(user_input)
-
-        # 读不出人话的消息（纯表情/纯链接）到这里就没了。整条丢弃：
-        # 不入库、不进背景缓存、不回复。只有「@了机器人却一个字没说」例外，
-        # 那还欠他一句「找我啥事」。
-        # 图片例外（2026-10-19）：纯图消息标记为 [图片] 照常进背景——闸门放行会异步补描述，
-        # 群友发的图从「整条蒸发」变成「至少留了个存在感」。
-        if not user_input and not is_at and not image_url:
-            return
-        if not user_input and image_url:
-            user_input = "[图片]"
-        runtime.QUOTES.remember(group_id, scene.get("msg_idx"), sender_openid, user_input)
-        # 回的是哪句：拼在前面给背景、分诊和小王看；指令解析照旧只看他自己说的（user_input）
-        quote_note = ""
-        if quoted or scene.get("quoted"):
-            quote_note = quotes.render(
-                None if quoted is None else naming.bot_name() if quotes_self
-                else "自己" if quoted["who"] == sender_openid else _who_label(group_id, quoted["who"]),
-                (quoted or {}).get("text") or scene.get("quoted"))
-        heard = quote_note + user_input
-
-        logger.info("📩 [%s] %s | %s", "@艾特" if is_at else "群消息", sender_openid, heard)
-
-        # 3. 归档（这是查证用的底稿）
-        # ⚠️ 本地控制指令（「猫娘模式」这类）照样落盘留痕，但打上 cmd 标记 ——
-        #    压缩长期记忆时会跳过它们。它们是操作不是聊天，进了压缩就变成
-        #    「这人想变猫娘」这种人物事实（2026-09-21 实测事故）。
-        archived = runtime.ARCHIVE.append(
-            group_id, sender_openid, heard, at=is_at,
-            cmd=is_control_command(user_input), message_id=message.id,
-            at_ids=raw_at_ids, mentions=listed_mentions,
-            msg_idx=scene.get("msg_idx"), ref_msg_idx=scene.get("ref_msg_idx"))
-        if config.DIGEST_ENABLED:
-            runtime.DIGESTS.touch(group_id)
-        # 记一下这个群最近有人说话：主动催债前要确认群里还活着。
-        # 就地更新而不是整块替换 —— 这个槽位还存着别的每群标记（比如群主认领提示有没有说过）。
-        observe_group(group_id)["last_seen"] = time.time()
-        runtime.STATE.mark_dirty()
-
-        # 3.4 交互观察：完整规范化输入落独立日志（只进不出，不进任何提示词路径）。
-        # call：at 是怎么叫到它的 —— 平台 @ / 引用它的话 / 正文里喊名字（桌宠据此说不同的话）。
-        runtime.INTERACTIONS.append(
-            "incoming", group_id, user=sender_openid, actor="user",
-            message_id=message.id, text=heard,
-            at=bool(is_at), cmd=is_control_command(user_input),
-            call="at" if at_bot else "quote" if quotes_self else "name" if named else None)
-
-        # 清空命令先于捎带和任何模型判断；不能先把待取消的提醒发出去。
-        if is_cancel_all_reminders(user_input):
-            await handle_cancel_all_reminders(
-                message, group_id, bool(runtime.OWNER_OPENID and sender_openid == runtime.OWNER_OPENID))
-            return
-
-        # 3.5 显式反馈命令：在进背景缓存/好感度/模型之前处理 —— 它是给系统的
-        #     记账，不是聊天内容，进了 buffer 就会变成下轮「群聊背景」。
-        # 3.5 写入群聊滑动窗口背景缓存。
-        #     只挡「同一个人连着刷一模一样的内容」（复读机、表情三连），别让它把窗口占满；
-        #     其余照收。以前这里是「? / 6 / 草 / 哈哈」之类的白名单枚举，来一句新的
-        #     口头禅就得回来加一个词，而且把「？」这种真实的接话信号也一起挡掉了。
-        #     带图的不算复读：描述回填前两张图都是「[图片]」，第二张会被当成复读丢掉
-        #     （2026-11-01 12:31:53/55 连发两张，问「读这两张图」时背景里只剩一张）。
-        buf = group_buffers[group_id]
-        if (not buf or image_url or voices or buf[-1]["sender"] != sender_openid
-                or buf[-1]["text"] != heard):
-            row = {"sender": sender_openid, "text": heard, "time": receipt_time, "message_id": message.id}
-            if scene.get("msg_idx"):
-                row["msg_idx"] = scene["msg_idx"]
-            buf.append(row)
-            runtime.STATE.data["buffers"][group_id] = list(buf)
-        media.remember(group_id, message.id, sender_openid, image_url)
-        # Slow carried results may themselves deliver a reply. They happened after
-        # receipt and belong in the late-event view, never the frozen source context.
-        await deliver_carried(message, group_id)
-
-        if voices:
-            transcript = await _recognize_voices(
-                voices, f"group:{group_id}:{message.id}" if message.id else None,
-                group=group_id)
-            row = None
-            if transcript:
-                row = runtime.ARCHIVE.attach_voice_transcript(
-                    group_id, message.id, transcript, sender=sender_openid,
-                    buffers=group_buffers, state=runtime.STATE,
-                    at=bool(is_at or any(n and n in transcript for n in naming.bot_names())))
-            if row:
-                user_input = user_input.replace("[语音]", row["text"], 1)
-                if not at_bot and any(n and n in user_input for n in naming.bot_names()):
-                    named = True
-                    is_at = True
-                    user_input = strip_call(user_input)
-            elif not (message.content or "").strip():
-                if at_bot:
-                    await safe_reply(message, "这条语音我暂时听不清，能发文字吗？")
-                return
-
-        # 分诊（2026-10-31）：这条消息要问判断的那几题，**第一次用到时**才问、只问一次，
-        # 之后各处复用同一份结果（见 decisions.FeedbackTracker.assess）。
-        # 起名候选在 5.5 才解析出来，所以第一次调用可能在那里，也可能在 9。
-        triage_box = {}
-
-        async def triage(nick_candidate=None):
-            if "result" not in triage_box:
-                try:
-                    triage_box["result"] = await runtime.FEEDBACK.assess(
-                        group_id, sender_openid,
-                        (quote_note + (user_input or (f"@{naming.bot_name()}" if at_bot else ""))).strip(),
-                        message_id=message.id, is_direct=bool(at_bot), named=named,
-                        history=history_at_receipt[-4:],
-                        reply_snapshot=feedback_at_receipt, now=receipt_time,
-                        nick_candidate=nick_candidate,
-                        want_recall=config.MEMORY_RECALL_ENABLED,
-                        want_lookup=(config.SEARCH_ENABLED
-                                     and providers.research_available()))
-                except Exception:
-                    logger.exception("⚠️ 分诊异常（%s）", group_id[-6:])
-                    # 异常不代表「没发起过」—— 标成已尝试，同一条消息不许补发第二次。
-                    triage_box["result"] = {"decision_attempted": True}
-            return triage_box["result"]
-
-        # 4. 群主认领 —— **群里永远不授权**，这里只负责把人指到私聊去。
-        #    以前这段真的会在群里认主（谁先喊谁得），等于把身份挂在大喇叭上招领；
-        #    现在群里说破天也只是收到一句「去私聊办」，权限一个字都不给。
-        if looks_like_claim_attempt(user_input):
-            if runtime.OWNER_OPENID is None:
-                # 每个群只正面回一次，免得有人反复喊就反复刷屏
-                if claim_redirect_pending(group_id):
-                    def commit_redirect(_receipt):
-                        slot = observe_group(group_id)
-                        slot["claim_redirect"] = slot["owner_hint"] = True
-                        runtime.STATE.mark_dirty()
-                    await safe_reply(message, OWNER_CLAIM_HINT, on_delivered=commit_redirect,
-                                     send_lock=owner_hint_lock(group_id),
-                                     is_current=lambda: claim_redirect_pending(group_id))
-                return
-            await safe_reply(message, "已经认得你了，直接说就好。" if runtime.OWNER_OPENID == sender_openid
-                             else "这边已经有人认领过我了。")
-            return
-
-        is_owner = runtime.OWNER_OPENID is not None and sender_openid == runtime.OWNER_OPENID
-
-        # 5.4 起名开关：群主一句话锁上/解开整个群的起名。0 token，纯本地。
-        #     排在昵称指令解析之前 —— 「锁起名」本身不含「叫我/叫X」，不会撞，
-        #     但万一撞了也要让开关先说话。
-        lock_cmd = relations.parse_nick_lock_command(user_input)
-        if lock_cmd:
-            await handle_nick_lock(message, group_id, lock_cmd, is_owner)
-            return
-
-        # 5.5 昵称管理：本人随时认领或改（以最新一次为准），群主可以 @某人 给对方指定
-        #     「机器人名，叫 小满」这种带称呼前缀的要先剥掉前缀才认得出来
-        bot_names = naming.bot_names()
-        # mentioned_others 照传：它是「这人 @ 了别人」的事实，剥 @ 文本要用到，
-        # 否则「@阿澈 叫我阿强」连本人改名都会失效。能不能给别人起名是另一件事，
-        # 交给 allow_other 控制（只有群主才可能是在给别人起名）。
-        nick_cmd = relations.parse_nick_command(
-            user_input, bot_names=bot_names,
-            mentioned_others=mentioned_others, allow_other=is_owner)
-        nick_verdict = None
-        if nick_cmd and nick_cmd.get("nick"):
-            # 本地模式只是**提议**一个候选。判断有把握时可以否决（诱饵 / 误触发），
-            # 但不能单独批准 —— 拿不准就照旧走词表、节流和审核那几道底线。
-            # 2026-10-31 真实语料 32 个候选：谐音政治人名有把握拦下 6 个，
-            # 却也把「姚元文」有把握地放行了；普通的「老王」五次里四次拿不准。
-            # 所以它只配当否决票，不配当批准章。
-            nick_verdict = (await triage(nick_candidate=nick_cmd["nick"])).get("nickname")
-            if nick_verdict == "not_a_request":
-                logger.info("🙅 起名模式误触发，按普通消息处理（%s）", sender_openid[-4:])
-                nick_cmd = None
-        if nick_cmd:
-            await handle_nick_command(message, nick_cmd, group_id, sender_openid,
-                                      is_owner, mentioned_others, verdict=nick_verdict)
-            return
-        # 解析不出命令 ≠ 没有这个意图：普通群友的「叫@某人 X」被 allow_other 吞掉了，
-        # 静默掉进闲聊会让人以为在商量、甚至以为改成了。带动词的是明确意图，必须给说法。
-        # 只认带动词的（不认「@老王 你好」那种任意短句），否则每句打招呼都要被回绝一次。
-        if not is_owner and relations.looks_like_other_nick(
-                user_input, bot_names=bot_names, mentioned_others=mentioned_others):
-            logger.info("🚫 非群主要给别人起名，已明说（%s）", sender_openid[-4:])
-            await safe_reply(message, NICK_OTHER_DENIED.format(owner=owner_label(group_id)))
-            return
-
-        # 9. 判定这条要不要接
-        # 搜索查询先解析一次：9.5 与反馈评估共用同一判定，不重复解析。
-        search_query = search_mod.extract_query(user_input)
-
-        # 自然反馈评估：只评普通群聊文本，最多一次原生判断；指令和搜索绕过。
-        # 评估用的输入都是脱敏后的本地代号，群号/openid/消息 ID 不出本机。
-        feedback_result = {}
-        if not is_control_command(user_input) and search_query is None:
-            feedback_result = await triage()
-            if feedback_result.get("target") is not None:
-                # 只有解析出有效反馈才落账；内部 ID 只进本地日志。
-                runtime.INTERACTIONS.append(
-                    "natural_feedback", group_id, user=sender_openid,
-                    actor="system", source_message_id=message.id,
-                    target=feedback_result.get("target"),
-                    suggested_move=feedback_result.get("suggested_move"),
-                    action=feedback_result.get("action"),
-                    source_reply_id=feedback_result.get("source_reply_id"),
-                    policy_id=config.INTERACTION_POLICY_ID)
-            # 「下一句骂你就是反馈」的跨天那一层：只收「没人请的插嘴」之后的
-            # 被嫌烦/被接着逗，折进本人的插嘴接纳度（receptive.py）。
-            # 内容对不对（repair_briefly / continue_normally）不算打扰的证据。
-            if (config.RECEPTIVE_ENABLED
-                    and feedback_result.get("target") == "bot_response"
-                    and runtime.RECEPTIVE.record(
-                        group_id, sender_openid,
-                        feedback_result.get("action"),
-                        route=feedback_result.get("source_route"))):
-                runtime.STATE.mark_dirty()
-        feedback_note = ""
-        reply_context = ""
-        if feedback_result.get("target") == "bot_response":
-            if feedback_result.get("action") == "back_off":
-                feedback_note = prompts.PROMPT_FEEDBACK_BACK_OFF
-            elif feedback_result.get("action") == "repair_briefly":
-                feedback_note = prompts.PROMPT_FEEDBACK_REPAIR
-        # 跨人续谈：判断看到的上一句可能不在本人的 session；只把实际送达的
-        # 原句作为本轮参考，不把反馈题的弃答改写成反馈或赋予新的回复资格。
-        bot_text = feedback_result.get("bot_reply_text")
-        if bot_text:
-            reply_context = prompts.PROMPT_PREVIOUS_BOT_REPLY.format(
-                recipient={
-                    "current_member": "由本轮说话人触发的接话",
-                    "another_member": "由另一位群友触发的接话",
-                    "group": "群内主动发言",
-                }.get(feedback_result.get("bot_reply_to"),
-                      "由另一位群友触发的接话"),
-                quoted_text=json.dumps(bot_text, ensure_ascii=False))
-
-        should_reply = False
-        # 没 @、没叫名字的这一轮：接不接交给小王自己（见下面最后一个分支）
-        unprompted = False
-        search_note = ""
-        # 「居然记得」：本轮端给它的那一条本人旧话（没获批就是空串）。
-        callback_note = ""
-        # 门控决策：记的是「这道门当时放没放人」。没叫它的那几轮要等小王答完才知道，
-        # 生成之后再记（见 11. 之后）。
-        gate_decision = None
-        # suggested_move 已过原生判断的格式/弃答闸，过期结论会被清空。已有结论时听
-        # 语义判断；缺失时才用本地词表，避免「没人吐槽反而不舒服」被裸词误认成喊停。
-        # 显式收敛仍优先，暂停窗的装卸继续由 FEEDBACK 管理。
-        back_off = bool(feedback_result.get("back_off")) or (
-            feedback_result.get("suggested_move") is None and looks_like_back_off(user_input))
-        addressed = feedback_result.get("addressed")
-        # 点了名：判断说「该答」就答；判断不可用也答（被叫到却被无视，比多答一句难受）——
-        # 唯一例外是判断有把握地读出「收敛」：被叫闭嘴不该回一句「好的我闭嘴」。
-        named_owed = named and (addressed == "answer"
-                                or (addressed is None
-                                    and not feedback_result.get("back_off")))
-        quip = False
-        if at_bot or named_owed:
-            should_reply = True
-            gate_decision = {"route": "direct",
-                             "selected": True,
-                             "reason": ("direct_address" if at_bot
-                                        else "named_answer" if addressed == "answer"
-                                        else "named_fallback")}
-        elif named and addressed == "quip":
-            # 被点名逗 / 夸 / 说起：addressed 那题已经判过「短接一句接得上」（接不上的是
-            # let_it_pass），这里只决定怎么接 —— 短接，不是正经作答。暂停窗内一律不接。
-            # 2026-11-01 以前还要 intervention 说 join_briefly 才接：那题问的是「没人请时
-            # 插一句合不合适」，题面写明点名的消息另有人管，于是几乎总说 stay_quiet ——
-            # 群主一句「小王我真的好喜欢你啊」就这样被吞了。
-            quip = not runtime.FEEDBACK.quiet(group_id)
-            should_reply = quip
-            gate_decision = {"route": "reply", "selected": quip,
-                             "reason": "named_quip" if quip else "named_quip_quiet"}
-        elif (feedback_result.get("target") == "bot_response"
-                and feedback_result.get("action") == "repair_briefly"):
-            # 有效修正：不用点名也补一句简短修正（一条，不连环追发）。
-            should_reply = True
-            gate_decision = {"route": "reply", "selected": True,
-                             "reason": "feedback_repair"}
-        elif runtime.FEEDBACK.quiet(group_id):
-            # 原生反馈判过「收敛一下」：暂停窗内没叫它的一律不问。
-            gate_decision = {"route": "banter", "selected": False,
-                             "reason": "feedback_quiet"}
-        elif back_off:
-            # 「小王闭嘴」这类没被判成该答的：不问它，免得回一句「好的我闭嘴」
-            gate_decision = {"route": "banter", "selected": False,
-                             "reason": "back_off"}
-        elif search_query is None:
-            # 没 @、没叫名字（2026-11-02 起）：不掷骰子了，交给小王 —— 是不是冲它来的、
-            # 接不接，它自己看（prompts.PROMPT_BANTER_NOTE；不接就写〔不接〕）。
-            # 以前这里是 12% 的骰子 × 亲密度 × 作息 × 节奏先验 × 插嘴判断 × 接纳度，
-            # 冲着它说却没带名字的话（接着它刚才的话往下聊）也跟着掷 ——
-            # 群主：「老任说话很明显都是对小王的」。代码只留两道底线：上面的收敛暂停窗，
-            # 和下面 _unprompted_lock 一个群一次只问一句（「刚开过口」由它自己掂量）。
-            should_reply = unprompted = True
-            now = time.time()
-            # 「居然记得」（2026-10-31 群主：「有时候让人觉得意想不到居然
-            # 记得」）：本地话题闸先挑出本人旧话，再问一次原生判断 ——
-            # 此刻端出来是「居然记得」还是「翻档案」。判断不可用就不端，
-            # 新增的惊喜不许靠失败兜底。要稀才稀奇：每人冷却 + 每天上限。
-            if (config.DECISION_CALLBACK_ENABLED
-                    and config.PERSONAL_MEMORY_ENABLED
-                    and config.DIGEST_ENABLED
-                    and runtime.RECEPTIVE.callback_allowed(
-                        group_id, sender_openid, now=now)):
-                who, sources = digest_mod.match_people(
-                    runtime.DIGESTS.get(group_id), group_id=group_id,
-                    sender=sender_openid, text=user_input,
-                    resolver=_resolve_name(group_id))
-                if sources:
-                    try:
-                        approved = await runtime.FEEDBACK.consider_callback(
-                            group_id, sender_openid,
-                            quote=sources[0]["quote"],
-                            quote_ts=sources[0]["ts"],
-                            history=list(buf or [])[-4:], now=now,
-                            source_message_id=message.id)
-                    except Exception:
-                        logger.exception("⚠️ 回忆判断异常（%s）", group_id[-6:])
-                        approved = None
-                    if approved:
-                        callback_note = refresh_names(
-                            group_id,
-                            digest_mod.render_matched(who, sources[:1]))
-        if gate_decision is not None:
-            runtime.INTERACTIONS.append(
-                "decision", group_id, user=sender_openid, actor="system",
-                source_message_id=message.id, **gate_decision)
-
-        # 9.5 联网：显式「搜索」命令所有群友可用、按群限流；配了联网查询时，
-        #     分诊判断说「这句得先查」也会查（见下面 9.6）。lookup = (慢活名, 要查的话)。
-        lookup = None
-        resource_note = ""
-        resource_score = (runtime.RELATIONS.get(group_id, sender_openid, create=False) or {}).get("score", 0)
-        if search_query is not None:
-            if not config.SEARCH_ENABLED:
-                await safe_reply(message, "联网搜索没开。")
-                return
-            if not search_query:
-                await safe_reply(message, "搜什么？把关键词带上。")
-                return
-            if wordfilter.has_hit(search_query):
-                await safe_reply(message, "这个我不搜。")
-                return
-            status = _reserve_search(group_id, sender_openid, resource_score, cooldown=True)
-            if status not in ("normal", "exception", "extra"):
-                await safe_reply(
-                    message,
-                    "刚搜过，让我缓一会儿再查。" if status == "cooldown"
-                    else "这会儿没法查，等会儿再试试。" if status == "unavailable"
-                    else "今天查得有点累啦，明天再帮你查吧。")
-                return
-            if status == "exception":
-                resource_note = "【本轮状态】今天的基础查询次数已用完，这次实际用了额外次数。可以自然地说这次破例帮他查，不要声称以后无限破例。"
-            if providers.research_available():
-                lookup = ("search", search_query)
-                should_reply = True
-                runtime.INTERACTIONS.append(
-                    "decision", group_id, user=sender_openid, actor="system",
-                    source_message_id=message.id, route="search", selected=True,
-                    reason="search_override")
-            else:
-                results = await search_mod.search_web(search_query)
-                if results is None:
-                    await safe_reply(message, "搜索暂时连不上，稍后再试。")
-                    return
-                if not results:
-                    await safe_reply(message, "（搜了一圈）没找到靠谱的结果，换个说法？")
-                    return
-                search_note = search_mod.render_note(results)
-                should_reply = True
-                logger.info("🌐 按需搜索：%d 条结果（%s）", len(results), group_id[-6:])
-                # 搜索成功会改写上面的门控结果 —— 单独记一条，而不是回头涂改插嘴记录。
-                runtime.INTERACTIONS.append(
-                    "decision", group_id, user=sender_openid, actor="system",
-                    source_message_id=message.id, route="search", selected=True,
-                    reason="search_override")
-
-        # 9.6 判断触发的联网查询：只在本轮本来就要正经回话时才查（插嘴、短接、喊停都不查）。
-        #     research 是隐藏彩蛋：今天的次数用完或刚用过，就退回普通查询。
-        #     自动查询不吃「搜索」命令的冷却，只算进每日上限。
-        if (lookup is None and should_reply and not unprompted and not quip
-                and not back_off and config.SEARCH_ENABLED
-                and providers.research_available()
-                and not wordfilter.has_hit(user_input)):
-            kind = feedback_result.get("lookup")
-            status = None
-            if kind == "research":
-                status = (_reserve_search(group_id, sender_openid, resource_score, deep=True)
-                          if config.DEEP_RESEARCH_ENABLED else "disabled")
-                if status in ("disabled", "deep_cooldown", "deep_daily"):
-                    kind = "search"
-            if kind == "search":
-                status = _reserve_search(group_id, sender_openid, resource_score)
-            if kind in ("search", "research") and status in ("quota", "daily", "unavailable"):
-                await safe_reply(message, "这会儿没法查，等会儿再试试。" if status == "unavailable"
-                                 else "今天查得有点累啦，明天再帮你查吧。")
-                return
-            if kind in ("search", "research") and status in ("normal", "exception", "extra"):
-                if status == "exception":
-                    resource_note = "【本轮状态】今天的基础查询次数已用完，这次实际用了额外次数。可以自然地说这次破例帮他查，不要声称以后无限破例。"
-                lookup = (kind, _lookup_query(
-                    (quote_note + (user_input or (f"@{naming.bot_name()}" if at_bot else ""))).strip(),
-                    history_at_receipt, message.id, sender_openid=sender_openid))
-
-        if not should_reply:
-            if image_url:
-                task = asyncio.create_task(media.caption_for(
-                    group_id, message.id, sender_openid, image_url))
-                _media_tasks.add(task)
-                task.add_done_callback(_media_tasks.discard)
-            return
-
-        if is_at and not user_input and not image_url and not quote_note and not history_at_receipt:
-            await safe_reply(message, f"找{naming.bot_name()}啥事？直接说就行。")
-            return
-        if not await BudgetGate.check(message, group_id):
-            runtime.INTERACTIONS.append(
-                "decision", group_id, user=sender_openid, actor="system",
-                source_message_id=message.id,
-                route="banter" if unprompted else "reply",
-                selected=False, reason="budget_blocked")
-            return
-        current_read = None
-        if image_url and not unprompted:
-            # 这条自己带的图：读图先起着，跟背景里欠着的图一起等（见下面 await_images）
-            current_read = asyncio.ensure_future(media.caption_for(
-                group_id, message.id, sender_openid, image_url, foreground=True))
-        elif image_url:
-            # 没叫它的那一轮按后台口径读图（吃冷却）：没人问的图不值得破一次冷却，
-            # 读不成也不提示它「说明看不到」—— 没人在等它看这张图。
-            caption = await media.caption_for(
-                group_id, message.id, sender_openid, image_url, foreground=False)
-            if caption:
-                user_input = f"{user_input}\n[图片：{caption}]"
-            elif user_input == "[图片]":
-                # 没人问、又没读成的纯图：没有可接的东西，不问它。问了它只看见裸 [图片]，
-                # 就答「我这边看不到」—— 2026-11-02 21:04 群友连发几张图，张张这么答。
-                runtime.INTERACTIONS.append(
-                    "decision", group_id, user=sender_openid, actor="system",
-                    source_message_id=message.id, route="banter",
-                    selected=False, reason="image_unread")
-                return
-            else:
-                user_input += "\n（这张图你没看；没人问你，别提它。）"
-
-        # 回的是哪句拼到前面（指令都在上面认完了，这一截碍不着它们）
-        user_input = quote_note + user_input
-
-        # 11. 组装群聊背景 + session，走 AI
-        context_hint = ""
-        state_note = ""
-        prev = []
-        now_ts = time.time()
-        buf = group_buffers.get(group_id)
-        if history_at_receipt:
-            # ⚠️ 必须按时间过滤（2026-10-06 实测）：buffer 是落盘的、跨重启保留，
-            # 机器睡了 12 天再醒来的第一条消息，配到的还是 12 天前的对话 ——
-            # 那不叫「最近背景」，叫考古。
-            fresh = [b for b in history_at_receipt if 0 <= now_ts - float(b.get("time") or 0)
-                     <= config.GROUP_BUFFER_TTL_SECONDS]
-            # 关注度（2026-10-19）：亲密度决定背景条数——越熟的人它记得越多，
-            # 生人没必要也没资格让它看到太多背景。条数表见 activation.context_turns。
-            _rec = runtime.RELATIONS.get(group_id, sender_openid, create=False)
-            _tier = relations.level_key((_rec or {}).get("score", 0))
-            _willingness, _turns, state_note = activation.profile(_tier)
-            # 带图的这条还没回填描述，别拿「[图片]」去比，把背景里别的没读的图也筛掉
-            same = None if image_url else user_input
-            earlier = [b for b in fresh if b["text"] != same]
-            prev = earlier[-_turns:]
-            # 这人刚发的图是他这句话的一部分：条数限的是能看多少别人的话，不该把他
-            # 递过来的图挤掉（2026-11-02 21:05 生人发图，隔两句问「这张怎么样」，图不在背景里）
-            prev = [b for b in earlier[:-_turns] if _own_recent_image(b, sender_openid, now_ts)] + prev
-        if not unprompted:
-            # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被冷却挡掉没读。
-            # 不然模型只看见裸 [图片]，答「没看到图」——2026-11-01 12:32 连着三次
-            # （实测见 docs/image-before-reply.md）。他自己的图等不到先回一句在看（await_images）。
-            # 没叫它的那一轮不补读：补读走前台、不吃冷却，每条闲聊都补就把冷却架空了
-            own = [b.get("message_id") for b in prev if _own_recent_image(b, sender_openid, now_ts)]
-            await await_images(
-                message, ([current_read] if current_read else []) + media.reads_owed(group_id, own),
-                media.reads_owed(group_id, [b.get("message_id") for b in prev
-                                            if b.get("message_id") not in own]))
-            if current_read is not None:
-                caption = (current_read.result()
-                           if current_read.done() and not current_read.cancelled() else None)
-                user_input += (f"\n[图片：{caption}]" if caption
-                               else "\n（本轮图片暂不可读；明确说明这一点，不猜测图中内容。）")
-        if prev:
-            # 必须标出发言人。之前只给一串裸文本，模型分不清哪句是谁说的，
-            # 于是把别人认领的名字安到了当前这位头上 —— 叫错人就是这么来的
-            # （_who_label 已提为模块级：读图上下文共用，两处渲染不许漂移）
-            rows = [(float(b.get("time") or 0),
-                     f"- {'当前说话人' if b['sender'] == sender_openid else '其他群友（' + _who_label(group_id, b['sender']) + '）'}：{b['text']}")
-                    for b in prev]
-            # 同一段时间里它自己说过的话按时间插进去（见 own_lines）；它自己刚画的图往前多看一段（_own_recent_drawing）
-            rows += [(o["time"], "- 你：" + (proactive.own_text(o)
-                      if o.get("medium", "text") != "text" or o.get("status", "delivered") != "delivered"
-                      else o["text"])) for o in own_lines.get(group_id, ())
-                     if o["time"] <= receipt_time
-                     and (rows[0][0] <= o["time"] or _own_recent_drawing(o, now_ts))]
-            rows.sort(key=lambda row: row[0])
-            context_hint = refresh_names(group_id, "\n".join(line for _, line in rows))
-            # ⚠️ 这行是对着「爱翻旧账的模型」写的（实测 Gemini 会把背景里别人的言行安到
-            # 当前说话人头上，一晚上把「当猫娘」安给了三个人）。所以要点名三件事：
-            # 每句都有主，当前说话人与其他人按 ID 区分，引用前先核对标记。
-            context_hint = _BG_PREAMBLE + "\n" + context_hint
-
-        # 每人每群一份独立 session，彻底隔离会话，绝不串台
-        session_id = f"{group_id}_{sender_openid}"
-
-        # 称呼与游戏关系注入：称呼在好感开关之外也要给（不然 AFFINITY_ENABLED=false
-        # 时连名字都叫不出来）；游戏部分（档位/模式/里程碑）只在好感开着时写。
-        # 同时消费掉待播报的里程碑。
-        target_record = runtime.RELATIONS.get(group_id, sender_openid,
-                                              create=config.AFFINITY_ENABLED)
-        relation_note = relations.build_relation_note(
-            target_record, sender_openid,
-            other_names=_other_names(group_id, sender_openid),
-            include_game=config.AFFINITY_ENABLED)
-        pending_milestone = ((target_record or {}).get("pending_milestone")
-                             if config.AFFINITY_ENABLED else None)
-        def commit_milestone():
-            if pending_milestone and target_record.get("pending_milestone") == pending_milestone:
-                target_record["pending_milestone"] = None
-                target_record["told_day"] = time.strftime("%Y-%m-%d")
-
-        # 群聊长期记忆注入：**每日层只留共享的群表达参考**（口头禅/语气词）。
-        # 个人材料不再进这层 —— 它随说话人与话题变化，属于本轮动态层（见下方
-        # personal_note）。简报/台账的独立出口照旧：群史记查询、催债定时任务、
-        # 查账触发词 —— 需要时查得到，不需要时不陪跑。
-        summary = runtime.DIGESTS.get(group_id) if config.DIGEST_ENABLED else None
-        group_memory = refresh_names(group_id, digest_mod.render_style(summary)) if summary else ""
-
-        # 可编辑知识库：维护者改文件、下一轮即生效；只按关键词取少量进动态层。
-        knowledge_note = ""
-        if (not unprompted and not quip and not back_off
-                and not feedback_note and config.KNOWLEDGE_ENABLED):
-            knowledge_note = refresh_names(
-                group_id, runtime.KNOWLEDGE.render(group_id, user_input))
-            if knowledge_note:
-                logger.info("📚 知识库命中：%d 条（%s）",
-                            knowledge_note.count("\n- "), session_id[-12:])
-
-        # 旧账召回：分诊判断「这句的回答要靠本群旧账」时才查本地归档；随机插嘴不翻旧账。
-        # 以前靠「上次 / 之前 / 答应」这类线索词触发，真实语料里点名消息上命中的 5 条全是误触发
-        # （「之前那个模型更有趣」「我叫王红闻你就要答应」），判断全判对了。
-        recall_note = ""
-        if (not unprompted and not quip and not back_off
-                and not feedback_note and config.MEMORY_RECALL_ENABLED
-                and feedback_result.get("recall") == "look_up"):
-            recall_names = _recall_names(group_id)
-            recall_now = time.time()
-            selection = recall_mod.select(
-                group_id, user_input,
-                archive=runtime.ARCHIVE, promises=runtime.PROMISES,
-                names=recall_names, now=recall_now, exclude_text=user_input)
-            recall_note = refresh_names(group_id, recall_mod.render(
-                selection, name_of=_resolve_name(group_id), now=recall_now))
-            _record_recall(group_id, sender_openid, message.id, user_input,
-                           recall_names, recall_now, selection)
-            if recall_note:
-                logger.info("🔎 旧账召回：%d 条本地证据（%s）",
-                            recall_note.count("\n- "), session_id[-12:])
-
-        # 个人原话：当前说话人、当前话题命中、来源与时间齐备才给，最多两条。
-        # 知识库/旧账/搜索已答了本轮要的东西时不再叠加；随机插嘴与喊停同样不给。
-        # 插嘴轮：只认门控里被原生判断放行的那一条（callback_note）；
-        # 普通接话轮照旧按本人 + 当前话题现挑。两条路都走同一道准入闸。
-        personal_note = callback_note
-        if (summary and not unprompted and not quip and not back_off
-                and not feedback_note
-                and not any((knowledge_note, recall_note, search_note, lookup))):
-            personal_note = refresh_names(group_id, digest_mod.render_people(
-                summary, group_id=group_id, sender=sender_openid, text=user_input,
-                resolver=_resolve_name(group_id)))
-            if personal_note:
-                logger.info("🗣 个人原话：%d 条命中（%s）",
-                            personal_note.count("\n- "), session_id[-12:])
-
-        if (not back_off and feedback_result.get("target") == "bot_response"
-                and feedback_result.get("source_route") == "reply"
-                and feedback_result.get("reminder_request") == "clear"):
-            # 这是在回答它刚问的具体事项，算正式办理提醒；仍须过实际提案审核。
-            unprompted = False
-
-        reply_kwargs = dict(
-            on_delivered=commit_milestone, owner_hint_group=group_id,
-            is_owner=is_owner,
-            context_hint=context_hint, unprompted=unprompted,
-            relation_note=relation_note, group_memory=group_memory,
-            owner_label=owner_label(group_id), state_note=state_note,
-            knowledge_note=knowledge_note, recall_note=recall_note,
-            personal_note=personal_note,
-            callback_approved=bool(callback_note),
-            feedback_note=feedback_note, reply_context=reply_context,
-            sincere_request=bool(feedback_result.get("sincere_request")),
-            playful_request=bool(feedback_result.get("playful_request")
-                                 and not feedback_result.get("sincere_request") and not lookup
-                                 and not search_note),
-            resource_note=resource_note,
-            back_off=back_off, quip=quip,
-            received_at=receipt_time, history_snapshot=session_at_receipt,
-            prior_search_note=prior_search_at_receipt,
-            history=([*history_at_receipt, {"sender": sender_openid, "text": heard,
-                       "time": receipt_time, "message_id": message.id}])[-4:],
-        )
-        # 画不画、说不说语音由小王在回复里自己决定；这里只定它这一轮「能不能」。
-        # 喊停这轮不画也不念：对方已经不想听了。先查再答的那轮能画、不念、不办提醒（见 media_turn）。
-        # （别叫 media：那是读图模块的名字，同一个函数里前面还在用它）
-        researching = bool(lookup or search_note)
-        this_turn = (None if back_off else
-                     media_turn(group_id, sender_openid, resource_score, asked=not quip,
-                                remind=not unprompted and not researching, voice=not researching))
-        if this_turn is not None:
-            this_turn.reminder_revision = reminder_revision_at_receipt
-            this_turn.reminder_intent = feedback_result.get("reminder_request")
-        outcome = None
-        if lookup:
-            outcome = await answer_with_lookup(message, session_id, user_input,
-                                               *lookup, reply_kwargs=reply_kwargs, media=this_turn)
-            if outcome is None:
-                await safe_reply(message, "这次没查成，等会儿再试试。")
-                return
-        if outcome is None:
-            if unprompted:
-                outcome = await reply_unprompted(message, session_id, user_input,
-                                                 media=this_turn, callback_note=callback_note,
-                                                 owed=feedback_result.get("target") == "bot_response",
-                                                 **reply_kwargs)
-            else:
-                outcome = await reply_in_session(message, session_id, user_input,
-                                                 search_note=search_note, media=this_turn,
-                                                 **reply_kwargs)
-        reply_text, delta, delivery = outcome
-        if delivery is None:
-            # 模型行使了不说话的权利：这轮到此为止，好感度/情绪结算全部跳过
-            return
-
-        # 日内微调（2026-10-06 改）：
-        #   「被 @ 且没扣分就 +1」撤掉了 —— 那等于把好感度变成「被搭理次数」，
-        #   实测一天 100 多次记账里 108 次 +1，连一直骂人的也在涨。
-        # 现在是：模型判**方向**（-1/0/1，见 CMD_PROTOCOL），拿不到模型判定时退回本地词表，
-        #   最后统一过每日封顶。真正的印象结算仍在压缩里做（它看得到一整天，更准）。
-        if config.AFFINITY_ENABLED:
-            reason = "模型判方向" if delta is not None else "词表兜底"
-            if delta is None:
-                delta = relations.local_sentiment(user_input)
-            # 有效原生反馈在场时，负向情绪不落账：被指出问题、嫌插话时机不对、
-            # 甚至玩笑式粗口都不该扣交情（正向与游戏结算照旧照记）。
-            if (delta or 0) < 0 and feedback_result.get("target") in (
-                    "bot_response", "another_person", "unclear"):
-                delta = 0
-            # reason 区分开是有用的：跑几天就能从日志里看出「模型判方向」和
-            # 「词表兜底」各自的占比与准头，再决定要不要把权重挪向压缩结算。
-            apply_affinity_delta_capped(group_id, sender_openid, delta, reason)
-            # 心情（2026-10-19）：跟着每轮结算漂移——被怼多了它会烦，被捧了会顺气。
-            # 零额外模型调用：方向值是现成的，心情只是它的指数移动平均。
-            if delta:
-                activation.note_mood(delta)
+        await _triage(turn)
+        if await _plan(turn):
+            _settle(turn, await _respond(turn))
 
     async def on_c2c_message_create(self, message: Message):
         """私聊。以前这里连去重都没有，重复投递会重复扣额度。"""

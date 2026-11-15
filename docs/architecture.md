@@ -35,6 +35,20 @@
 
 这些决定和当轮输入一起留下来，供[离线改进](#自己迭代把这一圈做成命令)重放。要看模块细节，可展开[详细架构图](readme/architecture-cn.svg)，或读[画图与语音](media-replies.md)、[引用与 @](quotes.md)。
 
+<a id="一轮消息的阶段"></a>
+
+**在代码里，这一轮是一个对象走过几段。** `bot.py` 的 `handle_group_msg` 只把各段串起来，段与段之间只传 `GroupTurn`；哪一段说「到此为止」，后面就不再跑。
+
+| 段 | 入口 | 做什么 |
+| --- | --- | --- |
+| 收件 | `_receive` → `_admit` | 去重，冻结到达时的现场（群聊背景、本人会话、它上一句回复、此前查到的资料、提醒版本），认出叫没叫到它；归档、进背景、把语音听成文字 |
+| 分诊 | `_local_command` → `_triage` | 0 token 指令当场办完；其余问一次 Decisions（`_assess`），定下接不接、走哪条路 |
+| 计划 | `_plan` | 占查询额度（`_plan_lookup`），读图并渲染背景（`_plan_scene`），取称呼、知识库、旧账和个人原话（`_plan_notes`），产出本轮动态层参数和可用动作 |
+| 生成与投递 | `_respond` → `reply_in_session` | 持会话锁，段间传 `ReplyTurn`：`_reply_draft` 写第一稿，`_reply_lookup` / `_reply_media` / `_reply_reminder` 核对并执行它提出的动作，`_reply_deliver` 发出去，确认送达才记进会话 |
+| 落账 | `_settle` | 真说出去了才结算好感和心情 |
+
+收件时冻结的那几样之后不再改：等锁、等图、等查询期间群里新发生的事，单独作为「后到事件」进本轮动态层（见[查询动作与消息时序](lookup-and-timeline.md)）。每段都能单独驱动，见 `tests/test_group_turn.py`；消息层回放走的是同一个 `handle_group_msg`。
+
 <a id="什么时候开口"></a>
 <a id="闭集判断只信排序不信刻度"></a>
 

@@ -123,7 +123,9 @@ class NoIdSlicingInDisplayPathsTest(unittest.TestCase):
     """
 
     def test_group_display_paths_do_not_slice_openids(self):
-        src = inspect.getsource(bot.GroupBot.handle_group_msg)
+        # 群聊这一轮的每一段，加上渲染背景的那个函数（发言人标签就是在那儿拼的）
+        src = "".join(inspect.getsource(stage) for stage in (
+            bot.GroupBot.handle_group_msg, *bot.GROUP_TURN_STAGES, bot._render_background))
         self.assertNotIn('群友{oid[-4:]}', src, "群聊背景又把编号拼回去了")
         self.assertNotIn('h["sender"][-4:]', src, "翻旧账又把编号拼回去了")
 

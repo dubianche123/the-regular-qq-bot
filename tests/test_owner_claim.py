@@ -231,9 +231,11 @@ class GroupChatNeverClaimsTest(BaseClaimTest):
         比一次行为断言更结实：将来谁顺手往群里加一句「那就认你吧」，这条会当场挂掉。
         用正则而不是子串 —— `OWNER_OPENID ==` 里也含「OWNER_OPENID =」，子串判断会误报。
         """
-        src = inspect.getsource(bot.GroupBot.handle_group_msg)
+        stages = (bot.GroupBot.handle_group_msg, *bot.GROUP_TURN_STAGES)
+        self.assertIn(bot._local_command, stages, "认领指路那一段不在守卫范围里")
+        src = "".join(inspect.getsource(stage) for stage in stages)
         self.assertIsNone(re.search(r"OWNER_OPENID\s*=(?!=)", src),
-                          "handle_group_msg 里出现了给 OWNER_OPENID 赋值的语句")
+                          "群聊路径里出现了给 OWNER_OPENID 赋值的语句")
 
     async def test_claim_attempt_gets_redirected_to_private_chat(self):
         """不授权，但也不能当没听见 —— 当事人得找得到路。"""

@@ -35,6 +35,20 @@ When speaking after a quiet interval, the model sees a bounded recent timeline w
 
 The inputs, judgments and outcomes also become the evidence for [offline improvement](#self-iteration-the-loop-as-commands). For modules, see the [detailed architecture](readme/architecture.svg), [image and voice](media-replies.md), and [quotes and @](quotes.md).
 
+<a id="stages-of-one-turn"></a>
+
+**In code, one turn is one object passing through stages.** `handle_group_msg` in `bot.py` only chains them; the stages share nothing but a `GroupTurn`, and once a stage ends the turn, nothing after it runs.
+
+| Stage | Entry point | What it does |
+| --- | --- | --- |
+| Receive | `_receive` → `_admit` | Deduplicate, freeze the scene at arrival (group background, the member's session, the bot's previous reply, earlier lookup material, reminder revision), work out whether the bot was addressed; archive, buffer, transcribe voice |
+| Triage | `_local_command` → `_triage` | Zero-token commands finish on the spot; everything else asks Decisions once (`_assess`) and settles whether and how to answer |
+| Plan | `_plan` | Reserve lookup quota (`_plan_lookup`), read images and render the background (`_plan_scene`), fetch names, knowledge, recall and personal quotes (`_plan_notes`), and produce the dynamic-layer inputs and allowed actions |
+| Generate and deliver | `_respond` → `reply_in_session` | Under the session lock, passing a `ReplyTurn`: `_reply_draft` writes the first draft, `_reply_lookup` / `_reply_media` / `_reply_reminder` check and execute the actions it proposed, `_reply_deliver` sends and records only what was confirmed delivered |
+| Settle | `_settle` | Affinity and mood change only when something was actually said |
+
+What was frozen at receipt never changes afterwards: anything that happens in the group while the turn waits for a lock, an image or a lookup enters the dynamic layer separately as late events (see [lookup actions and message timeline](lookup-and-timeline.md)). Every stage can be driven on its own, see `tests/test_group_turn.py`; message-level replay runs the same `handle_group_msg`.
+
 <a id="when-to-speak"></a>
 <a id="closed-set-judgment-trust-the-ranking-not-the-scale"></a>
 
