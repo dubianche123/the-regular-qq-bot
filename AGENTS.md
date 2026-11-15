@@ -83,6 +83,9 @@ launchctl bootout gui/$(id -u)/io.github.the-regular; launchctl bootstrap gui/$(
 | `panel.py` | 本机维护面板（`aiohttp`，127.0.0.1） |
 | `providers.py` | 显式候选、按任务路由、预算/超时边界 |
 | `turns.py` | 每轮生成、分诊与旧账检索输入的原样 JSONL 记录（`data/turns/`） |
+| `regular/shadow.py` | 影子回放：候选不上线，每晚用真实轮次和基线并排重放，盲评跨天累计 + 序贯检验；裁判核对（真实反应对裁判偏好） |
+| `regular/nightly.py` | 每晚汇总：体检、群友反应、影子回放拼成一页，可让桌宠说一句；默认不调模型 |
+| `regular/outcomes.py` | 只读反应账本：每条送达之后群友的实际反应（分诊的 `natural_feedback`），按版本 / 模型 / 路径 / 日期汇总 |
 | `regular/checkup.py` | 每日只读体检信号、上下文提取与标注结果统计 |
 | `regular/cases.py` / `regular/eval.py` | 事故用例库（生成/分诊/检索/消息四层）、双版本子进程回放、盲评、整天回放、窄口子措辞搜索 |
 | `regular/tune.py` | 体检信号阈值/词表与旧账检索策略的离线自迭代（坐标搜索、留出验证、漂移对比、`data/policies/` 提案与回退） |

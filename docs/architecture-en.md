@@ -210,7 +210,8 @@ The panel's checkup page reads local records. “让 Agent 改进” (Improve wi
 | `regular doctor` / `status` | local checks / read the runtime snapshot |
 | `regular --directory ~/.the-regular panel --open` | open the local configuration and maintenance panel (127.0.0.1 only) |
 | `regular service` | generate a launchd / systemd definition (never installs it) |
-| `regular coverage` / `calibration` | read-only stats: personal-quote coverage, judgment probabilities vs. outcomes |
+| `regular coverage` / `calibration` / `outcomes` | read-only stats: personal-quote coverage and keep/discard funnel, judgment probabilities vs. outcomes, how the group reacted to each delivered reply |
+| `regular shadow` / `nightly` | shadow replay (a candidate replays each finished day beside the baseline under a sequential test); a one-page nightly summary the desktop pet can announce |
 
 Decisions, search, vision, voice and drawing need the corresponding services. See [provider configuration](providers.md), [.env.example](../.env.example) and [image generation](image-generation.md).
 

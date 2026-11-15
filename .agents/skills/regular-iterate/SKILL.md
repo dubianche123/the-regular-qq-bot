@@ -142,5 +142,13 @@ description: 小团团（The Regular，QQ 群机器人）的自迭代流程：�
 | 会发什么给谁 | `eval … --plan` |
 | 新旧对比 | `eval --base HEAD --cand . --cases <标签> -n 4 --allow-paid` |
 | 只重评失败的 | `eval --rejudge <报告> --allow-paid` |
+| 噪声内的用例重抽再判 | `eval … --confirm 12 --allow-paid`（只按新抽的判，首轮样本不并入） |
+| 同代码只换模型 / 推理强度 | `eval --base . --cand . --cand-env OPENAI_MODELS=<模型> …`（报告记实际应答的模型） |
+| 一次评测样本不够 | `shadow start <名字> --cand <版本>`，之后每晚 `shadow run --allow-paid`，看 `shadow status` |
+| 裁判靠不靠谱 | `shadow judge --plan` / `--allow-paid`（真实被纠正 / 被接着玩的回复交给裁判核对） |
+| 群友实际怎么反应 | `outcomes [--by release\|model\|route\|day] [--route reply]` |
+| 体检的盲区 | `checkup --coverage`（真实现场用例里现在的体检列得出几条） |
+| 个人原话为什么没用上 | `coverage`（注入率 + 去留判断漏斗） |
+| 昨天的一页汇总 | `nightly [--pet]` |
 | 规则账本 | `rules` |
 | 线上跑的哪版 | `status --json` → `code.release` |

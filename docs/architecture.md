@@ -212,7 +212,8 @@ DEPLOY=/path/to/regular-bot
 | `regular doctor` / `status` | 本地体检 / 读运行时状态快照 |
 | `regular --directory ~/.the-regular panel --open` | 打开本机配置与维护面板（只绑 127.0.0.1） |
 | `regular service` | 生成 launchd / systemd 定义（不自动安装） |
-| `regular coverage` / `calibration` | 只读统计：个人原话覆盖率、判断概率对照实际结果 |
+| `regular coverage` / `calibration` / `outcomes` | 只读统计：个人原话覆盖率与去留漏斗、判断概率对照实际结果、每条送达之后群友的实际反应 |
+| `regular shadow` / `nightly` | 影子回放（候选每晚和基线并排重放、序贯下结论）；每晚一页汇总，可让桌宠说一句 |
 
 判断接口、联网、识图、语音和画图需要对应服务和配置。配置方法见[供应商说明](providers.md)、[示例配置](../.env.example)和[画图说明](image-generation.md)。
 
