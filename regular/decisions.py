@@ -418,7 +418,7 @@ class FeedbackTracker:
 
     async def assess(self, group, user, text, *, message_id="", is_direct=False,
                      named=False, history=None, nick_candidate=None,
-                     want_recall=False, want_lookup=False,
+                     want_recall=False, want_lookup=False, want_attitude=False,
                      reply_snapshot=_LIVE_REPLY, now=None):
         """一条人类消息的**分诊**：本机先决定要问哪几题，然后最多一次原生调用。
 
@@ -432,6 +432,7 @@ class FeedbackTracker:
           · 本轮会正经回复（被 @ / 点名）且开了召回 → recall：要不要翻本群旧账
           · 同上且配了联网查询 → lookup：要不要先上网查（search），或明确要它深挖（research）
           · 本地起名解析提出了候选 → nickname：adopt / refuse / not_a_request
+          · 被 @ / 点名、或在回它的话，且开着好感 → toward_bot：这句对它的态度方向（好感那一票）
 
         没叫它的消息接不接，2026-11-02 起由小王自己在回复里定（bot.reply_unprompted），
         这里不再问「插不插嘴」「要不要接着回」—— 跟它无关又不在反馈窗口里的消息一题都不问。
@@ -473,6 +474,9 @@ class FeedbackTracker:
         # 仅与对机器人说话或跟进它的回复有关时问；与分诊共用一次调用。
         if calls_bot or reply:
             questions += decision_prompts.request_kind_questions()
+            # 这句对它的态度方向：好感那一票（bot._settle）。以前是回复模型在正文后面自己记账。
+            if want_attitude:
+                questions += decision_prompts.toward_bot_questions()
         if (calls_bot or reply) and config.REMINDER_ENABLED:
             questions += decision_prompts.reminder_request_questions()
         # 对已有 bot 回复，原历史是该回复的证据；但群友可能在它之后、当前句之前
@@ -560,7 +564,8 @@ class FeedbackTracker:
                       nickname=choices.get("nickname"),
                       recall=choices.get("recall"),
                       lookup=choices.get("lookup"),
-                      reminder_request=choices.get("reminder_request"))
+                      reminder_request=choices.get("reminder_request"),
+                      toward_bot=choices.get("toward_bot"))
         # 已过可用性闸的认真结论也交给回复层；它与玩笑线索互斥，不改变接话门控。
         # 玩笑仍沿用原来的「低真心」边界，不把题面当作真实意图的定论。
         request_score = scores.get("request_kind") or {}

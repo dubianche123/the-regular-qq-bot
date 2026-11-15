@@ -19,21 +19,27 @@ import relations
 
 
 class OwnerNoteTest(unittest.TestCase):
-    """群主是群里跟它最熟的人 —— 但「熟」不许被写成「可以随便怼」。"""
+    """群主是群里跟它最熟的人 —— 但「熟」不许被写成「可以随便怼」。
+
+    2026-11-16 起这几条只写在一处：群主钉在最高一档，做法来自那一档的分寸提示；
+    PROMPT_OWNER_NOTE 只交代身份，不再逐条重复一遍。
+    """
+
+    def _owner_material(self):
+        rec = {"score": 100, "nick": "老王", "interactions": 50, "last_seen": 0, "first_seen": 0}
+        return prompts.PROMPT_OWNER_NOTE + relations.build_relation_note(rec, "owner-openid")
 
     def test_kindness_must_be_received_not_roasted(self):
-        self.assertIn("先把那句好意接住", prompts.PROMPT_OWNER_NOTE,
-                      "善意被抬杠接住是最伤的一种")
+        self.assertIn("好意必须先接住", self._owner_material(), "善意被抬杠接住是最伤的一种")
 
     def test_a_turn_cannot_be_only_jabs(self):
-        self.assertIn("一段话里不能只有挑刺", prompts.PROMPT_OWNER_NOTE)
+        self.assertIn("损只能是整段里的一句", self._owner_material())
 
-    def test_stands_by_him_when_he_is_having_a_bad_time(self):
-        self.assertIn("第一反应是护着他", prompts.PROMPT_OWNER_NOTE)
+    def test_stands_by_him(self):
+        self.assertIn("偏心护短", self._owner_material())
 
-    def test_answers_what_he_actually_said(self):
-        """别把对方的话当跳板、一开口就拐到别人身上。"""
-        self.assertIn("先接他说的这件事", prompts.PROMPT_OWNER_NOTE)
+    def test_owner_note_does_not_repeat_the_tier(self):
+        self.assertNotIn("好意", prompts.PROMPT_OWNER_NOTE)
 
 
 class CloseTierKeepsTeasingInBoundTest(unittest.TestCase):

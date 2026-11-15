@@ -238,18 +238,13 @@ class HarnessOrderTest(unittest.IsolatedAsyncioTestCase):
 
     # ── 协议与历史 ──
 
-    async def test_cmd_protocol_on_by_default(self):
-        """2026-10-06 起默认让模型判**方向**（-1/0/1）——「被 @ 就 +1」那条撤掉了。
-
-        判方向是模型的强项，绝对幅度交给代码和每日封顶；关掉它（CMD_PROTOCOL_ENABLED=false）
-        好感度就只剩本地词表 + 每日压缩。
-        """
+    async def test_reply_prompt_no_longer_asks_for_a_ledger_tag(self):
+        """2026-11-16 起这句对它的态度由分诊那一题判（toward_bot），回复只管说话，不再写 <CMD> 记账。"""
         msgs = await self.grab("th_cmd_1", "你好", is_owner=True,
                                relation_note="【记忆】x")
         blob = "\n".join(m["content"] for m in msgs)
-        self.assertTrue(config.CMD_PROTOCOL_ENABLED)
-        self.assertIn("<CMD>", blob)
-        self.assertIn("-1、0、1", blob)
+        self.assertNotIn("<CMD>", blob)
+        self.assertNotIn("-1、0、1", blob)
 
     async def test_envelope_never_stored_in_history(self):
         """信封只贴在发出去的请求上，历史里存的是原话，否则会一轮轮堆成雪球。"""

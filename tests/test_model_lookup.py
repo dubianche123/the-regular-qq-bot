@@ -49,7 +49,9 @@ class ModelLookupTest(_Base):
         self.addCleanup(ctx.stop)
 
     async def test_model_queries_after_decision_none_and_only_final_is_public(self):
-        self.script('〔搜索〕示例厂商 最新新机\n我已经查到了！\n<CMD>{"aff":1}</CMD>',
+        # 好感那一票来自分诊（toward_bot），不看草稿里残留的 <CMD> 标签
+        self.calls.side_effect = answer({"addressed": "answer", "lookup": "none", "toward_bot": "warm"})
+        self.script('〔搜索〕示例厂商 最新新机\n我已经查到了！\n<CMD>{"aff":-1}</CMD>',
                     '厂商刚发了蓝色款，价格还没官宣。\n<CMD>{"aff":-1}</CMD>')
         with patch.object(bot, "apply_affinity_delta_capped") as affinity:
             msg = await self._drive("小王 现在新机是啥颜色", is_at=True)
@@ -203,8 +205,10 @@ class ModelLookupTest(_Base):
         self.assertIn("没能整理出可靠的答复", msg.reply.await_args.kwargs["content"])
         self.assertEqual(len(self.fake.started), 1)
 
-    async def test_drawing_rewrite_preserves_first_query_score(self):
-        self.script('〔搜索〕新机\n<CMD>{"aff":1}</CMD>',
+    async def test_rewrites_do_not_change_the_affinity_vote(self):
+        """查询、拒画各重写一次，好感那一票照旧只有一票，来自分诊。"""
+        self.calls.side_effect = answer({"addressed": "answer", "lookup": "none", "toward_bot": "warm"})
+        self.script('〔搜索〕新机\n<CMD>{"aff":-1}</CMD>',
                     '〔画〕蓝色手机\n画一张\n<CMD>{"aff":-1}</CMD>',
                     '这张先不画。\n<CMD>{"aff":-1}</CMD>')
         with patch.object(bot.image_generation, "available", return_value=True), \

@@ -1,16 +1,14 @@
-"""激活度：作息、心情、亲密度融成一锅——一次回复的全部「内在状态」。
+"""激活度：作息和心情 —— 一次回复的「内在状态」，渲染成一句状态自述。
 
-设计原则（群主 2026-10-19 定调）：三个信号融合成**一个**激活度轮廓，
-不各自成系统、除心情的落盘外不碰模型、全部纯计算。
+设计原则（群主 2026-10-19 定调）：信号融合成**一个**轮廓，不各自成系统、除心情的落盘外不碰模型、全部纯计算。
 
-- 作息/生物钟：消息自带时间戳。凌晨的消息是「把人吵醒」——插嘴意愿打折，
-  真回了也带着起床气；这不是一个定时器，是看消息几点发的。
-- 心情：小王自己的情绪，全局一个值（-1 烦 → +1 顺）。事件驱动：每轮好感度
-  结算时喂一笔（模型判的方向现成的，零额外调用）；读取时按半衰期自然回中。
-  落 state.json（mood 键），重启不丢。
-- 关注度：亲密度决定能看到的背景条数——越熟的人，它记得越多。
+- 作息/生物钟：消息自带时间戳。凌晨的消息是「把人吵醒」—— 真回了也带着起床气；
+  这不是一个定时器，是看消息几点发的。
+- 心情：小王自己的情绪，全局一个值（-1 烦 → +1 顺）。事件驱动：每轮好感那一票
+  （分诊判的方向，现成的，零额外调用）喂一笔；读取时按半衰期自然回中。落 state.json（mood 键），重启不丢。
 
-对外只有一个入口：profile(tier, hour) → {willingness, turns, state_line}。
+亲密度 2026-11-16 起不再进这里：它以前决定能看到几条背景、乘在插嘴意愿上，现在只管怎么说
+（relations.build_relation_note）。对外入口：state_now() → 状态自述；主动开口另有 proactive_ok。
 """
 
 import time
@@ -110,21 +108,10 @@ def _mood_word(v):
     return ""
 
 
-def mood_dice_factor(v):
-    """心情对插嘴意愿的乘数：心情好更愿意搭话，烦了就更懒得理（±15% 封顶）。"""
-    return 1.0 + 0.15 * max(-1.0, min(1.0, v))
-
-
-# ── 关注度：亲密度档位 → 背景条数 ──
-# 越熟记得越多。生人不是不记，是没必要让它看到太多——它跟人家还没熟到翻旧账的程度。
-_CONTEXT_TURNS = {
-    "soulmate": 10, "buddy": 8, "friend": 6,
-    "acquaintance": 4, "familiar": 3, "distant": 2,
-}
-
-
-def context_turns(tier):
-    return _CONTEXT_TURNS.get(tier, 3)
+# 以前这里还有两样跟着亲密度走的东西，2026-11-16 撤了：
+# · 插嘴意愿乘数（作息 × 心情）：11-02 起接不接由小王自己定，这个数算出来没人用。
+# · 背景条数（生人 2 条到本命 10 条）：看懂群里在聊什么跟熟不熟无关，交情只管怎么说
+#   （称呼与分寸，relations.build_relation_note）；生人那一轮连上一句是谁说的都可能看不到。
 
 
 # ── 总装 ──
@@ -152,19 +139,11 @@ def state_line(label, mood_v):
             + "。（这是你的真实体感，只管你说话的劲头；别念出来，也别拿它当不回答的理由）")
 
 
-def profile(tier, hour=None, now=None):
-    """一次回复的完整内在状态。
-
-    返回 (willingness, turns, state_line)：
-    - willingness  插嘴意愿总乘数（作息 × 心情），乘在基数 × 亲密度权重之后
-    - turns        这位亲密度能看到的背景条数
-    - state_line   注入提示词的状态自述（没什么可说时为空串）
-    """
+def state_now(hour=None, now=None):
+    """这一刻的状态自述（作息 + 心情），注入提示词用；没什么可说时为空串。"""
     now = time.time() if now is None else now
-    factor, label = circadian(hour)
-    mood_v = current_mood(now)
-    willingness = factor * mood_dice_factor(mood_v)
-    return willingness, context_turns(tier), state_line(label, mood_v)
+    _, label = circadian(hour)
+    return state_line(label, current_mood(now))
 
 
 # ── 主动性 ──

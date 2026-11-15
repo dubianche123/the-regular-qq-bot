@@ -75,13 +75,13 @@ class RenderTest(unittest.TestCase):
             config.BOT_NAMES = saved
 
     def test_keeps_literal_braces_intact(self):
-        """提示词里有 {"aff": 2} 这种字面花括号（结构化输出协议）。
+        """提示词里可能有 {"aff": 0} 这种字面花括号（以前的记账协议、摘要的 <DIGEST>{…}</DIGEST> 示例）。
 
         这就是 render 用 replace 而不是 str.format 的原因 —— format 一碰就抛
-        KeyError，而且是运行到那一段才炸，等于把记账协议整个搞坏。
+        KeyError，而且是运行到那一段才炸。
         """
-        out = naming.render(prompts.CMD_PROTOCOL + "{owner}", owner="老张")
-        self.assertIn('{"aff": 0}', out)   # 协议示例值随口径变（三档），花括号本身必须活着
+        out = naming.render('<DIGEST>{"topics": []}</DIGEST>{owner}', owner="老张")
+        self.assertIn('{"topics": []}', out)
         self.assertFalse(out.endswith("{owner}"))
 
     def test_all_personas_render_clean(self):

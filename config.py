@@ -353,13 +353,9 @@ IMAGE_GENERATION_TIMEOUT_SECONDS = _env_float("IMAGE_GENERATION_TIMEOUT_SECONDS"
 
 # ══════════════════ 群友关系档案（见 relations.py）══════════════════
 AFFINITY_ENABLED = _env_bool("AFFINITY_ENABLED", True)
-# 每轮是否让模型在回复末尾吐一行 <CMD>{"aff":n}</CMD>。
-#
-# 2026-10-06 改过语义：以前是让它给 -3~+3 的**自由数字**，实测很虚（普通聊天也给 +3），
-# 而且没有任何东西能拦住它。现在只让它判**方向**（-1/0/1）——「这句对我是什么态度」是它的
-# 强项，绝对幅度交给代码：命中本地词表就扣，方向对上就加，最后还要过每日封顶。
-# 默认开着；关掉后每轮只剩本地词表，整天的印象仍由每日压缩统一评估。
-CMD_PROTOCOL_ENABLED = _env_bool("CMD_PROTOCOL_ENABLED", True)
+# 每轮那一票（2026-11-16 起）：分诊顺带判「这句对它的态度方向」（toward_bot，warm/neutral/hostile），
+# 送达了才记 ±1，再过每日封顶。以前是回复模型在正文后面写 <CMD>{"aff":n}</CMD> 给自己记账，
+# 拿不到再退回一张正负词表；两样都撤了。整天的印象仍由每日压缩统一结算。
 # 每日加分/扣分封顶（对称）。为什么需要：模型偶尔会判错，而好感度是**长期账本** ——
 # 没有封顶的话，一次判错就可能把「铁哥们」直接扣成「生疏」，且要靠很多天才能涨回来。
 AFFINITY_DAILY_GAIN_CAP = _env_int("AFFINITY_DAILY_GAIN_CAP", 10)

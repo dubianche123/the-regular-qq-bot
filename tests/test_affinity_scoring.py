@@ -6,7 +6,8 @@
 
 新口径三句话：
   1. **被 @ 本身不给分**。被搭理不等于被喜欢。
-  2. **模型只判方向**（-1/0/1），绝对幅度交给代码 + 每日封顶。
+  2. **只判方向**（-1/0/1），绝对幅度交给代码 + 每日封顶。2026-11-16 起方向由分诊那一题判
+     （decision_prompts.TOWARD_BOT_QUESTIONS），不再是回复模型自己写 <CMD> 记账、也没有词表兜底。
   3. 封顶**不对称**：加分放宽（关系本来就该越聊越近），扣分收紧（误判更伤人）。
 """
 import sys
@@ -21,30 +22,35 @@ import affinity
 import config
 import prompts
 import relations
+from types import SimpleNamespace
+from regular import decision_prompts
 
 GROUP = "TEST-AFF-GROUP"
 OID = "OID-AFF-0001"
 
 
-class DirectionProtocolTest(unittest.TestCase):
-    """模型那份协议：只判方向，且把两条易错标准写死。"""
+class DirectionQuestionTest(unittest.TestCase):
+    """分诊那一题：只判方向，且把两条易错标准写死。"""
+
+    def _q(self):
+        (q,) = decision_prompts.toward_bot_questions()
+        return q
 
     def test_only_three_values_allowed(self):
-        self.assertIn("-1、0、1", prompts.CMD_PROTOCOL)
-        self.assertNotIn("范围 -3 到 +3", prompts.CMD_PROTOCOL)
+        self.assertEqual([c["value"] for c in self._q()["choices"]], ["warm", "hostile", "neutral"])
+        self.assertEqual(bot._TOWARD_BOT, {"warm": 1, "neutral": 0, "hostile": -1})
 
     def test_mentioning_is_not_credit(self):
-        self.assertIn("被 @ 或被叫到名字，本身什么都不算", prompts.CMD_PROTOCOL)
+        self.assertIn("not warmth by itself", self._q()["instructions"])
 
     def test_discipline_is_not_hostility(self):
         """09-24 老王喊「小王闭嘴」被判 -1 —— 那是管教，不是讨厌。"""
-        self.assertIn("管教不算敌意", prompts.CMD_PROTOCOL)
+        self.assertIn("is correction, not hostility", self._q()["instructions"])
 
-    def test_it_is_told_not_to_please_anyone(self):
-        self.assertIn("别讨好谁", prompts.CMD_PROTOCOL)
-
-    def test_protocol_is_on_by_default(self):
-        self.assertTrue(config.CMD_PROTOCOL_ENABLED)
+    def test_the_reply_model_no_longer_grades_its_own_turn(self):
+        self.assertFalse(hasattr(prompts, "CMD_PROTOCOL"))
+        self.assertFalse(hasattr(config, "CMD_PROTOCOL_ENABLED"))
+        self.assertFalse(hasattr(relations, "local_sentiment"), "不再有正负词表兜底")
 
 
 class DailyCapTest(unittest.TestCase):
@@ -86,15 +92,23 @@ class DailyCapTest(unittest.TestCase):
         bot.apply_affinity_delta_capped(GROUP, OID, 1, "test", now=tomorrow)
         self.assertEqual(bot.affinity_budget(GROUP, OID, now=tomorrow)["gain"], 1)
 
-    def test_zero_mention_gives_nothing(self):
-        """没有模型判定时退回词表；「在吗」这种中性消息既不涨分也不建档。"""
-        bot.apply_affinity_delta_capped(GROUP, OID, relations.local_sentiment("在吗"), "test")
-        self.assertEqual(runtime.RELATIONS.get(GROUP, OID, create=False)["score"], 0)
+    def _settle(self, toward, target=None):
+        turn = SimpleNamespace(group_id=GROUP, sender_openid=OID, user_text="……",
+                               feedback={"toward_bot": toward, "target": target})
+        bot._settle(turn, ("正文", None, object()))
+        return runtime.RELATIONS.get(GROUP, OID, create=False)["score"]
+
+    def test_neutral_or_unasked_gives_nothing(self):
+        """中性、或者分诊没问这题（没叫它也不在回它的话），都不记这一票。"""
+        self.assertEqual(self._settle("neutral"), 0)
+        self.assertEqual(self._settle(None), 0)
 
     def test_insult_still_costs_affinity(self):
-        bot.apply_affinity_delta_capped(
-            GROUP, OID, relations.local_sentiment("小王我操你妈"), "test")
-        self.assertEqual(runtime.RELATIONS.get(GROUP, OID, create=False)["score"], -1)
+        self.assertEqual(self._settle("hostile"), -1)
+
+    def test_hostility_inside_feedback_on_its_reply_costs_nothing(self):
+        """被指出问题、嫌插话时机不对：那是反馈，不扣交情。"""
+        self.assertEqual(self._settle("hostile", target="bot_response"), 0)
 
     def test_digest_settlement_respects_the_cap_too(self):
         """压缩结算一次能到 ±6，它要是绕过封顶，封顶就形同虚设。"""
@@ -106,51 +120,18 @@ class DailyCapTest(unittest.TestCase):
         self.assertEqual(rec["interactions"], 0, "压缩结算不该虚增搭话次数")
 
 
-class MilestoneOnceADayTest(unittest.TestCase):
-    """日上限 10 = 一天能跨一个台阶 ⇒ 播报必须限流，否则它天天说「我们更熟了」。"""
+class NoMilestoneAnnouncementTest(unittest.TestCase):
+    """2026-11-16：跨台阶不再排一句「咱俩更熟了」让它当场说出来 —— 交情是内心戏不是台词。"""
 
-    def setUp(self):
+    def test_crossing_a_step_moves_the_score_without_queueing_a_line(self):
         for k in [k for k in runtime.RELATIONS.records if k.startswith("TEST-MS")]:
             runtime.RELATIONS.records.pop(k, None)
-        runtime.RELATIONS.get("TEST-MS", OID)["last_seen"] = time.time()
-
-    # ⚠️ 单次 apply 的幅度默认被 clamp 到 ±3（一次互动不该撬动太多），
-    #    所以测试里用 span 放大，才能一次跨过 10 分台阶。
-    SPAN = config.AFFINITY_DIGEST_SPAN
-
-    def _to_eight(self, now):
-        r = runtime.RELATIONS
-        r.apply("TEST-MS", OID, 6, now=now, span=self.SPAN)   # 0 → 6
-        r.apply("TEST-MS", OID, 2, now=now)                   # 6 → 8
-        rec = r.get("TEST-MS", OID, create=False)
-        rec["pending_milestone"] = None
-        return rec
-
-    def test_crossing_a_step_does_announce(self):
-        rec = self._to_eight(time.time())
-        runtime.RELATIONS.apply("TEST-MS", OID, 6, span=self.SPAN)   # 8 → 14，跨过 10
-        self.assertIsNotNone(rec.get("pending_milestone"))
-
-    def test_second_crossing_in_a_day_is_not_announced(self):
-        now = time.time()
-        rec = self._to_eight(now)
-        rec["told_day"] = time.strftime("%Y-%m-%d", time.localtime(now))
-        runtime.RELATIONS.apply("TEST-MS", OID, 6, span=self.SPAN)
-        self.assertIsNone(rec.get("pending_milestone"), "同一天不该再排一次播报")
-
-    def test_next_day_can_announce_again(self):
-        now = time.time()
-        rec = self._to_eight(now)
-        rec["told_day"] = time.strftime("%Y-%m-%d", time.localtime(now - 86400))
-        runtime.RELATIONS.apply("TEST-MS", OID, 6, span=self.SPAN, now=now + 86400)
-        self.assertIsNotNone(rec.get("pending_milestone"))
-
-    def test_the_score_still_moves_even_when_not_announced(self):
-        """限流的是「说出来」，不是记账 —— 分该涨还得涨。"""
-        rec = self._to_eight(time.time())
-        rec["told_day"] = time.strftime("%Y-%m-%d")
-        score = runtime.RELATIONS.apply("TEST-MS", OID, 6, span=self.SPAN)[0]
-        self.assertEqual(score, 14)
+        rec = runtime.RELATIONS.get("TEST-MS", OID)
+        rec["last_seen"] = time.time()
+        runtime.RELATIONS.apply("TEST-MS", OID, 6, span=config.AFFINITY_DIGEST_SPAN)
+        score = runtime.RELATIONS.apply("TEST-MS", OID, 6, span=config.AFFINITY_DIGEST_SPAN)[0]
+        self.assertGreaterEqual(score, 10, "跨过了一个 10 分台阶")
+        self.assertIsNone(rec.get("pending_milestone"))
 
 
 class TwoTierStandardsTest(unittest.TestCase):
@@ -161,9 +142,10 @@ class TwoTierStandardsTest(unittest.TestCase):
     GID = "TEST-LEDGER"
 
     def test_per_turn_judges_the_sentence_only(self):
-        self.assertIn("朋友之间的损、玩笑、互喷也不算敌意", prompts.CMD_PROTOCOL)
-        self.assertIn("拿不准一律 0", prompts.CMD_PROTOCOL)
-        self.assertIn("只判这一句话，不判这个人的一整天", prompts.CMD_PROTOCOL)
+        (q,) = decision_prompts.toward_bot_questions()
+        self.assertIn("teasing, roasting or swearing in jest", q["instructions"])
+        self.assertIn("When unsure, choose neutral", q["instructions"])
+        self.assertIn("not the speaker's whole day", q["instructions"])
 
     def test_reduce_judges_the_trajectory(self):
         import digest

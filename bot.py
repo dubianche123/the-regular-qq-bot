@@ -459,19 +459,18 @@ def _who_label(group_id, oid):
             or "一位群友")
 
 
-def _pick_background(history, sender, same, turns, now):
+def _pick_background(history, same, turns, now):
     """挑哪些背景行：收件时冻结的群聊里还新鲜、又不是眼前这句（same）的最近 turns 条。
 
     ⚠️ 必须按时间过滤（2026-10-06 实测）：buffer 是落盘的、跨重启保留，
     机器睡了 12 天再醒来的第一条消息，配到的还是 12 天前的对话 ——
     那不叫「最近背景」，叫考古。
-    这人刚发的图是他这句话的一部分：条数限的是能看多少别人的话，不该把他
-    递过来的图挤掉（2026-11-02 21:05 生人发图，隔两句问「这张怎么样」，图不在背景里）。
+    以前条数按亲密度给，这人刚发的图会被挤出去，要单独豁免（2026-11-02 21:05 生人发图，隔两句问
+    「这张怎么样」，图不在背景里）。2026-11-16 起条数人人一样、就是缓存的全部，不再需要豁免。
     """
     fresh = [b for b in history if 0 <= now - float(b.get("time") or 0)
              <= config.GROUP_BUFFER_TTL_SECONDS]
-    earlier = [b for b in fresh if b["text"] != same]
-    return [b for b in earlier[:-turns] if _own_recent_image(b, sender, now)] + earlier[-turns:]
+    return [b for b in fresh if b["text"] != same][-turns:]
 
 
 def _render_background(group_id, sender, rows, own, *, until, now):
@@ -703,7 +702,7 @@ def looks_like_back_off(text):
 
 
 
-# 记账标签。协议写法是 <CMD>{"aff": 0}</CMD>（prompts.CMD_PROTOCOL），模型会把它写歪：
+# 记账标签（2026-11-16 起提示词不再要它写，残留的照样拆掉）。当时的写法是 <CMD>{"aff": 0}</CMD>，模型会把它写歪：
 # 2026-11-03 下午 gpt-6-luna 四条原样进了群——「〔CMD>{"aff":0}」「换行后 < CMD>{"aff":1}」
 # 「〈CMD>{"aff":0}」，收尾的 </CMD> 全丢了。同一份提示词里〔画〕〔不接〕〔提醒〕用全角括号，
 # 会话历史里也留着这些标记（expression.record），两套写法串到了一起。
@@ -876,8 +875,9 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                        sincere_request=False):
     """生成候选回复；正式消息入口持session锁，并在送达后提交实际正文。
 
-    返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签（协议关了，
-    或者它没写/写坏了），调用方退回本地词表（见 config.CMD_PROTOCOL_ENABLED，默认开着）。
+    返回 (正文, 情感分值或 None)。2026-11-16 起提示词不再要它写记账标签，分值通常是 None：
+    这句对它的态度由分诊那一题判（regular/decision_prompts.TOWARD_BOT_QUESTIONS，见 _settle）。
+    模型偶尔照旧写出 <CMD> 标签时仍会被拆掉，不会发进群里。
 
     owner_label 是群里对群主的称呼（档案里认领的那个，没认领就是通用词）。2026-11-16 起它不进稳定头：
     群主本人在说话（PROMPT_OWNER_NOTE），或者眼前这句提到了他（PROMPT_OWNER_FACT），才进本轮动态层。
@@ -904,9 +904,6 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
                 + prompts.PROMPT_OUTPUT_RULES
                 + media_rules(flags))
         head = naming.render(head, owner=owner_label)
-        if config.AFFINITY_ENABLED and config.CMD_PROTOCOL_ENABLED:
-            # 输出协议：只有还让模型自评时才需要
-            head += prompts.CMD_PROTOCOL
 
         # ── 2) 每日记忆 / 3) 会话历史 由 runtime.SESSIONS.build_messages 按稳定度插入 ──
         # ── 4) 本轮动态：随发言人和轮次变化的东西，一律压到最末尾 ──
@@ -2584,7 +2581,7 @@ async def run_digest(group_id, reason=""):
             schedule_promises(group_id)
 
         # 好感度结算：这一整段时间里谁更亲近、谁在抬杠，一次性落库
-        # （每轮那一票是回复里的记账标签，见 config.CMD_PROTOCOL_ENABLED；这里是看全天的那一道）
+        # （每轮那一票是分诊的 toward_bot 那题，见 _settle；这里是看全天的那一道）
         if config.AFFINITY_ENABLED:
             n_aff, detail = apply_digest_affinity(
                 group_id, (result.get("data") or {}).get("affinity"))
@@ -3737,6 +3734,7 @@ async def _assess(turn, nick_candidate=None):
                 reply_snapshot=turn.feedback_at_receipt, now=turn.receipt_time,
                 nick_candidate=nick_candidate,
                 want_recall=config.MEMORY_RECALL_ENABLED,
+                want_attitude=config.AFFINITY_ENABLED,
                 want_lookup=(config.SEARCH_ENABLED
                              and providers.research_available()))
         except Exception:
@@ -4116,14 +4114,12 @@ async def _plan_scene(turn):
     prev = []
     now_ts = time.time()
     if history_at_receipt:
-        # 关注度（2026-10-19）：亲密度决定背景条数——越熟的人它记得越多，
-        # 生人没必要也没资格让它看到太多背景。条数表见 activation.context_turns。
-        _rec = runtime.RELATIONS.get(group_id, sender_openid, create=False)
-        _tier = relations.level_key((_rec or {}).get("score", 0))
-        _willingness, _turns, state_note = activation.profile(_tier)
+        # 背景条数不看交情（2026-11-16）：谁来问，都看同样的最近几句。以前按亲密度给 2~10 条，
+        # 生人那一轮连上一句是谁说的都可能看不到；交情只管怎么说（称呼与分寸）。
+        state_note = activation.state_now()
         # 带图的这条还没回填描述，别拿「[图片]」去比，把背景里别的没读的图也筛掉
-        prev = _pick_background(history_at_receipt, sender_openid,
-                                None if image_url else user_text, _turns, now_ts)
+        prev = _pick_background(history_at_receipt, None if image_url else user_text,
+                                config.GROUP_BUFFER_SIZE, now_ts)
     if not unprompted:
         # 背景里还没读成的图先读掉（就地回填这些条目）：后台读图还在路上，或被冷却挡掉没读。
         # 不然模型只看见裸 [图片]，答「没看到图」——2026-11-01 12:32 连着三次
@@ -4148,30 +4144,23 @@ async def _plan_scene(turn):
 
 
 def _plan_notes(turn):
-    """计划 · 材料：本轮动态层要带的称呼与关系、群表达参考、知识库、旧账、个人原话。
+    """计划 · 材料：本轮动态层要带的称呼与分寸、群表达参考、知识库、旧账、个人原话。
 
-    返回能直接并进 reply_kwargs 的那几项；待播报的里程碑送达以后才消费（on_delivered）。
+    返回能直接并进 reply_kwargs 的那几项。
     """
     message, group_id, sender_openid = turn.message, turn.group_id, turn.sender_openid
     user_text, session_id, feedback_result = turn.user_text, turn.session_id, turn.feedback
     # 正经回话才翻材料：没叫它的那句、短接、喊停、带着反馈提示的那轮都不给
     answering = not (turn.unprompted or turn.quip or turn.back_off or turn.feedback_note)
 
-    # 称呼与游戏关系注入：称呼在好感开关之外也要给（不然 AFFINITY_ENABLED=false
-    # 时连名字都叫不出来）；游戏部分（档位/模式/里程碑）只在好感开着时写。
-    # 同时消费掉待播报的里程碑。
+    # 称呼与分寸：称呼在好感开关之外也要给（不然 AFFINITY_ENABLED=false
+    # 时连名字都叫不出来）；分寸与相处风格只在好感开着时写。
     target_record = runtime.RELATIONS.get(group_id, sender_openid,
                                           create=config.AFFINITY_ENABLED)
     relation_note = relations.build_relation_note(
         target_record, sender_openid,
         other_names=_other_names(group_id, sender_openid),
         include_game=config.AFFINITY_ENABLED)
-    pending_milestone = ((target_record or {}).get("pending_milestone")
-                         if config.AFFINITY_ENABLED else None)
-    def commit_milestone():
-        if pending_milestone and target_record.get("pending_milestone") == pending_milestone:
-            target_record["pending_milestone"] = None
-            target_record["told_day"] = time.strftime("%Y-%m-%d")
 
     # 群聊长期记忆注入：**每日层只留共享的群表达参考**（口头禅/语气词）。
     # 个人材料不再进这层 —— 它随说话人与话题变化，属于本轮动态层（见下方
@@ -4223,7 +4212,7 @@ def _plan_notes(turn):
             logger.info("🗣 个人原话：%d 条命中（%s）",
                         personal_note.count("\n- "), session_id[-12:])
 
-    return dict(on_delivered=commit_milestone, relation_note=relation_note, group_memory=group_memory,
+    return dict(relation_note=relation_note, group_memory=group_memory,
                 knowledge_note=knowledge_note, recall_note=recall_note, personal_note=personal_note)
 
 
@@ -4318,6 +4307,9 @@ async def _respond(turn):
                                   **kwargs)
 
 
+_TOWARD_BOT = {"warm": 1, "neutral": 0, "hostile": -1}
+
+
 def _settle(turn, outcome):
     """落账：这一轮真说出去了才结算好感和心情。
 
@@ -4325,24 +4317,20 @@ def _settle(turn, outcome):
     """
     if outcome is None or outcome[2] is None:
         return
-    delta = outcome[1]
     # 日内微调（2026-10-06 改）：
     #   「被 @ 且没扣分就 +1」撤掉了 —— 那等于把好感度变成「被搭理次数」，
     #   实测一天 100 多次记账里 108 次 +1，连一直骂人的也在涨。
-    # 现在是：模型判**方向**（-1/0/1，见 CMD_PROTOCOL），拿不到模型判定时退回本地词表，
+    # 方向由分诊那一题判（toward_bot，2026-11-16）：以前是回复模型在正文后面自己记账，
+    #   拿不到标签再退回一张正负词表。分诊没问这题（没叫它、也不在回它的话）就不记这一票，
     #   最后统一过每日封顶。真正的印象结算仍在压缩里做（它看得到一整天，更准）。
-    if config.AFFINITY_ENABLED:
-        reason = "模型判方向" if delta is not None else "词表兜底"
-        if delta is None:
-            delta = relations.local_sentiment(turn.user_text)
+    delta = _TOWARD_BOT.get(turn.feedback.get("toward_bot"))
+    if config.AFFINITY_ENABLED and delta is not None:
         # 有效原生反馈在场时，负向情绪不落账：被指出问题、嫌插话时机不对、
         # 甚至玩笑式粗口都不该扣交情（正向与游戏结算照旧照记）。
-        if (delta or 0) < 0 and turn.feedback.get("target") in (
+        if delta < 0 and turn.feedback.get("target") in (
                 "bot_response", "another_person", "unclear"):
             delta = 0
-        # reason 区分开是有用的：跑几天就能从日志里看出「模型判方向」和
-        # 「词表兜底」各自的占比与准头，再决定要不要把权重挪向压缩结算。
-        apply_affinity_delta_capped(turn.group_id, turn.sender_openid, delta, reason)
+        apply_affinity_delta_capped(turn.group_id, turn.sender_openid, delta, "分诊判方向")
         # 心情（2026-10-19）：跟着每轮结算漂移——被怼多了它会烦，被捧了会顺气。
         # 零额外模型调用：方向值是现成的，心情只是它的指数移动平均。
         if delta:

@@ -95,8 +95,8 @@ class PersonaModeTest(unittest.TestCase):
         runtime.RELATIONS.set_mode(GROUP, OID, "知心", source="digest")
         rec = runtime.RELATIONS.get(GROUP, OID)
         note = relations.build_relation_note(rec, OID)
-        self.assertIn("相处模式：少损多听", note)
-        self.assertIn("档位定分寸", note)
+        self.assertIn("相处风格：少损多听", note)
+        self.assertIn("风格之内照上面的分寸来", note)
 
     def test_note_has_no_mode_line_when_unset(self):
         rec = runtime.RELATIONS.get(GROUP, OID)
@@ -136,7 +136,9 @@ class GameIsNotUnderstandingTest(unittest.TestCase):
         self.assertNotIn("说过", note, "游戏数据不许生成「原话」")
         self.assertNotIn("500", note, "搭话次数不进模型上下文")
         self.assertNotIn("次搭话", note)
-        self.assertIn("不证明你了解 TA", note)
+        self.assertNotIn(relations.level_label("soulmate"), note, "顶格也不报档位名")
+        import prompts
+        self.assertIn("不代表 TA 的固定喜好或开玩笑许可", prompts.PROMPT_SHARED_RULES)
 
     def test_canonical_name_works_with_zero_interactions_and_no_game(self):
         """只认领了名字、一次没聊过：称呼照常给，但不能说「从未见过」。"""

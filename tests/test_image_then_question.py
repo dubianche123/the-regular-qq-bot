@@ -170,12 +170,11 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("这张图你没看", self.unprompted[0])
 
     async def test_own_image_stays_in_background_past_the_turn_limit(self):
-        """2026-11-02 21:05：生人发图，中间别人插了两句，再问「这张怎么样」——亲密度只给
-        它看最后几条，图被挤出背景，它答「没看到画面」。"""
+        """2026-11-02 21:05：生人发图，中间别人插了两句，再问「这张怎么样」——当时亲密度只给
+        它看最后几条，图被挤出背景，它答「没看到画面」。2026-11-16 起背景条数人人一样
+        （GROUP_BUFFER_SIZE），这条照旧：他自己刚发的图不受条数限制。"""
         await self._drive("", image=URL)
-        turns = bot.activation.context_turns(
-            bot.relations.level_key(0))
-        for i in range(turns):
+        for i in range(2):
             await self._drive(f"别人插的第 {i} 句", sender=B)
         await self._drive("这张怎么样", is_at=True)
         self.assertIn(f"[图片：{CAPTION}]", self._background())

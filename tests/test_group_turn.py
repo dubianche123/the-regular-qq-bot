@@ -46,13 +46,13 @@ class BackgroundSelectionTest(unittest.TestCase):
         history = [self._row(B, "十二天前", config.GROUP_BUFFER_TTL_SECONDS + 60),
                    self._row(B, "一", 40), self._row(B, "二", 30),
                    self._row(A, "眼前这句", 20), self._row(B, "三", 10)]
-        picked = bot._pick_background(history, A, "眼前这句", 2, self.now)
+        picked = bot._pick_background(history, "眼前这句", 2, self.now)
         self.assertEqual([row["text"] for row in picked], ["二", "三"])
 
-    def test_own_recent_image_survives_the_row_limit(self):
-        history = [self._row(A, "[图片：一只橘猫]", 50), self._row(B, "[图片：别人的图]", 45),
-                   self._row(B, "一", 40), self._row(B, "二", 30)]
-        picked = bot._pick_background(history, A, "这张怎么样", 2, self.now)
+    def test_every_speaker_sees_the_same_recent_rows(self):
+        """2026-11-16：背景条数不看交情，谁来问都看同样的最近几句（生人发的图也就不会被挤出去）。"""
+        history = [self._row(A, "[图片：一只橘猫]", 50), self._row(B, "一", 40), self._row(B, "二", 30)]
+        picked = bot._pick_background(history, "这张怎么样", config.GROUP_BUFFER_SIZE, self.now)
         self.assertEqual([row["text"] for row in picked], ["[图片：一只橘猫]", "一", "二"])
 
     def test_render_labels_speakers_and_interleaves_its_own_lines(self):

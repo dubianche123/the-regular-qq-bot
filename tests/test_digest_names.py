@@ -203,9 +203,9 @@ class PromptAntiTicTest(unittest.TestCase):
         self.assertIn("表情是调味不是标点", prompts.PROMPT_OUTPUT_RULES)
 
     def test_relation_note_reading_rules_live_in_the_cached_head(self):
-        """档案怎么读是不变的说明，挪进稳定头吃缓存；档案本身只留一行提醒。"""
-        self.assertIn("内心戏", prompts.PROMPT_SHARED_RULES)
-        self.assertIn("不许向 TA 复述你们的关系状态", prompts.PROMPT_SHARED_RULES)
+        """档案怎么读是不变的说明，在稳定头里吃缓存；档案本身只给分寸（2026-11-16 起不再给档位名）。"""
+        self.assertIn("「称呼与分寸」是你跟 TA 说话的分寸", prompts.PROMPT_SHARED_RULES)
+        self.assertIn("亲疏靠语气让人感觉到，不用嘴说出来", prompts.PROMPT_SHARED_RULES)
 
     def test_the_anti_tic_rule_is_in_the_shared_block(self):
         rule = prompts.PROMPT_SHARED_RULES

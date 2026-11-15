@@ -15,9 +15,8 @@ from runtime import _all_named
 def apply_relation_delta(group_id, member_openid, delta, reason=""):
     """把一次互动的情感分值写进档案。
 
-    分值优先用模型在回复末尾记账标签里判的方向（config.CMD_PROTOCOL_ENABLED，默认开着），
-    拿不到时才是**本地关键词兜底**（见下方调用点）；整天的印象另由每日压缩结算
-    （apply_digest_affinity）。
+    分值是分诊那一题（toward_bot）判的方向；分诊没问这题就不记这一票。
+    整天的印象另由每日压缩结算（apply_digest_affinity）。
     """
     if not config.AFFINITY_ENABLED:
         return None

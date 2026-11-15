@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""好感度要「看得见」：档位决定语气分寸，跨档位时当场说出来。
+"""好感度要「看得见」：档位决定语气分寸，体现在怎么说上，不体现在嘴上说。
 
-2026-09-21 群主反馈：好感度系统没任何体现。查下来机制其实齐全（8 档、按模式换叫法、
-有里程碑），问题是两处太软：
-1. LEVEL_HINTS 每档只有一句抽象描述（「不太熟」），模型基本不看，八档一个味儿；
-2. 里程碑那段写的是「自然地流露一下」，模型经常一句都不提 —— 档案里档位变了，群里没人知道。
-这里把两条都钉住。
+2026-09-21 群主反馈：好感度系统没任何体现。当时两处太软：LEVEL_HINTS 每档只有一句抽象描述，
+模型基本不看，八档一个味儿；里程碑那段「自然地流露一下」也常常一句不提，于是改成每档写具体做法、
+跨台阶时要求当场说出来。
+2026-11-16 起后一条撤了：档位名和「要当场说出来」都不再给，前面又跟着一句「不许复述关系状态」，
+是先摆出来再禁止。现在模型只看得到「跟 TA 说话的分寸」，交情只体现在语气上。
 """
 import sys
 import unittest
@@ -36,92 +36,44 @@ class LevelHintsAreActionableTest(unittest.TestCase):
         self.assertEqual(len(set(relations.LEVEL_HINTS.values())), len(relations.LEVEL_HINTS))
 
 
-class InsultActuallyCostsAffinityTest(unittest.TestCase):
-    """「小王我操你妈」连着说，好感度一分没掉 —— 词表里根本没有这类指向性辱骂。"""
+class InsultIsJudgedAsHostileTest(unittest.TestCase):
+    """「小王我操你妈」连着说，好感度一分没掉（09-21）。现在由分诊那一题判，不靠词表。"""
 
-    def test_directed_insults_score_negative(self):
-        for text in ("小王我操你妈", "小王我想操你", "傻逼小王谁问你了", "你去死吧",
-                     "小王你妈的"):
-            self.assertEqual(relations.local_sentiment(text), -1, text)
-
-    def test_plain_exclamations_are_not_punished(self):
-        """「我操了」「卧槽」是语气词不是骂人 —— 冤案比漏判更伤。"""
-        for text in ("我操了", "卧槽这也行", "我今天真累", ""):
-            self.assertEqual(relations.local_sentiment(text), 0, text)
-
-    def test_positive_words_still_win(self):
-        self.assertEqual(relations.local_sentiment("谢谢小王，太厉害了"), 1)
+    def test_attacks_count_jests_do_not(self):
+        from regular import decision_prompts
+        (q,) = decision_prompts.toward_bot_questions()
+        self.assertIn("personal insults meant to hurt, harassment, crude sexual pestering", q["instructions"])
+        self.assertIn("swearing in jest", q["instructions"])
 
 
-class MilestoneIsAnnouncedTest(unittest.TestCase):
-    """跨了 10 分的台阶要被播报 —— 但只给感觉，不给数字。"""
+class TierShowsUpAsToneTest(unittest.TestCase):
+    REC = {"score": 12, "nick": "阿强", "interactions": 20, "last_seen": 0, "first_seen": 0}
 
-    # 现在写的是分数（relations.apply：new_score // 10 != old_score // 10 就记一次）
-    REC = {
-        "score": 12, "nick": "阿强", "interactions": 20,
-        "last_seen": 0, "first_seen": 0,
-        "pending_milestone": {"from": 7, "to": 12, "ts": 0},
-    }
+    def test_note_gives_the_tone_not_the_tier(self):
+        note = relations.build_relation_note(self.REC, "some-openid")
+        self.assertIn("跟 TA 说话的分寸：" + relations.LEVEL_HINTS["acquaintance"], note)
+        for _, _, label in relations.LEVELS:
+            self.assertNotIn(label, note)
+        self.assertFalse(any(c.isdigit() for c in note), note)
 
-    def test_legacy_tier_names_still_render(self):
-        """老档里存的是档位名（"familiar" 这种），读的时候不能崩。"""
-        rec = dict(self.REC,
-                   pending_milestone={"from": "familiar", "to": "acquaintance", "ts": 0})
+    def test_hints_carry_no_relationship_words_to_repeat(self):
+        for key, hint in relations.LEVEL_HINTS.items():
+            for word in ("不太熟", "有印象而已", "经常见到", "关系不错", "铁得很", "最亲近的人"):
+                self.assertNotIn(word, hint, key)
+
+    def test_old_pending_milestones_are_not_announced(self):
+        """老档里可能还留着一条待播报的里程碑：照常读，不再要它说出来。"""
+        rec = dict(self.REC, pending_milestone={"from": "familiar", "to": "acquaintance", "ts": 0})
         note = relations.build_relation_note(rec, "some-openid")
-        self.assertIn("更熟了", note)
-        self.assertIn("刚刚的变化", note)
-
-    def test_going_down_is_never_announced(self):
-        """降档**不当面说破**：「咱俩生分了」说给本人听是指责，变冷用语气表达。
-
-        （2026-10-06 实测：模型把「别摆老相识」的语气指令演成了台词，
-        主动凑上去跟人说「快成陌生人了」—— 所以降档改成不说破。）
-        """
-        rec = dict(self.REC, pending_milestone={"from": 12, "to": 2, "ts": 0})
-        note = relations.build_relation_note(rec, "some-openid")
-        line = [l for l in note.splitlines() if "刚刚的变化" in l][0]
-        self.assertIn("不必说出口", line)
-        self.assertIn("不许", line)
-        self.assertNotIn("要当场说出来", line)
-
-    def test_no_numbers_leak_into_the_note(self):
-        """播报里一个数字都不许有 —— 分数是内部账本，群里只该听见「更熟了」。
-
-        （提示词里出现的「好感度」是给模型下的禁令，不是要说出去的内容，所以只查数字。）
-        """
-        note = relations.build_relation_note(self.REC, "some-openid")
-        line = [l for l in note.splitlines() if "刚刚的变化" in l][0]
-        self.assertFalse(any(c.isdigit() for c in line), line)
-        self.assertIn("熟人", line, "档位要用称谓说出来，不能光说「升了一档」")
-
-    def test_note_demands_saying_it_out_loud(self):
-        note = relations.build_relation_note(self.REC, "some-openid")
-        self.assertIn("刚刚的变化", note)
-        self.assertIn("要当场说出来", note, "只写「流露一下」模型会一个字不提")
-
-    def test_note_says_do_not_keep_repeating(self):
-        note = relations.build_relation_note(self.REC, "some-openid")
-        self.assertIn("翻篇", note)
-
-
-class InnerMonologueNotDialogueTest(unittest.TestCase):
-    """关系档案是内心戏不是台词（2026-10-06：模型把「别摆老相识」的语气指令
-    说成了「快成陌生人了」，没人问它还主动插嘴说）。"""
-
-    REC = {"score": 8, "nick": "阿强", "interactions": 20,
-           "last_seen": 0, "first_seen": 0}
-
-    def test_note_forbids_narrating_the_relationship(self):
-        note = relations.build_relation_note(self.REC, "some-openid")
-        self.assertIn("内心戏", note)
-        self.assertIn("不许向 TA 复述你们的关系状态", note)
+        self.assertNotIn("刚刚的变化", note)
+        self.assertNotIn("当场说出来", note)
+        self.assertNotIn("不许向 TA 复述", note, "没摆出关系状态，也就不用再禁止它复述")
 
 
 class ToneTierOverridesPersonaTest(unittest.TestCase):
-    def test_note_tells_model_the_tier_wins(self):
-        rec = {"score": 90, "nick": "老王", "interactions": 50, "last_seen": 0, "first_seen": 0}
-        note = relations.build_relation_note(rec, "some-openid")
-        self.assertIn("优先级高于人设里的默认语气", note)
+    def test_the_head_tells_model_the_tone_wins(self):
+        import prompts
+        self.assertIn("「称呼与分寸」是你跟 TA 说话的分寸，优先级高于人设里的默认语气", prompts.PROMPT_SHARED_RULES)
 
 
 if __name__ == "__main__":

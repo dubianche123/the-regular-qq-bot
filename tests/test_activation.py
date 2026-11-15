@@ -68,17 +68,6 @@ class MoodTest(unittest.TestCase):
         self.assertAlmostEqual(activation._mood_state["v"], data["mood"]["v"])
 
 
-class ContextTurnsTest(unittest.TestCase):
-
-    def test_higher_affinity_sees_more_context(self):
-        self.assertEqual(activation.context_turns("soulmate"), 10)
-        self.assertEqual(activation.context_turns("friend"), 6)
-        self.assertEqual(activation.context_turns("familiar"), 3)
-
-    def test_unknown_tier_gets_the_floor(self):
-        self.assertEqual(activation.context_turns("ghost"), 3)
-
-
 class StateLineTest(unittest.TestCase):
 
     def test_deep_night_shapes_length_not_a_story(self):
@@ -100,18 +89,17 @@ class StateLineTest(unittest.TestCase):
         self.assertEqual(activation.state_line("", 0.0), "")
 
 
-class ProfileTest(unittest.TestCase):
+class StateNowTest(unittest.TestCase):
+    """2026-11-16 起只剩状态自述：亲密度不再决定背景条数，插嘴意愿乘数没人用，一并撤了。"""
 
-    def test_deep_night_discounts_willingness(self):
+    def test_state_now_is_the_line_for_this_hour_and_mood(self):
         activation._mood_state.update({"v": 0.0, "ts": time.time()})
-        w_day, _, _ = activation.profile("soulmate", hour=15)
-        w_night, _, _ = activation.profile("soulmate", hour=3)
-        self.assertLess(w_night, w_day)
+        self.assertEqual(activation.state_now(hour=3), activation.state_line("凌晨被吵醒", 0.0))
+        self.assertEqual(activation.state_now(hour=15), "")
 
-    def test_soulmate_sees_the_full_context(self):
-        activation._mood_state.update({"v": 0.0, "ts": time.time()})
-        _, turns, _ = activation.profile("soulmate", hour=15)
-        self.assertEqual(turns, 10)
+    def test_affinity_no_longer_lives_here(self):
+        self.assertFalse(hasattr(activation, "context_turns"))
+        self.assertFalse(hasattr(activation, "profile"))
 
 
 if __name__ == "__main__":
