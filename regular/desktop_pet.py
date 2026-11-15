@@ -40,7 +40,8 @@ FLOATING = (Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
 
 # ── preferences ──
 def _read_preferences(path):
-    """{"scale", "x", "quiet", "motion"}; the previous {"scale","position","motion"} form migrates."""
+    """{"scale", "x", "quiet", "motion", "reminders"}; the previous {"scale","position","motion"} form
+    migrates, and a file from before the reminders switch keeps them on."""
     if path is None:
         return {}
     try:
@@ -58,9 +59,37 @@ def _read_preferences(path):
     scale, x = data.get("scale"), data.get("x")
     if (type(scale) not in (int, float) or not 0.5 <= scale <= 1.6
             or type(data.get("motion")) is not bool or type(data.get("quiet")) is not bool
+            or type(data.get("reminders", True)) is not bool
             or type(x) not in (int, float) or not math.isfinite(x) or abs(x) > 100000):
         return {}
-    return {"scale": float(scale), "x": float(x), "quiet": data["quiet"], "motion": data["motion"]}
+    return {"scale": float(scale), "x": float(x), "quiet": data["quiet"], "motion": data["motion"],
+            "reminders": data.get("reminders", True)}
+
+
+_idle_clock = None
+
+
+def _input_idle_seconds():
+    """Seconds since the keyboard or mouse was last touched, where the system keeps that clock (macOS).
+
+    It is one number: not which key, which app or what is on screen, and it needs no permission.
+    None elsewhere (and under the offscreen test platform); the pet then only goes by cursor movement.
+    """
+    global _idle_clock
+    if QApplication.platformName() != "cocoa":
+        return None
+    try:
+        if _idle_clock is None:
+            import ctypes
+            import ctypes.util
+            clock = ctypes.CDLL(ctypes.util.find_library("CoreGraphics")).CGEventSourceSecondsSinceLastEventType
+            clock.restype, clock.argtypes = ctypes.c_double, (ctypes.c_int32, ctypes.c_uint32)
+            _idle_clock = clock
+        # kCGEventSourceStateCombinedSessionState, kCGAnyInputEventType
+        seconds = _idle_clock(0, 0xFFFFFFFF)
+    except (OSError, AttributeError, TypeError, ValueError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
 
 # ── background requests ──
@@ -753,10 +782,13 @@ def _particle(painter, kind, figure, age, seed=0.0):
         painter.setBrush(QColor("#ff8a3d"))
         painter.drawEllipse(QPointF(0, 0), s, s)
         return
-    if kind == "cloud":
+    if kind in ("cloud", "sigh"):
         # Opaque at once so the swap underneath never shows, then it swells and thins.
-        r = figure * (0.14 + 0.1 * age)
-        painter.setPen(QPen(QColor(185, 170, 220, 160), max(1.0, figure * 0.008)))
+        # A sigh is the same puff at breath size, with a darker rim so it reads on a pale wallpaper.
+        sigh = kind == "sigh"
+        r = figure * ((0.04 + 0.025 * age) if sigh else (0.14 + 0.1 * age))
+        painter.setPen(QPen(QColor(112, 118, 150, 220) if sigh else QColor(185, 170, 220, 160),
+                            max(1.0, figure * 0.008)))
         painter.setBrush(QColor(255, 253, 250))
         for dx, dy, k in ((0, 0, 1.0), (-0.55, 0.2, 0.7), (0.55, 0.22, 0.72), (0.05, -0.45, 0.66)):
             painter.drawEllipse(QPointF(dx * r, dy * r), r * k, r * k * 0.92)
@@ -1051,7 +1083,7 @@ class PetMoreMenu(QWidget):
         self.pet = pet
         self.setWindowTitle("老群友 · 更多")
         self.setAccessibleName("老群友更多设置")
-        self.setFixedSize(216, 356)
+        self.setFixedSize(216, 389)
         self.setStyleSheet("""
             QLabel { color:#173b32; font-size:14px; font-weight:600; background:transparent; }
             QPushButton { color:#173b32; background:transparent; border:0; border-radius:11px;
@@ -1067,8 +1099,10 @@ class PetMoreMenu(QWidget):
         self.scale = self._button("人物大小", self._next_scale)
         self.quiet = self._button("待在原地", None, checkable=True)
         self.motion = self._button("动作和特效", None, checkable=True)
+        self.reminders = self._button("久坐和深夜提醒", None, checkable=True)
         self.quiet.toggled.connect(pet.set_quiet)
         self.motion.toggled.connect(pet.set_motion)
+        self.reminders.toggled.connect(pet.set_reminders)
         self._button("变个魔法", pet.magic)
         self._button("投喂一块小饼干", pet.feed)
         self._button("刷新状态", pet.refresh_connection)
@@ -1092,10 +1126,11 @@ class PetMoreMenu(QWidget):
         brain = self.pet.brain
         self._scale_index = min(range(len(SCALES)), key=lambda i: abs(SCALES[i][0] - brain.scale))
         self.scale.setText(f"人物大小 · {SCALES[self._scale_index][1]}")
-        for button, enabled in ((self.quiet, brain.quiet), (self.motion, brain.motion)):
+        for button, label, enabled in ((self.quiet, "待在原地", brain.quiet), (self.motion, "动作和特效", brain.motion),
+                                       (self.reminders, "久坐和深夜提醒", brain.reminders)):
             button.blockSignals(True)
             button.setChecked(enabled)
-            button.setText(("待在原地" if button is self.quiet else "动作和特效") + ("：开" if enabled else "：关"))
+            button.setText(label + ("：开" if enabled else "：关"))
             button.blockSignals(False)
 
     def _next_scale(self):
@@ -1407,7 +1442,8 @@ class ActivityCard(_Card):
 # ── the character ──
 class PetWidget(QWidget):
     def __init__(self, client, *, quit_on_close=True, preferences_path=None, rng=None, clock=None, sprites=None,
-                 voice_factory=NativeVoiceSession, permission_request=request_microphone_permission):
+                 voice_factory=NativeVoiceSession, permission_request=request_microphone_permission,
+                 idle_probe=_input_idle_seconds):
         super().__init__(None, FLOATING)
         _floating(self)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
@@ -1425,6 +1461,10 @@ class PetWidget(QWidget):
         self.brain = PetBrain(rng=rng or random.Random(), now=self.now(), motion=motion,
                               quiet=preferences.get("quiet", False), scale=preferences.get("scale", 1.0))
         self.brain.external_care = True
+        self.brain.reminders = preferences.get("reminders", True)
+        # 照看者在不在：只记「上一次键盘鼠标有动静」的时刻。用墙上时钟，合盖睡一夜也算离开。
+        self.idle_probe = idle_probe
+        self._owner_cursor, self._owner_wall = None, time.time()
         self.setObjectName("regular-desktop-pet")
         self.setWindowTitle("The Regular · 老群友")
         self.setAccessibleName("老群友：靠近显示聊天和设置，拖起来会晃，戳一下有反应")
@@ -1560,6 +1600,7 @@ class PetWidget(QWidget):
         else:
             self._ground_from(brain.x, brain.floor - 1 if getattr(brain, "bottom_peek", False) else brain.y - 10)
         cursor = QCursor.pos()
+        brain.owner_idle(now, self._owner_idle(cursor))
         brain.hover(now, cursor.x(), cursor.y(), near=self._near(cursor))
         brain.set_attention(self._attention(), now)
         brain.tick(now)
@@ -1583,6 +1624,14 @@ class PetWidget(QWidget):
         elif self.bubble.isVisible():
             self.bubble.hide()
             self.bubble.serial = 0
+
+    def _owner_idle(self, cursor):
+        """Seconds since the keyboard or mouse was last touched: the system idle clock where there is one,
+        cursor movement everywhere. Nothing about what was typed or which window is in front."""
+        wall, system = time.time(), self.idle_probe()
+        if cursor != self._owner_cursor or (system is not None and system < 1.0):
+            self._owner_cursor, self._owner_wall = cursor, wall
+        return max(0.0, wall - self._owner_wall)
 
     def _near(self, cursor):
         left, top, right, bottom = self.brain.body_rect()
@@ -1873,12 +1922,17 @@ class PetWidget(QWidget):
         self._sync_windows(force=True)
         self._save_preferences()
 
+    def set_reminders(self, enabled):
+        self.brain.reminders = bool(enabled)
+        self._save_preferences()
+
     def _save_preferences(self):
         if self.preferences_path is None:
             return
         try:
             atomic_write_json(self.preferences_path, {"scale": self.brain.scale, "x": round(self.brain.x, 1),
-                                                      "quiet": self.brain.quiet, "motion": self.brain.motion})
+                                                      "quiet": self.brain.quiet, "motion": self.brain.motion,
+                                                      "reminders": self.brain.reminders})
         except OSError:
             if not self._preferences_warning:
                 print("桌宠偏好未能保存，本次调整仍已生效。")
@@ -1984,7 +2038,8 @@ class PetWidget(QWidget):
                 self._menu_leave_at = None
         focused = any(card is not None and card.isVisible() and card.isActiveWindow()
                       for card in (self.chat_bar, self.activity_card, self.proposal_card, self.voice_card))
-        if self._near(cursor) or bool(self._menu and self._menu.isVisible()) or focused:
+        near = self._near(cursor) and not self.brain.owner_away     # 鼠标停在她身上、人走了：收起圆盘
+        if near or bool(self._menu and self._menu.isVisible()) or focused:
             self._toolbar_leave_at = None
             if not self.toolbar.isVisible():
                 self._place_toolbar()

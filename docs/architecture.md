@@ -273,6 +273,8 @@ flowchart LR
 
 桌宠分两层：`regular/pet_brain.py` 是纯计算的大脑，持有行为计划、站/坐/躺过渡、重力与落地、拖拽单摆、摸头/戳/投喂和 agent 事件映射，不依赖 Qt；`regular/desktop_pet.py` 是 Qt 外壳，每帧把指针和时间喂给大脑，再按 `pose()` 画精灵帧与程序变换。人物、点击穿透的特效层、对话气泡和侧边快捷栏是独立透明窗口；人物窗口只在落地静止时按当前帧 alpha 设遮罩，拖拽和下落时取消遮罩以免旋转被裁。静止 30 fps、移动 60 fps。
 
+外壳另外每帧报给大脑一个数：键盘和鼠标多久没动了（macOS 读系统空闲时钟，其他系统只看光标位置变化）。只有秒数，不含按键、窗口或屏幕内容，不落盘、不进提示词。大脑据此判断照看者走开、回来和连续坐了多久，闲着时自己提起久坐与深夜（可在「更多」里关闭），并把只读心情加照顾加成的转变、群里五分钟消息数的骤增演出来；这些都不调用模型，也不写机器人的任何状态。
+
 agent 状态只读：面板的 `/companion/presence` 由 `regular/presence.py` 读 `status.json`（在线与新鲜度）、`state.json` 的 `mood`（`activation.mood_from_state` 同一半衰期）、作息和当天交互日志尾部 128 KB，映射成 `mention / replying / said / chimed / proactive / searching / drawing / drew / singing / voice / media_end` 与群内 5 分钟消息数（`searching` 来自查询转后台时的 `lookup` 行，`drawing / singing / media_end` 来自机器人在开始画、开始录和没发成时记的 `media` 行），不返回文字、群号、openid 或消息 ID。`POST /companion/cue`（token + CSRF）让编码 Agent 在固定动作表内让桌宠表态，只存在面板内存，不触达 QQ。
 
 大小、地面横坐标、「待在原地」和动作偏好只写实例的 `data/desktop-pet.json`，调整或退出时原子保存，不随每一帧写盘；旧版 `position` 格式自动迁移。地面取人物所在屏幕的可用区域底边，外屏断开也会落回现有屏幕。

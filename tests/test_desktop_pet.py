@@ -22,7 +22,7 @@ if HAS_QT:
     from PySide6.QtWidgets import QPushButton
     from regular import desktop_pet
     from regular.desktop_pet import PetWidget, SpriteBank
-    from regular.pet_brain import EDGE_PEEK, Step, TAP_POOL
+    from regular.pet_brain import EDGE_PEEK, LINES, OWNER_AWAY, Step, TAP_POOL
 
 CSRF = "synthetic-csrf-0123456789"
 
@@ -367,6 +367,21 @@ class DesktopPetTest(unittest.TestCase):
             pet.brain._burst(self.t[0], kind, 0.3, -0.6, 2)
         pet.fx.show()
         pet.fx.grab()
+
+    def test_a_sigh_is_a_visible_breath_sized_puff(self):
+        from regular.pet_brain import Particle
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        self.settle()
+        brain.particles[:] = [Particle("sigh", 0.2, -0.6, 0.0, 0.0, self.t[0] - 0.4, 1.6)]
+        pet._sync_windows(force=True)
+        self.assertTrue(pet.fx.isVisible())
+        image = pet.fx.grab().toImage()
+        inked = [(x, y) for x in range(0, image.width(), 2) for y in range(0, image.height(), 2)
+                 if image.pixelColor(x, y).alpha() > 200]
+        self.assertTrue(inked)
+        width = (max(x for x, _ in inked) - min(x for x, _ in inked)) / image.devicePixelRatio()
+        self.assertTrue(brain.figure * 0.08 <= width <= brain.figure * 0.3)   # a breath, not the body-sized poof
 
     def test_sprite_bank_loads_strips_on_demand_and_evicts_lru(self):
         bank = SpriteBank()
@@ -1047,6 +1062,70 @@ class DesktopPetTest(unittest.TestCase):
             self.advance(0.8)
         self.assertFalse(pet.toolbar.isVisible())
 
+    def test_the_shell_reports_only_how_long_keyboard_and_mouse_have_been_idle(self):
+        pet = self.pet
+        self.assertIsNone(pet.idle_probe())              # no system idle clock under the offscreen platform
+        here = QPoint(40, 40)
+        self.assertEqual(pet._owner_idle(here), 0.0)     # the cursor moved: someone is here
+        pet._owner_wall -= 400                           # wall clock, so a lid closed overnight counts
+        self.assertGreaterEqual(pet._owner_idle(here), 400)
+        self.assertLess(pet._owner_idle(QPoint(41, 40)), 1)
+        pet._owner_wall -= 400
+        pet.idle_probe = lambda: 0.2                     # a key was pressed although the cursor is still
+        self.assertLess(pet._owner_idle(QPoint(41, 40)), 1)
+        pet._owner_wall -= 400
+        pet.idle_probe = lambda: 50.0                    # nothing just now: the last seen input stands
+        self.assertGreaterEqual(pet._owner_idle(QPoint(41, 40)), 400)
+
+    def test_she_notices_the_owner_leaving_and_greets_the_return(self):
+        self.settle()
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        near = QPoint(round(brain.x), round(brain.y - 60))
+        with patch.object(desktop_pet.QCursor, "pos", return_value=near):
+            self.advance(0.2)
+            self.assertTrue(pet.toolbar.isVisible() and brain.attention and not brain.owner_away)
+            pet._owner_wall -= OWNER_AWAY + 60           # the cursor is still parked on her, the owner is gone
+            self.advance(1.0)
+            self.assertTrue(brain.owner_away)
+            self.assertFalse(pet.toolbar.isVisible() or brain.attention or brain.pointer.near)
+        brain._queue(Step("idle", 60), now=self.t[0], interrupt=True)
+        with patch.object(desktop_pet.QCursor, "pos", return_value=near + QPoint(3, 0)):
+            self.advance(0.2)
+        self.assertFalse(brain.owner_away)
+        self.assertEqual(brain.clip, "peek")
+        self.assertIn(pet.bubble.text, LINES["back"])
+        self.assertTrue(pet.toolbar.isVisible())
+
+    def test_reminders_have_a_switch_in_more_that_is_remembered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "data" / "desktop-pet.json"
+            pet = self.make(path)
+            self.assertTrue(pet.brain.reminders)
+            pet.show()
+            pet.show_menu()
+            switch = next(b for b in pet._menu.findChildren(QPushButton) if b.text() == "久坐和深夜提醒：开")
+            self.assertTrue(switch.isChecked())
+            self.assertGreaterEqual(pet._menu.height(), pet._menu.layout().minimumSize().height())
+            switch.click()
+            self.assertFalse(pet.brain.reminders)
+            self.assertIs(json.loads(path.read_text(encoding="utf-8"))["reminders"], False)
+            pet.close()
+            again = self.make(path)
+            self.assertFalse(again.brain.reminders)
+            again.show_menu()
+            self.assertIn("久坐和深夜提醒：关", [b.text() for b in again._menu.findChildren(QPushButton)])
+            again.close()
+            # A file from before the switch keeps reminders on; a malformed value falls back to defaults.
+            path.write_text(json.dumps({"scale": 1.2, "x": 600, "quiet": True, "motion": True}))
+            old = self.make(path)
+            self.assertEqual((old.brain.scale, old.brain.quiet, old.brain.reminders), (1.2, True, True))
+            old.close()
+            path.write_text(json.dumps({"scale": 1.2, "x": 600, "quiet": True, "motion": True, "reminders": "no"}))
+            bad = self.make(path)
+            self.assertEqual((bad.brain.scale, bad.brain.quiet, bad.brain.reminders), (1.0, False, True))
+            bad.close()
+
     def test_chat_pill_never_covers_the_palette_and_activity_card_fits_its_entries(self):
         self.settle()
         pet = self.pet
@@ -1403,7 +1482,7 @@ print("confirmation ownership and exit passed")
             first.set_quiet(True)
             first.set_motion(False)
             saved = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(saved, {"scale": 1.2, "x": 600.0, "quiet": True, "motion": False})
+            self.assertEqual(saved, {"scale": 1.2, "x": 600.0, "quiet": True, "motion": False, "reminders": True})
             if os.name != "nt":
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             size = first.size()

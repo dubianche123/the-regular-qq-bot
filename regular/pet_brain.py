@@ -239,6 +239,22 @@ BEAT_LINES = {
     "scene_height_nervous": "……刚才好高。", "scene_height_wings": "没、没有怕。",
 }
 DRAGON_COOLDOWN = 1500.0  # 变小龙是偶遇的惊喜：日常里至少隔二十几分钟
+# 照看这台机器的人在不在：外壳每帧只报「键盘鼠标多久没动了」这一个秒数，不含任何内容。
+OWNER_AWAY = 300.0        # 这么久没动静就当人走开了；再回来算重新坐下
+OWNER_WHILE = 1800.0      # 离开超过这么久，回来时她会好好打个招呼
+OWNER_LONG = 3 * 3600.0   # 再久就是「等你半天了」
+OWNER_NAP = 1800.0        # 人不在时她一觉最多睡这么久
+OWNER_SIT = 3000.0        # 连续坐这么久提醒一次（50 分钟）
+OWNER_LATE = 3600.0       # 深夜还在：最多每隔这么久说一次
+OWNER_LATE_AFTER = 600.0  # 深夜刚坐下不催，坐稳了再说
+NOTICE_EVERY = 2.0        # 她自己「留意到点什么」的检查间隔；只在闲着时才演
+# 心情外显：和提示词里「心情不错 / 有点烦」同一条线（activation._mood_word）。
+MOOD_BAND = 0.3
+MOOD_SHIFT_GAP = 600.0    # 同一个方向的心情转变，十分钟内只演一次
+# 群里气氛：五分钟消息数从冷清一下子变热闹。
+CHATTER_CALM, CHATTER_LIVELY = 2, 8
+CHATTER_SURGE_WITHIN = 180.0
+CHATTER_SURGE_GAP = 900.0
 FURNITURE_COOLDOWN = 1800.0
 SHOW_OFF_COOLDOWN = 300.0
 # 被你拎到高处再松手：会飞，但不是自己飞上去的，落地后腿会软一下。
@@ -287,6 +303,14 @@ LINES = {
     "full": ("吃不下啦。", "再吃就要变成球了。"),
     "greet": ("嗨～", "在忙吗？", "我在这儿哦。"),
     "late": ("好困……", "这么晚还不睡？"),
+    "back": ("回来啦？", "嗯？有动静。"),
+    "back_while": ("你回来啦！", "回来啦，等你呢。"),
+    "back_long": ("去了好久，等你半天了。", "终于回来啦！"),
+    "back_asleep": ("唔……你回来啦。", "（揉眼睛）回来了？"),
+    "sat": ("坐了 {n} 分钟啦，起来动一动？", "已经 {n} 分钟没歇了，喝口水吧。"),
+    "mood_up": ("今天心情不错～", "嘿嘿，开心。"),
+    "mood_down": ("……有点烦。", "唉。"),
+    "lively": ("群里突然热闹起来了。", "群里好热闹，我看看。"),
     "reply": ("群里有人找我，我回一句～", "打字中……", "回好啦。"),
     "listen": ("我听着呢，你说。", "嗯嗯，在听。"),
     "inspect": ("这张图我看看。", "举高点瞧瞧……"),
@@ -314,7 +338,7 @@ class Step:
     duration: float | None = None      # None: one pass of a non-loop clip (loops default to 4s)
     target_x: float | None = None      # walking destination
     target_y: float | None = None      # controlled flight destination
-    hold: str | None = None            # "chat" / "agent" / "state": held until that condition clears
+    hold: str | None = None            # "chat" / "agent" / "state" / "away": held until that condition clears
     edge_side: int = 0                 # -1 / +1: approach, peek and retreat at this screen edge
     line: str | None = None            # short, beat-specific speech
 
@@ -493,6 +517,19 @@ class PetBrain:
         self.game_best = 0
         self.pointer = _Pointer()
         self.attention = False
+        # 照看者：外壳没报过空闲时长之前一概不知道（_owner_since 为 None），不迎接也不提醒。
+        self.owner_away = False
+        self._owner_since: float | None = None   # 这一次坐下是从什么时候开始的
+        self._owner_gone = 0.0                   # 走开期间最后报上来的空闲秒数 = 离开了多久
+        self.reminders = True                    # 久坐 / 深夜提醒；「更多」里可以关
+        self._sit_mark = now                     # 久坐从这里起算：坐下时、每提醒一次后重置
+        self._late_mark = now - OWNER_LATE
+        self._notice_at = now + NOTICE_EVERY
+        self._mood_shown = 0                     # 她上一次表现出来的心情档：-1 烦 / 0 平 / 1 好
+        self._mood_said = {1: now - MOOD_SHIFT_GAP, -1: now - MOOD_SHIFT_GAP}
+        self._mood_mark_at = now
+        self._calm_at = float("-inf")            # 群里上一次冷清是什么时候
+        self._lively_at = now - CHATTER_SURGE_GAP
         self._greeted_at = -1000.0
         self._grab = None
         self._press = None
@@ -865,6 +902,8 @@ class PetBrain:
             return now >= self.state_until or now >= self._state_switch_at
         if step.hold == "sleep":
             return now >= self._sleep_cue_until or now - self.step_started >= 40
+        if step.hold == "away":
+            return not self.owner_away or now - self.step_started >= OWNER_NAP
         if step.target_x is not None or step.target_y is not None:
             reached = ((step.target_x is None or abs(self.x - step.target_x) < (0.001 if step.edge_side else 1.5))
                        and (step.target_y is None or abs(self.y - step.target_y) < 1.5))
@@ -981,6 +1020,8 @@ class PetBrain:
                               and min(self.x - self.left, self.right - self.x) <= self.figure * 2
                               and self.right - self.left > self.figure * 3) else 0.0,
         }
+        if self.owner_away and weights["nap"]:
+            weights["nap"] = 1.5         # 没人在，她也歇了：很快会找个地方睡下
         if self.repertoire.actions:
             for name in ("headphones", "gamepad", "tail_care", "lie_chin", "popcorn", "sit",
                          "tea_time", "book", "laptop"):
@@ -1066,6 +1107,8 @@ class PetBrain:
         if choice == "nap":
             self._nap_at = now
             clip = self._pick("sleep", "sleep")
+            if self.owner_away:          # 一直睡到你回来（或睡够了）；群里有她的动静照样会醒
+                return [Step(clip, hold="away"), Step("idle", 1)]
             return [Step(clip, r(12, 25)), Step("idle", 1)]
         if choice == "phone":
             return [Step(self._pick("curious", "phone"), r(8, 16)), Step("nod")]
@@ -1319,8 +1362,8 @@ class PetBrain:
         self.props.tick(now, self.left, self.right, self.ceiling, self.floor)
         asleep = self.clip in ASLEEP or self.hidden_asleep
         spec = self.repertoire.actions.get(self.clip, {})
-        working = self.chat_pending or self.media or now < self.agent_busy_until or (self.state_clip and now < self.state_until)
-        restful = spec.get("restful", False) and CLIPS[self.clip][3] and self.mode == "ground" and not working
+        restful = (spec.get("restful", False) and CLIPS[self.clip][3] and self.mode == "ground"
+                   and not self._busy(now))
         self.energy = max(0.0, min(1.0, self.energy + (dt / 240 if asleep else dt / 600 if restful else -dt / 2400)))
         if self.mode == "air":
             self._fall(now, dt)
@@ -1340,6 +1383,9 @@ class PetBrain:
             self._fly(now, dt)
         else:
             self._ground(now, dt)
+            if now >= self._notice_at:
+                self._notice_at = now + NOTICE_EVERY
+                self._notice(now)
         if self.clip == "idle" and now >= self.blink_at:
             self.blink_started = now
             self.blink_at = now + (0.3 if self.rng.random() < 0.15 else self.rng.uniform(2.4, 6.0))
@@ -1476,8 +1522,7 @@ class PetBrain:
                 and not self.media and now >= self.agent_busy_until
                 and not (self.state_clip and now < self.state_until)):
             self._greeted_at = now
-            greeting = "scene_glass_hello" if self._has("scene_glass_hello") and self.rng.random() < 0.35 else "wave"
-            self._queue(Step(greeting), Step("idle", 2.0), now=now, interrupt=True)
+            self._queue(Step(self._hello_clip()), Step("idle", 2.0), now=now, interrupt=True)
             lines = LINES["late"] if self.presence.circadian in NIGHT else LINES["greet"]
             self.say(self.rng.choice(lines), now=now, seconds=3.5)
 
@@ -2387,6 +2432,121 @@ class PetBrain:
             self._spark_at = now + 0.3
             self._burst(now, "sparkle", 0.05, -1.05, 1, spread=0.5)
 
+    # ── what she notices by herself: you, the hour, her own mood, the room ──
+    def _busy(self, now):
+        """Real work in progress: a local chat, or 小团团 searching / drawing / recording / in a panel state."""
+        return bool(self.chat_pending or self.media or now < self.agent_busy_until
+                    or (self.state_clip and now < self.state_until))
+
+    def _at_ease(self, now):
+        """On the ground in her own form with nothing real going on: free to start something herself.
+        A sleep she was explicitly asked for is not hers to end."""
+        return (self.mode == "ground" and not self._busy(now) and not self.game_active
+                and self.warp is None and self._form() == "human" and now >= self._sleep_cue_until)
+
+    def _hello_clip(self):
+        return "scene_glass_hello" if self._has("scene_glass_hello") and self.rng.random() < 0.35 else "wave"
+
+    def owner_idle(self, now, seconds):
+        """The shell reports how long the keyboard and mouse have been untouched: one number, no content."""
+        if seconds >= OWNER_AWAY:
+            self.owner_away, self._owner_gone = True, seconds
+        elif self.owner_away:
+            self.owner_away = False
+            self._owner_since = self._sit_mark = now
+            self._welcome_back(now, self._owner_gone)
+        elif self._owner_since is None:
+            self._owner_since = self._sit_mark = now
+
+    def _welcome_back(self, now, away):
+        """You touched the machine again after `away` seconds: the longer you were gone, the bigger the hello."""
+        self._greeted_at = now               # 这就是招呼了，别紧接着再对着鼠标挥一次手
+        if self.mode in ("hiding", "hidden"):
+            self._emit("!", now)             # 藏在边上时只抬一下头，不自己跑出来
+            return
+        if not self._at_ease(now):
+            return
+        self.last_interaction = now
+        if self.pointer.seen and abs(self.pointer.x - self.x) > self.figure * 0.12:
+            self.facing = 1 if self.pointer.x > self.x else -1
+        if self.clip in ASLEEP or self.clip in WAKING:
+            self._nap_at = now
+            steps, key = [Step("get_up")], "back_asleep"     # _queue 会补上醒来、坐起的过渡
+        elif away >= OWNER_LONG:
+            steps, key = [Step("hop"), Step(self._hello_clip())], "back_long"
+            self._emit("heart", now, 3)
+        elif away >= OWNER_WHILE:
+            steps, key = [Step(self._hello_clip())], "back_while"
+        else:
+            steps, key = [Step("peek")], "back"
+        self._queue_manual([*steps, Step("idle", 2.0)], now)
+        self.say(self.rng.choice(LINES[key]), now=now, seconds=3.5, kind="status" if key == "back" else "say")
+
+    def _mood_band(self):
+        """-1 烦 / 0 平 / 1 好：群聊心情加上被照顾的加成，和 status_summary 用同一条线。"""
+        mood = self.effective_mood
+        return 1 if mood >= MOOD_BAND else -1 if mood <= -MOOD_BAND else 0
+
+    def _notice(self, now):
+        """What she brings up herself, one thing at a time and only when nothing else is going on:
+        her mood has turned, you have sat too long, it is the middle of the night."""
+        if (not self._at_ease(now) or self.clip in ASLEEP or self.clip in WAKING
+                or now - max(self.last_interaction, self.last_agent_event) < 8):
+            return
+        band = self._mood_band()
+        if band != self._mood_shown:
+            self._mood_shown = band
+            if band and now - self._mood_said[band] >= MOOD_SHIFT_GAP:
+                self._mood_said[band] = now
+                if band > 0:
+                    steps = [Step("daily_joy_tail_catch" if self._has("daily_joy_tail_catch") else "hop")]
+                else:                        # 抱着尾巴缓一缓；没有那条素材时直接理尾巴
+                    comfort = [Step("daily_low_tail_comfort")] if self._has("daily_low_tail_comfort") else []
+                    steps = [*comfort, Step("tail_care", self.rng.uniform(10, 16))]
+                self._queue_manual([*steps, Step("idle", 1.5)], now)
+                self.say(self.rng.choice(LINES["mood_up" if band > 0 else "mood_down"]), now=now, seconds=3.2)
+                return
+        if not self.reminders or self._owner_since is None or self.owner_away:
+            return
+        if now - self._sit_mark >= OWNER_SIT:
+            # 久坐：她先看一眼表，自己伸个懒腰，再提醒你。
+            self._sit_mark = now
+            watch = [Step("life_clock_check", 4.0)] if self._has("life_clock_check") else []
+            self._queue_manual([*watch, Step("stretch"), Step("wing_stretch"), Step("idle", 2.0)], now)
+            self.say(self.rng.choice(LINES["sat"]).format(n=int((now - self._owner_since) // 60)),
+                     now=now, seconds=6)
+        elif (self.presence.circadian in NIGHT and now - self._late_mark >= OWNER_LATE
+              and now - self._owner_since >= OWNER_LATE_AFTER):
+            # 深夜：打个哈欠催你一句，然后自己先睡；群里刚有她的动静时只催不睡。
+            self._late_mark = now
+            bed = []
+            if now - self.last_agent_event >= ENGAGED_SECONDS:
+                self._nap_at = now
+                bed = [Step(self._pick("sleep", "sleep"), self.rng.uniform(40, 70))]
+            self._queue_manual([Step("stretch"), *bed, Step("idle", 1.0)], now)
+            self.say(self.rng.choice(LINES["late"]), now=now, seconds=5)
+
+    def _crowd_stirs(self, now):
+        """The group went from quiet to lively within minutes: she looks up; a nap ends with a grumble."""
+        if not self._at_ease(now) or self.clip in WAKING or now - self.last_interaction < 8:
+            return
+        watch = Step("popcorn", self.rng.uniform(20, 40))
+        if self.clip in ASLEEP:
+            self._woken(now, watch)
+            return
+        self._emit("!", now)
+        self._queue_manual([Step("lookaround"), watch, Step("idle", 1.0)], now)
+        self._status_line("lively", now, gap=0)
+
+    def _woken(self, now, *then):
+        """Roused before she was ready: stir, sit up, a heavy-lidded look, stand.
+        Nodding off while still seated skips the lying frames."""
+        self.jolt_started = now
+        lying = [Step("wake")] if self.posture() == "lie" else []
+        self._queue(*lying, Step("grumble", 1.2), Step("get_up"), *then, Step("idle", 2),
+                    now=now, interrupt=True)
+        self.say(self.rng.choice(LINES["woken"]), now=now, seconds=3.2)
+
     # ── particles and speech ──
     def _emit(self, kind, now, count=1):
         if not self.motion:
@@ -2409,6 +2569,15 @@ class PetBrain:
         if kind and self.motion and now >= self._emit_at:
             self._emit(kind, now)
             self._emit_at = now + {"z": 1.3, "note": 0.7, "heart": 0.5}.get(kind, 0.45)
+        if (self.motion and now >= self._mood_mark_at and self.mode == "ground"
+                and self.clip not in ASLEEP and (band := self._mood_band())):
+            # 心情外显：好的时候头顶不时飘个音符，烦的时候嘴边叹出一小团气。
+            # 间隔从时间推出来，不占用随机数；位置跟着站、坐、趴时头的高度走。
+            self._mood_mark_at = now + (16 if band > 0 else 26) + now * 7.3 % 10
+            head = (self.body_rect()[1] - self.y) / self.figure
+            self.particles.append(
+                Particle("note", 0.16 * self.facing, head + 0.05, 0.03 * self.facing, -0.2, now, 1.7) if band > 0 else
+                Particle("sigh", 0.2 * self.facing, head + 0.36, 0.1 * self.facing, 0.03, now, 1.6))
         alive = []
         for p in self.particles:
             if now - p.born < p.life:
@@ -2441,6 +2610,7 @@ class PetBrain:
     # ── user input ──
     def hover(self, now, x, y, *, near):
         p = self.pointer
+        near = near and not self.owner_away      # 鼠标停在她身边、人走了：不算有人在看
         if near and not p.near:
             p.since = now
         p.near = near
@@ -2727,13 +2897,7 @@ class PetBrain:
             return
         self._last_tap_at = now
         if self.clip in ASLEEP:
-            # Waking stays a slow, seated stretch: stir, sit up, heavy-lidded look, stand.
-            # Nodding off while still seated skips the lying frames.
-            self.jolt_started = now
-            lying = [Step("wake")] if self.posture() == "lie" else []
-            self._queue(*lying, Step("grumble", 1.2), Step("get_up"), Step("idle", 2),
-                        now=now, interrupt=True)
-            self.say(self.rng.choice(LINES["woken"]), now=now, seconds=3.2)
+            self._woken(now)
             return
         if self.clip in WAKING:
             if self.bubble is None:
@@ -2931,6 +3095,16 @@ class PetBrain:
             circadian=data.get("circadian") if isinstance(data.get("circadian"), str) else "",
             chatter=max(0, min(500, chatter)) if type(chatter) is int else 0, known=True)
         self.presence = new
+        if not old.known:
+            self._mood_shown = self._mood_band()     # 刚连上时的心情是底色，不算「转变」
+        if new.bot != "ready":
+            self._calm_at = float("-inf")            # 没连上时的 0 条不算冷清
+        elif new.chatter <= CHATTER_CALM:
+            self._calm_at = now
+        elif (new.chatter >= CHATTER_LIVELY and now - self._calm_at <= CHATTER_SURGE_WITHIN
+              and now - self._lively_at >= CHATTER_SURGE_GAP):
+            self._lively_at = now
+            self._crowd_stirs(now)
         # 面板每次心跳都会带上「此刻」的状态；不带就是状态结束了，让它自然回落。
         state = data.get("state")
         if isinstance(state, str) and state in STATE_CLIPS:
