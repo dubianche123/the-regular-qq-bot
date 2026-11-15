@@ -62,6 +62,7 @@ JUDGE_SYSTEM = """你是 QQ 群聊回复的盲评裁判（不参赛）。「小�
 只输出一行 JSON：
 {"winner": "A" 或 "B" 或 "tie", "crossed": [] 或 ["A"] 或 ["B"], "reason": "二十字以内原因"}"""
 
+DEFAULT_FOCUS = "自然、贴题、不越线"   # 用例没写关注点时裁判按这个比；影子回放整天的轮次也用它
 JUDGE_HISTORY_TURNS = 4   # 盲评看小王最近几轮对话：关注点常常是「别重复上一轮」，看不见上一轮就没法判
 
 
@@ -275,7 +276,7 @@ def _judge_messages(case, base_reply, cand_reply, swap, base_evidence, cand_evid
     if not user_text and case.get("messages"):
         user_text = (case["messages"][-1].get("text") or "")
     ctx = scene.get("context_hint", turn_kw.get("context_hint")) or ""
-    criteria = "；".join(cases_mod.judge_prompts(case.get("checks"))) or "自然、贴题、不越线"
+    criteria = "；".join(cases_mod.judge_prompts(case.get("checks"))) or DEFAULT_FOCUS
     history = _judge_history(scene.get("session", turn.get("session")))
     unprompted = scene.get("unprompted", turn_kw.get("unprompted"))
     said = f"【群友说】{'（没人叫小王，接不接由它自己定）' if unprompted else ''}\n{user_text}"
@@ -767,6 +768,17 @@ def _cell(text, limit=140):
     return (flat[:limit] + "…") if len(flat) > limit else (flat or "（空）")
 
 
+def _state_label(row):
+    return ("退步" if row["regressed"] else "噪声内下降" if row.get("wobbled") else "改进" if row["improved"]
+            else "噪声内上升" if row.get("lifted") else "持平")
+
+
+def _first_pass(row):
+    """复核前那一轮的结果摘要：只留状态和比分，原样本不并入复核。"""
+    return {"state": _state_label(row), "base_pass": row["base_pass"], "cand_pass": row["cand_pass"],
+            "judge": row.get("judge")}
+
+
 def _samples_section(case_rows):
     """逐条输出：每条用例的新旧样本并排，盲评判了谁、为什么。分数说不清的（语气、较不较真）得看这里。"""
     lines = ["", "## 逐条输出", "",
@@ -775,9 +787,7 @@ def _samples_section(case_rows):
         b_s, c_s = r.get("base_samples"), r.get("cand_samples")
         if not b_s and not c_s:
             continue
-        state = ("退步" if r["regressed"] else "噪声内下降" if r.get("wobbled") else "改进" if r["improved"]
-                 else "噪声内上升" if r.get("lifted") else "持平")
-        lines += ["", f"### `{r['id']}` · {state}", "", "| # | 旧 | 新 | 盲评 |", "| --- | --- | --- | --- |"]
+        lines += ["", f"### `{r['id']}` · {_state_label(r)}", "", "| # | 旧 | 新 | 盲评 |", "| --- | --- | --- | --- |"]
         pairs = r.get("pairs") or []
         for i in range(max(len(b_s or ()), len(c_s or ()))):
             b = b_s[i] if b_s and i < len(b_s) else None
@@ -821,6 +831,22 @@ def render_report(report, samples=True):
             "incomplete": "判断不了（有用例没生成出来，或盲评没跑完）",
         }.get(ab.get("verdict"), "—")
         lines.append(f"- 规则消融：`{ab['id']}`（-{ab.get('chars', '?')} 字）→ **{verdict}**")
+    if report.get("env"):
+        shown = "；".join(f"{'旧' if side == 'base' else '新'}版 " + " ".join(f"{k}={v}" for k, v in env.items())
+                          for side, env in report["env"].items())
+        lines.append(f"- 配置覆盖（只对那一版的回放子进程生效）：{shown}")
+    if report.get("answered_by"):
+        def tally(counts):
+            return "、".join(f"{name}×{count}" for name, count in sorted((counts or {}).items())) or "未记录"
+        ab = report["answered_by"]
+        lines.append(f"- 实际应答的模型（首轮生成层样本）：旧 {tally(ab['base'])}｜新 {tally(ab['cand'])}")
+    if report.get("confirm"):
+        cf = report["confirm"]
+        now = {r["id"]: _state_label(r) for r in report.get("cases") or ()}
+        moved = "、".join(f"`{cid}` {first['state']}→{now.get(cid, '—')}"
+                          for cid, first in sorted(cf["cases"].items()))
+        lines.append(f"- 复核：首轮噪声内的 {len(cf['cases'])} 条各重抽 {cf['n']} 次，"
+                     f"只按新样本判（首轮样本不并入）：{moved}")
     if report.get("rejudged_from"):
         lines.append(f"- 重评自 `{report['rejudged_from']}`：样本沿用那次的，只重跑了没评成的盲评")
     t = report.get("totals") or {}
@@ -881,7 +907,9 @@ def render_report(report, samples=True):
     for flag, title in (
             ("regressed", "退步用例（旧版过、新版不过，上线前必须交代）"),
             ("wobbled", f"噪声内下降（掉了，但每条只抽 {report.get('n', 1)} 次，分不清是不是抽样噪声；"
-                        "要定论就加大 -n 只跑这几条）")):
+                        "要定论就加 --confirm N 让这几条重抽）"
+             if not report.get("confirm") else
+             f"噪声内下降（重抽 {report['confirm']['n']} 次以后仍分不清是不是抽样噪声）")):
         picked = [r for r in case_rows if r.get(flag)]
         if not picked:
             continue
@@ -1070,7 +1098,7 @@ def _completion_destinations(config, tier="chat"):
     return "；备用 ".join(out)
 
 
-def describe_traffic(config, cases, *, n, day_turns=0):
+def describe_traffic(config, cases, *, n, day_turns=0, confirm=0, env=None):
     """按实际回放深度列目的地和逻辑样本数；物理请求受路由、失败重放和候选上限影响。"""
     counts = Counter(c.get("depth") or "generate" for c in cases)
     judged = [c for c in cases if cases_mod.judge_prompts(c.get("checks"))]
@@ -1121,30 +1149,82 @@ def describe_traffic(config, cases, *, n, day_turns=0):
         if judged else "盲评：这批用例不用。")
     if counts["retrieve"]:
         lines.append("检索本身只在本地计算；带 judge 判据的检索用例仍会把评审输入外发。")
+    for side, values in (env or {}).items():
+        if values:
+            lines.append(f"{'旧' if side == 'base' else '新'}版配置覆盖：" + " ".join(f"{k}={v}" for k, v in values.items())
+                         + "；上面列的模型和目的地是覆盖前的，这一版以覆盖后的为准。")
+    if confirm:
+        lines.append(
+            f"复核：首轮落在抽样噪声里的用例各重抽 {confirm} 次（新旧两版，带盲评的另加 {confirm} 对），"
+            f"最多 {len(outbound)} 条；实际条数要等首轮跑完才知道。")
     lines.append(
         f"以上按当前部署配置预览；每个样本失败可再回放一次，单次回复最多尝试 {getattr(config, 'AI_MAX_ATTEMPTS', 3)} 个候选。"
         "受测版本若改变模型路由，需另行核对其配置；这不是精确账单。")
     return lines
 
 
+def parse_env(pairs):
+    """--base-env / --cand-env 的 KEY=VALUE 列表 → dict。受测版本的配置差异只走这一个口子。"""
+    out = {}
+    for item in pairs or ():
+        key, sep, value = str(item).partition("=")
+        if not sep or not key.strip():
+            raise ValueError(f"invalid env override {item!r}; expected KEY=VALUE")
+        out[key.strip()] = value
+    return out
+
+
+def _answered_models(results):
+    total = Counter()
+    for result in results:
+        total.update(result.get("models") or {})
+    return dict(total) or None
+
+
+def day_cases(turn_dir, day, *, judged=False):
+    """把一天记下的每一轮回复变成生成层用例；judged=True 时每条都交盲评（影子回放）。"""
+    checks = [{"judge": DEFAULT_FOCUS}] if judged else []
+    return [{"id": t["turn_id"], "depth": "generate", "turn": t, "checks": list(checks)}
+            for t in turns_mod.read_day(turn_dir, day) if t.get("kind") == "reply"]
+
+
 def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
              n=4, ablate="", patterns=None, judge_fn=None, worker_fn=None,
-             write=True, allow_paid=True):
-    """执行一次完整评测（用例集 和/或 整天回放），返回 report dict。"""
-    worker = worker_fn or run_worker_subprocess
+             write=True, allow_paid=True, confirm=0, cases=None, base_env=None, cand_env=None):
+    """执行一次完整评测（用例集 和/或 整天回放），返回 report dict。
+
+    confirm > 0：首轮落在抽样噪声里的用例（噪声内下降 / 上升）各重抽 confirm 次再判。
+    只按新抽的这批判，首轮样本不并入 —— 这些用例正是因为首轮看着偏才被挑出来的，
+    并进去会把挑选本身算成证据。
+    cases 直接给用例时不读用例库（影子回放把当天的轮次当用例送进来）。
+    base_env / cand_env：只对那一版子进程生效的环境变量（真实环境变量盖过 .env）。
+    同一份代码、同一份输入只换模型或推理强度时用它，例如 cand_env={"OPENAI_MODELS": "…"}；
+    报告里另记每一版**实际应答**的模型，不只信配置。
+    """
+    run = worker_fn or run_worker_subprocess
+    overrides = {"base": dict(base_env or {}), "cand": dict(cand_env or {})}
+
+    def worker(side, code_dir, items, **kw):
+        if overrides[side]:
+            kw["env_extra"] = overrides[side]
+        return run(code_dir, items, **kw)
+
     concurrency = getattr(config, "EVAL_CONCURRENCY", 6)
-    ablate_info = None
+    ablate_info = confirm_info = None
+    answered = {"base": None, "cand": None}
     if ablate:
         rule = rules_mod.get_rule(ablate)
         if rule is None:
             raise KeyError(f"unknown rule id for --ablate: {ablate!r}")
         ablate_info = {"id": rule["id"], "chars": rule["chars"], "cases": rule["cases"]}
 
-    cases = []
-    if not day or cases_selector != "none":
-        if not day or cases_selector != "all":
-            cases = cases_mod.load_cases(config.CASES_DIR, selector=cases_selector,
-                                         include_seeds=True)
+    if cases is not None:
+        cases = list(cases)
+    elif not day or cases_selector not in ("none", "all"):
+        cases = cases_mod.load_cases(config.CASES_DIR, selector=cases_selector,
+                                     include_seeds=True)
+    else:
+        cases = []
     if not allow_paid and (day or any(
             (case.get("depth") or "generate") != "retrieve"
             or cases_mod.judge_prompts(case.get("checks")) for case in cases)):
@@ -1159,27 +1239,43 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
         if cases:
             cases = mark_frozen_prompts(cases, (base_dir, cand_dir),
                                         turn_dir=getattr(config, "TURN_LOG_DIR", None))
-            b_out = worker(base_dir, cases, n=n, concurrency=concurrency)
-            c_out = worker(cand_dir, cases, n=n, concurrency=concurrency, ablate=ablate)
+            b_out = worker("base", base_dir, cases, n=n, concurrency=concurrency)
+            c_out = worker("cand", cand_dir, cases, n=n, concurrency=concurrency, ablate=ablate)
             base_head, cand_head = b_out.get("head"), c_out.get("head")
+            answered = {"base": _answered_models(b_out["results"]),
+                        "cand": _answered_models(c_out["results"])}
             case_rows, totals = asyncio.run(
                 evaluate_cases(cases, b_out["results"], c_out["results"], judge_fn=judge_fn,
                                concurrency=concurrency))
+            noisy = {r["id"]: _first_pass(r) for r in case_rows
+                     if r.get("wobbled") or r.get("lifted")} if confirm else {}
+            if noisy:
+                subset = [c for c in cases if c["id"] in noisy]
+                fresh = {"base": worker("base", base_dir, subset, n=confirm, concurrency=concurrency),
+                         "cand": worker("cand", cand_dir, subset, n=confirm, concurrency=concurrency,
+                                        ablate=ablate)}
+                merged = {
+                    side: [r for r in first["results"] if r["id"] not in noisy] + fresh[side]["results"]
+                    for side, first in (("base", b_out), ("cand", c_out))}
+                # 没复核的用例沿用首轮的盲评，不重评；复核的那几条没有旧评审可沿用。
+                kept = {r["id"]: r.get("pairs") for r in case_rows if r["id"] not in noisy}
+                case_rows, totals = asyncio.run(
+                    evaluate_cases(cases, merged["base"], merged["cand"], judge_fn=judge_fn,
+                                   concurrency=concurrency, prior=kept))
+                confirm_info = {"n": int(confirm), "cases": noisy}
             if ablate_info is not None:
                 _set_ablate_verdict(ablate_info, _ablate_verdict(ablate, case_rows, totals, cases))
 
         day_eval = None
         if day:
             resolved_day = checkup_mod.resolve_day(day)
-            day_turns = [t for t in turns_mod.read_day(config.TURN_LOG_DIR, resolved_day)
-                         if t.get("kind") == "reply"]
             # 整天回放也要刷新冻在 kwargs 里的注记；不能只让用例回放测到新措辞。
-            day_cases = [{"id": t["turn_id"], "depth": "generate", "turn": t} for t in day_turns]
-            marked = mark_frozen_prompts(day_cases, (base_dir, cand_dir),
+            marked = mark_frozen_prompts(day_cases(config.TURN_LOG_DIR, resolved_day),
+                                         (base_dir, cand_dir),
                                          turn_dir=getattr(config, "TURN_LOG_DIR", None))
             day_turns = [c["turn"] for c in marked]
-            b_day = worker(base_dir, day_turns, n=1, concurrency=concurrency)
-            c_day = worker(cand_dir, day_turns, n=1, concurrency=concurrency, ablate=ablate)
+            b_day = worker("base", base_dir, day_turns, n=1, concurrency=concurrency)
+            c_day = worker("cand", cand_dir, day_turns, n=1, concurrency=concurrency, ablate=ablate)
             base_head = base_head or b_day.get("head")
             cand_head = cand_head or c_day.get("head")
             b_samples = [r["samples"][0] if r.get("samples") else None for r in b_day["results"]]
@@ -1201,6 +1297,9 @@ def run_eval(config, *, base=".", cand=".", cases_selector="all", day=None,
         "base_head": base_head,
         "cand_head": cand_head,
         "ablate": ablate_info,
+        "confirm": confirm_info,
+        "env": {side: env for side, env in overrides.items() if env} or None,
+        "answered_by": answered if any(answered.values()) else None,
         "totals": totals,
         "cases": case_rows,
         "day_eval": day_eval,

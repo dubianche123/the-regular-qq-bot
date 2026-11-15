@@ -547,6 +547,11 @@ def eval_command(config, args):
     from regular import eval as eval_mod
     if args.n < 1:
         raise ValueError("eval -n 必须至少为 1")
+    confirm = getattr(args, "confirm", 0) or 0     # 旧调用方不带这个参数
+    env = {"base": eval_mod.parse_env(getattr(args, "base_env", None)),
+           "cand": eval_mod.parse_env(getattr(args, "cand_env", None))}
+    if confirm < 0 or (confirm and (args.rejudge or args.search_wording)):
+        raise ValueError("eval --confirm 必须是正数，且不能和 --rejudge / --search-wording 一起用")
     if args.plan:
         # 必须先于任何付费分支；不支持的组合也只能报错，绝不能执行真实评测。
         if args.search_wording:
@@ -566,7 +571,8 @@ def eval_command(config, args):
             from regular import checkup as checkup_mod
             day_turns = sum(1 for t in turns_mod.read_day(config.TURN_LOG_DIR, checkup_mod.resolve_day(args.day))
                             if t.get("kind") == "reply")
-        for line in eval_mod.describe_traffic(config, selected, n=args.n, day_turns=day_turns):
+        for line in eval_mod.describe_traffic(config, selected, n=args.n, day_turns=day_turns,
+                                              confirm=confirm, env=env):
             print(line)
         return 0
     if args.search_wording:
@@ -600,7 +606,8 @@ def eval_command(config, args):
                 config, base=args.base, cand=args.cand, cases_selector=args.cases,
                 day=args.day, n=args.n, ablate=args.ablate or "",
                 patterns=patterns or None, write=not args.no_write,
-                allow_paid=args.allow_paid)
+                allow_paid=args.allow_paid, confirm=confirm,
+                base_env=env["base"], cand_env=env["cand"])
     except eval_mod.PaidEvaluationRequired:
         raise
     except RuntimeError as err:   # 盲评预检没过：原因原样说出来，别吞成一句泛泛的 doctor 提示
@@ -612,6 +619,57 @@ def eval_command(config, args):
         print(eval_mod.render_report(out, samples=False))
         if out.get("report_path"):
             print(f"Report written to {out['report_path']}（末尾有逐条输出：新旧样本和盲评理由）")
+    return 0
+
+
+def shadow_command(config, args):
+    """影子回放：登记候选、每晚回放记账、看累计结论；另有裁判核对。不自动上线。"""
+    from regular import checkup as checkup_mod
+    from regular import eval as eval_mod
+    from regular import shadow as shadow_mod
+    action = args.shadow_action
+    if action == "start":
+        state = shadow_mod.start(
+            config, args.name, cand=args.cand, base=args.base,
+            since=checkup_mod.resolve_day(args.since) if args.since else None,
+            base_env=eval_mod.parse_env(args.base_env), cand_env=eval_mod.parse_env(args.cand_env))
+        print(f"Registered shadow {state['name']}: {state['base']} -> {state['cand']}, from {state['since']}")
+        return 0
+    if action == "stop":
+        shadow_mod.stop(config, args.name)
+        print(f"Stopped shadow {args.name}")
+        return 0
+    if action == "status":
+        rows = [shadow_mod.summary(shadow_mod.load(config, name)) for name in shadow_mod.names(config)]
+        print(json.dumps(rows, ensure_ascii=False, indent=2) if args.json else shadow_mod.render(rows))
+        return 0
+    if action == "judge":
+        since = checkup_mod.resolve_day(args.since) if args.since else None
+        if args.plan:
+            for line in shadow_mod.describe_check(config, since=since, base=args.base):
+                print(line)
+            return 0
+        out, added = shadow_mod.judge_check(config, since=since, base=args.base,
+                                            allow_paid=args.allow_paid)
+        print(json.dumps(out, ensure_ascii=False, indent=2) if args.json
+              else shadow_mod.render_check(out) + f"\n\n  本次新核对 {added} 条。")
+        return 0
+    # run：没点名就把所有还在跑的候选都跑一遍（每晚定时任务就是这一条）
+    targets = [args.name] if args.name else [
+        name for name in shadow_mod.names(config)
+        if shadow_mod.load(config, name)["status"] == "active"]
+    if args.plan:
+        for name in targets:
+            state = shadow_mod.load(config, name)
+            for line in shadow_mod.describe(config, state, shadow_mod.pending_days(config, state)):
+                print(line)
+        return 0
+    rows = []
+    for name in targets:
+        state, ran = shadow_mod.run(config, name, allow_paid=args.allow_paid)
+        rows.append(shadow_mod.summary(state))
+        print(f"{name}: replayed {len(ran)} day(s) {' '.join(ran)}".rstrip(), file=sys.stderr)
+    print(json.dumps(rows, ensure_ascii=False, indent=2) if args.json else shadow_mod.render(rows))
     return 0
 
 
@@ -757,6 +815,12 @@ def main(argv=None):
     ev.add_argument("--cand", default=".", help="candidate git ref or directory (default: .)")
     ev.add_argument("--cases", default="all", help="case selector: all, tag, glob, or none")
     ev.add_argument("-n", type=int, default=4, help="samples per case per version (default: 4)")
+    ev.add_argument("--base-env", action="append", metavar="KEY=VALUE",
+                    help="environment override for the base replay only, e.g. OPENAI_MODELS=gpt-6-luna (repeatable)")
+    ev.add_argument("--cand-env", action="append", metavar="KEY=VALUE",
+                    help="environment override for the candidate replay only; same code, different model or effort")
+    ev.add_argument("--confirm", type=int, default=0, metavar="N",
+                    help="redraw N fresh samples for cases that landed within sampling noise and judge them on the fresh draw only")
     ev.add_argument("--day", help="replay all recorded turns of a day (YYYY-MM-DD or MM-DD)")
     ev.add_argument("--ablate", help="rule id from prompts.py to ablate in candidate")
     ev.add_argument("--search-wording", choices=("remind", "banter"),
@@ -770,6 +834,30 @@ def main(argv=None):
                     help="print what this run would send where (cases, live vs synthetic, models, request counts); no model calls")
     ev.add_argument("--rejudge", metavar="REPORT",
                     help="reuse all samples of a saved report (.json path or data/evals stamp); rerun only failed judge pairs")
+    sh = sub.add_parser("shadow", help="shadow replay: a candidate replays each finished day's real turns beside the baseline; verdicts accumulate under a sequential test")
+    sh_sub = sh.add_subparsers(dest="shadow_action", required=True)
+    sh_start = sh_sub.add_parser("start", help="register a candidate; nothing is run or deployed")
+    sh_start.add_argument("name", help="short name: lowercase letters, digits, hyphens")
+    sh_start.add_argument("--cand", required=True, help="candidate git ref or directory")
+    sh_start.add_argument("--base", default="HEAD", help="baseline git ref or directory (default: HEAD)")
+    sh_start.add_argument("--since", metavar="DAY", help="also replay finished days from this day on (default: start today)")
+    sh_start.add_argument("--base-env", action="append", metavar="KEY=VALUE")
+    sh_start.add_argument("--cand-env", action="append", metavar="KEY=VALUE")
+    sh_run = sh_sub.add_parser("run", help="replay every finished day not yet counted (all active candidates when no name)")
+    sh_run.add_argument("name", nargs="?")
+    sh_run.add_argument("--allow-paid", action="store_true", help="authorize real model requests and quota consumption")
+    sh_run.add_argument("--plan", action="store_true", help="print what would be sent where; no model calls")
+    sh_run.add_argument("--json", action="store_true")
+    sh_status = sh_sub.add_parser("status", help="accumulated tallies and verdicts; read-only")
+    sh_status.add_argument("--json", action="store_true")
+    sh_stop = sh_sub.add_parser("stop", help="stop a candidate; its ledger is kept")
+    sh_stop.add_argument("name")
+    sh_judge = sh_sub.add_parser("judge", help="check the blind judge against how the group really reacted (corrected vs played along)")
+    sh_judge.add_argument("--since", metavar="DAY")
+    sh_judge.add_argument("--base", default=".", help="code used to regenerate (default: .)")
+    sh_judge.add_argument("--allow-paid", action="store_true", help="authorize real model requests and quota consumption")
+    sh_judge.add_argument("--plan", action="store_true", help="print what would be sent where; no model calls")
+    sh_judge.add_argument("--json", action="store_true")
     tn = sub.add_parser("tune", help="read-only offline tuning for checkup thresholds or recall policy; no network or inference")
     tn.add_argument("target", choices=("checkup", "recall"), help="which local policy to tune")
     tn.add_argument("--cases", default="retrieve", help="recall: case selector (default: retrieve)")
@@ -865,6 +953,15 @@ def main(argv=None):
                 return eval_command(config, args)
             except eval_mod.PaidEvaluationRequired as error:
                 parser.error(str(error))
+        if args.command == "shadow":
+            from regular import eval as eval_mod
+            try:
+                return shadow_command(config, args)
+            except eval_mod.PaidEvaluationRequired as error:
+                parser.error(str(error))
+            except (KeyError, ValueError) as error:
+                print(str(error.args[0] if error.args else error), file=sys.stderr)
+                return 1
         if args.command == "tune":
             if args.target != "checkup" and args.benchmark:
                 parser.error("--benchmark is only supported by tune checkup")

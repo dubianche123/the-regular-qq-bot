@@ -138,7 +138,15 @@ def archive_row_to_message(row, group_id, reply_cb):
     )
 
 
-async def _run_generate_once(bot, runtime, config, turn, retries=1):
+def _answered_by(bot):
+    """这一次生成实际是哪家哪个模型答的（"provider:model"）；受测版本不报出处时返回 None。"""
+    meta_fn = getattr(getattr(bot, "providers", None), "completion_meta", None)
+    meta = meta_fn() if meta_fn else None
+    return f"{meta.get('provider')}:{meta.get('model')}" if isinstance(meta, dict) else None
+
+
+async def _run_generate_once(bot, runtime, config, turn, retries=1, provenance=None):
+    """provenance 给一个列表时，把实际应答的模型记进去 —— 模型对照不能只信配置。"""
     kw = dict(turn.get("kwargs") or {})
     user_text = kw.pop("user_text", "")
     sig = inspect.signature(bot.get_ai_reply)
@@ -192,9 +200,12 @@ async def _run_generate_once(bot, runtime, config, turn, retries=1):
                                                      bool(media.get("remind", True))))
                     stack.enter_context(patch.object(bot, "call_model", _release_and_call))
                     body, _ = await bot.get_ai_reply(sid, user_text, allow_fallback=False, **kw)
+                    answered = _answered_by(bot)
                 finally:
                     _release_sync()
             if body is not None:
+                if provenance is not None and answered:
+                    provenance.append(answered)
                 return body
         return None
     finally:
@@ -670,6 +681,7 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
         bot, runtime, config = _bot, _runtime, _config
     samples = []
     traces = []
+    answered = []
     errors = 0
     refreshed = stale = ()
     if depth == "generate":
@@ -696,13 +708,16 @@ async def replay_item(item, *, n=1, retries=1, bot=None, runtime=None, config=No
             spec = item.get("triage") or item.get("turn") or item
             out = await _run_triage_once(runtime, config, spec, retries=retries)
         else:
-            out = await _run_generate_once(bot, runtime, config, turn, retries=retries)
+            out = await _run_generate_once(bot, runtime, config, turn, retries=retries,
+                                           provenance=answered)
         if out is None:
             errors += 1
         samples.append(out)
     result = {"id": item.get("id") or item.get("turn_id"), "samples": samples, "errors": errors}
     if refreshed or stale:
         result.update(refreshed=list(refreshed), stale_prompts=list(stale))
+    if answered:
+        result["models"] = dict(collections.Counter(answered))
     if depth == "message":
         result["trace"] = traces
     return result
