@@ -57,8 +57,11 @@ NULL_DRAWS = 1000
 MIN_FOR_FIT = 10
 
 
-def _rows(log_dir):
-    """逐行读本机互动日志。坏行跳过并计数，不让半行挡住整份报告。"""
+def read_rows(log_dir):
+    """逐行读本机互动日志。坏行跳过并计数，不让半行挡住整份报告。
+
+    其他只读报告（regular/outcomes.py）共用这一份读取，不另写一套。
+    """
     diagnostics = {"files_read": 0, "malformed_lines": 0, "read_errors": 0}
     try:
         files = sorted(p for p in Path(log_dir).iterdir() if p.suffix == ".jsonl")
@@ -94,7 +97,7 @@ def _text(row, key):
 def pairs(log_dir, site="banter"):
     """拼出 (预测概率, 真实结果) 对，外加各级计数。只读，不改任何文件。"""
     question, acted = SITES[site]
-    rows, diagnostics = _rows(log_dir)
+    rows, diagnostics = read_rows(log_dir)
     counts = {"scores": 0, "acted": 0, "with_probability": 0, "delivered": 0,
               "labelled": 0, "welcome": 0, "unwelcome": 0,
               "no_reaction": 0, "other_verdict": 0, "stayed_quiet": 0,

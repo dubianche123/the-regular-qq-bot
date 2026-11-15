@@ -940,6 +940,60 @@ def report(day, *, interaction_dir, turn_dir, archive_dir=None, state_file=None,
             "precision": precision(checkup_dir) if checkup_dir else {}}
 
 
+def incident_coverage(cases, *, interaction_dir, turn_dir, archive_dir=None, state_file=None,
+                      policy=None):
+    """用例库里取自真实现场的事故，现在的体检能列出几条（docs/self-iteration.md 第 8 节）。
+
+    每条有 `source_turn_id` 的用例回到它那一天，用**现在的**信号和策略重跑体检，看有没有一条
+    候选指到同一轮或同一句话。没列出的那几条就是体检的盲区 —— 每一条都是一个缺的信号。
+    这是覆盖率，不是「截图之前就发现了」的比例：用例本身可能就是从体检候选存的。
+    每轮记录过了保留期的用例回不到现场，单独计数，不算没列出。
+    """
+    by_day, rows = defaultdict(list), []
+    for case in cases:
+        turn_id = case.get("source_turn_id")
+        if not turn_id:
+            continue
+        turn = turns_mod.find(turn_dir, turn_id)
+        if turn is None:
+            rows.append({"case": case["id"], "day": None, "covered": None, "signals": []})
+            continue
+        day = time.strftime("%Y-%m-%d", time.localtime(turn["ts"]))
+        by_day[day].append((case["id"], {turn_id, turn.get("message_id")} - {None}))
+    for day, members in sorted(by_day.items()):
+        message_of = {t["turn_id"]: t.get("message_id") for t in turns_mod.read_day(turn_dir, day)}
+        findings = report(day, interaction_dir=interaction_dir, turn_dir=turn_dir,
+                          archive_dir=archive_dir, state_file=state_file, policy=policy)["findings"]
+        for case_id, keys in members:
+            hit = sorted({f["signal"] for f in findings
+                          if keys & ({f.get("message_id"), *f.get("turn_ids", ()),
+                                      *(message_of.get(t) for t in f.get("turn_ids", ()))} - {None})})
+            rows.append({"case": case_id, "day": day, "covered": bool(hit), "signals": hit})
+    known = [r for r in rows if r["covered"] is not None]
+    return {"schema": "regular.checkup-coverage.v1", "cases": len(rows),
+            "replayable": len(known), "covered": sum(1 for r in known if r["covered"]),
+            "expired": len(rows) - len(known), "rows": sorted(rows, key=lambda r: (r["day"] or "", r["case"]))}
+
+
+def render_coverage(out):
+    lines = ["体检覆盖 —— 用例库里取自真实现场的事故，现在的体检能列出几条",
+             f"  真实现场用例 {out['cases']} 条｜回得到现场 {out['replayable']}｜"
+             f"体检列得出 {out['covered']}｜每轮记录已过期 {out['expired']}"]
+    missed = [r for r in out["rows"] if r["covered"] is False]
+    if missed:
+        lines += ["", "  没列出的（体检的盲区，每条都是一个缺的信号）："]
+        lines += [f"    {r['day']}  {r['case']}" for r in missed]
+    listed = [r for r in out["rows"] if r["covered"]]
+    if listed:
+        lines += ["", "  列得出的："]
+        lines += [f"    {r['day']}  {r['case']}  ← {'、'.join(LABELS.get(s, s) for s in r['signals'])}"
+                  for r in listed]
+    lines += ["", "  边界：这是覆盖率，不是「截图之前就发现了」的比例 —— 用例可能本来就是从体检候选存的。",
+              "  只认指到同一轮或同一句话的候选；用例里也有「本来就该这样」的对照现场，不是每条都该被列出。",
+              "  用的是现在的信号和策略，不是事故当天的。"]
+    return "\n".join(lines)
+
+
 def case_add_commands(day, finding):
     """生成一条或多条不撞名的 `regular case add` 命令（供 Markdown 报告与 Web 面板共用）。
 

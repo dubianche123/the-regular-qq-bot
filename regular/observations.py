@@ -100,3 +100,73 @@ def personal_memory_coverage(log_dir):
             "by_enabled": {key: _rates(counts) for key, counts in enabled.items()},
             "by_user": [{"alias": f"P{index:03d}", **_rates(counts)}
                         for index, counts in enumerate(people.values(), 1)]}
+
+
+# ── 个人原话漏斗：摘要提案 → 去留判断 → 在库 → 注入 ──
+
+def personal_memory_funnel(log_dir, state_file=None, *, now=None):
+    """个人原话为什么没派上用场：一路上在哪一步没了。只读，不输出原话和身份。
+
+    注入率只是漏斗的最后一格。前面几格：摘要模型提了一条原话 → 代码核实来源 →
+    原生判断决定去留（`decision_scores` 的 site=memory）→ 留在摘要状态里 → 话题命中才注入。
+    这里数的是**有记录**的两格：去留判断的结论，和现在在库的条数。
+    摘要模型提了多少、核实来源时筛掉多少，日志里没有记，这两格看不见。
+    """
+    import re
+    import time
+
+    import digest
+    from regular.calibration import read_rows
+
+    rows, diagnostics = read_rows(log_dir)
+    name = re.compile(r"(c\d+)_memory_(kind|action)")
+    verdicts = {"durable": 0, "brief": 0, "discard": 0, "abstained": 0}
+    calls = 0
+    for row in rows:
+        if row.get("kind") != "decision_scores" or row.get("site") != "memory":
+            continue
+        calls += 1
+        items = {}
+        for key, score in (row.get("scores") or {}).items():
+            match = name.fullmatch(key)
+            if match and isinstance(score, dict):
+                items.setdefault(match.group(1), {})[match.group(2)] = score.get("choice")
+        for key in row.get("dropped") or ():
+            match = name.fullmatch(str(key))
+            if match:
+                items.setdefault(match.group(1), {})[match.group(2)] = None
+        for answer in items.values():
+            kind, action = answer.get("kind"), answer.get("action")
+            if "discard" in (kind, action):
+                verdicts["discard"] += 1
+            elif kind is None or action is None:
+                verdicts["abstained"] += 1       # 没把握的题不作数，条目照短时效收录
+            elif (kind in digest._PEOPLE_DURABLE_KINDS
+                  and action in digest._PEOPLE_DURABLE_ACTIONS):
+                verdicts["durable"] += 1
+            else:
+                verdicts["brief"] += 1
+    store = None
+    if state_file:
+        try:
+            state = json.loads(Path(state_file).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            state = None
+        if isinstance(state, dict):
+            now = time.time() if now is None else now
+            store = {"entries": 0, "fresh": 0, "durable": 0}
+            for slot in (state.get("digests") or {}).values():
+                data = ((slot or {}).get("summary") or {}).get("data") or {}
+                for entry in data.get("people") or ():
+                    source = digest._people_evidence(entry, now)
+                    if not source:
+                        continue
+                    store["entries"] += 1
+                    decision = digest.people_decision(entry) or {}
+                    store["fresh"] += now - source["ts"] <= digest.people_max_age_seconds(entry)
+                    store["durable"] += (decision.get("kind") in digest._PEOPLE_DURABLE_KINDS
+                                         and decision.get("action") in digest._PEOPLE_DURABLE_ACTIONS)
+    return {"schema": "regular.personal-memory-funnel.v1", **diagnostics,
+            "judgement_calls": calls, "judged": sum(verdicts.values()), "verdicts": verdicts,
+            "store": store}
+

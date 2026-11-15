@@ -341,8 +341,10 @@ async def demo(messages):
 
 
 def coverage(config, *, as_json=False):
-    from regular.observations import personal_memory_coverage
+    from regular.observations import personal_memory_coverage, personal_memory_funnel
     report = personal_memory_coverage(config.INTERACTION_LOG_DIR)
+    funnel = personal_memory_funnel(config.INTERACTION_LOG_DIR, getattr(config, "STATE_FILE", None))
+    report["funnel"] = funnel
     stats = report["overall"]
     if as_json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -352,6 +354,13 @@ def coverage(config, *, as_json=False):
         print(f"Personal-quote injection coverage: {label}")
         print(f"Delivered model replies: {stats['delivered_model_replies']} | injected: {stats['injected']} | not injected: {stats['not_injected']} | unknown: {stats['unknown']}")
         print("Scope: observed confirmed model replies, not eligibility or personalization benefit.")
+        v, store = funnel["verdicts"], funnel["store"]
+        print(f"Funnel before injection: {funnel['judgement_calls']} keep/discard judgement calls over "
+              f"{funnel['judged']} proposed quotes -> keep long {v['durable']} | keep briefly {v['brief']} | "
+              f"discard {v['discard']} | abstained {v['abstained']}")
+        if store is not None:
+            print(f"In store now: {store['entries']} sourced quotes | not expired {store['fresh']} | long-term {store['durable']}")
+        print("Not recorded: how many quotes the digest model proposed and how many failed source verification.")
         if not report["files_read"]:
             print("No readable interaction journal files; unavailable is not 0% coverage.")
         if report["read_errors"]:
@@ -375,7 +384,25 @@ def calibration(config, *, site="banter", as_json=False):
     return 0 if out["counts"]["labelled"] else 1
 
 
-def checkup(config, *, day=None, as_json=False, write=True, label=None, note=""):
+def outcomes(config, *, by="release", since=None, route=None, as_json=False):
+    """只读反应账本：每条送达之后群友实际怎么反应，按版本等维度汇总。
+
+    不连 QQ、不调模型、不改日志。样本不足时报条数而不是比例。
+    """
+    from regular.checkup import resolve_day
+    from regular.outcomes import render, report
+    out = report(config.INTERACTION_LOG_DIR, config.TURN_LOG_DIR, by=by,
+                 since=resolve_day(since) if since else None, route=route)
+    if as_json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(render(out))
+    if out["read_errors"]:
+        return 1
+    return 0 if out["overall"] else 1
+
+
+def checkup(config, *, day=None, as_json=False, write=True, label=None, note="", coverage=False):
     """每日体检（docs/self-iteration.md ②）：只读、不联网、不调模型。
 
     --label ID yes|no 给一条候选标「是 / 不是」，体检报告据此统计每种信号的准确率。
@@ -391,6 +418,15 @@ def checkup(config, *, day=None, as_json=False, write=True, label=None, note="")
         checkup_mod.add_label(config.CHECKUP_DIR, finding_id, verdict,
                               signal=found["signal"], note=note)
         print(f"Labelled {finding_id} ({found['label']}) as {verdict}.")
+        return 0
+    if coverage:
+        from regular import cases as cases_mod
+        out = checkup_mod.incident_coverage(
+            cases_mod.load_cases(config.CASES_DIR), interaction_dir=config.INTERACTION_LOG_DIR,
+            turn_dir=config.TURN_LOG_DIR, archive_dir=config.ARCHIVE_DIR,
+            state_file=config.STATE_FILE, policy=checkup_mod.load_policy(config.CHECKUP_POLICY_FILE))
+        print(json.dumps(out, ensure_ascii=False, indent=2) if as_json
+              else checkup_mod.render_coverage(out))
         return 0
     out = checkup_mod.report(
         checkup_mod.resolve_day(day), interaction_dir=config.INTERACTION_LOG_DIR,
@@ -663,6 +699,12 @@ def main(argv=None):
     cal.add_argument("--site", choices=("banter", "callback"), default="banter",
                      help="which judgement to check (default: banter)")
     cal.add_argument("--json", action="store_true")
+    oc = sub.add_parser("outcomes", help="read-only ledger of how the group reacted to each delivered reply, by release / model / route / day; no network or inference")
+    oc.add_argument("--by", choices=("release", "model", "route", "day"), default="release",
+                    help="how to group deliveries (default: release)")
+    oc.add_argument("--since", metavar="DAY", help="only deliveries on or after this day (2026-11-03 / 11-03 / yesterday)")
+    oc.add_argument("--route", help="only one delivery route, e.g. reply / banter / image / proactive")
+    oc.add_argument("--json", action="store_true", help="include one row per delivery (local event ids only)")
     chk = sub.add_parser("checkup", help="read-only daily checkup: list suspicious moments from local journals; no network or inference")
     chk.add_argument("--day", help="YYYY-MM-DD, MM-DD, today or yesterday (default: today)")
     chk.add_argument("--json", action="store_true")
@@ -670,6 +712,8 @@ def main(argv=None):
     chk.add_argument("--label", nargs=2, metavar=("ID", "VERDICT"),
                      help="label a finding yes/no for per-signal precision")
     chk.add_argument("--note", default="", help="optional note stored with --label")
+    chk.add_argument("--coverage", action="store_true",
+                     help="how many real-incident cases today's signals would list; the misses are checkup's blind spots")
     rls = sub.add_parser("rules", help="read-only list of tracked prompt rules and stable-head length; no network or inference")
     rls.add_argument("--json", action="store_true")
     cs = sub.add_parser("case", help="manage replay cases in data/cases (add from turn, seed from docs, list)")
@@ -803,11 +847,14 @@ def main(argv=None):
             return coverage(config, as_json=args.json)
         if args.command == "calibration":
             return calibration(config, site=args.site, as_json=args.json)
+        if args.command == "outcomes":
+            return outcomes(config, by=args.by, since=args.since, route=args.route,
+                            as_json=args.json)
         if args.command == "checkup":
             if args.label and args.label[1] not in ("yes", "no"):
                 parser.error("--label VERDICT must be yes or no")
             return checkup(config, day=args.day, as_json=args.json, write=not args.no_write,
-                           label=args.label, note=args.note)
+                           label=args.label, note=args.note, coverage=args.coverage)
         if args.command == "rules":
             return rules_command(as_json=args.json)
         if args.command == "case":
