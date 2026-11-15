@@ -42,7 +42,7 @@ CLIPS = {
     "sit_rest": ("sit_rest", [0], 1, True, "sit"),
     "sit_look_left": ("sit_rest", [3], 1, True, "sit"),
     "sit_look_right": ("sit_rest", [4], 1, True, "sit"),
-    "stand_up": ("sit", [1, 0], 5, False, "stand"),
+    "stand_up": ("sit", [1, 0], 3, False, "stand"),                # 撑一下再站直，不是一下弹起来
     "sit_up": ("wake", [1, 2], 2.2, False, "sit"),
     "doze": ("sleep", [0, 1, 0, 1], 0.8, False, "sit"),
     "lie_down": ("wake", [1, 0], 1.6, False, "lie"),               # slumps, then the eyes fall shut
@@ -246,6 +246,31 @@ PAUSE_LOOK = 45.0              # ……停下来这么久，她抬头看你一�
 PAUSE_LOOK_GAP = 1800.0        # 半小时最多一次
 COWORK_AFTER = 600.0           # 你连续干活十分钟以上，她也多挑陪你干活的事
 NAP_GAP = 480.0           # 醒来之后至少这么久才会再睡（夜里 300 秒）
+DROWSY_DOZE = 0.35        # 犯困时坐着歇，有这么大的机会歇着歇着打起盹来
+WAKE_FPS = 3.0            # 在屏幕边睡着被叫醒：逆放入睡帧，慢慢睁眼
+EDGE_LINGER = (2.0, 3.2)  # 睁眼后先在边上看看你、眨眨眼，过这么久才爬出来
+# 天气联动（regular/weather.py 给出 scene）：每种天气一段应景的小动作，二十分钟最多一回；
+# 天气刚变（开始下雨、下雪）时会在下一段日常里先演这个。
+WEATHER_GAP = 1200.0
+WEATHER_WEIGHT = 1.4
+WEATHER_MAGIC = {"hot": ("magic_daily_cola",), "cold": ("magic_daily_roast", "magic_daily_scarf")}
+# 屏幕边的小时刻：靠着屏幕边、敲敲屏幕边、倒挂在屏幕顶上。为了不打扰，二十五分钟最多一回。
+EDGE_MOMENT_GAP = 1500.0
+EDGE_MOMENT_WEIGHT = 0.35
+# 光标路过时的几种反应（扑过去之外）：都只在她歇着时发生，彼此至少隔 CURSOR_PLAY_GAP，同一种更久。
+CURSOR_PLAY_GAP = 90.0
+CURSOR_PLAY_REPEAT = 600.0
+CURSOR_LINGER = 1.6        # 光标停在她头顶 / 脸前这么久，她才伸手
+CURSOR_TAIL_LINGER = 0.3   # 光标在她尾巴边逗留这么久（她回头看之前），她甩尾巴扫一下
+CURSOR_PLAY_CHANCE = 0.4   # 停在那儿也不是每次都理你；没理就隔一会儿再说
+CURSOR_DIZZY_TURNS = 2.0   # 光标绕着她转这么多圈（4 秒内）会转晕
+# 动作规格里的 effects：每种粒子活多久（秒）；从 at 飘向 toward 大约用 EFFECT_TRAVEL 秒。
+EFFECT_LIFE = {"rain": 0.55, "snow": 3.6, "frost": 0.55, "flame": 0.4, "steam": 1.3, "heat": 1.1, "drip": 0.6,
+               "violet": 0.7, "gold": 0.6, "sun": 2.4, "sparkle": 1.0, "heart": 1.4, "sweat": 1.0}
+EFFECT_TRAVEL = 0.45
+# 歇着、睡着时胸口一起一伏：从脚底往下压扁一点点再回来，从不比原本的姿势更高（窗口遮罩不用跟着变）。
+BREATH_AWAKE = (0.008, 4.2)    # 最多压扁的比例，一个来回的秒数
+BREATH_ASLEEP = (0.014, 5.6)
 AWAY_DOZE = 0.6           # 你不在时，该歇的时候有这么大的机会直接睡过去
 AMBIENT_LINE_GAP = 600.0  # 日常里她自己冒的小台词最多十分钟一句；被叫、被戳、你点「换一个」不受这个限制
 # 这些日常一开始就坐着或躺着；其余从站着开始。
@@ -253,7 +278,7 @@ SEATED_CHOICES = frozenset({"book", "tea_time", "laptop", "sit", "headphones", "
                             "tail_care", "lie_chin", "popcorn", "nap"})
 # 玩闹、表演和跑动：跟着「有多来劲」放大或收起；安静的那几样反过来。
 PLAY_CHOICES = frozenset({"wander", "patrol", "edge", "flight", "bottom", "dragon", "warp", "sneeze",
-                          "hop", "sing", "cheer", "sketch", "gamepad"})
+                          "hop", "sing", "cheer", "sketch", "gamepad", "edge_moment"})
 # 小团团在 QQ 里查资料 / 画图 / 录语音时，桌宠最多陪着演多久（查询五分钟放弃；生图超时 150 秒，再加上传）。
 MEDIA_HOLD = {"searching": 300.0, "drawing": 200.0, "singing": 90.0}
 # 群里叫到她的几种方式：平台 @、正文里喊名字、引用她的话；旧版机器人只知道「叫到了」。
@@ -264,7 +289,12 @@ BUSY_CLIP = {"searching": "laptop", "drawing": "drawing", "singing": "sing"}
 PORTAL_RADIUS = 0.5       # 法阵半径（人物高度的倍数）；地上的阵按透视压扁成椭圆
 PORTAL_TILT = 0.3         # 椭圆短轴 / 长轴
 WARP_COOLDOWN = 75.0      # 日常里两次传送至少隔这么久；被 @ 时的「这就过去」另算
-POUNCE_COOLDOWN = 20.0
+POUNCE_COOLDOWN = 45.0
+# 逗她要「来回晃」：横向每次至少晃出这么远（身高的比例）、1.6 秒内折返 3 次才算。
+# 平常用鼠标的手抖、微调、路过都到不了这个幅度——之前 2 像素的抖动就算一次，日常用鼠标一小时能扑五十多次、追着飞十几次。
+WIGGLE_SWING = 0.12
+WIGGLE_TURNS = 3
+WIGGLE_WINDOW = 1.6
 # 一段小剧场的结果拍各配一句；陪伴长驻那几拍保持安静。
 BEAT_LINES = {
     "dragon_fire_kettle": "烧点热水～", "life_tea_sip": "刚刚好。", "dragon_treasure_find": "找到啦。",
@@ -300,7 +330,7 @@ SHOW_OFF_COOLDOWN = 300.0
 HEIGHT_FEAR_DROP = 1.6          # 至少比自己高出这么多个身位才算「高」
 HEIGHT_FEAR_COOLDOWN = 240.0
 AIR_FIRE_COOLDOWN = 240.0
-AIR_CHASE_COOLDOWN = 60.0
+AIR_CHASE_COOLDOWN = 240.0
 AIR_CHASE_SECONDS = 3.0
 AIR_CHASE_RANGE = 2.5             # figure heights from the takeoff / invitation point
 AIR_HAND = (38 / 320, -158 / 320)  # adopted reach frame 2, relative to the feet anchor
@@ -380,6 +410,44 @@ class Step:
     hold: str | None = None            # "chat" / "agent" / "state" / "away": held until that condition clears
     edge_side: int = 0                 # -1 / +1: approach, peek and retreat at this screen edge
     line: str | None = None            # short, beat-specific speech
+    ease: str | None = None            # flight legs: "launch" / "cruise" / "land" keep speed across waypoints
+
+
+class _Wiggle:
+    """Turning points of a deliberate side-to-side wiggle; tremor and passing moves never reach the swing size."""
+    def __init__(self):
+        self.extreme, self.direction, self.turns = None, 0, deque(maxlen=8)
+
+    def clear(self):
+        self.extreme, self.direction = None, 0
+        self.turns.clear()
+
+    def feed(self, now, x, swing):
+        if self.extreme is None:
+            self.extreme = x
+        elif self.direction == 0:
+            if abs(x - self.extreme) >= swing:
+                self.direction, self.extreme = (1 if x > self.extreme else -1), x
+        elif (x - self.extreme) * self.direction > 0:
+            self.extreme = x                      # still travelling the same way
+        elif (self.extreme - x) * self.direction >= swing:
+            self.turns.append(now)
+            self.direction, self.extreme = -self.direction, x
+        return sum(1 for t in self.turns if now - t < WIGGLE_WINDOW) >= WIGGLE_TURNS
+
+
+def _flight_ease(kind, u):
+    """(x, y) progress along one flight leg. A takeoff gains height fast while the forward speed
+    builds; the cruise keeps its speed; a landing loses forward speed and touches down softly.
+    Different curves on the two axes bend the route into an arc instead of straight segments."""
+    smooth = u * u * (3 - 2 * u)
+    if kind == "launch":
+        return u * u, 1 - (1 - u) * (1 - u)
+    if kind == "cruise":
+        return u, smooth
+    if kind == "land":
+        return 1 - (1 - u) * (1 - u), smooth
+    return smooth, smooth
 
 
 @dataclass
@@ -528,6 +596,16 @@ class PetBrain:
         self.swing = self.swing_v = 0.0
         self.blink_started, self.blink_at = -10.0, now + 2.0
         self.particles: list[Particle] = []
+        self._effect_at: dict = {}             # (clip, cue index) -> next emission time
+        self.weather_scene = None              # rain / snow / hot / cold / sun from the panel, else None
+        self._weather_known = False
+        self._weather_at = now - WEATHER_GAP * 0.5
+        self._weather_due = None
+        self._edge_moment_at = now - EDGE_MOMENT_GAP * 0.6
+        self._cursor_play_at = now - CURSOR_PLAY_GAP
+        self._cursor_kind_at: dict = {}
+        self._cursor_still = (None, None, now)  # (x, y, since): where the cursor has been resting
+        self._cursor_turn = None                # (last angle, accumulated turn, since)
         self._emit_at = 0.0
         self.bubble: Bubble | None = None
         self._serial = 0
@@ -607,14 +685,12 @@ class PetBrain:
         self._pounce_at = now - POUNCE_COOLDOWN
         self._pounce_target: tuple[float, float] | None = None
         self._landing: str | None = None
-        self._jiggles: deque = deque(maxlen=8)
-        self._jiggle_dir = (0.0, 0.0)
+        self._jiggles = _Wiggle()
         self._air_fire_at = now - AIR_FIRE_COOLDOWN
         self._air_chase_at = now - AIR_CHASE_COOLDOWN
         self._air_chase = None
         self._air_returning = False
-        self._air_jiggles: deque = deque(maxlen=8)
-        self._air_jiggle_dir = (0.0, 0.0)
+        self._air_jiggles = _Wiggle()
         self._sneezed_at = -1000.0
         self._sneeze_warp = False
         self._sneeze_slip = False
@@ -716,7 +792,7 @@ class PetBrain:
         if self.mode == "edge_exit" and self._edge_exit and self._edge_exit.get("phase") == "wake":
             waking = self._edge_exit.get("wake_sequence")
             if waking:
-                frame = waking[min(int(max(0.0, now - self._edge_exit["since"]) * 5), len(waking) - 1)]
+                frame = waking[min(int(max(0.0, now - self._edge_exit["since"]) * WAKE_FPS), len(waking) - 1)]
             elif self.clip in ("motion_edge_look", "motion_bottom_look", "boundary_top_look"):
                 frame = seq[1]             # meet the viewer, not frame zero's sideways glance
         elif (self.mode == "edge_exit" and self._edge_exit and self._edge_exit["edge"] == "top"
@@ -740,7 +816,7 @@ class PetBrain:
                     entry_seconds = len(entry) / entry_fps
                     frame = (entry[min(int(elapsed * entry_fps), len(entry) - 1)] if elapsed < entry_seconds
                              else seq[int((elapsed - entry_seconds) * fps) % len(seq)])
-        elif self.mode == "hidden" and not self.hidden_asleep and self.clip in (
+        elif (self.mode == "hidden" and not self.hidden_asleep or self._lingering()) and self.clip in (
                 "motion_edge_look", "motion_bottom_look", "boundary_top_peek", "boundary_top_look"):
             if 0 <= now - self._hidden_blink_started < 0.16:
                 frame = seq[2 if self.clip == "boundary_top_peek" else 3]
@@ -779,6 +855,12 @@ class PetBrain:
         self._shown = shown
         changed_clip = old[3] is not None and old[3] != self.clip
         if not changed_clip:
+            # A few slow performances (magic, weather, takeoff) are six key poses held for a beat each;
+            # they opt into a short dissolve between their own frames so the poses flow instead of jumping.
+            # The renderer keeps the outgoing frame opaque underneath, so nothing dims.
+            blend = self.repertoire.actions.get(self.clip, {}).get("frame_blend")
+            if blend and self.motion and old[3] == self.clip and self.mode in ("ground", "fly"):
+                self._fade = (old[0], old[1], old[2], now, blend)
             return                         # let a dissolve already in flight finish
         # Only posture changes and the deliberately slow waking / falling-asleep
         # clips dissolve. Two standing poses on top of each other just make a
@@ -817,7 +899,20 @@ class PetBrain:
                 # cursor chase. A stationary reply/reach stays upright.
                 rot = max(-12.0, min(12.0, self._flight_vx / max(self.scale, 0.01) * 0.12))
         return {"sx": sx, "sy": sy, "rot": rot, "dy": self._hop_offset(now) + self._jolt_offset(now),
-                "pivot": "hands" if self.clip == "dangle" else "feet"}
+                "pivot": "hands" if self.clip == "dangle" else "feet", "breath": self._breath(now)}
+
+    def _breath(self, now):
+        """歇着、睡着时一呼一吸：竖直方向从脚底压扁 0–breath 再回来。只画在身上，不改窗口遮罩，
+        也不动 sx/sy——人物比例照旧是 1。"""
+        if (not self.motion or self.mode != "ground" or self.edge_side
+                or self.bottom_peek or self.top_peek):
+            return 0.0
+        spec = self.repertoire.actions.get(self.clip, {})
+        asleep = self.clip in ASLEEP and self.clip not in ("doze", "lie_down")
+        if not (asleep or self.clip in RESTING or spec.get("restful") or spec.get("role") == "rest"):
+            return 0.0
+        depth, period = BREATH_ASLEEP if asleep else BREATH_AWAKE
+        return depth * 0.5 * (1 - math.cos(2 * math.pi * now / period))
 
     def _jolt_offset(self, now):
         t = now - self.jolt_started
@@ -920,14 +1015,24 @@ class PetBrain:
             self._move_origin = (self.x, self.y)
             dx = (self.step.target_x - self.x) if self.step.target_x is not None else 0.0
             dy = self.step.target_y - self.y
-            self._move_duration = max(0.35, math.hypot(dx, dy) / max(1.0, 85.0 * self.scale))
+            speed = max(1.0, 85.0 * self.scale)
+            self._move_duration = max(0.35, math.hypot(dx, dy) / speed)
+            if self.step.ease in ("launch", "land"):
+                # Speeding up from the takeoff / slowing into the landing covers the leg at half the cruise
+                # speed on average, so the hand-over to the cruise leg keeps the same horizontal speed.
+                self._move_duration = max(0.9, 2 * abs(dx) / speed, abs(dy) / (1.1 * speed))
+            elif self.step.ease == "cruise":
+                self._move_duration = max(0.35, abs(dx) / speed)
             if self._role(self.step.clip) == "air_play" and not CLIPS[self.step.clip][3]:
                 # Pace the short route to the full performance, not the reverse.
                 self._move_duration = len(CLIPS[self.step.clip][1]) / CLIPS[self.step.clip][2]
         if self.step.target_x is not None:
             self.facing = 1 if self.step.target_x >= self.x else -1
-        elif self.step.edge_side and (self.step.clip == "edge_peek" or self._role(self.step.clip) == "edge"):
+        elif self.step.edge_side and (self.step.clip == "edge_peek" or self._role(self.step.clip) == "edge"
+                                      or self.step.clip == "edge_wall_lean"):
             self.facing = -self.step.edge_side
+        elif self.step.edge_side and self.step.clip == "edge_knock":
+            self.facing = self.step.edge_side
         keep_wingbeat = (self.mode == "fly" and self.step.clip == self.clip and CLIPS[self.clip][3]
                          and self.repertoire.actions.get(self.clip, {}).get("family") == "flap")
         self._set_clip(self.step.clip, now, restart=not keep_wingbeat)
@@ -970,7 +1075,8 @@ class PetBrain:
         if step.target_x is not None or step.target_y is not None:
             reached = ((step.target_x is None or abs(self.x - step.target_x) < (0.001 if step.edge_side else 1.5))
                        and (step.target_y is None or abs(self.y - step.target_y) < 1.5))
-            return reached and (self._role(step.clip) != "air_play" or CLIPS[step.clip][3] or self._clip_done(now))
+            return (reached and (self._role(step.clip) != "air_play" or CLIPS[step.clip][3] or self._clip_done(now))
+                    and (step.duration is None or now - self.step_started >= step.duration))
         if step.duration is not None:
             return now - self.step_started >= step.duration
         return now - self.step_started >= 4.0 if CLIPS[step.clip][3] else self._clip_done(now)
@@ -1068,9 +1174,32 @@ class PetBrain:
             if (self.owner_away and not engaged and now - self._nap_at >= NAP_GAP
                     and self.rng.random() < AWAY_DOZE):
                 return self._nap_steps(now)
+            # 坐着歇、人又犯困：眼皮打着架就真睡过去一会儿，不是困成那样又突然站起来。
+            if (vitals.drowsy and not engaged and self._end_posture() == "sit"
+                    and now - self._nap_at >= NAP_GAP and self.rng.random() < DROWSY_DOZE):
+                return [Step("sit_rest", self.rng.uniform(20, 40)), *self._nap_steps(now)]
             return self._rest_steps(vitals)
         self._owes_rest = True
-        return self._hush(self._pastime(now, vitals, spell, engaged=engaged, offline=offline, mood=mood), now)
+        steps = self._pastime(now, vitals, spell, engaged=engaged, offline=offline, mood=mood)
+        return self._hush(self._unhurried(steps), now)
+
+    def _unhurried(self, steps):
+        """自己起意换个姿势做下一件事时不弹起来：坐着先抬眼看看、再站起来，站稳了停一下才开始；
+        睡着的先醒透、起身。被叫、被戳、群里有事不走这里，照样马上起来。"""
+        if not steps:
+            return steps
+        first = steps[0].clip
+        start = self.repertoire.actions.get(first, {}).get("starts_from", STARTS_FROM.get(first, CLIPS[first][4]))
+        posture = self._end_posture()
+        if start not in ("stand", "air") or posture == "stand":
+            return steps
+        r = self.rng.uniform
+        if posture == "sit":
+            rise = [Step(self.rng.choice(("sit_look_left", "sit_look_right")), r(1.0, 1.8)), Step("stand_up")]
+        else:
+            last = self.plan[-1].clip if self.plan else self.step.clip if self.step else self.clip
+            rise = [Step("get_up" if last in ASLEEP else "stand_up")]   # _queue 先补上醒来 / 坐起
+        return [*rise, Step("idle", r(1.5, 2.5)), *steps]
 
     def _rest_steps(self, vitals):
         """歇着：就在当前的姿势里待一阵，不为了歇站起来或坐下。站着就眨眨眼、看看光标，
@@ -1135,6 +1264,9 @@ class PetBrain:
             "edge": 0.65 if (now - self._edge_at >= EDGE_COOLDOWN
                               and min(self.x - self.left, self.right - self.x) <= self.figure * 2
                               and self.right - self.left > self.figure * 3) else 0.0,
+            "weather": WEATHER_WEIGHT if self._weather_ready(now) else 0.0,
+            "edge_moment": (EDGE_MOMENT_WEIGHT if self.motion and now - self._edge_moment_at >= EDGE_MOMENT_GAP
+                            and self._edge_moments() else 0.0),
         }
         if self.owner_working(now):
             # 你在埋头干活：她也多陪你干点安静的活，少在旁边蹦跶。
@@ -1166,6 +1298,7 @@ class PetBrain:
                 weights[name] *= SPELL_BIAS if (name in SEATED_CHOICES) == (spell == "seated") else 1 / SPELL_BIAS
         if self.quiet or self.pointer.near:
             weights["wander"] = weights["patrol"] = weights["edge"] = weights["flight"] = weights["bottom"] = 0.0
+            weights["edge_moment"] = 0.0
             weights["warp"] = weights["dragon"] = 0.0
             if self.quiet:
                 weights["hop"] = weights["cheer"] = 0.0
@@ -1178,12 +1311,18 @@ class PetBrain:
         # 真到了屏幕边，就探出头看看；较远处仍只是偶尔挑中的小探险。
         if choices.get("edge", 0) > 0 and min(self.x - self.left, self.right - self.x) <= self.figure * 0.45:
             choice = "edge"
+        elif self._weather_due is not None and now >= self._weather_due and self._weather_ready(now):
+            choice = "weather"             # 刚开始下雨 / 下雪：先演这个
         else:
             choice = self._weighted(choices)
         if choice != "library":
             self._ambient_recent.append(choice)
         if choice == "library":
             return self._routine_steps(now)
+        if choice == "weather":
+            return self._weather_steps(now)
+        if choice == "edge_moment":
+            return self._edge_moment_steps(now)
         if choice == "warp":
             return self._prop_routine(now) or [Step("idle", 1.5)]
         if choice == "sneeze":
@@ -1268,12 +1407,60 @@ class PetBrain:
             return [Step("sing", r(5, 9))]
         return [Step(choice)]
 
+    def _edge_moments(self):
+        names = [name for name in ("edge_wall_lean", "edge_knock") if self._has(name)]
+        if (self._has("edge_bat_hang") and self.motion and not self.quiet
+                and self.floor - self.ceiling >= self.figure * 2.6):
+            names.append("edge_bat_hang")
+        return names if self.right - self.left > self.figure * 3 else []
+
+    def _edge_moment_steps(self, now):
+        """A rare inventive moment at the screen's border: lean on it, knock on it, or hang from the top."""
+        self._edge_moment_at = now
+        r = self.rng.uniform
+        name = self.rng.choice(self._edge_moments())
+        f = self.figure
+        bounds = (self.repertoire.actions[name].get("geometry") or {}).get("bounds") or [-100, -320, 100, 0]
+        side = -1 if self.x - self.left <= self.right - self.x else 1
+        plane = self.left if side == -1 else self.right
+        line = self.repertoire.actions[name].get("line")
+        if name == "edge_bat_hang":
+            x = self._clamp_x(self.x + side * f * r(0.6, 1.4), edge_side=0)
+            hang = self.ceiling - bounds[1] * f / 320.0          # her shoes against the top of the screen
+            back = self._clamp_x(x - side * f * r(1.2, 2.0), edge_side=0)
+            launch = self._has("motion_fly_launch_crouch") and self._has("motion_fly_launch_lift")
+            self.facing = side
+            return [Step("motion_fly_launch_crouch" if launch else self._pick("fly", "hop", family="takeoff")),
+                    Step("motion_fly_launch_lift" if launch else self._flap_clip("quick"),
+                         target_x=x, target_y=hang + f * 0.3, ease="launch"),
+                    Step(name, r(12, 20), target_x=x, target_y=hang, line=line),
+                    Step(self._flap_clip("slow"), target_x=back, target_y=self.floor, hold="air_return", ease="land"),
+                    Step(self._powered_landing())]
+        # Lean: back to the border, facing in. Knock: facing the border, knuckles on it.
+        facing = -side if name == "edge_wall_lean" else side
+        reach = -bounds[0] if facing > 0 else bounds[2]          # how far the far side of her sticks out
+        if name == "edge_knock":
+            reach = bounds[2] if facing > 0 else -bounds[0]
+        x = plane - side * reach * f / 320.0
+        inside = self._clamp_x(x - side * f * 0.8, edge_side=0)
+        hold = r(20, 40) if name == "edge_wall_lean" else None
+        return [Step("walk", target_x=x, edge_side=side), Step(name, hold, edge_side=side, line=line),
+                Step("walk", target_x=inside, edge_side=side), Step("idle", r(2, 4))]
+
     def _nap_steps(self, now):
         self._nap_at = now
+        # 你在跟前时，睡醒了先缓一缓，不一睁眼就去找事做。你不在时照旧：白天一觉睡够就起来活动，
+        # 免得「醒来先歇」又直接接着睡过去。
+        self._owes_rest = not self.owner_away
         clip = self._pick("sleep", "sleep")
         if self.owner_away:          # 一直睡到你回来（白天最多 OWNER_NAP，夜里睡到天亮）；群里有她的动静照样会醒
             return [Step(clip, hold="away"), self._pause(1)]
         return [Step(clip, self.rng.uniform(12, 25)), self._pause(1)]
+
+    def _flap_clip(self, pace):
+        """Quick beats to climb, slow beats to cruise and descend; any flap art as a fallback."""
+        name = {"quick": "motion_fly_flap_quick", "slow": "motion_fly_flap_slow"}[pace]
+        return name if self._has(name) else self._pick("fly", "fall", family="flap")
 
     def _flight_steps(self, now):
         clearance = self.floor - self.ceiling - self.figure * 1.1
@@ -1286,18 +1473,21 @@ class PetBrain:
         if abs(travel) < self.figure * 0.5:
             return [Step("idle", 2)]
         self.facing = direction          # Look toward the route before taking off.
-        prep = self._pick("fly", "hop", family="takeoff")
-        flap = self._pick("fly", "fall", family="flap")
+        launch = self._has("motion_fly_launch_crouch") and self._has("motion_fly_launch_lift")
+        # 屈膝展翼、蹬地离地，离地后快拍爬升；平飞和下降换成慢拍。每段接着上一段的速度飞，不在拐点停顿。
+        prep = "motion_fly_launch_crouch" if launch else self._pick("fly", "hop", family="takeoff")
+        climb = "motion_fly_launch_lift" if launch else self._flap_clip("quick")
+        flap = self._flap_clip("slow")
         land = self._powered_landing()
         cruise = flap                    # Old glide art has standing legs and tiny static wings.
         if (self._air_play_allowed(now) and self._has("air_play_fire")
                 and now - self._air_fire_at >= AIR_FIRE_COOLDOWN and self.rng.random() < 0.2):
             self._air_fire_at = now
             cruise = "air_play_fire"
-        return [Step(prep), Step(flap, target_x=self.x + travel * 0.32, target_y=height),
+        return [Step(prep), Step(climb, target_x=self.x + travel * 0.32, target_y=height, ease="launch"),
                 Step(cruise, target_x=self.x + travel * 0.68,
-                     target_y=max(self.ceiling + self.figure * 1.1, height - self.figure * 0.08)),
-                Step(flap, target_x=target, target_y=self.floor, hold="air_return"), Step(land)]
+                     target_y=max(self.ceiling + self.figure * 1.1, height - self.figure * 0.08), ease="cruise"),
+                Step(flap, target_x=target, target_y=self.floor, hold="air_return", ease="land"), Step(land)]
 
     def _air_return_steps(self):
         return [Step(self._pick("fly", "fall", family="flap"), target_y=self.floor, hold="air_return"),
@@ -1613,26 +1803,32 @@ class PetBrain:
         if step is None:
             self.mode = "air"
             return
+        # Hanging upside down from the top of the screen, her shoes are the top of the art.
+        room = self._head_clearance(step.clip) if self._role(step.clip) == "edge_moment" else self.figure
         if not self.bottom_peek:
             # Screen and pet-size changes must not leave an unreachable old waypoint.
             if step.target_x is not None:
                 step.target_x = self._clamp_x(step.target_x, edge_side=0)
             if step.target_y is not None:
                 step.target_y = (self.floor if step.hold == "air_return" else
-                                 min(self.floor, max(self.ceiling + self.figure, step.target_y)))
+                                 min(self.floor, max(self.ceiling + room, step.target_y)))
         previous_x = self.x
         if step.hold == "air_chase" and self._air_chase is not None:
             self._track_air_cursor(dt)
         elif step.target_x is not None or step.target_y is not None:
             progress = max(0.0, min(1.0, (now - self.step_started) / self._move_duration))
-            eased = progress * progress * (3 - 2 * progress)
-            for axis, origin, target in (("x", self._move_origin[0], step.target_x),
-                                         ("y", self._move_origin[1], step.target_y)):
+            ease_x, ease_y = _flight_ease(step.ease, progress)
+            for axis, origin, target, eased in (("x", self._move_origin[0], step.target_x, ease_x),
+                                                ("y", self._move_origin[1], step.target_y, ease_y)):
                 if target is not None:
                     setattr(self, axis, origin + (target - origin) * eased)
+            if step.clip == "motion_fly_launch_lift" and self._clip_done(now):
+                # Off the ground: the push-off frames hand over to quick climbing wingbeats.
+                step.clip = self._flap_clip("quick")
+                self._set_clip(step.clip, now, restart=True)
         self.x = self._clamp_x(self.x)
         lower = self._bottom_target() if self.bottom_peek else self.floor
-        self.y = max(min(lower, self.ceiling + self.figure), min(lower, self.y))
+        self.y = max(min(lower, self.ceiling + room), min(lower, self.y))
         self._flight_vx = (self.x - previous_x) / dt if dt > 0 else 0.0
         if (step.hold == "air_return" and not self.bottom_peek
                 and 0 < self.floor - self.y <= self.figure * 0.18
@@ -1873,17 +2069,7 @@ class PetBrain:
                 self._fade = None
                 return
         if now < self._hidden_sleep_at:
-            if self.pointer.seen:
-                offset = self.pointer.x - self.x
-                deadzone = self.figure * 0.35
-                desired = 0 if offset < -deadzone else 2 if offset > deadzone else 1
-                if desired != self._hidden_gaze_candidate:
-                    self._hidden_gaze_candidate, self._hidden_gaze_since = desired, now
-                elif now - self._hidden_gaze_since >= 0.25:
-                    self._hidden_gaze = desired
-            if self.motion and now >= self._hidden_blink_at:
-                self._hidden_blink_started = now
-                self._hidden_blink_at = now + self.rng.uniform(4, 8)
+            self._hidden_eyes(now)
             return
         self.hidden_asleep = True
         self._hidden_sleep_started = now
@@ -1925,8 +2111,47 @@ class PetBrain:
                     self._set_clip(self._hidden_clip, now, restart=True)
             self.x, self.y = self._hidden_target(edge=edge)
             self.say("嗯？", now=now, seconds=1.2, kind="status")
+            self._edge_exit["woke"] = True
+            self._nap_at = now
+            self._owes_rest = True       # 下来以后先歇着，不接着就去看书
         else:
             self._prepare_edge_exit(now)
+
+    def _lingering(self):
+        return self.mode == "edge_exit" and bool(self._edge_exit) and self._edge_exit.get("phase") == "linger"
+
+    def _linger_at_edge(self, now):
+        """刚被叫醒：睁开眼先在边上看看你、眨眨眼（底边还会打个哈欠），过一会儿才爬出来。
+        再点一下就不磨蹭了。"""
+        state = self._edge_exit
+        self._hidden_clip = self._hidden_awake_clip or self._hidden_clip
+        if state.get("hurry") or not self.motion:
+            self._prepare_edge_exit(now)
+            return
+        seconds = self.rng.uniform(*EDGE_LINGER)
+        yawn = "edge_daily_bottom_yawn"
+        if state["edge"] == "bottom" and not self.quiet and yawn in CLIPS and self._role(yawn) == "edge_micro":
+            self._hidden_clip = yawn
+            seconds += len(CLIPS[yawn][1]) / CLIPS[yawn][2]
+        state.update(phase="linger", since=now, until=now + seconds)
+        self._set_clip(self._hidden_clip, now, restart=True)
+        self.x, self.y = self._hidden_target(edge=state["edge"])
+        self._hidden_blink_at = now + self.rng.uniform(0.6, 1.4)
+        self._fade = None
+
+    def _hidden_eyes(self, now):
+        """藏在边上醒着时：眼睛跟着光标左右看，间或眨眼。"""
+        if self.pointer.seen:
+            offset = self.pointer.x - self.x
+            deadzone = self.figure * 0.35
+            desired = 0 if offset < -deadzone else 2 if offset > deadzone else 1
+            if desired != self._hidden_gaze_candidate:
+                self._hidden_gaze_candidate, self._hidden_gaze_since = desired, now
+            elif now - self._hidden_gaze_since >= 0.25:
+                self._hidden_gaze = desired
+        if self.motion and now >= self._hidden_blink_at:
+            self._hidden_blink_started = now
+            self._hidden_blink_at = now + self.rng.uniform(4, 8)
 
     def _wake_for_attention(self, now):
         """An explicit local conversation can call her out without a mouse click."""
@@ -1936,16 +2161,21 @@ class PetBrain:
         self._sleep_cue_until = 0.0
         self._hidden_sleep_at = float("inf")
         self._emerge(now)
+        if self._edge_exit and self._edge_exit["phase"] == "wake":
+            self._edge_exit["hurry"] = True     # 有人叫她：醒了就出来，不在边上磨蹭
         return True
 
-    def _after_edge_exit(self, now):
-        """Resume the current conversation after the supported wake and landing."""
+    def _after_edge_exit(self, now, *, woke=False):
+        """Resume the current conversation after the supported wake and landing.
+        Woken from a nap with nothing waiting: stretch, then rest (see _emerge)."""
         if self.chat_pending:
             return [Step("think", hold="chat")]
         if self.state_clip and now < self.state_until:
             return self._state_steps(self.state_name, self.state_clip, now)
         if self.media and now < self.agent_busy_until:
             return [Step(self._busy_clip(), hold="agent")]
+        if woke and not self.plan:
+            return [Step("stretch")]
         return list(self.plan) or [Step("idle", 1.5)]
 
     def _prepare_edge_exit(self, now):
@@ -1954,7 +2184,7 @@ class PetBrain:
         if edge == "top":
             bounds = (self.repertoire.actions.get(self.clip, {}).get("geometry") or {}).get("bounds") or [0, 0, 0, 0]
             state["peek_depth"] = (self.y + bounds[3] * self.figure / 320.0 - self.ceiling) / self.figure
-        if state["phase"] == "wake":
+        if state["phase"] in ("wake", "linger"):
             self._hidden_clip = self._hidden_awake_clip or self._hidden_clip
             if edge != "top":
                 self.x, self.y = self._hidden_target(edge=edge)
@@ -1981,8 +2211,17 @@ class PetBrain:
         edge, phase = state["edge"], state["phase"]
         if phase == "wake":
             self.x, self.y = self._hidden_target(edge=edge)
-            duration = len(state["wake_sequence"]) / 5 if state.get("wake_sequence") else 0.3
+            duration = len(state["wake_sequence"]) / WAKE_FPS if state.get("wake_sequence") else 0.3
             if now - state["since"] >= duration:
+                self._linger_at_edge(now)
+            return
+        if phase == "linger":
+            if self._role(self.clip) == "edge_micro" and self._clip_done(now):
+                self._hidden_clip = self._hidden_awake_clip or self._hidden_clip   # 哈欠打完，接着看你
+                self._set_clip(self._hidden_clip, now, restart=True)
+            self.x, self.y = self._hidden_target(edge=edge)
+            self._hidden_eyes(now)
+            if now >= state["until"]:
                 self._prepare_edge_exit(now)
             return
         if phase == "prepare":
@@ -2036,7 +2275,7 @@ class PetBrain:
             self.top_peek = self.bottom_peek = False
             self._edge_exit = None
             clip = "boundary_land" if "boundary_land" in CLIPS else "land"
-            following = self._after_edge_exit(now)
+            following = self._after_edge_exit(now, woke=state.get("woke", False))
             self._queue(Step(clip), *following, now=now, interrupt=True)
 
     def _top_exit_motion(self, now, dt):
@@ -2141,7 +2380,9 @@ class PetBrain:
                 fresh = available
             if not fresh:
                 return False
-            chosen = self.rng.choice(fresh)
+            # 天热先变冰可乐，天冷先烤棉花糖、烘围巾：魔法跟着外面的天气走。
+            seasonal = [name for name in WEATHER_MAGIC.get(self.weather_scene, ()) if name in fresh]
+            chosen = self.rng.choice(seasonal or fresh)
         if chosen == "dragon":
             steps = self._dragon_steps(now)
             self._magic_dragon_shown = True
@@ -2150,7 +2391,8 @@ class PetBrain:
             if not steps:
                 return False
         else:
-            steps = [Step(chosen), Step("idle", 1.5)]
+            # 开场先说她想做什么，看图不用猜：「好热……来点冰的！」
+            steps = [Step(chosen, line=self.repertoire.actions.get(chosen, {}).get("wish")), Step("idle", 1.5)]
         self._magic_used.add(chosen)
         self._queue_manual(steps, now)
         return True
@@ -2383,14 +2625,7 @@ class PetBrain:
         if not nearby or not self.left <= x <= self.right or y < self.ceiling + f * 0.35:
             self._air_jiggles.clear()
             return
-        mx, my = x - self.pointer.x, y - self.pointer.y
-        if abs(mx) + abs(my) < 2:
-            return
-        px, py = self._air_jiggle_dir
-        if (px and mx and (px > 0) != (mx > 0)) or (py and my and (py > 0) != (my > 0)):
-            self._air_jiggles.append(now)
-        self._air_jiggle_dir = (mx or px, my or py)
-        if sum(now - t < 1.0 for t in self._air_jiggles) >= 3:
+        if self._air_jiggles.feed(now, x, f * WIGGLE_SWING):
             self._air_jiggles.clear()
             self._start_air_chase(now, x, y)
 
@@ -2475,14 +2710,7 @@ class PetBrain:
         if not (f * 0.55 <= abs(dx) <= f * 2.4 and -f * 0.1 <= dy <= f * 1.6):
             self._jiggles.clear()
             return
-        px, py = self._jiggle_dir
-        mx, my = x - self.pointer.x, y - self.pointer.y
-        if abs(mx) + abs(my) < 2:
-            return
-        if (px and mx and (px > 0) != (mx > 0)) or (py and my and (py > 0) != (my > 0)):
-            self._jiggles.append(now)
-        self._jiggle_dir = (mx or px, my or py)
-        if sum(1 for t in self._jiggles if now - t < 1.0) >= 3:
+        if self._jiggles.feed(now, x, f * WIGGLE_SWING):
             self._jiggles.clear()
             self._pounce_at = now
             self._pounce_target = (x, y)
@@ -2687,6 +2915,7 @@ class PetBrain:
             self.facing = 1 if self.pointer.x > self.x else -1
         if self.clip in ASLEEP or self.clip in WAKING:
             self._nap_at = now
+            self._owes_rest = True
             steps, key = [Step("get_up")], "back_asleep"     # _queue 会补上醒来、坐起的过渡
         elif away >= OWNER_LONG:
             steps, key = [Step("hop"), Step(self._hello_clip())], "back_long"
@@ -2788,6 +3017,8 @@ class PetBrain:
         lying = [Step("wake")] if self.posture() == "lie" else []
         self._queue(*lying, Step("grumble", 1.2), Step("get_up"), *then, Step("idle", 2),
                     now=now, interrupt=True)
+        self._nap_at = now
+        self._owes_rest = True           # 被弄醒的：缓一会儿，不接着就去做别的
         self.say(self.rng.choice(LINES["woken"]), now=now, seconds=3.2)
 
     # ── particles and speech ──
@@ -2806,8 +3037,40 @@ class PetBrain:
                 (-0.07 if inward else 0.07 if kind == "z" else 0.0) + self.rng.uniform(-0.04, 0.04),
                 -self.rng.uniform(0.16, 0.3), now, 1.0 if kind in ("!", "puff") else 1.7))
 
+    def _clip_effects(self, now):
+        """Beat-synced particles from the clip's spec: her breath, a flame, rain round her wing, snow.
+        Effects are not painted into the art, so they stay legible at desktop size."""
+        effects = self.repertoire.actions.get(self.clip, {}).get("effects")
+        if not effects or not self.motion or self.mode not in ("ground", "fly"):
+            return
+        frame = self._frame(now)[1]
+        r = self.rng.uniform
+        for index, cue in enumerate(effects):
+            key = (self.clip, index)
+            if frame not in cue["frames"] or now < self._effect_at.get(key, 0.0):
+                continue
+            self._effect_at[key] = now + cue["every"]
+            kind, life = cue["kind"], EFFECT_LIFE.get(cue["kind"], 1.0)
+            if "zone" in cue:              # weather falling through a band beside her
+                zone = cue["zone"]
+                low, high = self.rng.choice(list(zip(zone[::2], zone[1::2])))
+                vx, vy = {"rain": (-0.12, 2.4), "snow": (r(-0.1, 0.1), 0.34), "heat": (r(-0.03, 0.03), -0.32),
+                          "sun": (r(-0.04, 0.04), 0.1)}.get(kind, (0.0, 0.3))
+                self.particles.append(Particle(kind, r(low, high) * self.facing, cue["y"] + r(-0.05, 0.05),
+                                               vx * self.facing, vy, now, life))
+                continue
+            ax, ay = cue["at"]
+            if "toward" in cue:
+                tx, ty = cue["toward"]
+                vx, vy = (tx - ax) / EFFECT_TRAVEL + r(-0.04, 0.04), (ty - ay) / EFFECT_TRAVEL + r(-0.04, 0.04)
+            else:
+                vx, vy = r(-0.05, 0.05), -r(0.12, 0.25)
+            self.particles.append(Particle(kind, ax * self.facing + r(-0.015, 0.015), ay + r(-0.015, 0.015),
+                                           vx * self.facing, vy, now, life))
+
     def _particles(self, now, dt):
         self._spell_particles(now)
+        self._clip_effects(now)
         kind = {"sleep": "z", "sing": "note", "shy": "heart", "cheer": "sparkle",
                 "hop": "sparkle", "eat": "crumb"}.get(self.clip)
         if self.mode == "ground" and self._role(self.clip) == "sleep":
@@ -2832,7 +3095,7 @@ class PetBrain:
                 p.x += p.vx * dt
                 p.y += p.vy * dt
                 alive.append(p)
-        self.particles = alive[-36:]
+        self.particles = alive[-64:]
 
     def say(self, text, *, now, seconds=None, kind="say"):
         text = str(text).strip()
@@ -2866,6 +3129,7 @@ class PetBrain:
             self._air_cursor_check(now, x, y)
         if not near:
             self._pounce_check(now, x, y)
+        self._cursor_play(now, x, y)
         left, top, right, bottom = self.body_rect()
         over_head = near and left <= x <= right and top <= y <= top + (bottom - top) * 0.42
         dx = x - p.x
@@ -2877,6 +3141,69 @@ class PetBrain:
                 p.reversals.clear()
                 self._petted(now)
         p.x, p.y, p.seen = x, y, True
+
+    def _cursor_play_ready(self, now, kind):
+        """Only while she is resting, not too often, and never the same trick twice in a row soon."""
+        return (self.motion and not self.quiet and not self.attention and self._at_ease(now)
+                and self.posture() == "stand" and self.step is not None and self.step.clip in RESTING
+                and not self.step.hold and self._has("cursor_" + kind)
+                and now - self._cursor_play_at >= CURSOR_PLAY_GAP and now - self._pounce_at >= POUNCE_COOLDOWN
+                and now - self._cursor_kind_at.get(kind, float("-inf")) >= CURSOR_PLAY_REPEAT)
+
+    def _cursor_play(self, now, x, y):
+        """A passing cursor gets more than the pounce: a tail swat when it brushes past behind her, a hop
+        when it rests just above her head, a poke when it rests at her face, and dizziness when it
+        circles her. Ordinary mouse use rarely does any of these on purpose (see tests)."""
+        if not self.pointer.seen or self.mode != "ground":
+            self._cursor_turn = None
+            return
+        f = self.figure
+        cx, cy = self.x, self.y - f * 0.5
+        distance = math.hypot(x - cx, y - cy)
+        if f * 0.35 <= distance <= f * 1.8:
+            angle = math.atan2(y - cy, x - cx)
+            if self._cursor_turn is None or now - self._cursor_turn[2] > 4.0:
+                self._cursor_turn = (angle, 0.0, now)
+            else:
+                last, total, since = self._cursor_turn
+                total += (angle - last + math.pi) % (2 * math.pi) - math.pi
+                self._cursor_turn = (angle, total, since)
+                if abs(total) >= CURSOR_DIZZY_TURNS * 2 * math.pi and self._cursor_play_ready(now, "dizzy"):
+                    self._cursor_turn = None
+                    self._cursor_react(now, "dizzy", [Step("cursor_dizzy", 3.2), Step("idle", 1.5)])
+                    return
+        else:
+            self._cursor_turn = None
+        dx, up = x - self.x, self.floor - y
+        ahead = dx * self.facing
+        if abs(dx) <= f * 0.28 and f * 1.02 <= up <= f * 1.4:
+            zone, linger = "reach_up", CURSOR_LINGER          # just above her head
+        elif f * 0.12 <= ahead <= f * 0.45 and f * 0.55 <= up <= f * 0.92:
+            zone, linger = "poke", CURSOR_LINGER              # right in front of her face
+        elif f * 0.2 <= -ahead <= f * 0.6 and f * 0.08 <= up <= f * 0.45:
+            zone, linger = "tail_swat", CURSOR_TAIL_LINGER    # hanging about by her tail
+        else:
+            self._cursor_still = (None, None, now)
+            return
+        sx, sy, since = self._cursor_still
+        if sx != zone:
+            self._cursor_still = (zone, None, now)
+            return
+        if now - since < linger or not self._cursor_play_ready(now, zone):
+            return
+        if self.rng.random() >= CURSOR_PLAY_CHANCE:
+            self._cursor_kind_at[zone] = now - CURSOR_PLAY_REPEAT + 30.0     # not this time; ask again later
+            self._cursor_still = (None, None, now)
+            return
+        self._cursor_react(now, zone, [Step("cursor_" + zone), Step("idle", 1.5)])
+
+    def _cursor_react(self, now, kind, steps):
+        self._cursor_play_at = self._cursor_kind_at[kind] = now
+        self._cursor_still = (None, None, now)
+        self._owes_rest = True            # a little reaction, then back to resting, not off to a new activity
+        line = self.repertoire.actions.get(steps[0].clip, {}).get("line")
+        steps[0].line = line
+        self._queue(*steps, now=now, interrupt=True)
 
     def _petted(self, now):
         """Hovering back and forth over her head is a head pat; clicking the head does the same."""
@@ -3131,6 +3458,13 @@ class PetBrain:
         if self.mode in ("hiding", "hidden") and self.hidden_edge:
             self._emerge(now)
             return
+        if self.mode == "edge_exit" and self._edge_exit and self._edge_exit["phase"] in ("wake", "linger"):
+            # 又点了一下：不磨蹭了，这就出来。
+            if self._edge_exit["phase"] == "linger":
+                self._prepare_edge_exit(now)
+            else:
+                self._edge_exit["hurry"] = True
+            return
         if self.game_active:
             # 一局进行中，所有点击都归游戏：既不会被双击聊天抢走，也不会
             # 顺手再放一个小动作盖掉命中演出。
@@ -3369,14 +3703,55 @@ class PetBrain:
             self._status_line("online", now, gap=0)
             if self.mode == "ground" and self.clip in ASLEEP:
                 self._queue(Step("wake"), Step("get_up"), now=now, interrupt=True)
+        if "weather" in data:
+            self._observe_weather(now, data.get("weather"))
         for event in data.get("events") or ():
             if not isinstance(event, dict) or self.has_seen(event):
                 continue
             if event.get("kind") == "care":
                 self.receive_care(now, event)
                 continue
+            if event.get("kind") == "command":       # applied by the desktop shell (settings, magic)
+                self._seen_events.append(self._event_key(event))
+                continue
             self._seen_events.append(self._event_key(event))
             self._agent_event(now, event)
+
+    def _observe_weather(self, now, reading):
+        """The panel's weather reading. A change after she already knew (rain starting) plays soon."""
+        scene = reading.get("scene") if isinstance(reading, dict) else None
+        scene = scene if scene in ("rain", "snow", "hot", "cold", "sun") else None
+        if scene != self.weather_scene:
+            if scene and self._weather_known:
+                self._weather_due = now + self.rng.uniform(5, 25)
+            self.weather_scene = scene
+        self._weather_known = True
+
+    def _weather_steps(self, now):
+        """One vignette for the weather outside: wing umbrella, snowflakes, melting then an iced cola,
+        warming her hands then a fire trick, basking in the sun."""
+        self._weather_at, self._weather_due = now, None
+        r = self.rng.uniform
+        scene = self.weather_scene
+
+        def vignette(name, seconds=None):
+            return Step(name, seconds, line=self.repertoire.actions[name].get("line"))
+        if scene == "rain":
+            return [vignette("weather_wing_umbrella", r(20, 35)), self._pause(r(3, 5))]
+        if scene == "snow":
+            return [vignette("weather_snow_catch", r(16, 28)), self._pause(r(3, 5))]
+        if scene == "sun":
+            return [vignette("weather_sunbask", r(25, 45)), self._pause(r(3, 5))]
+        trick = [name for name in WEATHER_MAGIC[scene] if self._has(name)]
+        first = vignette("weather_heat_melt", r(12, 20)) if scene == "hot" else vignette("weather_warm_hands")
+        return [first, *([Step(self.rng.choice(trick))] if trick else []), Step("idle", 1.5)]
+
+    def _weather_ready(self, now):
+        if not self.weather_scene:
+            return False
+        names = {"rain": ("weather_wing_umbrella",), "snow": ("weather_snow_catch",), "sun": ("weather_sunbask",),
+                 "hot": ("weather_heat_melt",), "cold": ("weather_warm_hands",)}[self.weather_scene]
+        return all(self._has(name) for name in names) and now - self._weather_at >= WEATHER_GAP
 
     @staticmethod
     def _event_key(event):

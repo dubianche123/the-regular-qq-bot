@@ -586,6 +586,9 @@ if (chatForm) {
     if (action.kind === "toggle") {
       words.textContent = `${action.enabled ? "打开" : "关掉"}「${action.label}」？`;
       yes.textContent = action.enabled ? "打开" : "关掉";
+    } else if (action.kind === "command") {
+      words.textContent = `${action.label}？`;
+      yes.textContent = "好";
     } else {
       words.textContent = "这件事需要 Agent 帮忙，打开交接页？";
       yes.textContent = "打开交接页";
@@ -593,6 +596,21 @@ if (chatForm) {
     const done = text => { card.replaceChildren(Object.assign(document.createElement("p"), { textContent: text })); card.classList.add("settled"); };
     no.addEventListener("click", () => done("好，先不动。"));
     yes.addEventListener("click", async () => {
+      if (action.kind === "command") {
+        // Confirming runs the same slash command you could have typed; no model call.
+        yes.disabled = no.disabled = true;
+        try {
+          const body = new FormData();
+          body.set("csrf", chatForm.elements.namedItem("csrf").value);
+          body.set("text", action.command);
+          const response = await fetch("/companion/chat", { method: "POST", body, credentials: "same-origin", headers: { Accept: "application/json" } });
+          const data = await response.json();
+          done(response.ok ? data.text : (data.error || "没执行上，稍后再试。"));
+        } catch {
+          done("没执行上，稍后再试。");
+        }
+        return;
+      }
       if (action.kind !== "toggle") { window.location.href = "/iterate"; return; }
       yes.disabled = no.disabled = true;
       try {

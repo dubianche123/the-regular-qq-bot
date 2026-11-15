@@ -222,6 +222,40 @@ class DesktopPetTest(unittest.TestCase):
                 self.assertGreater(opaque, 300)
                 self.assertLess(missed / opaque, .025)
 
+    def test_chat_commands_change_her_own_settings(self):
+        """/安静 开、/动效 关 from either chat arrive as command events on the heartbeat."""
+        pet, brain = self.pet, self.pet.brain
+        pet.apply_command({"kind": "command", "name": "quiet", "enabled": True})
+        self.assertTrue(brain.quiet)
+        pet.apply_command({"kind": "command", "name": "motion", "enabled": False})
+        self.assertFalse(brain.motion)
+        pet.apply_command({"kind": "command", "name": "scale", "value": 1.2})
+        self.assertEqual(brain.scale, 1.2)
+        pet.apply_command({"kind": "command", "name": "quiet", "enabled": "yes"})    # malformed: ignored
+        self.assertTrue(brain.quiet)
+
+    def test_breathing_repaints_inside_the_same_mask_and_lowers_her_head(self):
+        """Breathing only squashes her downward from the feet: a repaint, never a mask rebuild."""
+        pet, brain = self.pet, self.pet.brain
+        pet.show()
+        brain.set_ground(0, 1440, 860, 33)
+        brain.x, brain.y, brain.mode = 700, 860, "ground"
+        brain._set_clip("sit_rest", self.t[0], restart=True)
+        tops = []
+        for breath in (0.0, 0.014):
+            strip, frame, mirrored, transform = brain.pose()
+            transform["breath"] = breath
+            with patch.object(brain, "pose", return_value=(strip, frame, mirrored, transform)):
+                pet._sync_windows()
+                if breath:
+                    self.assertEqual(pet._mask_key, mask_key)
+                    self.assertNotEqual(pet._paint_key, paint_key)
+                mask_key, paint_key = pet._mask_key, pet._paint_key
+                image = pet.grab().toImage()
+            tops.append(next(y for y in range(image.height())
+                             if any(image.pixelColor(x, y).alpha() > 200 for x in range(0, image.width(), 2))))
+        self.assertGreater(tops[1], tops[0])
+
     def test_fully_hidden_portal_frame_passes_input_without_creating_a_rectangle(self):
         pet, brain = self.pet, self.pet.brain
         pet.show()
@@ -447,7 +481,7 @@ class DesktopPetTest(unittest.TestCase):
         from regular.pet_repertoire import available
         adopted = available()
         self.assertGreaterEqual(len(adopted), 168)
-        for name in ("life_sleep_hug_tail", "life_reply_air_phone", "dragon_magic_wand"):
+        for name in ("life_sleep_hug_tail", "life_reply_air_phone", "dragon_magic_snow"):
             with self.subTest(name=name):
                 self.assertIn(name, adopted)
                 strip, sequence, *_ = desktop_pet.CLIPS[name]

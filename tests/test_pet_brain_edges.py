@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from regular.pet_brain import CLIPS, PetBrain
+from regular.pet_brain import CLIPS, EDGE_LINGER, RESTING, WAKE_FPS, PetBrain
 
 
 AWAKE = {
@@ -203,7 +203,7 @@ def test_sleep_and_wake_keep_the_hidden_pose_without_exposing_the_body(edge, sca
     brain.poke(9)
     frames = []
     for index in range(len(entry)):
-        time = 9 + index / 5 + .01
+        time = 9 + index / WAKE_FPS + .01
         brain.set_ground(-800, 640, 860, 38)
         brain.tick(time)
         assert brain.clip == SLEEP[edge]
@@ -211,9 +211,23 @@ def test_sleep_and_wake_keep_the_hidden_pose_without_exposing_the_body(edge, sca
         assert_hidden_projection(brain, edge, SLEEP[edge])
         frames.append(brain.pose(time)[1])
     assert frames == list(reversed(entry))
-    brain.tick(9 + len(entry) / 5 + .01)
-    assert brain._edge_exit["phase"] == "prepare"
+    # Eyes open: she stays hidden on the same edge a moment, looking at you, before climbing out.
+    time = 9 + len(entry) / WAKE_FPS + .01
+    brain.tick(time)
+    assert brain._edge_exit["phase"] == "linger"
     assert not brain.hidden_asleep
+    until = brain._edge_exit["until"]
+    assert until - time >= EDGE_LINGER[0] - .02
+    while time < until - .1:
+        time += .25
+        brain.set_ground(-800, 640, 860, 38)
+        brain.tick(time)
+        assert brain._edge_exit["phase"] == "linger"
+        assert (brain.x, brain.y) == pytest.approx(brain._hidden_target(edge=edge))
+        if edge != "bottom" or "rest_y" in brain.repertoire.actions[brain.clip]["geometry"]:
+            assert_hidden_projection(brain, edge, brain.clip)
+    brain.tick(until + .01)
+    assert brain._edge_exit["phase"] == "prepare"
 
 
 @pytest.mark.parametrize("edge", ("top", "bottom"))
@@ -243,6 +257,8 @@ def test_old_assets_wake_with_a_steady_acknowledging_gaze(edge):
         brain.tick(time)
         assert brain.pose(time)[1] == 1
     brain.tick(1.31)
+    assert brain._edge_exit["phase"] == "linger"
+    brain.poke(1.5)                    # a second click: no more dawdling
     assert brain._edge_exit["phase"] == "prepare"
 
 
@@ -447,6 +463,13 @@ def test_top_cast_stays_at_the_original_head_depth_until_the_open_route_is_ready
     while brain._edge_exit['phase'] == 'wake':
         now += .05
         brain.tick(now)
+    if brain._edge_exit['phase'] == 'linger':
+        # Awake again, she peeks at the awake depth; the cast starts from exactly there.
+        geometry = brain.repertoire.actions[brain.clip]['geometry']
+        hidden_bottom = brain.y + geometry['bounds'][3] * brain.figure / 320
+        while brain._edge_exit['phase'] == 'linger':
+            now += .05
+            brain.tick(now)
     started = brain._edge_exit['since']
     assert brain.clip == 'edge_daily_top_cast'
     geometry = brain.repertoire.actions[brain.clip]['geometry']
@@ -533,3 +556,31 @@ def test_top_exit_without_motion_returns_without_leaving_an_open_route(disable_a
     assert brain.warp is None and not brain.portals
     if disable_after_open:
         assert all(portal.closing is not None for portal in portals)
+
+
+# 2026-11-15 群主：边上趴着睡着，点一下立刻弹出来、紧接着就开始看书，不合理。
+@pytest.mark.parametrize("edge", ("left", "bottom", "top"))
+def test_clicked_awake_on_an_edge_she_comes_round_then_climbs_out_stretches_and_rests(edge):
+    brain = sleeping_hidden(edge)
+    brain.tick(30)
+    brain.poke(30)
+    t, phases = 30.0, []
+    while brain.mode not in ("ground",) and t < 45:
+        t += .05
+        brain.tick(t)
+        phase = brain._edge_exit and brain._edge_exit["phase"]
+        if phase and (not phases or phases[-1][0] != phase):
+            phases.append((phase, t))
+    assert [name for name, _ in phases[:3]] == ["wake", "linger", "prepare"]
+    assert phases[2][1] - 30 >= EDGE_LINGER[0]               # a few seconds of coming round first
+    clips = []
+    for _ in range(600):                                     # the next minute on the ground
+        t += .1
+        brain.tick(t)
+        if not clips or clips[-1] != brain.clip:
+            clips.append(brain.clip)
+    if edge != "top":                                        # the top route lands through a spell
+        assert "stretch" in clips
+    after = clips[clips.index("stretch") + 1:] if "stretch" in clips else clips[1:]
+    assert after and all(clip in RESTING or brain._role(clip) in ("rest", "transition") or clip in
+                         ("warp_land", "boundary_land", "land", "idle", "peek", "nod") for clip in after), clips

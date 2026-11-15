@@ -1105,3 +1105,8 @@ a.cap-chip:hover, .cap-chip > summary:hover strong { color: var(--accent-hover);
   .wx-handoff-bar { grid-template-columns: minmax(0, 1fr); }
   .wx-checkup-summary { flex-wrap: wrap; }
 }
+
+/* 桌宠天气联动 */
+.wx-inline { display:inline-flex; flex-wrap:wrap; align-items:center; gap:8px; margin:4px 8px 4px 0; }
+.wx-inline input[name="city"] { width:12em; }
+.wx-notice { margin:8px 0; padding:8px 12px; border-radius:8px; background:var(--moss); color:var(--ink); }

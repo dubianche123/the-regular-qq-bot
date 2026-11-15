@@ -238,7 +238,8 @@ def _jobs(stage, out, model):
         return [{"name": name, "group": name.split("_", 1)[0],
                  "refs": [out / "base.png", out / (spec["style"] + ".png"),
                           *(out / (name + ".png") for name in spec.get("extra_refs", ()))],
-                 "size": "1024x1024", "model": model,
+                 # Six-beat performances use a 3x2 sheet of the same 512 px cells (1536x1024).
+                 "size": spec.get("size", "1024x1024"), "model": model,
                  **({"prompt_header": spec["prompt_header"]} if "prompt_header" in spec else {}),
                  "prompt": spec.get("prompt_header", default_header) + "\nAction: " + spec["prompt"]}
                 for name, spec in ACTIONS.items()]
@@ -335,8 +336,10 @@ def _anchor(frame):
     return left + sum(i * v for i, v in enumerate(columns)) / total, bottom, (left, top, right, bottom)
 
 
-def _drop_strays(frame, keep=0.03):
-    """Erase small islands touching the cell border: slivers of the neighbouring frame's hand or tail."""
+def _drop_strays(frame, keep=0.03, *, anywhere=False):
+    """Erase small islands touching the cell border: slivers of the neighbouring frame's hand or tail.
+    With anywhere=True also small marks floating free (drawn sparkles, '!' lines, snowflakes): the
+    program adds those effects itself."""
     import numpy as np
     from PIL import Image, ImageDraw, ImageFilter
 
@@ -358,7 +361,7 @@ def _drop_strays(frame, keep=0.03):
     h, w = alpha.shape
     stray = np.zeros_like(alpha, dtype=bool)
     for area, region, top, bottom, left, right in parts:
-        if area < keep * largest and (top <= 1 or left <= 1 or bottom >= h - 2 or right >= w - 2):
+        if area < keep * largest and (anywhere or top <= 1 or left <= 1 or bottom >= h - 2 or right >= w - 2):
             stray |= region
     if not stray.any():
         return frame
@@ -581,9 +584,9 @@ def build(args):
         if args.only and name not in args.only:
             continue
         action_spec = ACTIONS.get(name, {})
-        if "cells" in action_spec and (not isinstance(cells, (list, tuple)) or len(cells) != 4
-                or any(type(i) is not int or not 0 <= i < 4 for i in cells)):
-            raise ValueError(f"{name}: cells must select four source cells with indices 0..3")
+        if "cells" in action_spec and (not isinstance(cells, (list, tuple)) or len(cells) not in (4, 6)
+                or any(type(i) is not int or not 0 <= i < len(cells) for i in cells)):
+            raise ValueError(f"{name}: cells must select four source cells (or six from a 3x2 sheet)")
         reuse = action_spec.get("reuse_strip_frames")
         if reuse:
             ref_name, indices = reuse["strip"], reuse["frames"]
@@ -603,6 +606,8 @@ def build(args):
         frames = [clean(_cell(sheet(sheet_name), index), action_spec.get("alpha_cutoff", 12)) for index in cells]
         if action_spec.get("drop_strays"):
             frames = [_drop_strays(frame) for frame in frames]
+        if action_spec.get("drop_marks"):
+            frames = [_drop_strays(frame, action_spec["drop_marks"], anywhere=True) for frame in frames]
         if name == "idle":
             frames += [clean(Image.composite(_cell(sheet(face), 0), frames[0], eyes)) for face in FACES]
         strip = Image.new("RGBA", (CANVAS[0] * len(frames), CANVAS[1]), (0, 0, 0, 0))

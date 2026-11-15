@@ -127,6 +127,15 @@ class PanelClient:
             raise CompanionError("开关没保存上，请到「能力与服务」里再试。")
         return str(body.get("timing") or "")
 
+    def command(self, text, csrf):
+        """A slash command through the same chat route; the panel runs it without the model."""
+        if not isinstance(csrf, str) or not 16 <= len(csrf) <= 512:
+            raise CompanionError("请先刷新本机连接。")
+        body = self._request("POST", "/companion/chat", {"text": text, "csrf": csrf}, accept="application/json")
+        if not isinstance(body.get("text"), str):
+            raise CompanionError("命令没执行上，稍后再试。")
+        return body["text"]
+
     def presence(self, since=None):
         """Content-free agent state; an old panel without the route reads as unknown."""
         path = "/companion/presence" + ("" if since is None else "?" + urlencode({"since": f"{since:.3f}"}))

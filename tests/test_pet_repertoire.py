@@ -34,15 +34,14 @@ class RepertoireTest(unittest.TestCase):
         repertoire = Repertoire(random.Random(1), actions)
         self.assertEqual(repertoire.choose("sleep", posture="air", fallback="sleep"), "sleep")
 
-    def test_retired_variants_stay_loadable_but_never_reenter_automatic_pools(self):
+    def test_scripted_variants_stay_loadable_but_never_enter_automatic_pools(self):
         actions = available()
         repertoire = Repertoire(random.Random(7), actions)
         for role, group in (("music", "music"), ("treasure", "treasure"), ("sleep", "sleep")):
             picked = {repertoire.choose(role) for _ in range(60)}
             self.assertEqual(picked, set(CURATED_POOLS[group]))
         self.assertIn("dragon_treasure_share", clips(actions))  # scripted result
-        self.assertIn("dragon_music_flute", clips(actions))    # archived art
-        self.assertNotIn("dragon_music_flute", curated_actions(actions))
+        self.assertNotIn("dragon_treasure_share", curated_actions(actions))
 
     def test_loop_filter_survives_repeated_draws_and_has_an_independent_bag(self):
         # Synthetic mixed family exercises the constraint independently of curation.
@@ -56,9 +55,9 @@ class RepertoireTest(unittest.TestCase):
             self.assertEqual(repertoire.choose("toy", loop=False), "reveal")
         self.assertEqual(repertoire.choose("toy", posture="air", loop=True, fallback="idle"), "idle")
 
-    def test_missing_selected_art_does_not_restore_retired_prop_skins(self):
-        repertoire = Repertoire(random.Random(1), {"dragon_music_flute": ACTIONS["dragon_music_flute"]})
-        self.assertEqual(repertoire.choose("music", fallback="sing"), "sing")
+    def test_missing_selected_art_does_not_promote_a_scripted_variant(self):
+        repertoire = Repertoire(random.Random(1), {"dragon_treasure_share": ACTIONS["dragon_treasure_share"]})
+        self.assertEqual(repertoire.choose("treasure", fallback="sing"), "sing")
 
     def test_only_adopted_art_becomes_a_playable_clip(self):
         actions = available()
@@ -69,7 +68,8 @@ class RepertoireTest(unittest.TestCase):
             with self.subTest(action=name):
                 self.assertEqual(clip[0], actions[name].get("strip", name))
                 self.assertIn(clip[0], manifest["actions"])
-                self.assertTrue(all(0 <= frame < 4 for frame in clip[1]))
+                frames = manifest["actions"][clip[0]]["frames"]      # four-frame sheets, or six from a 3x2 sheet
+                self.assertTrue(all(0 <= frame < frames for frame in clip[1]))
                 self.assertGreater(clip[2], 0)
 
 

@@ -190,52 +190,12 @@
    "file": "dragon_fire_marshmallow.webp",
    "frames": 4
   },
-  "dragon_fire_candle": {
-   "file": "dragon_fire_candle.webp",
-   "frames": 4
-  },
-  "dragon_fire_teacup": {
-   "file": "dragon_fire_teacup.webp",
-   "frames": 4
-  },
-  "dragon_fire_lantern": {
-   "file": "dragon_fire_lantern.webp",
-   "frames": 4
-  },
-  "dragon_fire_toast": {
-   "file": "dragon_fire_toast.webp",
-   "frames": 4
-  },
-  "dragon_fire_spark": {
-   "file": "dragon_fire_spark.webp",
-   "frames": 4
-  },
   "dragon_fire_kettle": {
    "file": "dragon_fire_kettle.webp",
    "frames": 4
   },
   "dragon_wing_brush": {
    "file": "dragon_wing_brush.webp",
-   "frames": 4
-  },
-  "dragon_wing_stretch": {
-   "file": "dragon_wing_stretch.webp",
-   "frames": 4
-  },
-  "dragon_wing_polish": {
-   "file": "dragon_wing_polish.webp",
-   "frames": 4
-  },
-  "dragon_wing_ribbon": {
-   "file": "dragon_wing_ribbon.webp",
-   "frames": 4
-  },
-  "dragon_tail_chase": {
-   "file": "dragon_tail_chase.webp",
-   "frames": 4
-  },
-  "dragon_tail_bow": {
-   "file": "dragon_tail_bow.webp",
    "frames": 4
   },
   "dragon_tail_ball": {
@@ -246,52 +206,16 @@
    "file": "dragon_tail_brush.webp",
    "frames": 4
   },
-  "dragon_magic_star": {
-   "file": "dragon_magic_star.webp",
-   "frames": 4
-  },
-  "dragon_magic_book": {
-   "file": "dragon_magic_book.webp",
-   "frames": 4
-  },
-  "dragon_magic_crane": {
-   "file": "dragon_magic_crane.webp",
-   "frames": 4
-  },
   "dragon_magic_flower": {
    "file": "dragon_magic_flower.webp",
-   "frames": 4
-  },
-  "dragon_magic_portal": {
-   "file": "dragon_magic_portal.webp",
-   "frames": 4
-  },
-  "dragon_magic_crystal": {
-   "file": "dragon_magic_crystal.webp",
-   "frames": 4
-  },
-  "dragon_magic_wand": {
-   "file": "dragon_magic_wand.webp",
    "frames": 4
   },
   "dragon_magic_feather": {
    "file": "dragon_magic_feather.webp",
    "frames": 4
   },
-  "dragon_magic_butterfly": {
-   "file": "dragon_magic_butterfly.webp",
-   "frames": 4
-  },
-  "dragon_magic_moon": {
-   "file": "dragon_magic_moon.webp",
-   "frames": 4
-  },
   "dragon_magic_snow": {
    "file": "dragon_magic_snow.webp",
-   "frames": 4
-  },
-  "dragon_magic_bubble": {
-   "file": "dragon_magic_bubble.webp",
    "frames": 4
   },
   "dragon_treasure_count": {
@@ -306,10 +230,6 @@
    "file": "dragon_treasure_hide.webp",
    "frames": 4
   },
-  "dragon_treasure_pouch": {
-   "file": "dragon_treasure_pouch.webp",
-   "frames": 4
-  },
   "dragon_treasure_find": {
    "file": "dragon_treasure_find.webp",
    "frames": 4
@@ -318,64 +238,16 @@
    "file": "dragon_treasure_share.webp",
    "frames": 4
   },
-  "dragon_treasure_sort": {
-   "file": "dragon_treasure_sort.webp",
-   "frames": 4
-  },
-  "dragon_treasure_open": {
-   "file": "dragon_treasure_open.webp",
-   "frames": 4
-  },
   "dragon_treasure_coin_spin": {
    "file": "dragon_treasure_coin_spin.webp",
-   "frames": 4
-  },
-  "dragon_treasure_key": {
-   "file": "dragon_treasure_key.webp",
    "frames": 4
   },
   "dragon_toy_ball": {
    "file": "dragon_toy_ball.webp",
    "frames": 4
   },
-  "dragon_toy_top": {
-   "file": "dragon_toy_top.webp",
-   "frames": 4
-  },
-  "dragon_toy_plane": {
-   "file": "dragon_toy_plane.webp",
-   "frames": 4
-  },
-  "dragon_toy_pinwheel": {
-   "file": "dragon_toy_pinwheel.webp",
-   "frames": 4
-  },
-  "dragon_toy_clockwork": {
-   "file": "dragon_toy_clockwork.webp",
-   "frames": 4
-  },
-  "dragon_toy_bubbles": {
-   "file": "dragon_toy_bubbles.webp",
-   "frames": 4
-  },
-  "dragon_toy_puzzle": {
-   "file": "dragon_toy_puzzle.webp",
-   "frames": 4
-  },
   "dragon_toy_handheld": {
    "file": "dragon_toy_handheld.webp",
-   "frames": 4
-  },
-  "dragon_toy_musicbox": {
-   "file": "dragon_toy_musicbox.webp",
-   "frames": 4
-  },
-  "dragon_toy_yoyo": {
-   "file": "dragon_toy_yoyo.webp",
-   "frames": 4
-  },
-  "dragon_toy_blocks": {
-   "file": "dragon_toy_blocks.webp",
    "frames": 4
   },
   "dragon_toy_kaleidoscope": {
@@ -386,64 +258,24 @@
    "file": "dragon_music_ukulele.webp",
    "frames": 4
   },
-  "dragon_music_flute": {
-   "file": "dragon_music_flute.webp",
-   "frames": 4
-  },
-  "dragon_music_bell": {
-   "file": "dragon_music_bell.webp",
-   "frames": 4
-  },
   "dragon_music_kalimba": {
    "file": "dragon_music_kalimba.webp",
-   "frames": 4
-  },
-  "dragon_music_tambourine": {
-   "file": "dragon_music_tambourine.webp",
-   "frames": 4
-  },
-  "dragon_music_harmonica": {
-   "file": "dragon_music_harmonica.webp",
    "frames": 4
   },
   "dragon_craft_sketch": {
    "file": "dragon_craft_sketch.webp",
    "frames": 4
   },
-  "dragon_craft_paint": {
-   "file": "dragon_craft_paint.webp",
-   "frames": 4
-  },
-  "dragon_craft_origami": {
-   "file": "dragon_craft_origami.webp",
-   "frames": 4
-  },
   "dragon_craft_knit": {
    "file": "dragon_craft_knit.webp",
-   "frames": 4
-  },
-  "dragon_craft_stamp": {
-   "file": "dragon_craft_stamp.webp",
-   "frames": 4
-  },
-  "dragon_craft_clay": {
-   "file": "dragon_craft_clay.webp",
    "frames": 4
   },
   "dragon_garden_water": {
    "file": "dragon_garden_water.webp",
    "frames": 4
   },
-  "dragon_garden_seed": {
-   "file": "dragon_garden_seed.webp",
-   "frames": 4
-  },
   "dragon_garden_sprout": {
    "file": "dragon_garden_sprout.webp",
-   "frames": 4
-  },
-  "dragon_garden_prune": {
-   "file": "dragon_garden_prune.webp",
    "frames": 4
   },
   "dragon_snack_cookie": {
@@ -452,22 +284,6 @@
   },
   "dragon_snack_berry": {
    "file": "dragon_snack_berry.webp",
-   "frames": 4
-  },
-  "dragon_snack_stir": {
-   "file": "dragon_snack_stir.webp",
-   "frames": 4
-  },
-  "dragon_play_bubble_catch": {
-   "file": "dragon_play_bubble_catch.webp",
-   "frames": 4
-  },
-  "dragon_play_paper_fan": {
-   "file": "dragon_play_paper_fan.webp",
-   "frames": 4
-  },
-  "dragon_play_ribbon": {
-   "file": "dragon_play_ribbon.webp",
    "frames": 4
   },
   "life_comic_open": {
@@ -486,10 +302,6 @@
    "file": "life_note_read.webp",
    "frames": 4
   },
-  "life_map_unfold": {
-   "file": "life_map_unfold.webp",
-   "frames": 4
-  },
   "life_bookmark_place": {
    "file": "life_bookmark_place.webp",
    "frames": 4
@@ -498,32 +310,8 @@
    "file": "life_book_doodle.webp",
    "frames": 4
   },
-  "life_book_stack": {
-   "file": "life_book_stack.webp",
-   "frames": 4
-  },
-  "life_pencil_note": {
-   "file": "life_pencil_note.webp",
-   "frames": 4
-  },
   "life_pencil_sharpen": {
    "file": "life_pencil_sharpen.webp",
-   "frames": 4
-  },
-  "life_sticky_note": {
-   "file": "life_sticky_note.webp",
-   "frames": 4
-  },
-  "life_whiteboard": {
-   "file": "life_whiteboard.webp",
-   "frames": 4
-  },
-  "life_letter_open": {
-   "file": "life_letter_open.webp",
-   "frames": 4
-  },
-  "life_letter_fold": {
-   "file": "life_letter_fold.webp",
    "frames": 4
   },
   "life_laptop_type": {
@@ -542,32 +330,12 @@
    "file": "life_tea_sip.webp",
    "frames": 4
   },
-  "life_tea_stir": {
-   "file": "life_tea_stir.webp",
-   "frames": 4
-  },
-  "life_bread_break": {
-   "file": "life_bread_break.webp",
-   "frames": 4
-  },
   "life_riceball": {
    "file": "life_riceball.webp",
    "frames": 4
   },
   "life_candy_unwrap": {
    "file": "life_candy_unwrap.webp",
-   "frames": 4
-  },
-  "life_cookie_offer": {
-   "file": "life_cookie_offer.webp",
-   "frames": 4
-  },
-  "life_paper_plane": {
-   "file": "life_paper_plane.webp",
-   "frames": 4
-  },
-  "life_blocks": {
-   "file": "life_blocks.webp",
    "frames": 4
   },
   "life_hair_comb": {
@@ -586,10 +354,6 @@
    "file": "life_clock_check.webp",
    "frames": 4
   },
-  "life_hair_clip": {
-   "file": "life_hair_clip.webp",
-   "frames": 4
-  },
   "life_phone_read": {
    "file": "life_phone_read.webp",
    "frames": 4
@@ -598,20 +362,8 @@
    "file": "life_phone_reply.webp",
    "frames": 4
   },
-  "life_phone_compose": {
-   "file": "life_phone_compose.webp",
-   "frames": 4
-  },
   "life_phone_greet": {
    "file": "life_phone_greet.webp",
-   "frames": 4
-  },
-  "life_chat_peek": {
-   "file": "life_chat_peek.webp",
-   "frames": 4
-  },
-  "life_chat_listen": {
-   "file": "life_chat_listen.webp",
    "frames": 4
   },
   "life_chat_nod": {
@@ -622,36 +374,16 @@
    "file": "life_image_photo.webp",
    "frames": 4
   },
-  "life_image_compare": {
-   "file": "life_image_compare.webp",
-   "frames": 4
-  },
-  "life_image_tilt": {
-   "file": "life_image_tilt.webp",
-   "frames": 4
-  },
   "life_search_book": {
    "file": "life_search_book.webp",
-   "frames": 4
-  },
-  "life_search_lens": {
-   "file": "life_search_lens.webp",
    "frames": 4
   },
   "life_search_laptop": {
    "file": "life_search_laptop.webp",
    "frames": 4
   },
-  "life_search_cards": {
-   "file": "life_search_cards.webp",
-   "frames": 4
-  },
   "life_voice_headphone": {
    "file": "life_voice_headphone.webp",
-   "frames": 4
-  },
-  "life_voice_speaker": {
-   "file": "life_voice_speaker.webp",
    "frames": 4
   },
   "life_voice_record": {
@@ -660,10 +392,6 @@
   },
   "life_drawing_pencil": {
    "file": "life_drawing_pencil.webp",
-   "frames": 4
-  },
-  "life_drawing_brush": {
-   "file": "life_drawing_brush.webp",
    "frames": 4
   },
   "life_drawing_tablet": {
@@ -678,14 +406,6 @@
    "file": "life_sent_check.webp",
    "frames": 4
   },
-  "life_wait_hourglass": {
-   "file": "life_wait_hourglass.webp",
-   "frames": 4
-  },
-  "life_wait_think": {
-   "file": "life_wait_think.webp",
-   "frames": 4
-  },
   "life_tea_cool": {
    "file": "life_tea_cool.webp",
    "frames": 4
@@ -694,40 +414,8 @@
    "file": "life_bread_bite.webp",
    "frames": 4
   },
-  "life_fruit_slice": {
-   "file": "life_fruit_slice.webp",
-   "frames": 4
-  },
-  "life_paper_crane": {
-   "file": "life_paper_crane.webp",
-   "frames": 4
-  },
-  "life_yarn_ball": {
-   "file": "life_yarn_ball.webp",
-   "frames": 4
-  },
-  "life_windup": {
-   "file": "life_windup.webp",
-   "frames": 4
-  },
-  "life_spinning_top": {
-   "file": "life_spinning_top.webp",
-   "frames": 4
-  },
-  "life_ribbon": {
-   "file": "life_ribbon.webp",
-   "frames": 4
-  },
-  "life_puzzle": {
-   "file": "life_puzzle.webp",
-   "frames": 4
-  },
   "life_tail_pillow": {
    "file": "life_tail_pillow.webp",
-   "frames": 4
-  },
-  "life_fan": {
-   "file": "life_fan.webp",
    "frames": 4
   },
   "life_wrist_stretch": {
@@ -736,10 +424,6 @@
   },
   "life_phone_notice": {
    "file": "life_phone_notice.webp",
-   "frames": 4
-  },
-  "life_phone_scroll": {
-   "file": "life_phone_scroll.webp",
    "frames": 4
   },
   "life_chat_popcorn": {
@@ -754,16 +438,8 @@
    "file": "life_voice_mic_check.webp",
    "frames": 4
   },
-  "life_drawing_palette": {
-   "file": "life_drawing_palette.webp",
-   "frames": 4
-  },
   "life_sleep_hug_tail": {
    "file": "life_sleep_hug_tail.webp",
-   "frames": 4
-  },
-  "life_sleep_curled_tail": {
-   "file": "life_sleep_curled_tail.webp",
    "frames": 4
   },
   "life_sleep_wing_blanket": {
@@ -774,52 +450,8 @@
    "file": "life_sleep_face_down.webp",
    "frames": 4
   },
-  "life_sleep_side_hands": {
-   "file": "life_sleep_side_hands.webp",
-   "frames": 4
-  },
-  "life_sleep_back": {
-   "file": "life_sleep_back.webp",
-   "frames": 4
-  },
-  "life_sleep_tail_pillow": {
-   "file": "life_sleep_tail_pillow.webp",
-   "frames": 4
-  },
-  "life_sleep_star_pillow": {
-   "file": "life_sleep_star_pillow.webp",
-   "frames": 4
-  },
-  "life_sleep_round_pillow": {
-   "file": "life_sleep_round_pillow.webp",
-   "frames": 4
-  },
-  "life_sleep_book": {
-   "file": "life_sleep_book.webp",
-   "frames": 4
-  },
-  "life_sleep_wing_fold": {
-   "file": "life_sleep_wing_fold.webp",
-   "frames": 4
-  },
-  "life_sleep_knees": {
-   "file": "life_sleep_knees.webp",
-   "frames": 4
-  },
   "life_reply_air_phone": {
    "file": "life_reply_air_phone.webp",
-   "frames": 4
-  },
-  "life_reply_air_note": {
-   "file": "life_reply_air_note.webp",
-   "frames": 4
-  },
-  "life_reply_air_wave": {
-   "file": "life_reply_air_wave.webp",
-   "frames": 4
-  },
-  "life_reply_air_type": {
-   "file": "life_reply_air_type.webp",
    "frames": 4
   },
   "life_reply_sit_calm": {
@@ -830,28 +462,12 @@
    "file": "life_reply_sit_sleepy.webp",
    "frames": 4
   },
-  "life_reply_sit_note": {
-   "file": "life_reply_sit_note.webp",
-   "frames": 4
-  },
-  "life_reply_sit_laptop": {
-   "file": "life_reply_sit_laptop.webp",
-   "frames": 4
-  },
   "life_reply_stand_bright": {
    "file": "life_reply_stand_bright.webp",
    "frames": 4
   },
-  "life_reply_stand_quiet": {
-   "file": "life_reply_stand_quiet.webp",
-   "frames": 4
-  },
   "life_reply_stand_think": {
    "file": "life_reply_stand_think.webp",
-   "frames": 4
-  },
-  "life_reply_stand_wave": {
-   "file": "life_reply_stand_wave.webp",
    "frames": 4
   },
   "motion_walk_brisk": {
@@ -926,18 +542,6 @@
    "file": "motion_fly_takeoff_tip.webp",
    "frames": 4
   },
-  "motion_fly_glide": {
-   "file": "motion_fly_glide.webp",
-   "frames": 4
-  },
-  "motion_fly_glide_tucked": {
-   "file": "motion_fly_glide_tucked.webp",
-   "frames": 4
-  },
-  "motion_fly_glide_arms": {
-   "file": "motion_fly_glide_arms.webp",
-   "frames": 4
-  },
   "motion_fly_flap_slow": {
    "file": "motion_fly_flap_slow.webp",
    "frames": 4
@@ -950,44 +554,12 @@
    "file": "motion_fly_flap_asymmetric.webp",
    "frames": 4
   },
-  "motion_fly_hover": {
-   "file": "motion_fly_hover.webp",
-   "frames": 4
-  },
-  "motion_fly_hover_curious": {
-   "file": "motion_fly_hover_curious.webp",
-   "frames": 4
-  },
-  "motion_fly_hover_tail": {
-   "file": "motion_fly_hover_tail.webp",
-   "frames": 4
-  },
-  "motion_fly_hover_hands": {
-   "file": "motion_fly_hover_hands.webp",
-   "frames": 4
-  },
   "motion_fly_land": {
    "file": "motion_fly_land.webp",
    "frames": 4
   },
   "motion_fly_land_soft": {
    "file": "motion_fly_land_soft.webp",
-   "frames": 4
-  },
-  "motion_fly_turn": {
-   "file": "motion_fly_turn.webp",
-   "frames": 4
-  },
-  "motion_fly_turn_look": {
-   "file": "motion_fly_turn_look.webp",
-   "frames": 4
-  },
-  "motion_fly_circle": {
-   "file": "motion_fly_circle.webp",
-   "frames": 4
-  },
-  "motion_fly_circle_tucked": {
-   "file": "motion_fly_circle_tucked.webp",
    "frames": 4
   },
   "motion_drag_dangle": {
@@ -1044,22 +616,6 @@
   },
   "motion_ceiling_release": {
    "file": "motion_ceiling_release.webp",
-   "frames": 4
-  },
-  "motion_floor_squat": {
-   "file": "motion_floor_squat.webp",
-   "frames": 4
-  },
-  "motion_floor_kneel": {
-   "file": "motion_floor_kneel.webp",
-   "frames": 4
-  },
-  "motion_floor_balance": {
-   "file": "motion_floor_balance.webp",
-   "frames": 4
-  },
-  "motion_floor_wings": {
-   "file": "motion_floor_wings.webp",
    "frames": 4
   },
   "motion_bottom_peek": {
@@ -1500,27 +1056,79 @@
   },
   "magic_daily_cola": {
    "file": "magic_daily_cola.webp",
-   "frames": 4
+   "frames": 6
   },
   "magic_daily_roast": {
    "file": "magic_daily_roast.webp",
-   "frames": 4
+   "frames": 6
   },
   "magic_daily_scarf": {
    "file": "magic_daily_scarf.webp",
-   "frames": 4
+   "frames": 6
   },
   "magic_daily_brush": {
    "file": "magic_daily_brush.webp",
-   "frames": 4
+   "frames": 6
   },
   "magic_daily_mend": {
    "file": "magic_daily_mend.webp",
-   "frames": 4
+   "frames": 6
   },
   "sit_rest": {
    "file": "sit_rest.webp",
    "frames": 5
+  },
+  "motion_fly_launch": {
+   "file": "motion_fly_launch.webp",
+   "frames": 6
+  },
+  "weather_snow_catch": {
+   "file": "weather_snow_catch.webp",
+   "frames": 4
+  },
+  "weather_warm_hands": {
+   "file": "weather_warm_hands.webp",
+   "frames": 6
+  },
+  "weather_heat_melt": {
+   "file": "weather_heat_melt.webp",
+   "frames": 4
+  },
+  "weather_sunbask": {
+   "file": "weather_sunbask.webp",
+   "frames": 4
+  },
+  "edge_wall_lean": {
+   "file": "edge_wall_lean.webp",
+   "frames": 4
+  },
+  "edge_knock": {
+   "file": "edge_knock.webp",
+   "frames": 4
+  },
+  "edge_bat_hang": {
+   "file": "edge_bat_hang.webp",
+   "frames": 4
+  },
+  "cursor_tail_swat": {
+   "file": "cursor_tail_swat.webp",
+   "frames": 4
+  },
+  "cursor_reach_up": {
+   "file": "cursor_reach_up.webp",
+   "frames": 4
+  },
+  "cursor_poke": {
+   "file": "cursor_poke.webp",
+   "frames": 4
+  },
+  "cursor_dizzy": {
+   "file": "cursor_dizzy.webp",
+   "frames": 4
+  },
+  "weather_wing_umbrella": {
+   "file": "weather_wing_umbrella.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -1884,46 +1492,6 @@
     1
    ]
   },
-  "dragon_fire_candle": {
-   "bounds": [
-    -102,
-    -312,
-    94,
-    1
-   ]
-  },
-  "dragon_fire_teacup": {
-   "bounds": [
-    -95,
-    -240,
-    91,
-    1
-   ]
-  },
-  "dragon_fire_lantern": {
-   "bounds": [
-    -100,
-    -314,
-    90,
-    0
-   ]
-  },
-  "dragon_fire_toast": {
-   "bounds": [
-    -106,
-    -324,
-    94,
-    0
-   ]
-  },
-  "dragon_fire_spark": {
-   "bounds": [
-    -103,
-    -322,
-    85,
-    0
-   ]
-  },
   "dragon_fire_kettle": {
    "bounds": [
     -103,
@@ -1937,46 +1505,6 @@
     -115,
     -317,
     87,
-    -1
-   ]
-  },
-  "dragon_wing_stretch": {
-   "bounds": [
-    -96,
-    -291,
-    84,
-    1
-   ]
-  },
-  "dragon_wing_polish": {
-   "bounds": [
-    -104,
-    -321,
-    99,
-    -1
-   ]
-  },
-  "dragon_wing_ribbon": {
-   "bounds": [
-    -105,
-    -318,
-    110,
-    1
-   ]
-  },
-  "dragon_tail_chase": {
-   "bounds": [
-    -131,
-    -322,
-    118,
-    0
-   ]
-  },
-  "dragon_tail_bow": {
-   "bounds": [
-    -111,
-    -317,
-    97,
     -1
    ]
   },
@@ -1996,59 +1524,11 @@
     1
    ]
   },
-  "dragon_magic_star": {
-   "bounds": [
-    -100,
-    -314,
-    86,
-    0
-   ]
-  },
-  "dragon_magic_book": {
-   "bounds": [
-    -92,
-    -244,
-    77,
-    2
-   ]
-  },
-  "dragon_magic_crane": {
-   "bounds": [
-    -113,
-    -320,
-    125,
-    0
-   ]
-  },
   "dragon_magic_flower": {
    "bounds": [
     -100,
     -309,
     89,
-    0
-   ]
-  },
-  "dragon_magic_portal": {
-   "bounds": [
-    -107,
-    -325,
-    98,
-    0
-   ]
-  },
-  "dragon_magic_crystal": {
-   "bounds": [
-    -99,
-    -313,
-    84,
-    1
-   ]
-  },
-  "dragon_magic_wand": {
-   "bounds": [
-    -113,
-    -320,
-    125,
     0
    ]
   },
@@ -2060,35 +1540,11 @@
     0
    ]
   },
-  "dragon_magic_butterfly": {
-   "bounds": [
-    -125,
-    -316,
-    121,
-    1
-   ]
-  },
-  "dragon_magic_moon": {
-   "bounds": [
-    -98,
-    -314,
-    87,
-    0
-   ]
-  },
   "dragon_magic_snow": {
    "bounds": [
     -99,
     -324,
     88,
-    1
-   ]
-  },
-  "dragon_magic_bubble": {
-   "bounds": [
-    -106,
-    -319,
-    120,
     1
    ]
   },
@@ -2116,14 +1572,6 @@
     1
    ]
   },
-  "dragon_treasure_pouch": {
-   "bounds": [
-    -97,
-    -313,
-    85,
-    1
-   ]
-  },
   "dragon_treasure_find": {
    "bounds": [
     -95,
@@ -2140,36 +1588,12 @@
     1
    ]
   },
-  "dragon_treasure_sort": {
-   "bounds": [
-    -104,
-    -264,
-    80,
-    0
-   ]
-  },
-  "dragon_treasure_open": {
-   "bounds": [
-    -96,
-    -223,
-    80,
-    0
-   ]
-  },
   "dragon_treasure_coin_spin": {
    "bounds": [
     -99,
     -321,
     89,
     0
-   ]
-  },
-  "dragon_treasure_key": {
-   "bounds": [
-    -102,
-    -320,
-    86,
-    -1
    ]
   },
   "dragon_toy_ball": {
@@ -2180,83 +1604,11 @@
     -1
    ]
   },
-  "dragon_toy_top": {
-   "bounds": [
-    -102,
-    -309,
-    94,
-    -1
-   ]
-  },
-  "dragon_toy_plane": {
-   "bounds": [
-    -99,
-    -320,
-    147,
-    1
-   ]
-  },
-  "dragon_toy_pinwheel": {
-   "bounds": [
-    -106,
-    -317,
-    100,
-    0
-   ]
-  },
-  "dragon_toy_clockwork": {
-   "bounds": [
-    -105,
-    -322,
-    105,
-    1
-   ]
-  },
-  "dragon_toy_bubbles": {
-   "bounds": [
-    -107,
-    -320,
-    118,
-    1
-   ]
-  },
-  "dragon_toy_puzzle": {
-   "bounds": [
-    -105,
-    -226,
-    78,
-    -1
-   ]
-  },
   "dragon_toy_handheld": {
    "bounds": [
     -107,
     -225,
     82,
-    0
-   ]
-  },
-  "dragon_toy_musicbox": {
-   "bounds": [
-    -102,
-    -218,
-    86,
-    0
-   ]
-  },
-  "dragon_toy_yoyo": {
-   "bounds": [
-    -99,
-    -319,
-    94,
-    1
-   ]
-  },
-  "dragon_toy_blocks": {
-   "bounds": [
-    -103,
-    -217,
-    79,
     0
    ]
   },
@@ -2276,44 +1628,12 @@
     1
    ]
   },
-  "dragon_music_flute": {
-   "bounds": [
-    -101,
-    -299,
-    105,
-    0
-   ]
-  },
-  "dragon_music_bell": {
-   "bounds": [
-    -104,
-    -303,
-    95,
-    0
-   ]
-  },
   "dragon_music_kalimba": {
    "bounds": [
     -99,
     -252,
     104,
     0
-   ]
-  },
-  "dragon_music_tambourine": {
-   "bounds": [
-    -100,
-    -301,
-    88,
-    0
-   ]
-  },
-  "dragon_music_harmonica": {
-   "bounds": [
-    -99,
-    -306,
-    92,
-    1
    ]
   },
   "dragon_craft_sketch": {
@@ -2324,44 +1644,12 @@
     1
    ]
   },
-  "dragon_craft_paint": {
-   "bounds": [
-    -108,
-    -295,
-    97,
-    -1
-   ]
-  },
-  "dragon_craft_origami": {
-   "bounds": [
-    -102,
-    -289,
-    94,
-    0
-   ]
-  },
   "dragon_craft_knit": {
    "bounds": [
     -99,
     -292,
     79,
     0
-   ]
-  },
-  "dragon_craft_stamp": {
-   "bounds": [
-    -104,
-    -291,
-    95,
-    0
-   ]
-  },
-  "dragon_craft_clay": {
-   "bounds": [
-    -95,
-    -288,
-    79,
-    1
    ]
   },
   "dragon_garden_water": {
@@ -2372,14 +1660,6 @@
     0
    ]
   },
-  "dragon_garden_seed": {
-   "bounds": [
-    -98,
-    -218,
-    77,
-    -1
-   ]
-  },
   "dragon_garden_sprout": {
    "bounds": [
     -97,
@@ -2388,20 +1668,12 @@
     -1
    ]
   },
-  "dragon_garden_prune": {
-   "bounds": [
-    -105,
-    -306,
-    93,
-    1
-   ]
-  },
   "dragon_snack_cookie": {
    "bounds": [
-    -94,
-    -238,
-    79,
-    1
+    -93,
+    -230,
+    84,
+    0
    ]
   },
   "dragon_snack_berry": {
@@ -2410,38 +1682,6 @@
     -324,
     87,
     -1
-   ]
-  },
-  "dragon_snack_stir": {
-   "bounds": [
-    -85,
-    -256,
-    82,
-    0
-   ]
-  },
-  "dragon_play_bubble_catch": {
-   "bounds": [
-    -105,
-    -314,
-    108,
-    1
-   ]
-  },
-  "dragon_play_paper_fan": {
-   "bounds": [
-    -101,
-    -320,
-    104,
-    1
-   ]
-  },
-  "dragon_play_ribbon": {
-   "bounds": [
-    -133,
-    -316,
-    121,
-    0
    ]
   },
   "life_comic_open": {
@@ -2470,18 +1710,10 @@
   },
   "life_note_read": {
    "bounds": [
-    -98,
-    -234,
-    78,
-    1
-   ]
-  },
-  "life_map_unfold": {
-   "bounds": [
-    -98,
-    -238,
-    78,
-    1
+    -92,
+    -306,
+    81,
+    0
    ]
   },
   "life_bookmark_place": {
@@ -2500,60 +1732,12 @@
     0
    ]
   },
-  "life_book_stack": {
-   "bounds": [
-    -97,
-    -214,
-    86,
-    1
-   ]
-  },
-  "life_pencil_note": {
-   "bounds": [
-    -102,
-    -296,
-    81,
-    -1
-   ]
-  },
   "life_pencil_sharpen": {
    "bounds": [
     -101,
     -288,
     77,
     1
-   ]
-  },
-  "life_sticky_note": {
-   "bounds": [
-    -99,
-    -291,
-    77,
-    0
-   ]
-  },
-  "life_whiteboard": {
-   "bounds": [
-    -97,
-    -294,
-    80,
-    0
-   ]
-  },
-  "life_letter_open": {
-   "bounds": [
-    -97,
-    -242,
-    76,
-    0
-   ]
-  },
-  "life_letter_fold": {
-   "bounds": [
-    -94,
-    -251,
-    77,
-    0
    ]
   },
   "life_laptop_type": {
@@ -2588,28 +1772,12 @@
     0
    ]
   },
-  "life_tea_stir": {
-   "bounds": [
-    -91,
-    -253,
-    80,
-    1
-   ]
-  },
-  "life_bread_break": {
-   "bounds": [
-    -94,
-    -240,
-    80,
-    1
-   ]
-  },
   "life_riceball": {
    "bounds": [
-    -93,
-    -244,
-    80,
-    1
+    -96,
+    -232,
+    91,
+    0
    ]
   },
   "life_candy_unwrap": {
@@ -2618,30 +1786,6 @@
     -239,
     89,
     0
-   ]
-  },
-  "life_cookie_offer": {
-   "bounds": [
-    -96,
-    -285,
-    85,
-    0
-   ]
-  },
-  "life_paper_plane": {
-   "bounds": [
-    -100,
-    -295,
-    93,
-    0
-   ]
-  },
-  "life_blocks": {
-   "bounds": [
-    -98,
-    -299,
-    84,
-    1
    ]
   },
   "life_hair_comb": {
@@ -2676,20 +1820,12 @@
     1
    ]
   },
-  "life_hair_clip": {
-   "bounds": [
-    -95,
-    -289,
-    86,
-    -1
-   ]
-  },
   "life_phone_read": {
    "bounds": [
-    -97,
-    -245,
-    76,
-    0
+    -96,
+    -311,
+    83,
+    -1
    ]
   },
   "life_phone_reply": {
@@ -2697,14 +1833,6 @@
     -99,
     -244,
     84,
-    0
-   ]
-  },
-  "life_phone_compose": {
-   "bounds": [
-    -103,
-    -248,
-    80,
     0
    ]
   },
@@ -2716,67 +1844,27 @@
     1
    ]
   },
-  "life_chat_peek": {
-   "bounds": [
-    -100,
-    -320,
-    86,
-    -1
-   ]
-  },
-  "life_chat_listen": {
-   "bounds": [
-    -99,
-    -320,
-    90,
-    0
-   ]
-  },
   "life_chat_nod": {
    "bounds": [
-    -88,
-    -251,
-    80,
-    1
+    -100,
+    -315,
+    84,
+    0
    ]
   },
   "life_image_photo": {
    "bounds": [
-    -94,
-    -234,
-    76,
-    0
-   ]
-  },
-  "life_image_compare": {
-   "bounds": [
-    -93,
-    -241,
-    77,
-    1
-   ]
-  },
-  "life_image_tilt": {
-   "bounds": [
-    -84,
-    -245,
-    77,
-    1
+    -97,
+    -308,
+    83,
+    -1
    ]
   },
   "life_search_book": {
    "bounds": [
-    -95,
-    -234,
-    78,
-    1
-   ]
-  },
-  "life_search_lens": {
-   "bounds": [
-    -95,
-    -242,
-    77,
+    -94,
+    -296,
+    82,
     0
    ]
   },
@@ -2788,28 +1876,12 @@
     0
    ]
   },
-  "life_search_cards": {
-   "bounds": [
-    -94,
-    -254,
-    75,
-    0
-   ]
-  },
   "life_voice_headphone": {
    "bounds": [
     -92,
     -279,
     83,
     -1
-   ]
-  },
-  "life_voice_speaker": {
-   "bounds": [
-    -98,
-    -304,
-    90,
-    0
    ]
   },
   "life_voice_record": {
@@ -2826,14 +1898,6 @@
     -271,
     78,
     0
-   ]
-  },
-  "life_drawing_brush": {
-   "bounds": [
-    -101,
-    -294,
-    77,
-    1
    ]
   },
   "life_drawing_tablet": {
@@ -2860,22 +1924,6 @@
     1
    ]
   },
-  "life_wait_hourglass": {
-   "bounds": [
-    -93,
-    -316,
-    87,
-    1
-   ]
-  },
-  "life_wait_think": {
-   "bounds": [
-    -97,
-    -314,
-    84,
-    -1
-   ]
-  },
   "life_tea_cool": {
    "bounds": [
     -95,
@@ -2886,65 +1934,9 @@
   },
   "life_bread_bite": {
    "bounds": [
-    -92,
-    -242,
-    78,
-    0
-   ]
-  },
-  "life_fruit_slice": {
-   "bounds": [
-    -99,
-    -270,
-    81,
-    1
-   ]
-  },
-  "life_paper_crane": {
-   "bounds": [
-    -99,
-    -291,
-    76,
-    1
-   ]
-  },
-  "life_yarn_ball": {
-   "bounds": [
-    -93,
-    -316,
-    87,
-    0
-   ]
-  },
-  "life_windup": {
-   "bounds": [
     -95,
-    -316,
-    88,
-    1
-   ]
-  },
-  "life_spinning_top": {
-   "bounds": [
-    -99,
-    -262,
-    79,
-    1
-   ]
-  },
-  "life_ribbon": {
-   "bounds": [
-    -93,
-    -275,
-    85,
-    0
-   ]
-  },
-  "life_puzzle": {
-   "bounds": [
-    -102,
-    -295,
-    124,
+    -239,
+    89,
     0
    ]
   },
@@ -2954,14 +1946,6 @@
     -249,
     87,
     0
-   ]
-  },
-  "life_fan": {
-   "bounds": [
-    -99,
-    -316,
-    87,
-    1
    ]
   },
   "life_wrist_stretch": {
@@ -2977,14 +1961,6 @@
     -100,
     -315,
     90,
-    0
-   ]
-  },
-  "life_phone_scroll": {
-   "bounds": [
-    -89,
-    -242,
-    75,
     0
    ]
   },
@@ -3012,27 +1988,11 @@
     0
    ]
   },
-  "life_drawing_palette": {
-   "bounds": [
-    -101,
-    -288,
-    87,
-    0
-   ]
-  },
   "life_sleep_hug_tail": {
    "bounds": [
     -82,
     -190,
     175,
-    0
-   ]
-  },
-  "life_sleep_curled_tail": {
-   "bounds": [
-    -83,
-    -161,
-    134,
     0
    ]
   },
@@ -3052,99 +2012,11 @@
     1
    ]
   },
-  "life_sleep_side_hands": {
-   "bounds": [
-    -88,
-    -166,
-    162,
-    -1
-   ]
-  },
-  "life_sleep_back": {
-   "bounds": [
-    -90,
-    -190,
-    139,
-    -1
-   ]
-  },
-  "life_sleep_tail_pillow": {
-   "bounds": [
-    -93,
-    -180,
-    150,
-    1
-   ]
-  },
-  "life_sleep_star_pillow": {
-   "bounds": [
-    -87,
-    -180,
-    159,
-    1
-   ]
-  },
-  "life_sleep_round_pillow": {
-   "bounds": [
-    -87,
-    -179,
-    160,
-    0
-   ]
-  },
-  "life_sleep_book": {
-   "bounds": [
-    -89,
-    -167,
-    166,
-    1
-   ]
-  },
-  "life_sleep_wing_fold": {
-   "bounds": [
-    -88,
-    -166,
-    177,
-    0
-   ]
-  },
-  "life_sleep_knees": {
-   "bounds": [
-    -89,
-    -167,
-    147,
-    1
-   ]
-  },
   "life_reply_air_phone": {
    "bounds": [
     -135,
     -294,
     134,
-    0
-   ]
-  },
-  "life_reply_air_note": {
-   "bounds": [
-    -130,
-    -285,
-    125,
-    -1
-   ]
-  },
-  "life_reply_air_wave": {
-   "bounds": [
-    -130,
-    -300,
-    127,
-    0
-   ]
-  },
-  "life_reply_air_type": {
-   "bounds": [
-    -126,
-    -290,
-    124,
     0
    ]
   },
@@ -3164,35 +2036,11 @@
     1
    ]
   },
-  "life_reply_sit_note": {
-   "bounds": [
-    -104,
-    -221,
-    77,
-    1
-   ]
-  },
-  "life_reply_sit_laptop": {
-   "bounds": [
-    -107,
-    -221,
-    76,
-    1
-   ]
-  },
   "life_reply_stand_bright": {
    "bounds": [
     -99,
     -300,
     85,
-    2
-   ]
-  },
-  "life_reply_stand_quiet": {
-   "bounds": [
-    -104,
-    -312,
-    86,
     2
    ]
   },
@@ -3202,14 +2050,6 @@
     -307,
     86,
     1
-   ]
-  },
-  "life_reply_stand_wave": {
-   "bounds": [
-    -101,
-    -317,
-    85,
-    -1
    ]
   },
   "motion_walk_brisk": {
@@ -3356,30 +2196,6 @@
     1
    ]
   },
-  "motion_fly_glide": {
-   "bounds": [
-    -103,
-    -288,
-    99,
-    0
-   ]
-  },
-  "motion_fly_glide_tucked": {
-   "bounds": [
-    -109,
-    -310,
-    92,
-    0
-   ]
-  },
-  "motion_fly_glide_arms": {
-   "bounds": [
-    -101,
-    -313,
-    97,
-    0
-   ]
-  },
   "motion_fly_flap_slow": {
    "bounds": [
     -122,
@@ -3404,38 +2220,6 @@
     0
    ]
   },
-  "motion_fly_hover": {
-   "bounds": [
-    -94,
-    -289,
-    86,
-    0
-   ]
-  },
-  "motion_fly_hover_curious": {
-   "bounds": [
-    -110,
-    -327,
-    106,
-    0
-   ]
-  },
-  "motion_fly_hover_tail": {
-   "bounds": [
-    -99,
-    -313,
-    105,
-    0
-   ]
-  },
-  "motion_fly_hover_hands": {
-   "bounds": [
-    -103,
-    -331,
-    106,
-    0
-   ]
-  },
   "motion_fly_land": {
    "bounds": [
     -132,
@@ -3449,38 +2233,6 @@
     -123,
     -282,
     126,
-    0
-   ]
-  },
-  "motion_fly_turn": {
-   "bounds": [
-    -99,
-    -308,
-    99,
-    2
-   ]
-  },
-  "motion_fly_turn_look": {
-   "bounds": [
-    -100,
-    -298,
-    89,
-    0
-   ]
-  },
-  "motion_fly_circle": {
-   "bounds": [
-    -100,
-    -302,
-    99,
-    0
-   ]
-  },
-  "motion_fly_circle_tucked": {
-   "bounds": [
-    -102,
-    -293,
-    90,
     0
    ]
   },
@@ -3594,38 +2346,6 @@
     -311,
     133,
     0
-   ]
-  },
-  "motion_floor_squat": {
-   "bounds": [
-    -107,
-    -287,
-    101,
-    0
-   ]
-  },
-  "motion_floor_kneel": {
-   "bounds": [
-    -123,
-    -259,
-    112,
-    0
-   ]
-  },
-  "motion_floor_balance": {
-   "bounds": [
-    -98,
-    -295,
-    83,
-    0
-   ]
-  },
-  "motion_floor_wings": {
-   "bounds": [
-    -111,
-    -287,
-    82,
-    -1
    ]
   },
   "motion_bottom_peek": {
@@ -4515,41 +3235,41 @@
   },
   "magic_daily_cola": {
    "bounds": [
-    -107,
-    -342,
-    94,
-    -1
+    -100,
+    -314,
+    82,
+    0
    ]
   },
   "magic_daily_roast": {
    "bounds": [
-    -108,
-    -337,
-    106,
-    -1
+    -107,
+    -306,
+    83,
+    0
    ]
   },
   "magic_daily_scarf": {
    "bounds": [
-    -106,
-    -316,
-    98,
-    -1
+    -111,
+    -301,
+    87,
+    0
    ]
   },
   "magic_daily_brush": {
    "bounds": [
-    -140,
-    -325,
-    88,
-    -1
+    -147,
+    -329,
+    100,
+    1
    ]
   },
   "magic_daily_mend": {
    "bounds": [
-    -108,
-    -311,
-    80,
+    -98,
+    -310,
+    79,
     0
    ]
   },
@@ -4559,6 +3279,110 @@
     -233,
     93,
     1
+   ]
+  },
+  "motion_fly_launch": {
+   "bounds": [
+    -165,
+    -312,
+    149,
+    0
+   ]
+  },
+  "weather_snow_catch": {
+   "bounds": [
+    -95,
+    -314,
+    88,
+    -1
+   ]
+  },
+  "weather_warm_hands": {
+   "bounds": [
+    -90,
+    -304,
+    83,
+    0
+   ]
+  },
+  "weather_heat_melt": {
+   "bounds": [
+    -97,
+    -230,
+    84,
+    0
+   ]
+  },
+  "weather_sunbask": {
+   "bounds": [
+    -117,
+    -239,
+    103,
+    0
+   ]
+  },
+  "edge_wall_lean": {
+   "bounds": [
+    -90,
+    -315,
+    85,
+    0
+   ]
+  },
+  "edge_knock": {
+   "bounds": [
+    -123,
+    -314,
+    84,
+    0
+   ]
+  },
+  "edge_bat_hang": {
+   "bounds": [
+    -92,
+    -255,
+    86,
+    0
+   ]
+  },
+  "cursor_tail_swat": {
+   "bounds": [
+    -128,
+    -316,
+    87,
+    -1
+   ]
+  },
+  "cursor_reach_up": {
+   "bounds": [
+    -121,
+    -354,
+    104,
+    0
+   ]
+  },
+  "cursor_poke": {
+   "bounds": [
+    -113,
+    -311,
+    85,
+    0
+   ]
+  },
+  "cursor_dizzy": {
+   "bounds": [
+    -94,
+    -282,
+    101,
+    -1
+   ]
+  },
+  "weather_wing_umbrella": {
+   "bounds": [
+    -108,
+    -311,
+    124,
+    0
    ]
   }
  },

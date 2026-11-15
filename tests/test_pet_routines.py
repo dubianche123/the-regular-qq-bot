@@ -34,7 +34,7 @@ def test_missing_story_and_recent_family():
 
 
 def test_quiet_filters_air_and_nonloops():
-    actions = {name: ACTIONS[name] for name in ("dragon_fire_toast", "motion_fly_hover", "life_laptop_type")}
+    actions = {name: ACTIONS[name] for name in ("dragon_magic_flower", "motion_fly_flap_slow", "life_laptop_type")}
     family, beats = choose_routine(random.Random(1), actions, quiet=True)
     assert family == "ambient:work"
     assert beats[0][0] == "life_laptop_type"
@@ -43,9 +43,9 @@ def test_quiet_filters_air_and_nonloops():
 
 def test_standalone_one_shot_remains_reachable():
     # A future adopted one-shot can still work in a folder without full scenes.
-    actions = {"new_toast": ACTIONS["dragon_fire_toast"]}
+    actions = {"new_flower": ACTIONS["dragon_magic_flower"]}
     assert choose_routine(random.Random(1), actions, mode="story") == (
-        "once:cooking", [("new_toast", None)])
+        "once:conjure", [("new_flower", None)])
 
 
 def test_activity_results_keep_the_game_and_have_win_loss_and_rematch_branches():

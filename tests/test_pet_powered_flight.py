@@ -35,15 +35,18 @@ def test_route_faces_its_destination_then_climbs_cruises_and_descends_diagonally
     with patch.object(b.rng, 'random', return_value=1):
         steps = b._flight_steps(0)
     assert b.facing == direction
-    assert b.repertoire.actions[steps[0].clip]['family'] == 'takeoff'
+    # Crouch and spread the wings on the ground, then push off: the lift frames open the climb.
+    assert b.repertoire.actions[steps[0].clip]['family'] in ('launch_crouch', 'takeoff')
     assert b.repertoire.actions[steps[-1].clip]['family'] == 'landing'
     travel = steps[1:-1]
+    assert [step.ease for step in travel] == ['launch', 'cruise', 'land']
     previous = (x, b.floor)
-    for step in travel:
+    for index, step in enumerate(travel):
         assert step.target_x is not None and step.target_y is not None
         assert (step.target_x - previous[0]) * direction > b.figure * .2
-        assert b.repertoire.actions[step.clip]['family'] == 'flap'
-        assert CLIPS[step.clip][3]
+        family = b.repertoire.actions[step.clip]['family']
+        assert family == 'flap' or (index == 0 and family == 'launch_lift')
+        assert CLIPS[step.clip][3] or family == 'launch_lift'
         previous = (step.target_x, step.target_y)
     assert travel[0].target_y < b.floor
     assert abs(travel[1].target_y - travel[0].target_y) < b.figure * .15
@@ -51,7 +54,7 @@ def test_route_faces_its_destination_then_climbs_cruises_and_descends_diagonally
     assert not any(step.duration is not None for step in steps)
 
 
-def test_same_wingbeat_keeps_its_frame_clock_across_all_three_route_segments():
+def test_cruise_and_descent_share_one_wingbeat_clock_after_a_quicker_climb():
     b = brain()
     with patch.object(b.rng, 'random', return_value=1):
         steps = b._flight_steps(0)
@@ -68,14 +71,15 @@ def test_same_wingbeat_keeps_its_frame_clock_across_all_three_route_segments():
             assert b.transform(now)['sx'] == b.transform(now)['sy'] == 1
     advance_until(b, lambda: b.clip == 'idle', each=collect)
     assert len(phase_clocks) == 3
-    assert len(set(phase_clocks.values())) == 1
+    climb, cruise, descent = (phase_clocks[key] for key in sorted(phase_clocks))
+    assert cruise == descent != climb             # quick beats to climb, then one unbroken slow beat
     assert frames == {0, 1, 2, 3}
     assert max(banks) > 5
     assert b.mode == 'ground' and b.y == b.floor
     assert b.transform(b._now)['rot'] == 0
 
 
-@pytest.mark.parametrize('clip', ['motion_fly_glide', 'life_reply_air_phone'])
+@pytest.mark.parametrize('clip', ['life_reply_air_phone'])
 def test_interrupting_static_air_art_uses_a_powered_return_then_lands(clip):
     b = brain()
     b.mode, b.y = 'fly', 500
@@ -99,9 +103,9 @@ def test_interrupting_static_air_art_uses_a_powered_return_then_lands(clip):
     assert b.mode == 'ground' and b.y == b.floor
 
 
-@pytest.mark.parametrize('clip', ['motion_fly_flap_slow', 'motion_fly_glide'])
+@pytest.mark.parametrize('clip', ['motion_fly_flap_slow'])
 @pytest.mark.parametrize('direction', [-1, 1])
-def test_banking_follows_actual_horizontal_motion_for_wingbeats_and_legacy_glide(clip, direction):
+def test_banking_follows_actual_horizontal_motion_for_wingbeats(clip, direction):
     b = brain()
     b.mode, b.y = 'fly', 500
     b._queue(Step(clip, target_x=b.x + direction * 150, target_y=450),
@@ -162,7 +166,7 @@ def test_too_little_room_keeps_the_pet_on_the_ground(width, height, scale):
 def test_return_uses_current_screen_and_does_not_reuse_an_old_floor():
     b = brain()
     b.mode, b.y = 'fly', 400
-    b._set_clip('motion_fly_glide', 0, restart=True)
+    b._set_clip('life_reply_air_phone', 0, restart=True)
     b._queue(Step('idle', 60), now=0, interrupt=True)
     b.set_ground(0, 900, 700, 30)
     b.scale = 1.5
@@ -211,7 +215,7 @@ def test_powered_routes_reach_before_contact_and_settle_after_without_restarting
         b._queue(*steps, Step('idle', 60), now=0, interrupt=True)
     elif entry == 'interrupt':
         b.mode, b.y = 'fly', 500
-        b._set_clip('motion_fly_glide', 0, restart=True)
+        b._set_clip('life_reply_air_phone', 0, restart=True)
         b.step = Step(b.clip, 60)
         b._queue(Step('idle', 60), now=0, interrupt=True)
     else:

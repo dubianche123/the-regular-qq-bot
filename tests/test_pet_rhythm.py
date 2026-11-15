@@ -88,8 +88,15 @@ def test_a_daytime_away_nap_still_ends_by_itself():
     b.observe(0.0, ready())
     b.owner_idle(0.0, 2 * OWNER_AWAY)
     b._queue(*b._nap_steps(0.0), now=0.0, interrupt=True)
-    t, _ = run(b, 0.0, OWNER_NAP + 60, idle=2 * OWNER_AWAY)
-    assert b.step is None or b.step.hold != "away"
+    run(b, 0.0, OWNER_NAP - 1, idle=2 * OWNER_AWAY)
+    nap = b.step
+    assert nap.hold == "away"
+    # She gets up once the nap is long enough (she may well nod off again later: you are still away).
+    t, woke = OWNER_NAP - 1, False
+    while t < OWNER_NAP + 60 and not woke:
+        t, _ = run(b, t, 1, idle=2 * OWNER_AWAY)
+        woke = b.step is not nap
+    assert woke
 
 
 def test_at_dawn_the_night_hold_gives_way():

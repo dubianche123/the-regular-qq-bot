@@ -189,7 +189,7 @@ class PanelPetPresenceTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status, 200)
             body = await response.json()
             self.assertEqual({k: v for k, v in body.items() if k not in ('care', 'effective_mood')},
-                             {'available': True, 'reason': '', 'qq_connected': False, **snapshot})
+                             {'available': True, 'reason': '', 'qq_connected': False, 'weather': None, **snapshot})
             self.assertEqual(body['care']['warmth'], 0)
             self.assertEqual(body['effective_mood'], .4)
             self.assertEqual(read.call_args.kwargs['since'], 12.5)

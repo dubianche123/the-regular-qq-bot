@@ -817,6 +817,79 @@ def _particle(painter, kind, figure, age, seed=0.0):
         painter.drawLine(QPointF(0, -s * 1.5), QPointF(0, s * 1.5))
         painter.drawLine(QPointF(-s * 0.7, -s * 0.4), QPointF(s * 0.7, -s * 0.4))
         return
+    if kind in ("frost", "snow"):
+        # A tiny six-armed crystal: pale blue breath, white falling snow.
+        s = size * (0.22 if kind == "frost" else 0.3) * (1.0 - (0.4 * age if kind == "frost" else 0.0))
+        pen = QPen(QColor(150, 205, 245, 235) if kind == "frost" else QColor(255, 255, 255, 240),
+                   max(1.0, s * 0.32), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.rotate(seed * 997 % 60 + age * (120 if kind == "frost" else 40))
+        for angle in (0, 60, 120):
+            painter.save()
+            painter.rotate(angle)
+            painter.drawLine(QPointF(-s, 0), QPointF(s, 0))
+            painter.restore()
+        if kind == "snow":
+            painter.setPen(QPen(QColor(150, 175, 210, 160), 0.8))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(0, 0), s * 0.35, s * 0.35)
+        return
+    if kind == "flame":
+        s = size * 0.42 * (1.0 - 0.5 * age)
+        path = QPainterPath()
+        path.moveTo(0, -s * 1.3)
+        path.cubicTo(s * 0.9, -s * 0.2, s * 0.6, s * 0.8, 0, s * 0.8)
+        path.cubicTo(-s * 0.6, s * 0.8, -s * 0.9, -s * 0.2, 0, -s * 1.3)
+        painter.fillPath(path, QColor(255, 140, 50, 230))
+        painter.scale(0.5, 0.55)
+        painter.translate(0, s * 0.5)
+        painter.fillPath(path, QColor(255, 225, 120, 240))
+        return
+    if kind in ("steam", "heat"):
+        # A soft rising wisp; heat is a warm-tinted shimmer line.
+        pen = QPen(QColor(255, 255, 255, round(190 * (1 - age))) if kind == "steam"
+                   else QColor(255, 170, 110, round(170 * (1 - age))),
+                   max(1.2, size * 0.09), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        s = size * (0.5 + 0.4 * age)
+        path = QPainterPath()
+        path.moveTo(0, s)
+        path.cubicTo(s * 0.45, s * 0.4, -s * 0.45, -s * 0.2, 0, -s * 0.8)
+        painter.drawPath(path)
+        return
+    if kind in ("drip", "rain"):
+        painter.setPen(Qt.PenStyle.NoPen)
+        if kind == "rain":
+            pen = QPen(QColor(105, 160, 225, 230), max(1.5, size * 0.11), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(0, -size * 0.7), QPointF(-size * 0.05, size * 0.1))
+            return
+        s = size * 0.2
+        path = QPainterPath()
+        path.moveTo(0, -s)
+        path.cubicTo(s * 0.9, 0, s * 0.7, s, 0, s)
+        path.cubicTo(-s * 0.7, s, -s * 0.9, 0, 0, -s)
+        painter.fillPath(path, QColor(120, 175, 235, 220))
+        return
+    if kind in ("violet", "gold"):
+        s = size * 0.3 * (1.0 - 0.5 * age)
+        color = QColor(178, 140, 240, 235) if kind == "violet" else QColor(246, 200, 76, 240)
+        path = QPainterPath()
+        path.moveTo(0, -s)
+        for a, b in ((s * .25, -s * .25), (s, 0), (s * .25, s * .25), (0, s), (-s * .25, s * .25), (-s, 0), (-s * .25, -s * .25)):
+            path.lineTo(a, b)
+        path.closeSubpath()
+        painter.fillPath(path, color)
+        return
+    if kind == "sun":
+        glow = QRadialGradient(QPointF(0, 0), size * 0.35)
+        glow.setColorAt(0, QColor(255, 236, 150, 200))
+        glow.setColorAt(1, QColor(255, 236, 150, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(glow)
+        painter.drawEllipse(QPointF(0, 0), size * 0.35, size * 0.35)
+        return
     if kind in ("z", "note", "!"):
         font = QFont()
         font.setBold(True)
@@ -1347,6 +1420,8 @@ class ProposalCard(_Card):
         if action["kind"] == "toggle":
             words = f"{'打开' if action['enabled'] else '关掉'}「{action['label']}」？"
             yes_text = "打开" if action["enabled"] else "关掉"
+        elif action["kind"] == "command":
+            words, yes_text = f"{action['label']}？", "好"
         else:
             words, yes_text = "这件事需要 Agent 帮忙，打开交接页？", "打开交接页"
         # Parent every child explicitly: a button first added to a loose layout stays Python-owned,
@@ -1705,7 +1780,9 @@ class PetWidget(QWidget):
                 self._place_voice()
         strip, frame, mirrored, transform = brain.pose()
         fade = transform["fade"]
+        # Breathing only repaints: it squashes her inside the current mask, so no mask rebuild.
         key = (strip, frame, mirrored, round(transform["sx"], 3), round(transform["sy"], 3),
+               round(transform.get("breath", 0.0), 3),
                round(transform["rot"], 1), round(transform["dy"], 1), brain.mode,
                _screen_clip(self, brain).getRect() if _screen_clipped(brain) else None,
                fade and (fade[0], fade[1], fade[2], round(fade[3], 2)), self.lift,
@@ -1815,7 +1892,7 @@ class PetWidget(QWidget):
             painter.translate(0, pivot)
             painter.rotate(transform["rot"])
             painter.translate(0, -pivot)
-        painter.scale(transform["sx"], transform["sy"])
+        painter.scale(transform["sx"], transform["sy"] * (1 - transform.get("breath", 0.0)))
         fade = transform["fade"]
         if fade is not None:
             # The outgoing pose stays fully opaque underneath; only the incoming one
@@ -2280,8 +2357,25 @@ class PetWidget(QWidget):
         if not self.csrf:
             self.brain.say("还没连上，开关没动。", now=self.now(), seconds=4)
             return
+        if action["kind"] == "command":
+            # Confirming runs the same slash command you could have typed (no model call).
+            csrf = self.csrf
+            self._submit("command", lambda: self.client.command(action["command"], csrf))
+            return
         csrf, self._pending_toggle = self.csrf, action
         self._submit("toggle", lambda: self.client.toggle(action["flag"], action["enabled"], csrf))
+
+    def apply_command(self, event):
+        """A slash command from either chat, for the pet's own settings and actions."""
+        now, name = self.now(), event.get("name")
+        if name in ("quiet", "motion") and type(event.get("enabled")) is bool:
+            (self.set_quiet if name == "quiet" else self.set_motion)(event["enabled"])
+        elif name == "scale" and type(event.get("value")) in (int, float):
+            self.set_scale(event["value"])
+        elif name == "magic":
+            self.brain.magic(now)
+        elif name == "next":
+            self.brain.next_activity(now)
 
     def open_panel(self, path):
         webbrowser.open(self.client.management_url(path))
@@ -2369,6 +2463,9 @@ class PetWidget(QWidget):
                 fresh = [e for e in events if not self.brain.has_seen(e)]
                 self.brain.observe(now, data)
                 for event in fresh:
+                    if event.get("kind") == "command":
+                        self.apply_command(event)
+                        continue
                     line = _ACTIVITY.get(event.get("kind"))
                     if event.get("kind") == "cue" and isinstance(event.get("text"), str) and event["text"]:
                         line = "Agent：" + event["text"][:60]
@@ -2398,6 +2495,11 @@ class PetWidget(QWidget):
                 self.brain.receive_care(now, value.get("care_event"))
             else:
                 self.brain.say("这次还没确认，连好后再看看。", now=now, seconds=3)
+        elif key == "command":
+            text = str(result.get("value") or "") if result["ok"] else result["message"]
+            if text:
+                self.brain.say(text[:120], now=now, seconds=6)
+                self._record(text[:80])
         elif key == "toggle":
             action, self._pending_toggle = self._pending_toggle or {}, None
             if self.proposal_card is not None:

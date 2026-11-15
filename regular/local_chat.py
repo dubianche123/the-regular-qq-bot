@@ -32,7 +32,7 @@ _INTERNAL = re.compile(r"<(CMD|DIGEST)(?:\s[^<>]*)?>.*?(?:</\1\s*>|$)", re.DOTAL
 # 只是提议：面板和桌宠把它画成确认卡，维护者点了才执行；这里从不执行。
 MANAGED = {"读图": "vision", "画图": "image", "动图": "gif", "听语音": "voice_input",
            "模型转写": "transcription", "发语音": "voice_output"}
-_PROPOSAL = re.compile(r"^[ \t]*[〔【\[［][ \t]*(开关|交给[ \t]*Agent)([^\r\n〔【\[［〕】\]］]*)[〕】\]］][ \t]*$",
+_PROPOSAL = re.compile(r"^[ \t]*[〔【\[［][ \t]*(开关|交给[ \t]*Agent|天气|桌宠)([^\r\n〔【\[［〕】\]］]*)[〕】\]］][ \t]*$",
                        re.MULTILINE | re.IGNORECASE)
 
 
@@ -105,7 +105,10 @@ def manage_reply(body):
                 and parts[1] in ("开", "关") and action is None):
             action = {"kind": "toggle", "flag": MANAGED[parts[0]], "label": parts[0],
                       "enabled": parts[1] == "开"}
-        elif match.group(1) != "开关" and not parts and action is None:
+        elif match.group(1) in ("天气", "桌宠") and action is None:
+            from regular.chat_commands import proposal_from
+            action = proposal_from(match.group(1) + " " + " ".join(parts))
+        elif match.group(1) not in ("开关", "天气", "桌宠") and not parts and action is None:
             action = {"kind": "handoff"}
     body = _PROPOSAL.sub("", body).strip()
     said = expression.parse(body)
@@ -113,6 +116,7 @@ def manage_reply(body):
         return text_reply(body), None
     if not body and action:
         body = ("要把这件事交给编码 Agent 吗？" if action["kind"] == "handoff"
+                else f"要{action['label']}吗？" if action["kind"] == "command"
                 else f"要把{action['label']}{'打开' if action['enabled'] else '关掉'}吗？")
     return text_reply(body) or "这句我先安静陪你。", action
 
@@ -123,6 +127,9 @@ def proposal(value):
         return None
     if value.get("kind") == "handoff":
         return {"kind": "handoff"}
+    if value.get("kind") == "command":
+        from regular.chat_commands import proposal_valid
+        return proposal_valid(value)
     names = {flag: label for label, flag in MANAGED.items()}
     if (value.get("kind") == "toggle" and isinstance(value.get("flag"), str)
             and value["flag"] in names and type(value.get("enabled")) is bool):

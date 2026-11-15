@@ -32,6 +32,7 @@ from aiohttp import web
 
 from regular import decision_settings
 from regular import instance_settings
+from regular import weather
 from regular.panel_runtime import PanelRuntime
 
 import knowledge as knowledge_mod
@@ -380,7 +381,24 @@ def _home_status(cfg, csrf, runner, groups, budget):
             f'<div class="wx-hero-action">{action}</div></div>{progress}{attention}</section>')
 
 
-def _dashboard(cfg, *, csrf="", runner=None):
+def _weather_section(cfg, csrf, notice=""):
+    """桌宠的天气联动：选一个城市，她按那里的天气挑应景的小动作。和她聊天时说「天气 杭州」也能改。"""
+    data = weather.load(cfg)
+    current = weather.describe(data)
+    place = data.get("place")
+    clear = (f'<form method="post" action="/weather/clear" class="wx-inline"><input type="hidden" name="csrf" '
+             f'value="{_esc(csrf)}"><button type="submit" class="secondary">关闭天气联动</button></form>') if place else ""
+    note = f'<p class="wx-notice" role="status">{_esc(notice)}</p>' if notice else ""
+    return (f'<section class="wx-section" id="weather" aria-label="桌宠天气联动"><div class="wx-section-head"><h2>桌宠 · 天气</h2></div>'
+            f'<p>{_esc(current)}</p>{note}'
+            f'<form method="post" action="/weather/save" class="wx-inline"><input type="hidden" name="csrf" value="{_esc(csrf)}">'
+            f'<label>城市 <input name="city" maxlength="{weather.MAX_CITY_CHARS}" placeholder="例如 杭州" '
+            f'value="{_esc((place or {}).get("name", ""))}"></label> <button type="submit">选这个城市</button></form>{clear}'
+            f'<p class="muted">下雨她会撑翅膀当伞，下雪接雪花，太热瘫一会儿再冰一杯可乐，太冷呵火暖手，晴天晒太阳。'
+            f'只向 Open-Meteo 发城市名和经纬度，最多半小时查一次。</p></section>')
+
+
+def _dashboard(cfg, *, csrf="", runner=None, notice=""):
     snapshot, state = _status(cfg)
     managed = runner.snapshot() if runner is not None else {}
     if runner is not None:
@@ -435,6 +453,7 @@ def _dashboard(cfg, *, csrf="", runner=None):
 {_home_status(cfg, csrf, runner, len(groups), budget)}
 {today}
 <section class="wx-section"><div class="wx-section-head"><h2>群里</h2><a href="/knowledge">群知识 →</a></div>{group_table}</section>
+{_weather_section(cfg, csrf, notice)}
 <details class="wx-disclosure wx-details-group"><summary>维护者才需要看的：日志、文件与版本</summary><h3>运行日志与版本</h3><p>当前版本：<code>{_esc(code.get('release') or '尚无运行记录')}</code></p><p>安装位置：<code>{_esc(code.get('source_root') or '—')}</code></p><h3>最近日志</h3><pre>{_esc(log or '暂无日志')}</pre>{startup}<h3>知识文件 · {len(files)} 份</h3>{knowledge_table}<a href="/knowledge">整理群知识 →</a></details>
 """
     return _page("概览", body, "home", cfg=cfg, refresh=5 if managed.get("owned") and managed.get("running")
@@ -1476,7 +1495,103 @@ def create_app(cfg, *, token):
         return response
 
     async def home(request):
-        return _html(_dashboard(cfg, csrf=csrf, runner=runner))
+        notice = {"saved": "已换好城市，她会照那里的天气过日子。", "cleared": "天气联动关了。",
+                  "missing": "没找到这个城市，换个写法试试（例如「杭州」或「Hangzhou」）。",
+                  "offline": "这会儿查不到天气服务，稍后再试。"}.get(request.query.get("weather", ""), "")
+        return _html(_dashboard(cfg, csrf=csrf, runner=runner, notice=notice))
+
+    weather_job = {"task": None}
+
+    def _weather_session():
+        import aiohttp
+        return aiohttp.ClientSession(trust_env=False)      # 直连，不继承网关代理
+
+    async def _refresh_weather():
+        try:
+            async with _weather_session() as session:
+                await weather.refresh(cfg, session)
+        finally:
+            weather_job["task"] = None
+
+    def _kick_weather():
+        """Presence polls drive the half-hourly refresh; at most one request in flight."""
+        if weather_job["task"] is None and weather.due(cfg):
+            import asyncio
+            weather_job["task"] = asyncio.get_running_loop().create_task(_refresh_weather())
+
+    async def set_weather_city(city):
+        """Shared by the panel form and the chat command: (ok, message)."""
+        try:
+            city = weather.city_text(city)
+            async with _weather_session() as session:
+                place = await weather.geocode(session, city)
+                if place is None:
+                    return False, "missing"
+                weather.save_place(cfg, place)
+                await weather.refresh(cfg, session)
+        except ValueError:
+            return False, "missing"
+        except Exception:
+            return False, "offline"
+        return True, weather.describe(weather.load(cfg))
+
+    async def run_command(command):
+        from regular import capabilities, chat_commands, presence
+        name = command["name"]
+        if name == "help":
+            return chat_commands.HELP
+        if name == "unknown":
+            return "不认识这个命令。\n" + chat_commands.HELP
+        if name == "weather":
+            if command.get("off"):
+                weather.clear(cfg)
+                return "天气联动关了。"
+            if not command.get("city"):
+                return "现在：" + weather.describe(weather.load(cfg)) + "。换城市：/天气 杭州；关掉：/天气 关"
+            ok, result = await set_weather_city(command["city"])
+            if ok:
+                return "好，照这里的天气过日子：" + result
+            return ("没找到这个城市，换个写法试试（例如「杭州」或「Hangzhou」）。" if result == "missing"
+                    else "这会儿查不到天气服务，稍后再试。")
+        if name == "toggle":
+            try:
+                capabilities.set_enabled(cfg, command["flag"], "true" if command["enabled"] else "false")
+            except (ValueError, OSError):
+                return f"「{command['label']}」这个开关没保存上，可以去「模型与能力」里再试。"
+            return (f"已{'打开' if command['enabled'] else '关掉'}「{command['label']}」。"
+                    + str(_cap_runtime(cfg, runner)[1] or ""))
+        if name == "status":
+            lines = [presence_payload().get("bot") == "ready" and "她在线。" or "她现在没连上 QQ。"]
+            try:
+                lines.append("今天：" + presence.render_day_summary(presence.day_summary(cfg)))
+            except Exception:
+                pass
+            current = capabilities.runtime_status(cfg)["enabled"]
+            from regular.local_chat import MANAGED
+            lines.append("能力：" + "、".join(f"{label}{'开' if current[flag] else '关'}" for label, flag in MANAGED.items()))
+            lines.append("天气：" + weather.describe(weather.load(cfg)))
+            return "\n".join(lines)
+        # The pet's own settings and actions travel to it as a command event on its next heartbeat.
+        cues.append({"kind": "command", "id": secrets.token_hex(6), "ts": round(time.time(), 3), **command})
+        return {"quiet": f"好，桌宠安静模式{'开' if command.get('enabled') else '关'}了。",
+                "motion": f"好，桌宠的动作和特效{'开' if command.get('enabled') else '关'}了。",
+                "scale": f"好，桌宠调到 {command.get('value', 1):g} 倍大。",
+                "magic": "让她变个魔法～", "next": "让她换个节目。"}[name]
+
+    async def weather_save(request):
+        form = await checked_form(request)
+        ok, result = await set_weather_city(form.get("city"))
+        if "application/json" in request.headers.get("Accept", ""):
+            return web.json_response({"ok": ok, "text": result if ok else None, "error": None if ok else result},
+                                     status=200 if ok else 400)
+        raise web.HTTPFound("/?weather=" + ("saved" if ok else result) + "#weather")
+
+    async def weather_clear(request):
+        await checked_form(request)
+        weather.clear(cfg)
+        if "application/json" in request.headers.get("Accept", ""):
+            return web.json_response({"ok": True})
+        raise web.HTTPFound("/?weather=cleared#weather")
 
     async def setup_page(request):
         if request.query.get("provider"):
@@ -1619,6 +1734,11 @@ def create_app(cfg, *, token):
         now = time.time()
         payload = {**companion_state(), **presence.snapshot(cfg, since=since, now=now, cues=cues)}
         payload["care"] = care.snapshot(now)
+        payload["weather"] = weather.snapshot(cfg, now)
+        try:
+            _kick_weather()
+        except RuntimeError:             # no running loop (direct calls in tests): the next poll refreshes
+            pass
         payload["effective_mood"] = round(max(-1.0, min(1.0,
             payload.get("mood", 0.0) + payload["care"]["warmth"])), 4)
         return payload
@@ -1676,6 +1796,11 @@ def create_app(cfg, *, token):
         text = str(form.get("text") or "").strip()
         if not text or len(text) > 2000:
             return web.json_response({"error": "请发送 1–2000 个字符。"}, status=400)
+        from regular import chat_commands
+        command = chat_commands.parse(text)
+        if command is not None:
+            # 斜杠命令不经过模型：控制台自己执行，桌宠的设置随心跳交给桌宠。
+            return web.json_response({"text": await run_command(command), "command": command["name"]})
         from regular.local_chat import LocalChatError, send_chat
         try:
             result = await send_chat(cfg, text, care=care.facts(time.time()))
@@ -1771,6 +1896,8 @@ def create_app(cfg, *, token):
     app.router.add_get("/search", search)
     app.router.add_get("/decision", decision)
     app.router.add_post("/decision/save", decision_save)
+    app.router.add_post("/weather/save", weather_save)
+    app.router.add_post("/weather/clear", weather_clear)
     app.on_cleanup.append(cleanup)
     return app
 

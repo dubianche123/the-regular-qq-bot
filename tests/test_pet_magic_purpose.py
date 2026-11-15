@@ -155,12 +155,13 @@ def test_recent_daily_magic_family_yields_to_another_complete_story(with_magic):
     assert family == "scene:daily_magic" and len(beats) == 1
 
 
+# 2026-11-15: six beats (want, ready, cast, works, enjoy, put away), not four slideshow poses.
 @pytest.mark.parametrize("name,dwell", [
-    ("magic_daily_cola", (1.25, 1.5, 1.75, 1.0)),
-    ("magic_daily_roast", (1.25, 1.75, 1.75, 1.0)),
-    ("magic_daily_scarf", (1.5, 1.75, 1.75, 1.0)),
-    ("magic_daily_brush", (1.5, 2.0, 1.5, 1.0)),
-    ("magic_daily_mend", (1.75, 2.0, 1.75, 1.0)),
+    ("magic_daily_cola", (1.25, 0.75, 0.75, 1.25, 1.25, 1.0)),
+    ("magic_daily_roast", (1.25, 0.75, 1.25, 1.0, 1.25, 1.0)),
+    ("magic_daily_scarf", (1.25, 0.75, 1.25, 1.0, 1.0, 1.0)),
+    ("magic_daily_brush", (1.25, 0.75, 1.5, 1.0, 1.0, 1.0)),
+    ("magic_daily_mend", (1.25, 0.75, 1.25, 1.0, 1.0, 1.0)),
 ])
 @pytest.mark.parametrize("entry", ["story", "manual"])
 def test_each_daily_performance_holds_its_beats_then_pauses(with_magic, name, dwell, entry):
@@ -186,7 +187,7 @@ def test_each_daily_performance_holds_its_beats_then_pauses(with_magic, name, dw
             seen.append(frame)
             starts.append(b._now)
         b.tick(round(b._now + 1 / 60, 9))
-    assert seen == [0, 1, 2, 3]
+    assert seen == [0, 1, 2, 3, 4, 5]
     elapsed = [end - start for start, end in zip(starts, [*starts[1:], b._now])]
     assert elapsed == pytest.approx(dwell, abs=1 / 60)
     assert b._now == pytest.approx(sum(dwell), abs=1 / 60)

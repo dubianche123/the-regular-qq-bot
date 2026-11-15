@@ -54,8 +54,8 @@ class SpritePlanTest(unittest.TestCase):
 
     def test_library_group_and_action_filters_cannot_expand_paid_scope(self):
         args = SimpleNamespace(stage="library", output="/unused/source", model=sprites.MODELS[0],
-                               group="life", only=["life_sleep_back", "motion_edge_peek"])
-        self.assertEqual(sprites.plan(args)["outputs"], ["life_sleep_back"])
+                               group="life", only=["life_sleep_hug_tail", "motion_edge_peek"])
+        self.assertEqual(sprites.plan(args)["outputs"], ["life_sleep_hug_tail"])
         args.prompt_file = "/unused/custom-prompt.txt"
         args.only = []
         with self.assertRaisesRegex(ValueError, "one selected action"):

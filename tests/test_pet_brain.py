@@ -604,7 +604,7 @@ class MotionRepertoireTest(unittest.TestCase):
                     break
                 frames.add(requested.pose()[1])
                 requested.tick((i + 1) * 0.1)
-            self.assertEqual(frames, {0, 1, 2, 3})
+            self.assertEqual(frames, set(CLIPS[clip][1]))
             self.assertEqual(requested.clip, "idle")
             self.assertEqual(requested.posture(), "stand")
 
@@ -964,9 +964,9 @@ class InteractionTest(unittest.TestCase):
             b.set_ground(0, 1440, 860, 0)
             b.place(700)
             b.mode, b.y = "fly", 500
-            b.step = Step("motion_fly_glide", target_x=700 + direction * 200, target_y=500)
+            b.step = Step("motion_fly_flap_slow", target_x=700 + direction * 200, target_y=500)
             b._move_origin, b._move_duration, b.step_started = (700, 500), 2, 0
-            b._set_clip("motion_fly_glide", 0, restart=True)
+            b._set_clip("motion_fly_flap_slow", 0, restart=True)
             self.assertAlmostEqual(b.transform(0)["rot"], 0)
             for frame in range(1, 61):
                 b._fly(frame / 60, 1 / 60)
