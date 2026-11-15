@@ -5,7 +5,8 @@ Stages (each request is one paid Images call, never retried):
   base    chibi desk-pet model sheet, using regular/assets/mascot.png as identity reference
   anchor  walk / wave / hop sheets, referencing the base only
   sheets  every other action sheet, referencing the base and the walk sheet (scale/style anchor)
-  faces   masked blink edits on the idle sheet; only the eye ellipse is composited back
+  faces   masked eye edits: blinks on the idle sheet; blinks and glances on the seated sheet
+          (sit_rest). Only the eye ellipse is composited back
   library motion / dragon / life catalogs, each action using its own pose reference
 
   python tools/pet_sprites.py generate --directory ~/the-regular --output /tmp/pet-src \
@@ -148,6 +149,16 @@ FACES = {
     "blink_half": "Change: both eyes are HALF CLOSED mid-blink: upper eyelids lowered to cover the top half of each lavender iris, relaxed expression.",
     "blink_closed": "Change: both eyes are FULLY CLOSED in a natural relaxed blink: gently curved closed eyelid lines with lashes, no iris or pupil visible.",
 }
+# Her still seated rest: the sit sheet's bottom-left figure (cell 2, legs forward, eyes open) gets the same
+# masked eye edits, so she can sit quietly, blink and glance at the cursor instead of swinging her legs nonstop.
+SIT_EYES = (228, 220, 368, 270)   # sit sheet, cell 2, cell coordinates
+SIT_FACE_EDIT = FACE_EDIT.replace("TOP-LEFT figure", "BOTTOM-LEFT figure (sitting on the floor, legs stretched forward)")
+SIT_FACES = {
+    "sit_blink_half": FACES["blink_half"],
+    "sit_blink_closed": FACES["blink_closed"],
+    "sit_glance_left": "Change: both eyes stay fully open with the same eyelid shape, but each lavender iris and pupil moves toward the viewer's LEFT side of its eye, a calm sideways glance at something on the left; same soft smile.",
+    "sit_glance_right": "Change: both eyes stay fully open with the same eyelid shape, but each lavender iris and pupil moves toward the viewer's RIGHT side of its eye, a calm sideways glance at something on the right; same soft smile.",
+}
 
 # Runtime strips: action -> (source sheet, cells, scale multiplier). Frame sequencing lives in regular/pet_brain.py.
 STRIPS = {
@@ -232,8 +243,10 @@ def _jobs(stage, out, model):
                  "prompt": spec.get("prompt_header", default_header) + "\nAction: " + spec["prompt"]}
                 for name, spec in ACTIONS.items()]
     if stage == "faces":
-        return [{"name": name, "refs": [out / "idle.png"], "mask": out / "eyes-mask.png", "size": "1024x1024",
-                 "model": model, "prompt": FACE_EDIT + "\n" + change} for name, change in FACES.items()]
+        return ([{"name": name, "refs": [out / "idle.png"], "mask": out / "eyes-mask.png", "size": "1024x1024",
+                  "model": model, "prompt": FACE_EDIT + "\n" + change} for name, change in FACES.items()]
+                + [{"name": name, "refs": [out / "sit.png"], "mask": out / "sit-eyes-mask.png", "size": "1024x1024",
+                    "model": model, "prompt": SIT_FACE_EDIT + "\n" + change} for name, change in SIT_FACES.items()])
     raise ValueError(stage)
 
 
@@ -282,9 +295,12 @@ async def generate(args):
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
     if args.stage == "faces":
-        mask = Image.new("RGBA", (1024, 1024), (0, 0, 0, 255))
-        ImageDraw.Draw(mask).ellipse((EYES[0] - 6, EYES[1] - 6, EYES[2] + 6, EYES[3] + 6), fill=(0, 0, 0, 0))
-        mask.save(out / "eyes-mask.png")
+        for filename, (x0, y0, x1, y1) in (("eyes-mask.png", EYES),
+                                           ("sit-eyes-mask.png", (SIT_EYES[0], SIT_EYES[1] + CELL,
+                                                                  SIT_EYES[2], SIT_EYES[3] + CELL))):
+            mask = Image.new("RGBA", (1024, 1024), (0, 0, 0, 255))
+            ImageDraw.Draw(mask).ellipse((x0 - 6, y0 - 6, x1 + 6, y1 + 6), fill=(0, 0, 0, 0))
+            mask.save(out / filename)
     jobs = _selected_jobs(args)
     semaphore = asyncio.Semaphore(args.parallel)
     transport = httpx.AsyncHTTPTransport(retries=0)
@@ -657,12 +673,72 @@ def build(args):
             manifest["geometry"][name]["rest_x"] = round(target_x - ANCHOR[0], 3)
         if rest is not None:
             manifest["geometry"][name]["rest_y"] = round((rest - source_y) * scale, 3)
+    if ((not args.only or "sit_rest" in args.only) and (source / "sit.png").is_file()
+            and all((source / f"{face}.png").is_file() for face in SIT_FACES)):
+        _sit_rest(source, out, manifest)
     (out / "sprites.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     size = sum(p.stat().st_size for p in out.glob("*.webp"))
     print(json.dumps({"actions": len(manifest["actions"]),
                       "frames": sum(a["frames"] for a in manifest["actions"].values()),
                       "bytes": size, "clipped": warnings}, ensure_ascii=False))
     return 0
+
+
+def _register(raw, target):
+    """Scale and offset that place a raw sheet cell onto a shipped frame, by the smallest pixel difference."""
+    from PIL import Image, ImageChops, ImageStat
+
+    def bbox(image):
+        return image.getchannel("A").point(lambda v: 255 if v > 40 else 0).getbbox()
+
+    raw_box, target_box = bbox(raw), bbox(target)
+    guess = (target_box[3] - target_box[1]) / (raw_box[3] - raw_box[1])
+    best = None
+    for step in range(-8, 9):
+        scale = guess + step * 0.0025
+        size = round(raw.width * scale)
+        scaled = raw.resize((size, size), Image.LANCZOS)
+        for dx in range(-3, 4):
+            for dy in range(-3, 4):
+                x = round(target_box[0] - raw_box[0] * scale) + dx
+                y = round(target_box[1] - raw_box[1] * scale) + dy
+                placed = Image.new("RGBA", target.size)
+                placed.paste(scaled, (x, y))
+                score = sum(ImageStat.Stat(ImageChops.difference(placed, target)).mean)
+                if best is None or score < best[0]:
+                    best = (score, scale, x, y)
+    return best[1:]
+
+
+def _sit_rest(source, out, manifest):
+    """Still seated rest: frame 1 of the shipped sit strip (legs forward, eyes open), then the masked eye edits
+    pasted onto that same frame through its own placement, so switching to sit_swing never jumps.
+    Frames: open, blink half, blink closed, glance left, glance right."""
+    from PIL import Image, ImageDraw, ImageFilter
+
+    with Image.open(out / manifest["actions"]["sit"]["file"]) as strip:
+        base = strip.convert("RGBA").crop((CANVAS[0], 0, 2 * CANVAS[0], CANVAS[1]))
+    with Image.open(source / "sit.png") as sheet:
+        raw = _cell(sheet.convert("RGBA"), 2)
+    scale, x, y = _register(raw, base)
+    size = round(CELL * scale)
+    eyes = Image.new("L", (CELL, CELL), 0)
+    ImageDraw.Draw(eyes).ellipse(SIT_EYES, fill=255)
+    mask = Image.new("L", CANVAS, 0)
+    mask.paste(eyes.filter(ImageFilter.GaussianBlur(5)).resize((size, size), Image.LANCZOS), (x, y))
+    frames = [base]
+    for face in SIT_FACES:
+        with Image.open(source / f"{face}.png") as sheet:
+            edited = _cell(sheet.convert("RGBA"), 2).resize((size, size), Image.LANCZOS)
+        placed = Image.new("RGBA", CANVAS)
+        placed.paste(edited, (x, y))
+        frames.append(Image.composite(placed, base, mask))
+    strip = Image.new("RGBA", (CANVAS[0] * len(frames), CANVAS[1]))
+    for index, frame in enumerate(frames):
+        strip.paste(frame, (index * CANVAS[0], 0))
+    strip.save(out / "sit_rest.webp", "WEBP", quality=86, alpha_quality=92, method=6)
+    manifest["actions"]["sit_rest"] = {"file": "sit_rest.webp", "frames": len(frames)}
+    manifest["geometry"]["sit_rest"] = dict(manifest["geometry"]["sit"])
 
 
 def calibrate(args):

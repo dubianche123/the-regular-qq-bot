@@ -1517,6 +1517,10 @@
   "magic_daily_mend": {
    "file": "magic_daily_mend.webp",
    "frames": 4
+  },
+  "sit_rest": {
+   "file": "sit_rest.webp",
+   "frames": 5
   }
  },
  "geometry": {
@@ -4547,6 +4551,14 @@
     -311,
     80,
     0
+   ]
+  },
+  "sit_rest": {
+   "bounds": [
+    -99,
+    -233,
+    93,
+    1
    ]
   }
  },
