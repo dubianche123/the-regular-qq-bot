@@ -673,6 +673,24 @@ def shadow_command(config, args):
     return 0
 
 
+def nightly_command(config, args):
+    """每晚汇总：昨天的体检、群友反应、影子回放拼成一页；--pet 让桌宠说一句。默认不调模型。"""
+    from regular import checkup as checkup_mod
+    from regular import nightly as nightly_mod
+    out = nightly_mod.run(config, day=checkup_mod.resolve_day(args.day) if args.day else None,
+                          allow_paid=args.allow_paid, write=not args.no_write)
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(out["line"])
+        if out.get("path"):
+            print(f"Page written to {out['path']}")
+    if args.pet:
+        from regular import desktop
+        desktop.cue(config, action=out["cue"], text=out["line"], port=args.port)   # 桌宠没开不算失败
+    return 0
+
+
 def tune_command(config, args):
     """离线调参：体检阈值/词表（靠标注）或旧账检索策略（靠检索用例）。只读、不联网、不调模型。"""
     from regular import tune as tune_mod
@@ -858,6 +876,14 @@ def main(argv=None):
     sh_judge.add_argument("--allow-paid", action="store_true", help="authorize real model requests and quota consumption")
     sh_judge.add_argument("--plan", action="store_true", help="print what would be sent where; no model calls")
     sh_judge.add_argument("--json", action="store_true")
+    ng = sub.add_parser("nightly", help="one page for yesterday: checkup, how the group reacted, shadow replay; read-only unless --allow-paid")
+    ng.add_argument("--day", help="YYYY-MM-DD, MM-DD or yesterday (default: yesterday)")
+    ng.add_argument("--allow-paid", action="store_true",
+                    help="also run pending shadow replays and the judge check (real model requests)")
+    ng.add_argument("--pet", action="store_true", help="ask the running desktop pet to say the one-line summary")
+    ng.add_argument("--port", type=int, default=8765, help="local settings service port for --pet (default: 8765)")
+    ng.add_argument("--no-write", action="store_true", help="print only; do not write data/nightly or data/checkups")
+    ng.add_argument("--json", action="store_true")
     tn = sub.add_parser("tune", help="read-only offline tuning for checkup thresholds or recall policy; no network or inference")
     tn.add_argument("target", choices=("checkup", "recall"), help="which local policy to tune")
     tn.add_argument("--cases", default="retrieve", help="recall: case selector (default: retrieve)")
@@ -903,6 +929,11 @@ def main(argv=None):
     svc = sub.add_parser("service", help="generate a launchd or systemd definition; never install or start it")
     svc.add_argument("kind", choices=("launchd", "systemd"))
     svc.add_argument("--output", required=True, help="path for the generated service definition")
+    svc.add_argument("--job", choices=("bot", "nightly"), default="bot",
+                     help="bot: the QQ runtime (default); nightly: the morning summary job (launchd only)")
+    svc.add_argument("--hour", type=int, default=9, help="nightly: hour of day to run (default: 9)")
+    svc.add_argument("--allow-paid", action="store_true",
+                     help="nightly: let the job run shadow replays and the judge check (real model requests every day)")
     dm = sub.add_parser("demo", help="offline interactive demo through the production message handler")
     dm.add_argument("messages", nargs="*", help="optional messages for a noninteractive demo")
     probe = sub.add_parser("probe", help="run an explicitly authorized paid research probe")
@@ -920,7 +951,11 @@ def main(argv=None):
             return asyncio.run(demo(args.messages))
         if args.command == "service":
             from regular.service import main as generate_service
-            return generate_service([args.kind, "--directory", args.directory, "--output", args.output])
+            options = [args.kind, "--directory", args.directory, "--output", args.output]
+            if args.job == "nightly":
+                options += ["--job", "nightly", "--hour", str(args.hour)]
+                options += ["--allow-paid"] if args.allow_paid else []
+            return generate_service(options)
         try:
             config = load_config(args.directory)
         except ImportError as error:
@@ -953,6 +988,8 @@ def main(argv=None):
                 return eval_command(config, args)
             except eval_mod.PaidEvaluationRequired as error:
                 parser.error(str(error))
+        if args.command == "nightly":
+            return nightly_command(config, args)
         if args.command == "shadow":
             from regular import eval as eval_mod
             try:

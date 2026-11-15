@@ -473,6 +473,7 @@ TURN_LOG_KEEP_DAYS = _env_int("TURN_LOG_KEEP_DAYS", 30)   # 0 = 永不清理
 CHECKUP_DIR = data_path("CHECKUP_DIR", "checkups")
 CASES_DIR = data_path("CASES_DIR", "cases")
 EVAL_DIR = data_path("EVAL_DIR", "evals")
+NIGHTLY_DIR = data_path("NIGHTLY_DIR", "nightly")   # 每晚汇总页（regular/nightly.py）
 SHADOW_DIR = data_path("SHADOW_DIR", "shadow")   # 影子回放的累计账与裁判核对（regular/shadow.py）
 # 体检信号与旧账检索的策略文件（docs/self-iteration.md「体检与检索策略的自迭代」）：
 # `regular tune` 离线搜出来、维护者 `regular policy apply` 才写进来；没有文件就用代码里的默认值。

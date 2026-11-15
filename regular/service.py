@@ -34,6 +34,28 @@ def launchd(directory, python):
     }
 
 
+def launchd_nightly(directory, python, *, hour=9, allow_paid=False):
+    """每天早上跑一次 `regular nightly --pet`。从源码目录跑：影子回放要用 git 检出受测版本。
+
+    allow_paid 为真时这个任务每天都会把前一天的真实群聊发给回复模型和裁判 ——
+    只有生成定义的人显式给了才写进去。
+    """
+    directory = Path(directory).expanduser().resolve()
+    code = Path(__file__).resolve().parent.parent
+    arguments = [str(Path(python).expanduser().absolute()), "-m", "regular",
+                 "--directory", str(directory), "nightly", "--pet"]
+    return {
+        "Label": LABEL + ".nightly",
+        "ProgramArguments": arguments + (["--allow-paid"] if allow_paid else []),
+        "WorkingDirectory": str(code),
+        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1", "PATH": _service_path(),
+                                 "PYTHONPATH": str(code)},
+        "StartCalendarInterval": {"Hour": int(hour), "Minute": 0},
+        "StandardOutPath": str(directory / "data" / "nightly.log"),
+        "StandardErrorPath": str(directory / "data" / "nightly.log"),
+    }
+
+
 def _systemd_quote(value):
     # systemd's documented quoted string escaping; no shell or XML substitution.
     return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('\n', '\\n') + '"'
@@ -70,13 +92,21 @@ def main(argv=None):
     parser.add_argument("--directory", default=str(Path.cwd()))
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--job", choices=("bot", "nightly"), default="bot")
+    parser.add_argument("--hour", type=int, default=9)
+    parser.add_argument("--allow-paid", action="store_true")
     args = parser.parse_args(argv)
+    if args.job == "nightly" and (args.kind != "launchd" or not 0 <= args.hour <= 23):
+        parser.error("the nightly job is generated for launchd only, with --hour between 0 and 23")
     output = Path(args.output).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     if args.kind == "launchd":
         (Path(args.directory).expanduser().resolve() / "data").mkdir(parents=True, exist_ok=True)
+        definition = (launchd_nightly(args.directory, args.python, hour=args.hour,
+                                      allow_paid=args.allow_paid)
+                      if args.job == "nightly" else launchd(args.directory, args.python))
         with output.open("wb") as stream:
-            plistlib.dump(launchd(args.directory, args.python), stream, sort_keys=False)
+            plistlib.dump(definition, stream, sort_keys=False)
     else:
         output.write_text(systemd(args.directory, args.python), encoding="utf-8")
     print(f"Generated {output}; not installed or started.")
