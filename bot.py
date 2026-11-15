@@ -85,9 +85,12 @@ def setup_logging():
     file_handler.setFormatter(fmt)
     root.addHandler(file_handler)
 
-    stream = logging.StreamHandler(sys.stdout)
-    stream.setFormatter(fmt)
-    root.addHandler(stream)
+    # 前台运行时同时打到终端；作为服务时 stdout 是 launchd 的 service.log，那个文件不轮转，
+    # 再抄一份就成了一份永不清理的日志副本。服务模式下 service.log 只留启动错误和崩溃栈。
+    if sys.stdout.isatty():
+        stream = logging.StreamHandler(sys.stdout)
+        stream.setFormatter(fmt)
+        root.addHandler(stream)
 
 
 def patch_aiohttp_ssl():
@@ -3251,7 +3254,7 @@ async def post_to_group(group_id, text, *, model_generated=False, history=(), tu
         if not sent:
             journal("unconfirmed", reason="empty receipt")
             return False
-        logger.info("📢 [主动发言] 群 %s | %s", group_id[-6:], text.replace("\n", " ")[:150])
+        logger.info("📢 [主动发言] 群 %s | %d 字", group_id[-6:], len(text))
         _remember_sent(group_id, sent, text)
         _note_own_line(group_id, text, user=member)
         # 确认送达的模型生成群发才登记反馈缓存：静态模式播报/本地文案不算。
@@ -3549,7 +3552,8 @@ def _receive(message, is_at, robot):
             (quoted or {}).get("text") or scene.get("quoted"))
     heard = quote_note + user_input
 
-    logger.info("📩 [%s] %s | %s", "@艾特" if is_at else "群消息", sender_openid, heard)
+    # 原话只进带保留期的归档（archive/）；日志只记来了一条、多长，免得聊天原文在日志里永不过期。
+    logger.info("📩 [%s] %s | %d 字", "@艾特" if is_at else "群消息", sender_openid, len(heard))
     return GroupTurn(
         message=message, group_id=group_id, sender_openid=sender_openid,
         receipt_time=receipt_time, session_at_receipt=session_at_receipt,

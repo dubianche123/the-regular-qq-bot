@@ -241,7 +241,7 @@ Explore the full message flow diagrams, Decisions calibration data, self-iterati
 ### Practical Notes
 
 - **Predictable quotas**: Set independent daily call limits per capability in the workbench so banter never burns through your budget.
-- **Local-first privacy**: Credentials, state ledgers, and logs stay on your machine under `~/.the-regular` with the workbench bound to `127.0.0.1`. For 24/7 operation, see [persistent operation](docs/getting-started.md#以后如何再打开).
+- **Local-first privacy**: Credentials, state ledgers, and logs stay on your machine under `~/.the-regular`, created readable by you only; raw chat lives only in the retention-limited archive, and logs record counts and lengths. The workbench binds to `127.0.0.1`. For 24/7 operation, see [persistent operation](docs/getting-started.md#以后如何再打开).
 - **Customizable identity**: The original dragon-girl mascot, name, persona, and sprite repertoire can be customized freely ([Visual identity & prompts](docs/visual-identity.md) · [Pet repertoire guide](docs/pet-repertoire.md)).
 
 [Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)

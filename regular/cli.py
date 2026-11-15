@@ -872,6 +872,8 @@ def main(argv=None):
     probe.add_argument("name", help="file stem in tests/probes, e.g. probe_cache")
     probe.add_argument("--allow-paid", action="store_true", help="authorize real model requests and quota consumption")
     args = parser.parse_args(argv)
+    # 实例里几乎都是群聊原文、密钥和账本：本进程新建的文件和目录只给本人读写。
+    os.umask(0o077)
     if args.command is None:
         args.command, args.port, args.browser = "pet", 8765, False
     try:

@@ -129,8 +129,7 @@ class Sender:
         result = DeliveryResult("delivered", item.text, receipt, fallback=item.fallback)
         self.last_status = result.status
         self.last_delivery_at = self.clock()
-        logger.info("📤 [已送达%s] %s", "·引用" if item.quote else "",
-                    item.text.replace("\n", " ")[:120])
+        logger.info("📤 [已送达%s] %d 字", "·引用" if item.quote else "", len(item.text))
         # 观察记录先于业务回调落账：异步/卡住的 on_delivered 不许拖延
         # 「已送达」进入索引，否则随后赶到的显式反馈会找不到刚送达的回复。
         self._observe(item, result)

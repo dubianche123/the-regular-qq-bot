@@ -29,6 +29,7 @@ def launchd(directory, python):
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 10,
+        "Umask": 0o077,
         "StandardOutPath": str(directory / "data" / "service.log"),
         "StandardErrorPath": str(directory / "data" / "service.log"),
     }
@@ -51,6 +52,7 @@ def launchd_nightly(directory, python, *, hour=9, allow_paid=False):
         "EnvironmentVariables": {"PYTHONUNBUFFERED": "1", "PATH": _service_path(),
                                  "PYTHONPATH": str(code)},
         "StartCalendarInterval": {"Hour": int(hour), "Minute": 0},
+        "Umask": 0o077,
         "StandardOutPath": str(directory / "data" / "nightly.log"),
         "StandardErrorPath": str(directory / "data" / "nightly.log"),
     }

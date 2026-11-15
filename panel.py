@@ -1901,7 +1901,9 @@ def run(cfg, *, host="127.0.0.1", port=8765, open_browser=False):
     app = create_app(cfg, token=token)
     display_host = f"[{host}]" if ":" in host else host
     url = f"http://{display_host}:{int(port)}/?token={token}"
-    print(f"Panel: {url}")
+    # 带 token 的地址只给终端前的人看；被桌宠或服务拉起时 stdout 是日志文件，不把钥匙写进去。
+    print(f"Panel: {url}" if sys.stdout.isatty() else
+          f"Panel: http://{display_host}:{int(port)}/ (token in data/{TOKEN_FILE})")
     print("Local only. Press Ctrl+C to stop.")
     if open_browser:
         webbrowser.open(url)
