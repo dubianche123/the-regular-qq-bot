@@ -879,8 +879,8 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
     返回 (正文, 情感分值或 None)。分值为 None 表示这次没拿到模型给的记账标签（协议关了，
     或者它没写/写坏了），调用方退回本地词表（见 config.CMD_PROTOCOL_ENABLED，默认开着）。
 
-    owner_label 是群里对群主的称呼（档案里认领的那个，没认领就是通用词）。它只在
-    人设里出现「别总提群主」这类句子里，对**同一个群**是常数，所以不影响下面这条不变量。
+    owner_label 是群里对群主的称呼（档案里认领的那个，没认领就是通用词）。2026-11-16 起它不进稳定头：
+    群主本人在说话（PROMPT_OWNER_NOTE），或者眼前这句提到了他（PROMPT_OWNER_FACT），才进本轮动态层。
 
     提示词按「越稳定越靠前」排列，这是给前缀缓存让路（实测命中率 85% → 98%）：
         1) 稳定头   角色 + 记账口径 + 协议，与「谁在说、说到第几句」全无关 → 全群全天共享
@@ -926,6 +926,17 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
             bits.append(prompts.PROMPT_QUIP_NOTE.strip())
         if context_hint:
             bits.append("【群聊最近背景】\n" + context_hint)
+        # 按需出现的材料（prompts.py「按需出现的材料」）：眼前这句和背景里提到了才给，没提到就看不见。
+        seen = f"{context_hint}\n{user_text}"
+        if not back_off:
+            game = prompts.game_note(seen)
+            if game:
+                bits.append(game)
+        # 群主是谁只看眼前这句提没提到：背景里每句都标着发言人，群主一说话他的名字就在背景里，
+        # 拿背景来比，三成的轮次都会被交代一遍「这是群主」（11-09~11-16 的 192 轮回放）。
+        if (not is_owner and owner_label and owner_label != naming.DEFAULT_OWNER_LABEL
+                and (owner_label in user_text or naming.DEFAULT_OWNER_LABEL in user_text)):
+            bits.append(prompts.PROMPT_OWNER_FACT.format(owner=owner_label))
         if timeline_note:
             bits.append(timeline_note)
         if search_action_note:
@@ -998,12 +1009,14 @@ async def get_ai_reply(session_id, user_text, is_owner=False,
         max_tokens = (config.AI_MAX_TOKENS_BANTER if unprompted or quip
                       else config.AI_MAX_TOKENS)
 
-        # 没叫它的那句换个框送进去（PROMPT_UNPROMPTED_LINE）；会话里记的仍是原话
+        # 没叫它的那句换个框送进去（PROMPT_UNPROMPTED_LINE）；会话里记的仍是原话。
+        # 也不附这个人的会话记录（2026-11-16）：插话的由头只该从眼前这句和群聊背景里找，
+        # 背景里本来就有它自己刚说的话；以前附着会话记录，再在 PROMPT_BANTER_NOTE 里写「不许翻」。
         messages = runtime.SESSIONS.build_messages(
             session_id, head,
             prompts.PROMPT_UNPROMPTED_LINE.format(text=user_text) if unprompted else user_text,
             memory_block=group_memory, turn_context=turn_context,
-            history_snapshot=history_snapshot,
+            history_snapshot=[] if unprompted else history_snapshot,
         )
         # 对话一律走对话梯队：不为「插嘴」单独换模型，那会让同一个角色在不同路径上表现不一致
         raw = await call_model(messages, max_tokens)
@@ -4091,7 +4104,9 @@ async def _plan_scene(turn):
                 selected=False, reason="image_unread")
             return False
         else:
-            user_text += "\n（这张图你没看；没人问你，别提它。）"
+            # 没人问、又没读成的图：去掉标记，它就不知道这里有张图（2026-11-16）。以前留着标记，
+            # 再补一句「这张图你没看；没人问你，别提它」。
+            user_text = user_text.replace("[图片]", "").strip()
 
     # 回的是哪句拼到前面（指令都在上面认完了，这一截碍不着它们）
     user_text = quote_note + user_text

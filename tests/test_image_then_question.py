@@ -164,7 +164,10 @@ class ImageThenQuestionTest(unittest.IsolatedAsyncioTestCase):
         self._cooled_down()
         await self._drive("哈哈哈这个", image=URL)
         self.assertEqual(len(self.unprompted), 1)
-        self.assertIn("这张图你没看；没人问你，别提它", self.unprompted[0])
+        # 2026-11-16：不再留着标记再叫它别提，而是直接看不见这张图
+        self.assertTrue(self.unprompted[0].endswith("哈哈哈这个"))
+        self.assertNotIn("[图片]", self.unprompted[0].rsplit("【群里刚冒出来的一句", 1)[-1])
+        self.assertNotIn("这张图你没看", self.unprompted[0])
 
     async def test_own_image_stays_in_background_past_the_turn_limit(self):
         """2026-11-02 21:05：生人发图，中间别人插了两句，再问「这张怎么样」——亲密度只给

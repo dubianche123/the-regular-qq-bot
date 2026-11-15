@@ -173,6 +173,8 @@ Small-scale checks so far: the same version against itself, 4 cases with 4 sampl
 | --- | --- |
 | State has provenance | names, relationships, promises, mood, quotas and jobs stay code-owned; personal quotes bind verbatim to the archive and enter context only when relevant, at most two |
 | Context has an order | stable head → daily memory → session history → current turn; person- and turn-dependent content goes last |
+| She sees what she needs | Material appears on demand: game references and who the owner is enter the current turn only when they come up; unprompted turns carry no session history; an unread image loses its marker. Nothing is shown first and then guarded by a "don't mention" rule |
+| One speaker per group | Only one turn writes and sends at a time (`turntaking.py`): owed replies first, an unprompted remark yields to someone calling her, and the later reply sees the earlier one |
 | Calls are bounded | SDK auto-retry is off; explicit candidates, attempt caps, request/turn timeouts and global/per-feature daily budgets |
 | Evidence has a boundary | explicit, single-step tools; search reads titles, snippets and links only; outside material is wrapped as untrusted evidence |
 | Privacy and output checks | no openids or group IDs in model context or replies; memory, archive and knowledge exports pass the sensitive-word check; the panel binds only to 127.0.0.1 |

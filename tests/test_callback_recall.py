@@ -135,15 +135,13 @@ class ConsiderCallbackTest(unittest.IsolatedAsyncioTestCase):
 class PromptWiringTest(unittest.TestCase):
     """材料给了却用不上等于没做：插嘴说明必须真的开那条缝。"""
 
-    def test_default_banter_note_still_forbids_digging(self):
-        self.assertIn("不许翻", prompts.PROMPT_BANTER_NOTE)
+    def test_default_banter_note_is_just_the_decision(self):
+        # 2026-11-16：插话那轮不再附会话记录，也就不用再写「旧事不许翻」（bot.get_ai_reply）
+        self.assertEqual(prompts.PROMPT_BANTER_NOTE, prompts._BANTER_DECIDE)
 
     def test_callback_note_opens_exactly_one_exception(self):
         note = prompts.PROMPT_BANTER_CALLBACK_NOTE
-        self.assertIn("例外", note)
         self.assertIn("个人原话", note)
-        # 只开一条缝：其余旧事照旧不许翻
-        self.assertIn("其他旧事照旧不许翻", note)
         # 仍然不许端着说「我记得你以前」
         self.assertIn("我记得你以前", note)
 

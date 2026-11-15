@@ -32,6 +32,9 @@ G = "GID_WHEN"
 A = "USER_WHEN_A"
 B = "USER_WHEN_B"
 QUOTE = "我只喝手冲，速溶那种不算咖啡"
+# 插话说明的两个版本：普通的只有「接不接你自己定」，开了「居然记得」的多一句【个人原话】那条
+BANTER_LINE = "接不接你自己定"
+CALLBACK_LINE = "【个人原话】里那一句"
 
 
 class _Recorder(interactions.InteractionLog):
@@ -320,7 +323,7 @@ class CallbackRecallWiredTest(_Base):
         layer = self._last_prompt()
         self.assertIn(QUOTE, layer)
         # 必须换成开了例外的那段说明，否则材料给了也用不上
-        self.assertIn("其他旧事照旧不许翻", layer)
+        self.assertIn(CALLBACK_LINE, layer)
         self.assertTrue(self.log.gates()[-1]["callback"])
         self.assertFalse(self.receptive.callback_allowed(G, A))
 
@@ -333,7 +336,8 @@ class CallbackRecallWiredTest(_Base):
         await self._unprompted([self._callback_body("hold_it")])
         layer = self._last_prompt()
         self.assertNotIn(QUOTE, layer)
-        self.assertIn("不许翻", layer)
+        self.assertIn(BANTER_LINE, layer)
+        self.assertNotIn(CALLBACK_LINE, layer)
         self.assertFalse(self.log.gates()[-1]["callback"])
         # 判断说「先别」不消耗额度
         self.assertTrue(self.receptive.callback_allowed(G, A))
@@ -354,7 +358,8 @@ class CallbackRecallWiredTest(_Base):
         with patch.object(config, "DECISION_CALLBACK_ENABLED", False):
             await self._unprompted([])
         self.assertNotIn(QUOTE, self._last_prompt())
-        self.assertIn("不许翻", self._last_prompt())
+        self.assertIn(BANTER_LINE, self._last_prompt())
+        self.assertNotIn(CALLBACK_LINE, self._last_prompt())
 
 
 class InjectionGateTest(unittest.IsolatedAsyncioTestCase):
@@ -379,7 +384,17 @@ class InjectionGateTest(unittest.IsolatedAsyncioTestCase):
     async def test_unprompted_with_approval_keeps_it(self):
         layer = await self._bits(unprompted=True, callback_approved=True)
         self.assertIn(QUOTE, layer)
-        self.assertIn("其他旧事照旧不许翻", layer)
+        self.assertIn(CALLBACK_LINE, layer)
+
+    async def test_unprompted_turn_does_not_carry_the_session_history(self):
+        """插话只看眼前这句和群聊背景（2026-11-16）：以前附着会话记录，再在说明里写「不许翻」。"""
+        sessions = storage.SessionStore()
+        sessions.record("sid-inject", "上周那个旧梗", "旧梗的回答")
+        with patch.object(runtime, "SESSIONS", sessions):
+            banter = await self._bits(unprompted=True)
+            direct = await self._bits()
+        self.assertNotIn("上周那个旧梗", banter)
+        self.assertIn("上周那个旧梗", direct)
 
     async def test_approval_does_not_override_a_back_off(self):
         """对方正在喊停时，获批的回忆也不许端出来。"""
