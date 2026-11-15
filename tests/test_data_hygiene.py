@@ -34,11 +34,15 @@ class LogContentTest(unittest.IsolatedAsyncioTestCase):
     def test_service_mode_does_not_copy_the_log_into_stdout(self):
         root = logging.getLogger()
         before = list(root.handlers)
+        # botpy 一 import 就 basicConfig()，根 logger 上会先有一个打到 stderr 的控制台 handler
+        console = logging.StreamHandler()
+        root.addHandler(console)
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(config, "LOG_FILE", os.path.join(tmp, "bot.log")), \
                 patch("sys.stdout.isatty", return_value=False):
             try:
                 bot.setup_logging()
+                self.assertNotIn(console, root.handlers, "service.log 不该再收到一份日志")
                 added = [h for h in root.handlers if h not in before]
                 self.assertEqual([type(h).__name__ for h in added], ["RotatingFileHandler"])
             finally:
@@ -46,6 +50,9 @@ class LogContentTest(unittest.IsolatedAsyncioTestCase):
                     if handler not in before:
                         root.removeHandler(handler)
                         handler.close()
+                for handler in before:
+                    if handler not in root.handlers:
+                        root.addHandler(handler)
 
 
 class PrivateFilesTest(unittest.TestCase):

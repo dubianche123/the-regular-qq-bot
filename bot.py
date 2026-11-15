@@ -70,6 +70,12 @@ def setup_logging():
     os.makedirs(os.path.dirname(config.LOG_FILE), exist_ok=True)
     root = logging.getLogger()
     root.setLevel(config.LOG_LEVEL)
+    # botpy 一 import 就 logging.basicConfig()，在根 logger 上挂了一个打到 stderr 的控制台 handler：
+    # 作为服务时 stderr 也是 launchd 的 service.log，每一行日志都会多抄一份进那个不轮转的文件
+    # （2026-11-16 清空以后照样在长）。终端输出由下面自己的 handler 管，这个摘掉。
+    for handler in list(root.handlers):
+        if type(handler) is logging.StreamHandler:
+            root.removeHandler(handler)
     # botpy DEBUG includes raw gateway events, including signed media URLs and ASR.
     sdk_logger = logging.getLogger("botpy")
     if sdk_logger.getEffectiveLevel() < logging.INFO:
