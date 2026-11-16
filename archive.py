@@ -527,7 +527,7 @@ class MessageArchive:
     def rename_in_memory_files(self, group_id, old, new):
         """把本群所有「每日 MD」里的旧称呼改掉，返回改动的文件数。
 
-        这些 MD 是「群史记」命令直接发到群里的正文，留着旧名同样会让人一头雾水。
+        这些 MD 就是面板上的小本本，留着旧名同样会让人一头雾水。
         原始归档（archive/*.jsonl）是查证底稿，一个字都不动。
         """
         old = (old or "").strip()

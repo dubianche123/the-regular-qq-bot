@@ -1653,7 +1653,7 @@ async def _reply_reminder(rt):
 
 
 async def _reply_deliver(rt):
-    """投递与落账：语音、图、文字三种发法；确认送达了才记进会话、留查询证据、消费里程碑（commit）。"""
+    """投递与落账：语音、图、文字三种发法；确认送达了才记进会话、留查询证据（commit）。"""
     message, session_id, user_text, context = rt.message, rt.session_id, rt.user_text, rt.context
     history, trace, media, generation = rt.history, rt.trace, rt.media, rt.generation
     on_delivered, owner_hint_group, is_stale, received_at = rt.on_delivered, rt.owner_hint_group, rt.is_stale, rt.received_at

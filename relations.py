@@ -92,32 +92,6 @@ def level_label(key):
     return LEVELS[0][2]
 
 
-
-
-
-# 档位从低到高的顺序，用来比较「升了还是降了」
-LEVEL_ORDER = tuple(k for _, k, _ in LEVELS)
-
-
-def tier_of(value):
-    """把一个里程碑端点归一成档位名。
-
-    ⚠️ 存过两种格式：早期写的是档位名（"familiar"），现在写的是分数（7）。
-    老档里还有上一版留下的，读的时候都得认 —— 谁也不许在这崩。
-    """
-    if isinstance(value, str):
-        return value if value in LEVEL_ORDER else LEVEL_ORDER[0]
-    try:
-        return level_key(int(value))
-    except (TypeError, ValueError):
-        return level_key(0)
-
-
-def tier_rank(value):
-    """档位高低，用来判断里程碑是往熟了走还是往生分走。"""
-    return LEVEL_ORDER.index(tier_of(value))
-
-
 def clamp_delta(delta):
     return max(DELTA_MIN, min(DELTA_MAX, int(delta)))
 
@@ -251,7 +225,6 @@ class RelationStore:
                 "first_seen": float(rec.get("first_seen") or time.time()),
                 "last_seen": float(rec.get("last_seen") or 0),
                 "interactions": int(rec.get("interactions") or 0),
-                "pending_milestone": rec.get("pending_milestone"),
                 "told_day": str(rec.get("told_day") or ""),
                 "decay_steps": max(0, int(rec.get("decay_steps") or 0)),
             })
@@ -272,7 +245,7 @@ class RelationStore:
             now = time.time()
             rec = {
                 "score": 0, "nick": None, "first_seen": now, "last_seen": 0.0,
-                "interactions": 0, "pending_milestone": None,
+                "interactions": 0,
             }
             self.records[k] = rec
         if rec is not None:

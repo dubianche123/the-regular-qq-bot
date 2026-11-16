@@ -40,7 +40,7 @@ class DemoSession:
                     return '离线演示：群友在试用称呼、关系和本地指令。<DIGEST>' + json.dumps({
                         "topics": ["离线体验"], "people": [], "memes": [],
                         "promises": [], "affinity": []}, ensure_ascii=False) + '</DIGEST>'
-                return '（离线演示）在呢。称呼、骰子、模式和查档走的都是真正的本地处理器。<CMD>{"aff":0}</CMD>'
+                return '（离线演示）在呢。这句是写死的；「叫我阿强」这类改称呼走的是真正的本地处理器。'
             self.stack.enter_context(patch.object(bot, "call_model", fake_model))
             self.client = SimpleNamespace(robot=SimpleNamespace(id="demo-bot", name="老群友"))
             return self
