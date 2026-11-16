@@ -83,8 +83,8 @@ With the default official OpenAI setup, chat, judgment, vision, drawing, voice, 
 </details>
 
 Three things shape the everyday group experience:
-- **Conversation with room for others.** No slash commands required. She considers conversational turn-taking before chiming in, and respects quiet time whenever someone asks her to chill.
-- **Continuity between conversations.** Local deterministic code tracks nicknames, rapport scores, and source-backed quotes alongside her own delivered messages—linking back to original lines when revisiting older topics.
+- **Conversation with room for others.** No slash commands required. She considers conversational turn-taking before chiming in, and respects quiet time whenever someone asks her to chill. When two people call her back to back, she answers one at a time and the second reply knows what the first one said.
+- **Continuity between conversations.** Local deterministic code tracks nicknames, rapport scores, and source-backed quotes alongside her own delivered messages—linking back to original lines when revisiting older topics. Rapport shapes how she talks to someone, not how much of the chat she gets to see.
 - **A built-in loop to fix what feels off.** Your Coding Agent can turn *"why did she miss that?"* or *"why did she answer the wrong person?"* into a replayable regression case and benchmark a proposed fix against the current version.
 
 ---
@@ -180,7 +180,7 @@ After installing dependencies, run:
 .venv/bin/python -m regular demo
 ```
 
-Runs 100% offline with zero model calls so you can explore message routing, rapport ledgers, and local commands.
+Runs 100% offline with zero model calls: messages go through the production handler, local commands such as `叫我阿强` (call me A-Qiang) work for real, and replies come from a fixed offline fake model.
 
 </details>
 
@@ -231,8 +231,9 @@ Expand *Chat* to choose Zhipu GLM, Gemini, or another compatible endpoint; capab
 
 Beneath the 240+ action desktop dragon-girl and friendly group regular is a compact **Agent Harness** engineered around deterministic state boundaries, prefix-cache economics, and regression-proof self-evolution:
 
-- **⚡ 0.71s Closed-Set Judgment Layer (`Decisions API / Jev`)**: Replaces brittle regex rules and costly full-LLM `SKIP` calls with ultra-cheap (~0.1 USD / 1M tokens) closed-set Decisions API checks for intent triage, back-off detection, memory recall, and reminder screening while the chat model focuses on writing replies; [908 historical triage calls recorded a 0.71-second median latency](docs/judgment-layer.md).
-- **🧱 Four-Layer Context Layout for Prefix Caching**: Structured strictly as `Stable Instructions → Daily Memory → Session History → Current-Turn Facts`. Speaker- and turn-specific data always goes last, preserving a stable prefix for [prefix caching](docs/DESIGN_NOTES_EN.md) (75.6%–98% measured hit rates).
+- **⚡ 0.71s Closed-Set Judgment Layer (`Decisions API / Jev`)**: Replaces brittle regex rules and costly full-LLM `SKIP` calls with ultra-cheap (~0.1 USD / 1M tokens) closed-set Decisions API checks for intent triage, back-off detection, memory recall, and reminder screening—plus whether each message is warm or hostile toward her (the affinity vote; code keeps the score and caps it per day)—while the chat model focuses on writing replies; [908 historical triage calls recorded a 0.71-second median latency](docs/judgment-layer.md).
+- **🎙️ One Speaker per Group**: If A calls her and B calls her before she has answered A, the two turns no longer write in parallel and land at once. Only one turn writes and sends at a time (`turntaking.py`): owed replies go first, an unprompted remark yields to someone calling her, and the later reply sees the earlier one. Modelled on the Vercel Chat SDK channel queue and LangGraph double-texting; [background and replay data](docs/when-to-reply.md#11-16一个群一支话筒) (Chinese).
+- **🧱 Four-Layer Context Layout with On-Demand Material**: Structured strictly as `Stable Instructions → Daily Memory → Session History → Current-Turn Facts`. Speaker- and turn-specific data always goes last, preserving a stable prefix for [prefix caching](docs/DESIGN_NOTES_EN.md) (75.6%–98% measured hit rates). On the official OpenAI API the stable head gets its own 12-hour cache, so a group that went quiet for an afternoon does not pay to rewrite it. Game references and who the owner is enter the turn only when they come up, instead of being shown and then guarded by a "don't mention" rule.
 - **🔄 Controlled Self-Evolution with Blind Judging & Rule Ablation**: Combines zero-token daily health scans (`regular checkup`), [generation / triage / retrieval / message replays](docs/self-iteration.md), independent blind pairwise judging, and single-rule ablation (`--ablate`) so weak candidates are rejected and obsolete prompt rules get pruned.
 - **🛡️ 2,500+ Offline Regression Cases Protect State Boundaries**: The pure-Python desktop pet brain (`pet_brain.py`), physics props (`pet_props.py`), pixel-accurate native click-through mask (`desktop_pet.py`), rapport scores, nicknames, promises, and daily quotas live strictly in deterministic local Python code. [CI](.github/workflows/ci.yml) runs the offline suite on Linux with Python 3.10 / 3.12 / 3.13, plus targeted offscreen pet, audio, and voice-interface tests on Windows and macOS. Offscreen tests do not replace native desktop interaction checks.
 

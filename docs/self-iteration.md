@@ -309,7 +309,7 @@ Decisions 不是另加的一层：题面属于可编辑判断说明，输入结�
  "model": "gpt-6-luna", "effort": "low", "raw": "…", "sent": "…", "outgoing_id": "…"}
 ```
 
-- 直接调模型的四处（起名审核、群史记查询、到点提醒那句、催债）先不记，需要时再补。
+- 直接调模型的三处（起名审核、到点提醒那句、催债）先不记，需要时再补。
 - 主要分诊的输入（`decisions.FeedbackTracker.assess` 拼的那份 payload）也记在 `data/turns/`，
   连同题目名和选择，供分诊层回放。旧账 callback 仍只有交互日志中的结果和分数（`decision_scores`），
   没有完整原始输入，不属于这条回放链的完整覆盖范围。

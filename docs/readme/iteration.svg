@@ -22,7 +22,7 @@
 <text x="88" y="480" font-size="18" fill="#56677E" font-weight="400">Include normal scenes and irrelevant evidence</text>
 <text x="88" y="512" font-size="16" fill="#56677E">Candidate-only yes/no cannot establish recall</text>
 <rect x="696" y="320" width="520" height="226" rx="17" fill="#F0EBF8" stroke="#DCD2EE"/>
-<text x="720" y="348" font-size="13" fill="#7962A7" font-weight="700">CANDIDATES · CODING AGENT / LOCAL TUNING</text>
+<text x="720" y="348" font-size="13" fill="#7962A7" font-weight="700">CANDIDATES · CODING AGENT</text>
 <text x="720" y="384" font-size="23" fill="#213249" font-weight="650">Code and prompt candidates</text>
 <text x="720" y="418" font-size="17" fill="#56677E" font-weight="400">Agent: code, prompts, questions and inputs</text>
 <text x="720" y="450" font-size="16.5" fill="#56677E" font-weight="400">Checkup thresholds and recall ranking live in code</text>

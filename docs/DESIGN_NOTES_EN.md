@@ -24,7 +24,7 @@ Affinity is an integer. The ledger lives in `state.json`; grading, decay and ran
 
 | Common approach | What happens here | Why |
 |:--|:--|:--|
-| Let the model score affinity every turn | Model judges sentiment only; code applies the number | The number is code-owned, so the model can't make it up; no extra JSON demanded of it either |
+| Let the model score affinity every turn | Triage also judges each message's direction toward the bot (warm / neutral / hostile); code applies the number and caps it per day | The number is code-owned, so the model can't make it up; the judge is not the model that just replied, and replies no longer carry a bookkeeping tag (2026-11-16) |
 | Feed it a week of chat logs as memory | Rolling compression: new summary = f(old summary, today's delta) | Constant cost regardless of how busy the group gets; also dodges mid-context forgetting |
 | Rely on prompts to block sensitive words | Code wordlist + a model review pass | Controlled test: prompt-only left the count of leaked words **unchanged** (2 vs 2) |
 | Let the model remember who is called what | Names are archive state, refreshed before injection | A stale name makes it call people by old names, or treat the old and new name as two different people |
@@ -119,7 +119,7 @@ The fix is to treat names as **state**, not as text:
 | A speaker with no name, when compressing | Signed as the generic 「一位群友」, **never as the last four of the openid**. The old fallback put strings like `6ABA` into the summary, and the summary is injected every turn — the model called people by it |
 | Stale names in the promise ledger | The nag prompt and the ledger command both run through the refresh pass first; the ledger stores whatever the name was back then |
 | Turning free renaming off entirely | The owner says 「锁起名」 and member self-renames stop in that group; naming falls back to the owner only (`@someone call them X` still works). 「解锁起名」 reopens it. The flag lives in the per-group state and survives restarts. Clearing your own name is never locked |
-| Coverage | Group chronicle, daily memory, recent-chat background, the previous summary fed back to the compression model, and the 群史记 command output |
+| Coverage | 小本本 (her notebook; called 群史记 before 11-16), daily memory, recent-chat background, the previous summary fed back to the compression model |
 | On rename/revoke | The session window, long-term memory and daily MD are scrubbed too; `archive/` raw logs are never touched |
 | Off limits | Any literal in the primary-name list (`main_names()`) — no automatic logic may rewrite it, including the rename/revoke history sync |
 
@@ -135,7 +135,7 @@ One related hard rule: **relationships come from the archive only.** Anyone clai
 |:--|:--|:--|
 | Session context | `state.json` (one per person per group, fully isolated) | 8 exchanges / 3000 chars, 30 min idle resets the topic |
 | Raw messages | `archive/YYYY-MM-DD.jsonl` | 90 days by default; append-only, the **single source of truth** |
-| Long-term memory (chronicle) | `memory/YYYY-MM-DD.md` + `state.json` | Compressed at 120 messages or 24 hours, whichever comes first; at least 15 messages to bother |
+| Long-term memory (小本本, formerly 群史记) | `memory/YYYY-MM-DD.md` + `state.json` | Compressed at 120 messages or 24 hours, whichever comes first; at least 15 messages to bother |
 | Relation archive | `state.json` | ±3 per interaction, ±6 per daily settlement; no decay for 3 days, then 1 point per 2 days toward 0; pruned after 90 days idle |
 | Rename ledger | `state.json` | Up to 300 entries per group; only used to rewrite history, never injected |
 | Promise ledger | `state.json` | Nagging starts 24h after a promise; every 48h, at most twice; no unprompted messages 23:00–08:00 |

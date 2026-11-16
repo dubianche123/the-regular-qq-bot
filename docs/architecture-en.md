@@ -44,10 +44,10 @@ The inputs, judgments and outcomes also become the evidence for [offline improve
 | Receive | `_receive` → `_admit` | Deduplicate, freeze the scene at arrival (group background, the member's session, the bot's previous reply, earlier lookup material, reminder revision), work out whether the bot was addressed; archive, buffer, transcribe voice |
 | Triage | `_local_command` → `_triage` | Zero-token commands finish on the spot; everything else asks Decisions once (`_assess`) and settles whether and how to answer |
 | Plan | `_plan` | Reserve lookup quota (`_plan_lookup`), read images and render the background (`_plan_scene`), fetch names, knowledge, recall and personal quotes (`_plan_notes`), and produce the dynamic-layer inputs and allowed actions |
-| Generate and deliver | `_respond` → `reply_in_session` | Under the session lock, passing a `ReplyTurn`: `_reply_draft` writes the first draft, `_reply_lookup` / `_reply_media` / `_reply_reminder` check and execute the actions it proposed, `_reply_deliver` sends and records only what was confirmed delivered |
-| Settle | `_settle` | Affinity and mood change only when something was actually said |
+| Generate and deliver | `_respond` → `reply_in_session` | First takes the group's floor (`turntaking.py`; the claim is queued as soon as triage ends), then the session lock, passing a `ReplyTurn`: `_reply_draft` writes the first draft, `_reply_lookup` / `_reply_media` / `_reply_reminder` check and execute the actions it proposed, `_reply_deliver` sends and records only what was confirmed delivered |
+| Settle | `_settle` | Affinity and mood change only when something was actually said; the affinity vote is the direction triage judged on the way (`toward_bot`), and nothing is recorded when that question was not asked |
 
-What was frozen at receipt never changes afterwards: anything that happens in the group while the turn waits for a lock, an image or a lookup enters the dynamic layer separately as late events (see [lookup actions and message timeline](lookup-and-timeline.md)). Every stage can be driven on its own, see `tests/test_group_turn.py`; message-level replay runs the same `handle_group_msg`.
+What was frozen at receipt never changes afterwards: anything that happens in the group while the turn waits for the floor, a lock, an image or a lookup enters the dynamic layer separately as late events (see [lookup actions and message timeline](lookup-and-timeline.md)). Every stage can be driven on its own, see `tests/test_group_turn.py`; message-level replay runs the same `handle_group_msg`.
 
 <a id="when-to-speak"></a>
 <a id="closed-set-judgment-trust-the-ranking-not-the-scale"></a>
@@ -171,8 +171,8 @@ Small-scale checks so far: the same version against itself, 4 cases with 4 sampl
 
 | Boundary | How code enforces it |
 | --- | --- |
-| State has provenance | names, relationships, promises, mood, quotas and jobs stay code-owned; personal quotes bind verbatim to the archive and enter context only when relevant, at most two |
-| Context has an order | stable head → daily memory → session history → current turn; person- and turn-dependent content goes last |
+| State has provenance | names, relationships, promises, mood, quotas and jobs stay code-owned; triage judges the direction of each affinity vote while code keeps the score and caps it per day, and closeness sets tone and extra quota only, never how much chat she sees; personal quotes bind verbatim to the archive and enter context only when relevant, at most two |
+| Context has an order | stable head → daily memory → session history → current turn; person- and turn-dependent content goes last. On the official OpenAI API the stable head gets its own 12-hour cache ([providers](providers.md)) |
 | She sees what she needs | Material appears on demand: game references and who the owner is enter the current turn only when they come up; unprompted turns carry no session history; an unread image loses its marker. Nothing is shown first and then guarded by a "don't mention" rule |
 | One speaker per group | Only one turn writes and sends at a time (`turntaking.py`): owed replies first, an unprompted remark yields to someone calling her, and the later reply sees the earlier one |
 | Calls are bounded | SDK auto-retry is off; explicit candidates, attempt caps, request/turn timeouts and global/per-feature daily budgets |
