@@ -1141,6 +1141,22 @@
   "mood_tail_hug": {
    "file": "mood_tail_hug.webp",
    "frames": 4
+  },
+  "mood_huff": {
+   "file": "mood_huff.webp",
+   "frames": 4
+  },
+  "mood_hand_hide": {
+   "file": "mood_hand_hide.webp",
+   "frames": 4
+  },
+  "mood_pat_soften": {
+   "file": "mood_pat_soften.webp",
+   "frames": 4
+  },
+  "mood_tail_guard": {
+   "file": "mood_tail_guard.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -3419,6 +3435,38 @@
     -336,
     93,
     0
+   ]
+  },
+  "mood_huff": {
+   "bounds": [
+    -83,
+    -319,
+    86,
+    1
+   ]
+  },
+  "mood_hand_hide": {
+   "bounds": [
+    -89,
+    -328,
+    84,
+    0
+   ]
+  },
+  "mood_pat_soften": {
+   "bounds": [
+    -89,
+    -330,
+    83,
+    0
+   ]
+  },
+  "mood_tail_guard": {
+   "bounds": [
+    -95,
+    -300,
+    95,
+    -1
    ]
   }
  },

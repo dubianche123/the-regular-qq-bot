@@ -21,6 +21,8 @@ from regular.pet_care import (CARE_GAIN, CARE_COOLDOWN, CARE_MAX, CARE_DECAY,
                               DISTRESS_MAX, change, change_distress, decay, decay_distress)
 from regular.pet_repertoire import Repertoire, clips as repertoire_clips
 from regular.pet_props import PropPlay
+from regular.pet_interactions import upset_reaction
+from regular.pet_rest import current_rest as rest_pose, entering_rest
 from regular.pet_routines import ACTIVITY_ENDINGS, DAILY_MAGIC, EPISODES, MOOD_HOLDS, activity_sequence, choose_routine
 
 FIGURE = 160.0          # 100% 时人物站立高度（点）
@@ -539,6 +541,7 @@ class PetBrain:
         self._last_story_at = now
         self._rests_since_story = 0
         self._furniture_at = now - FURNITURE_COOLDOWN
+        self._rest_stays = 0
         self._last_trick_at = now - 120.0
         self._prop_voice_at = now - 5.0
         self._prop_check_at = now
@@ -947,6 +950,27 @@ class PetBrain:
 
     def _queue(self, *steps, now, interrupt=False):
         """Append steps, inserting sit/stand/lie transitions so poses never jump."""
+        pose = self.current_rest()
+        if pose and pose["exit"] and steps:
+            compatible = {*pose["enter"], pose["stay"], pose["exit"]}
+            leaving = any(step.clip not in compatible or step.target_x is not None
+                          or step.target_y is not None for step in steps)
+            if (not leaving and interrupt and self.step is not None
+                    and self.clip in pose["enter"]):
+                # Finish unfolding/sitting before a compatible conversation hold.
+                remaining = pose["enter"][pose["enter"].index(self.clip) + 1:]
+                steps = (*[Step(clip) for clip in remaining],
+                         *[step for step in steps if step.clip not in pose["enter"]])
+                self.plan.clear()
+                interrupt = False
+            if leaving and steps[0].clip != pose["exit"]:
+                if self.clip == pose["exit"] and self.step is not None:
+                    # A second request replaces the destination, not the put-away already playing.
+                    if interrupt:
+                        self.plan.clear()
+                        interrupt = False
+                else:
+                    steps = (Step(pose["exit"]), *steps)
         interrupted_air_play = interrupt and self.air_play_active
         if interrupt and self.mode == "ground" and self.warp is not None:
             request = self._warp_request if any(s.clip == "warp_cast" for s in steps) else None
@@ -1004,6 +1028,10 @@ class PetBrain:
             if self.posture() == "stand":
                 self._set_clip("idle", now)
             return
+        before = self.current_rest()
+        after = rest_pose(self.step.clip, self.repertoire.actions)
+        if before is None or after is None or before["name"] != after["name"]:
+            self._rest_stays = 0
         if self._role(self.step.clip) == "bottom":
             self.bottom_peek = True
         if self.step.hold == "air_return" and self.step.target_x is None and not self.bottom_peek:
@@ -1111,6 +1139,10 @@ class PetBrain:
         return self.repertoire.choose(role, fallback=fallback, **kwargs)
 
     def _state_steps(self, name, fallback, now):
+        rest = self.current_rest()
+        if rest and rest["exit"] and self.clip != rest["exit"] and name in ("think", "talk", "listen", "reply"):
+            self._state_switch_at = now + self.rng.uniform(10, 16)
+            return [Step(rest["stay"], hold="state")]
         role = {"reply": "reply", "listen": "listen", "inspect": "inspect",
                 "checkup": "study", "handoff": "celebrate", "stuck": "curious"}.get(name)
         clip = fallback
@@ -1167,6 +1199,10 @@ class PetBrain:
         # 夜里没人在：睡整觉，一直睡到你回来或者天亮。半夜被群里叫醒，回完话也接着睡。
         if vitals.sleepy and self.owner_away and not engaged:
             return self._nap_steps(now)
+        pose = self.current_rest()
+        if pose and pose["exit"] and (self._rest_stays < 2 or self.rng.random() < 0.75):
+            self._rest_stays += 1
+            return self._rest_steps(vitals)
         if self._feeling_low():
             return self._low_mood_steps()
         if self.attention:
@@ -1195,6 +1231,9 @@ class PetBrain:
         睡着的先醒透、起身。被叫、被戳、群里有事不走这里，照样马上起来。"""
         if not steps:
             return steps
+        pose = self.current_rest()
+        if pose and pose["exit"]:
+            return steps             # Its own put-away already includes getting up.
         first = steps[0].clip
         start = self.repertoire.actions.get(first, {}).get("starts_from", STARTS_FROM.get(first, CLIPS[first][4]))
         posture = self._end_posture()
@@ -1214,6 +1253,9 @@ class PetBrain:
         或者抱着尾巴歇会儿；趴着就继续托腮。"""
         seconds = (self.rng.uniform(*REST_SPAN) * (1.0 + max(0.0, DAY_PEP - vitals.pep))
                    * (LIVELY_REST if vitals.room == "lively" else 1.0))
+        pose = self.current_rest()
+        if pose:
+            return [Step(pose["stay"], seconds)]
         posture = self._end_posture()
         if posture == "lie":
             return [Step("lie_chin", seconds)]
@@ -1589,9 +1631,11 @@ class PetBrain:
             self._rests_since_story += 1
         else:
             self._last_story_at, self._rests_since_story = now, 0
+        pose = entering_rest(beats, self.repertoire.actions)
+        ending = [] if pose else [self._pause(1)]
         return [*(Step(clip, duration, line=BEAT_LINES.get(clip)
                        if not family.startswith("ambient:") or clip.startswith("scene_") else None)
-                  for clip, duration in beats), self._pause(1)]
+                  for clip, duration in beats if not pose or clip != pose["exit"]), *ending]
 
     def _activity_steps(self, clip, duration):
         beats = activity_sequence(self.rng, self.repertoire.actions, clip, duration,
@@ -1601,14 +1645,20 @@ class PetBrain:
                 for name, seconds in beats]
 
     def _furniture_exit(self):
-        spec = self.repertoire.actions.get(self.clip, {})
-        if spec.get("role") != "scene_furniture":
-            return None
-        branches = EPISODES.get(spec.get("family"), ())
-        for branch in branches:
-            if branch and branch[-1][0] in self.repertoire.actions:
-                return branch[-1]
-        return None
+        pose = self.current_rest()
+        return (pose["exit"], None) if pose and pose["exit"] else None
+
+    def current_rest(self):
+        """The current adopted quiet place, independently of stand/sit/lie geometry."""
+        return rest_pose(self.clip, self.repertoire.actions)
+
+    def keep_rest(self, now):
+        """A small local acknowledgement that leaves the resting figure and furniture intact."""
+        pose = self.current_rest()
+        if self.mode != "ground" or pose is None or self.clip == pose["exit"]:
+            return False
+        self.jolt_started = now
+        return True
 
     def _queue_manual(self, steps, now):
         if self._warp_request and self._warp_request.get("cause") == "prop" and not any(s.clip == "warp_cast" for s in steps):
@@ -3184,6 +3234,12 @@ class PetBrain:
                 p.reversals.clear()
                 self._petted(now)
         p.x, p.y, p.seen = x, y, True
+        if (near and now - p.since > 1.5 and now - self._greeted_at > 20
+                and self.mode == "ground" and self._mood_stay_active()
+                and not self.chat_pending and not self.media and now >= self.agent_busy_until
+                and not (self.state_clip and now < self.state_until)):
+            if self._mood_touch(now, "hover"):
+                self._greeted_at = now
 
     def _cursor_play_ready(self, now, kind):
         """Only while she is resting, not too often, and never the same trick twice in a row soon."""
@@ -3259,11 +3315,22 @@ class PetBrain:
         self._pat(now)
 
     def _pat(self, now):
+        before = self.effective_mood
         state = self._care(now, "pat")
+        if self._mood_touch(now, "pat", comforted=state == "gain" and before < 0):
+            return
+        if self.keep_rest(now) or self.posture() in ("sit", "lie"):
+            self.jolt_started = now
+            if state == "gain" and self.effective_mood >= 0 and self._mood_stay_active():
+                self.step.hold = None
+            self.say(self.rng.choice(self._care_lines("pat", state)), now=now, seconds=2.4)
+            if state == "gain":
+                self._emit("heart", now, 3)
+            return
         self._react(now, "pat", self._care_lines("pat", state), "heart",
                     seconds=2.4, emit=4 if state == "gain" else 1)
         # 被夸后忍不住露一手：小火苗或者变一下小龙，都是偶尔的。
-        if (self.motion and not self.quiet and now - self._show_off_at >= SHOW_OFF_COOLDOWN
+        if (state == "gain" and self.effective_mood >= 0 and self.motion and not self.quiet and now - self._show_off_at >= SHOW_OFF_COOLDOWN
                 and self.rng.random() < 0.2):
             trick = None
             if self._can_dragon(now) and self.rng.random() < 0.4:
@@ -3273,6 +3340,24 @@ class PetBrain:
             if trick:
                 self._show_off_at = now
                 self.plan.extend(trick)
+
+    def _mood_touch(self, now, trigger, *, comforted=False):
+        if self.effective_mood >= 0 and not comforted:
+            return False
+        if self.keep_rest(now):
+            line = "……好一点了。" if comforted else "我听着呢，先缓一会儿。" if trigger == "pat" else "先不闹我嘛。"
+            self.say(line, now=now, seconds=2.4)
+            return True
+        reaction = upset_reaction(self.rng, self.repertoire.actions, trigger,
+                                  mood=self.effective_mood, posture=self.posture(),
+                                  comforted=comforted, recent_clips=self.repertoire.recent)
+        if reaction is None:
+            return False
+        clip, line = reaction
+        seconds = max(3.0, len(CLIPS[clip][1]) / CLIPS[clip][2])
+        self._queue(Step(clip, seconds, hold="mood"), now=now, interrupt=True)
+        self.say(line, now=now, seconds=2.4)
+        return True
 
     def press(self, now, x, y):
         self._press = (now, x, y)
@@ -3458,6 +3543,19 @@ class PetBrain:
             else:
                 self._queue(Step("feed_expect"), *self._feed_steps(text), now=now, interrupt=True)
         else:
+            if action == "pat":
+                was_upset = self.effective_mood < 0 or self._role(self.clip) == "mood"
+                if self._mood_touch(now, "pat", comforted=result == "gain" and was_upset):
+                    return
+                if self.keep_rest(now) or self.posture() in ("sit", "lie"):
+                    self.jolt_started = now
+                    if result == "gain" and self.effective_mood >= 0 and self._mood_stay_active():
+                        self.step.hold = None
+                    if text:
+                        self.say(text, now=now, seconds=2.8)
+                    if result == "gain":
+                        self._emit("heart", now, 3)
+                    return
             clip = "peek" if result == "fed_full" else "pat"
             self._queue(Step(clip), Step("idle", 1.5), now=now, interrupt=True)
             if text:
@@ -3487,7 +3585,8 @@ class PetBrain:
 
     def _feed_steps(self, line=None):
         """Accept, bite, then respond with the same cookie and body throughout."""
-        return [Step("feed_accept"), Step("feed_bite"), Step("feed_content", line=line), Step("idle", 1.5)]
+        after = self._low_mood_steps() if self._feeling_low() else [Step("idle", 1.5)]
+        return [Step("feed_accept"), Step("feed_bite"), Step("feed_content", line=line), *after]
 
     def _next_tap_clip(self):
         """洗牌袋：一轮里每个小幅动作都轮到一次，且不与上一次重复。"""
@@ -3544,9 +3643,19 @@ class PetBrain:
             if self.bubble is None:
                 self.say(self.rng.choice(LINES["waking"]), now=now, seconds=2)
             return
+        zone = self._tap_zone(x, y)
+        if zone == "head":
+            self._last_tap_clip = "pat"
+            self._pat(now)
+            return
+        if self._mood_touch(now, zone):
+            return
+        if self.keep_rest(now):
+            self.say(self.rng.choice(LINES["poke"]), now=now, seconds=2)
+            return
         if self.posture() in ("sit", "lie"):
             # 坐着看书喝茶、趴着托腮时应一声，不为了一个小动作站起来。
-            if (self._tap_zone(x, y) == "body" and self.motion and not self.quiet and self._has("spell_sneeze")
+            if (zone == "body" and self.motion and not self.quiet and self._has("spell_sneeze")
                     and now - self._last_trick_at >= 120 and self.rng.random() < 0.08):
                 self._last_trick_at = now
                 self.jolt_started = now        # 坐着就地打个小喷嚏，不为一个小动作站起来
@@ -3558,11 +3667,7 @@ class PetBrain:
             self.say(self.rng.choice(LINES["poke"]), now=now, seconds=2)
             return
         recent = sum(1 for t in self.pokes if now - t < 6)
-        zone = self._tap_zone(x, y)
-        if zone == "head":
-            self._last_tap_clip = "pat"
-            self._pat(now)
-        elif zone == "feet":
+        if zone == "feet":
             self._last_tap_clip = "peek"
             self._react(now, "peek", LINES["tapped_feet"], "sparkle")
         else:
@@ -3705,7 +3810,8 @@ class PetBrain:
         self.set_state("think", now, source="local")
         self.last_interaction = now
         if self.mode == "ground":
-            busy = "laptop" if self.posture() == "sit" else "think"
+            rest = self.current_rest()
+            busy = rest["stay"] if rest and rest["exit"] and self.clip != rest["exit"] else "laptop" if self.posture() == "sit" else "think"
             self._queue(Step(busy, hold="chat"), now=now, interrupt=True)
         self.say("…", now=now, seconds=80, kind="think")
 
@@ -3718,7 +3824,7 @@ class PetBrain:
     def chat_failed(self, now, message):
         self.chat_pending = False
         self.clear_state(now, source="local")
-        if self.mode == "ground":
+        if self.mode == "ground" and not self.keep_rest(now):
             self._queue(Step("lookaround"), Step("idle", 2), now=now, interrupt=True)
         self.say(message, now=now, seconds=6, kind="status")
 
@@ -3855,7 +3961,9 @@ class PetBrain:
         self.state_clip, self.state_name, self.state_until = None, None, 0.0
         self.state_source = None
         if was_active and self.mode == "ground":
-            self._queue(Step("idle", 1), now=now, interrupt=True)
+            rest = self.current_rest()
+            self._queue(Step(rest["stay"], 30) if rest and rest["exit"] else Step("idle", 1),
+                        now=now, interrupt=True)
         elif had_state and self.mode in ("fly", "bottom"):
             self._queue(Step("idle", 1), now=now, interrupt=True)
 

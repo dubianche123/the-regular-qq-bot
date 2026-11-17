@@ -108,16 +108,16 @@ def test_tea_hot_branch_cools_down_before_sipping_again_and_quiet_stays_calm():
             ("tea", 12), ("scene_tea_relax", None)]
 
 
-def test_furniture_requires_complete_entry_stay_and_exit_and_holds_one_object():
+def test_furniture_requires_complete_assets_but_waits_to_exit_until_leaving():
     sofa = EPISODES["sofa"][0]
     actions = {name: ACTIONS[name] for name, _ in sofa}
     family, beats = choose_routine(random.Random(5), actions, mode="story")
     assert family == "scene:sofa"
-    assert [name for name, _ in beats] == [name for name, _ in sofa]
-    assert 45 <= beats[2][1] <= 75
+    assert [name for name, _ in beats] == [name for name, _ in sofa[:-1]]
+    assert 75 <= beats[2][1] <= 180
     assert not ACTIONS[beats[0][0]]["loop"]
     assert ACTIONS[beats[2][0]]["loop"]
-    assert not ACTIONS[beats[-1][0]]["loop"]
+    assert ACTIONS[beats[-1][0]]["loop"]
     del actions["scene_sofa_exit"]
     assert choose_routine(random.Random(5), actions, mode="story") is None
 
@@ -130,20 +130,20 @@ def test_tired_game_results_and_complete_scene_requests_use_current_state():
     chair = {name: ACTIONS[name] for name, _ in EPISODES["chair"][0]}
     family, beats = choose_routine(random.Random(1), chair, mode="story")
     assert family == "scene:chair"
-    assert [name for name, _ in beats] == [name for name, _ in EPISODES["chair"][0]]
+    assert [name for name, _ in beats] == [name for name, _ in EPISODES["chair"][0][:-1]]
     fire = {name: ACTIONS[name] for branch in EPISODES["fire"] for name, _ in branch}
     assert choose_routine(random.Random(1), fire, mode="story", quiet=True) is None
 
 
-def test_a_long_home_rest_keeps_entry_and_cleanup_in_the_same_plan():
+def test_a_long_home_rest_enters_a_stable_place_without_preplanning_cleanup():
     actions = {name: ACTIONS[name] for name, _ in EPISODES["chair"][0]}
     picks = [choose_routine(random.Random(seed), actions, mode="rest", quiet=True) for seed in range(40)]
     homes = [pick for pick in picks if pick is not None]
     assert 2 <= len(homes) <= 20             # furniture is an occasion, not most rests
     family, beats = homes[0]
     assert family == "home:chair"
-    assert [name for name, _ in beats] == ["scene_chair_entry", "scene_chair_rest", "scene_chair_exit"]
-    assert 35 <= beats[1][1] <= 65
+    assert [name for name, _ in beats] == ["scene_chair_entry", "scene_chair_rest"]
+    assert 75 <= beats[1][1] <= 180
     actions.update({name: ACTIONS[name] for name, _ in EPISODES["sofa"][0]})
     picks = [choose_routine(random.Random(seed), actions, ("scene:chair",), mode="rest") for seed in range(40)]
     assert {pick[0] for pick in picks if pick is not None} == {"home:sofa"}

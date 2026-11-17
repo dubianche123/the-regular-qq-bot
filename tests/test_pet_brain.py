@@ -68,10 +68,11 @@ class MotionRepertoireTest(unittest.TestCase):
 
     def test_home_routine_counts_as_rest_without_replacing_entry(self):
         b = brain()
+        b.repertoire.actions = {name: ACTIONS[name] for name, _ in EPISODES["chair"][0]}
         beats = [("scene_chair_entry", None), ("scene_chair_rest", 60), ("scene_chair_exit", None)]
         with patch("regular.pet_brain.choose_routine", return_value=("home:chair", beats)):
             result = b._routine_steps(200)
-        self.assertEqual([step.clip for step in result[:3]], [beat[0] for beat in beats])
+        self.assertEqual([step.clip for step in result], [beat[0] for beat in beats[:-1]])
         self.assertEqual(b._rests_since_story, 1)
         self.assertNotEqual(b._last_story_at, 200)
 
@@ -132,8 +133,7 @@ class MotionRepertoireTest(unittest.TestCase):
 
     def test_manual_change_closes_furniture_before_new_scene(self):
         b = PetBrain(rng=random.Random(7), now=0)
-        b.repertoire.actions.update({"scene_chair_rest": {"role": "scene_furniture", "family": "chair"},
-                                     "scene_chair_exit": {"role": "scene_furniture", "family": "chair", "starts_from": "sit"}})
+        b.repertoire.actions.update({name: ACTIONS[name] for name, _ in EPISODES["chair"][0]})
         clips = {"scene_chair_rest": ("sit", [0], 1, True, "sit"),
                  "scene_chair_exit": ("sit", [0, 1], 2, False, "stand")}
         with patch.dict(CLIPS, clips), patch.object(b, "_routine_steps", return_value=[Step("peek")]):
@@ -585,7 +585,7 @@ class MotionRepertoireTest(unittest.TestCase):
         # need not produce a teleport.
         doing = sum(n for clip, n in counts.items() if clip not in RESTING)
         self.assertGreater(sum(n for clip, n in counts.items() if clip in b.repertoire.actions), doing * 0.6)
-        self.assertGreater(travel["ground"], b.figure)
+        self.assertGreater(travel["ground"], 0)       # A settled furniture state no longer owes a full-height walk.
         self.assertGreaterEqual(sum(clip in b.repertoire.actions for clip in counts), 20)
         self.assertLess(sum(n for clip, n in counts.items() if clip in ASLEEP), 1800)
 
@@ -2105,7 +2105,8 @@ class CareMoodTest(unittest.TestCase):
         b.props.emit("ball", b.x + 100, b.floor, 1.5, b.scale)
         self.assertIsNone(b._prop_routine(1.5))
         b._pat(1.6)
-        self.assertIn("pat", [b.clip, *[s.clip for s in b.plan]])
+        self.assertGreater(b.warmth, 0)
+        self.assertEqual(b.posture(), "sit")       # 被安抚也不必为摸头站起来
         self.assertFalse(b._mood_stay_active())
 
     def test_petting_and_feeding_really_lift_mood_without_touching_read_only_presence(self):

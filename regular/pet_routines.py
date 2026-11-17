@@ -1,6 +1,7 @@
 """Interruptible, stationary everyday routines for the desktop companion."""
 
 from regular.pet_repertoire import curated_actions
+from regular.pet_rest import entering_rest, furniture_episode
 
 # Each story requires every named beat, preserving cause and effect.
 # Compatibility for old asset folders; complete character episodes take priority.
@@ -48,10 +49,8 @@ EPISODES = {
         (("dragon_magic_snow", None),),
         (("daily_curious_feather", None),),
     ),
-    "chair": ((("scene_chair_entry", None), ("scene_chair_rest", (35, 65)),
-               ("scene_chair_exit", None)),),
-    "sofa": ((("scene_sofa_entry", None), ("scene_sofa_settle", None),
-              ("scene_sofa_lounge", (45, 75)), ("scene_sofa_exit", None)),),
+    "chair": (furniture_episode("chair"),),
+    "sofa": (furniture_episode("sofa"),),
     "sleepy_read": (
         (("life_comic_turn", 8.0), ("scene_sleepy_book", None), ("life_bookmark_place", 4.0)),
         (("daily_book_hug_sleep", None), ("daily_book_sleep_hold", (35, 60))),
@@ -333,6 +332,9 @@ def choose_routine(rng, actions, recent_families=(), *, mode="rest", quiet=False
         else:
             options = [(1.0, branch) for branch in branches]
         branch = _choose_ending(rng, options, recent_clips)
+        pose = entering_rest(branch, actions)
+        if pose:
+            branch = tuple(beat for beat in branch if beat[0] != pose["exit"])
         return family, [(name, rng.uniform(*duration) if isinstance(duration, tuple) else duration)
                         for name, duration in branch]
     if mode == "rest":

@@ -79,6 +79,60 @@ def test_low_pep_rests_longer_and_a_lively_room_shorter():
     assert lively < 0.85 * day
 
 
+def test_furniture_stays_across_multiple_rests_without_reentering_or_exiting():
+    for clip, name in (("scene_chair_rest", "chair"), ("scene_sofa_lounge", "sofa")):
+        b = brain(adopted=True)
+        b.observe(0, ready())
+        b._set_clip(clip, 0, restart=True)
+        b._queue(Step(clip, 1), now=0, interrupt=True)
+        _, clips = run(b, 0, 180)
+        assert b.current_rest()["name"] == name
+        assert set(clips) == {clip}
+        assert not any(step.clip.endswith("_exit") for step in b.plan)
+
+
+def test_restful_non_furniture_pose_is_kept_when_taking_the_next_rest():
+    b = brain(adopted=True)
+    b._set_clip("daily_quiet_tail_rest", 0, restart=True)
+    steps = b._rest_steps(b.vitals())
+    assert [step.clip for step in steps] == ["daily_quiet_tail_rest"]
+    assert b.current_rest()["exit"] is None
+
+
+def test_leaving_furniture_for_real_work_exits_once_and_a_new_request_does_not_restart_cleanup():
+    b = brain(adopted=True)
+    b._set_clip("scene_sofa_lounge", 0, restart=True)
+    b._queue(Step("talk", 10), now=1, interrupt=True)
+    assert b.clip == "scene_sofa_exit"
+    began = b.clip_started
+    b._queue(Step("inspect", 10), now=1.2, interrupt=True)
+    assert b.clip == "scene_sofa_exit" and b.clip_started == began
+    assert [step.clip for step in b.plan] == ["inspect"]
+
+
+def test_small_acknowledgement_keeps_rest_and_furniture_in_place():
+    b = brain(adopted=True)
+    b._set_clip("scene_chair_rest", 0, restart=True)
+    b._queue(Step("scene_chair_rest", 120), now=0, interrupt=True)
+    original = b.step
+    assert b.keep_rest(10)
+    assert b.step is original and b.clip == "scene_chair_rest"
+    assert b.jolt_started == 10
+
+
+def test_resting_furniture_can_later_leave_for_an_activity_without_a_forced_timeout():
+    b = brain(adopted=True)
+    b.observe(0, ready())
+    b._set_clip("scene_chair_rest", 0, restart=True)
+    b._rest_stays = 2
+    b._owes_rest = False
+    with patch.object(b.rng, "random", return_value=1), patch.object(b, "_pastime", return_value=[Step("walk", target_x=900)]):
+        steps = b._choose(100)
+    b._queue(*steps, now=100, interrupt=True)
+    assert b.clip == "scene_chair_exit"
+    assert any(step.clip == "walk" for step in b.plan)
+
+
 def test_a_real_group_event_does_not_wait_for_the_rest_to_end():
     b = brain()
     b.observe(0.0, ready())
@@ -127,8 +181,9 @@ def test_an_hour_at_the_desk_is_mostly_resting_but_not_still():
             t += 0.25
             b.owner_idle(t, 0.0)
             b.tick(t)
-            resting += b.clip in RESTING or b.repertoire.actions.get(b.clip, {}).get("role") == "rest"
+            spec = b.repertoire.actions.get(b.clip, {})
+            resting += b.clip in RESTING or spec.get("role") == "rest" or bool(spec.get("restful"))
             changes += b.clip != last
             last = b.clip
         assert 40 < changes < 200, (seed, changes)            # was ~300 an hour before resting was the default
-        assert 0.55 < resting / (3600 * 4) < 0.9, (seed, resting / (3600 * 4))
+        assert 0.55 < resting / (3600 * 4) < 0.97, (seed, resting / (3600 * 4))
