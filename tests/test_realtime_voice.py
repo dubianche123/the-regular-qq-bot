@@ -173,6 +173,29 @@ def test_manager_tool_contract_binds_each_capability_in_its_name_without_a_flag_
 
 
 @asynchronous
+async def test_thinking_precedes_immediate_response_completion(tmp_path):
+    session = voice.RealtimeSession(cfg_for(tmp_path), mode="continuous")
+    session._native = Native()
+    session._upstream = Provider()
+    provider = session._upstream
+
+    async def immediate_completion(value):
+        assert value["type"] == "response.create"
+        provider.push("response.done", response={"status": "completed", "output": []})
+        await asyncio.wait_for(session._response_finished.wait(), 1)
+
+    provider.send_json = immediate_completion
+    task = asyncio.create_task(session._provider())
+    try:
+        await session._create_response()
+        states = [event["state"] for event in session._native.sent if event["type"] == "state"]
+        assert states == ["thinking", "idle"]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@asynchronous
 async def test_ptt_audio_stream_and_transcript_without_extra_asr(tmp_path):
     h = await Harness(cfg_for(tmp_path)).start()
     try:

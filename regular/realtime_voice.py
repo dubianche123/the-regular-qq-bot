@@ -359,9 +359,9 @@ class RealtimeSession:
         self._audio_bytes = 0
         self._transcript = ""
         self._truncated = False
+        await self._emit("state", state="thinking")
         await self._upstream.send_json({"type": "response.create", "response": {
             "output_modalities": ["audio"], "max_output_tokens": MAX_OUTPUT_TOKENS}})
-        await self._emit("state", state="thinking")
 
     async def _continuous_control(self, event):
         kind = event.get("type")
