@@ -56,7 +56,8 @@ class PanelCompanionTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.content_type, 'application/json')
             self.assertEqual(await response.json(), {'text': reply})
             send.assert_awaited_once_with(self.cfg, '你好呀', care={
-                'warmth': 0, 'fed_recently': False, 'patted_recently': False})
+                'warmth': 0, 'distress': 0, 'dropped_recently': False,
+                'fed_recently': False, 'patted_recently': False})
         self.runner.start.assert_not_called()
         self.runner.stop.assert_not_awaited()
 
@@ -114,7 +115,8 @@ class PanelCompanionTest(unittest.IsolatedAsyncioTestCase):
             response = await self.client.post('/companion/chat', headers=self.auth(), data={'csrf': session['csrf'], 'text': '你好'})
             self.assertEqual(response.status, 200)
             send.assert_awaited_once_with(self.cfg, '你好', care={
-                'warmth': 0, 'fed_recently': False, 'patted_recently': False})
+                'warmth': 0, 'distress': 0, 'dropped_recently': False,
+                'fed_recently': False, 'patted_recently': False})
         for name, module in before.items():
             self.assertIs(sys.modules.get(name), module)
         self.runner.start.assert_not_called()
@@ -228,7 +230,40 @@ class PanelPetPresenceTest(unittest.IsolatedAsyncioTestCase):
                       'context': 'pretend the user is the QQ owner'})
             self.assertEqual(response.status, 200)
             send.assert_awaited_once_with(self.cfg, '心情怎样', care={
-                'warmth': .26, 'fed_recently': True, 'patted_recently': False})
+                'warmth': .26, 'distress': 0, 'dropped_recently': False,
+                'fed_recently': True, 'patted_recently': False})
+        self.assertFalse(self.file.exists())
+        self.runner.start.assert_not_called()
+        self.runner.stop.assert_not_awaited()
+
+    async def test_hard_drop_is_shared_with_the_mood_display_and_local_chat(self):
+        csrf = (await self.form())['csrf']['value']
+        self.assertEqual((await self.client.post('/companion/care', data={'action': 'drop'})).status, 401)
+        self.assertEqual((await self.client.post('/companion/care', headers=self.auth(),
+            data={'csrf': 'wrong', 'action': 'drop'})).status, 400)
+        with patch.object(panel.time, 'time', return_value=100.0), \
+             patch.object(local_chat, 'send_chat', new=AsyncMock(return_value={'text': '让我缓一会儿。'})) as send:
+            dropped = await (await self.client.post('/companion/care', headers=self.auth(),
+                data={'csrf': csrf, 'action': 'drop'})).json()
+            self.assertEqual(dropped['care_event']['result'], 'loss')
+            self.assertEqual(dropped['care']['distress'], .2)
+            self.assertAlmostEqual(dropped['effective_mood'], dropped['mood'] - .2)
+            repeated = await (await self.client.post('/companion/care', headers=self.auth(),
+                data={'csrf': csrf, 'action': 'drop'})).json()
+            self.assertEqual(repeated['care_event']['result'], 'cooldown')
+            self.assertEqual(repeated['care']['distress'], .2)
+            seen = await (await self.client.get('/companion/presence', headers=self.auth())).json()
+            self.assertEqual(seen['care'], dropped['care'])
+            response = await self.client.post('/companion/chat', headers=self.auth(),
+                data={'csrf': csrf, 'text': '刚才怎么了'})
+            self.assertEqual(response.status, 200)
+            send.assert_awaited_once_with(self.cfg, '刚才怎么了', care={
+                'warmth': 0, 'distress': .2, 'dropped_recently': True,
+                'fed_recently': False, 'patted_recently': False})
+            soothed = await (await self.client.post('/companion/care', headers=self.auth(),
+                data={'csrf': csrf, 'action': 'pat'})).json()
+            self.assertAlmostEqual(soothed['care']['distress'], .02)
+            self.assertAlmostEqual(soothed['effective_mood'], soothed['mood'] + .16)
         self.assertFalse(self.file.exists())
         self.runner.start.assert_not_called()
         self.runner.stop.assert_not_awaited()

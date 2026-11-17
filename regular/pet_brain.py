@@ -3,7 +3,8 @@
 外壳（regular/desktop_pet.py）每帧调用 tick()，把鼠标、聊天和面板给的 presence 喂进来，
 再读 pose() / particles / bubble 画出来。这里不保存、不改写机器人的任何状态：
 群聊心情、作息、群里发生了什么都只读，桌宠只是把小团团「此刻在干嘛」演出来。
-warmth 是摸头、喂饼干带来的短暂好心情，有上限、独立冷却，会随时间消退。
+warmth 是摸头、喂饼干带来的短暂好心情，distress 是被高处松手或重摔后的短暂惊吓。
+两者都有上限、独立冷却，会随时间消退。
 正常运行由本机面板持有，脑中只保留表现快照；独立离线脑使用相同纯规则。
 它只叠加在只读心情之上，从不写回 presence 或群聊关系。
 
@@ -16,7 +17,8 @@ from dataclasses import dataclass, field
 import math
 import random
 
-from regular.pet_care import CARE_GAIN, CARE_COOLDOWN, CARE_MAX, CARE_DECAY, change, decay
+from regular.pet_care import (CARE_GAIN, CARE_COOLDOWN, CARE_MAX, CARE_DECAY,
+                              DISTRESS_MAX, change, change_distress, decay, decay_distress)
 from regular.pet_repertoire import Repertoire, clips as repertoire_clips
 from regular.pet_props import PropPlay
 from regular.pet_routines import ACTIVITY_ENDINGS, DAILY_MAGIC, EPISODES, activity_sequence, choose_routine
@@ -328,7 +330,6 @@ FURNITURE_COOLDOWN = 1800.0
 SHOW_OFF_COOLDOWN = 300.0
 # 被你拎到高处再松手：会飞，但不是自己飞上去的，落地后腿会软一下。
 HEIGHT_FEAR_DROP = 1.6          # 至少比自己高出这么多个身位才算「高」
-HEIGHT_FEAR_COOLDOWN = 240.0
 AIR_FIRE_COOLDOWN = 240.0
 AIR_CHASE_COOLDOWN = 240.0
 AIR_CHASE_SECONDS = 3.0
@@ -577,8 +578,8 @@ class PetBrain:
         self._magic_used = set()
         self._magic_dragon_shown = False
         self._show_off_at = now - SHOW_OFF_COOLDOWN
-        self._height_fear_at = now - HEIGHT_FEAR_COOLDOWN
-        self._air_top: float | None = None    # 被松手后飞得最高的位置，只为落地后那一下腿软
+        self._air_top: float | None = None    # 非 None 只表示被用户松手；自主飞行不算摔落
+        self._drop_scared = False
         self._sleep_cue_until = 0.0
         self._prop_chase_at = now - 120.0
         self._chasing_prop = None
@@ -630,10 +631,11 @@ class PetBrain:
         self.feeds: deque = deque(maxlen=6)
         self._feed_waiting = False
         self.warmth = 0.0                # 被照顾出来的短暂好心情，独立于只读的群聊心情
+        self.distress = 0.0              # 被摔后的短暂惊吓，不改群聊心情或关系分
         self._warmth_at = now
-        self._care_at = {"pat": -1000.0, "feed": -1000.0}
+        self._care_at = {"pat": -1000.0, "feed": -1000.0, "drop": -1000.0}
         self.external_care = False
-        self.care_requests = deque(maxlen=1)
+        self.care_requests = deque(maxlen=8)
         self._care_snapshot_at = float("-inf")
         self._last_tap_clip: str | None = None     # 连点不重样
         self._tap_bag: list[str] = []             # 洗牌袋：一轮里不重复
@@ -744,6 +746,7 @@ class PetBrain:
         self.x, self.y, self.mode = self._clamp_x(float(x)), self.floor, "ground"
         self._air_chase, self._air_returning = None, False
         self._air_top = None
+        self._drop_scared = False
 
     def posture(self):
         return CLIPS[self.clip][4]
@@ -1011,6 +1014,8 @@ class PetBrain:
                 target = self._clamp_x(self.x - self.facing * offset, edge_side=0)
             self.step.target_x = target
         if self.step.target_y is not None:
+            # A powered route takes over from free fall; its later landing is not another user drop.
+            self._air_top, self._drop_scared = None, False
             self.mode = "bottom" if self.bottom_peek else "fly"
             self._move_origin = (self.x, self.y)
             dx = (self.step.target_x - self.x) if self.step.target_x is not None else 0.0
@@ -1493,16 +1498,14 @@ class PetBrain:
         return [Step(self._pick("fly", "fall", family="flap"), target_y=self.floor, hold="air_return"),
                 Step(self._powered_landing())]
 
-    def _height_scare(self, now, drop):
-        if (not self.motion or self.quiet or drop < self.figure * HEIGHT_FEAR_DROP
-                or self.chat_pending or self.media or now < self.agent_busy_until
-                or (self.state_clip and now < self.state_until)       # 群里真有事时不演
-                or now - self._height_fear_at < HEIGHT_FEAR_COOLDOWN
-                or not (self._has("scene_height_nervous") and self._has("scene_height_wings"))
-                or self.rng.random() >= 0.6):
-            return False
-        self._height_fear_at = now
-        return True
+    def _height_scare(self, drop):
+        return drop >= self.figure * HEIGHT_FEAR_DROP
+
+    def _drop_recovery_steps(self):
+        if self._has("scene_height_nervous") and self._has("scene_height_wings"):
+            return [Step("scene_height_nervous", line=BEAT_LINES["scene_height_nervous"]),
+                    Step("scene_height_wings", line=BEAT_LINES["scene_height_wings"])]
+        return [Step("sit_down"), Step("sit_rest", 1.2), Step("stand_up")]
 
     def _powered_landing(self):
         if self._has("motion_fly_approach") and self._has("motion_fly_settle"):
@@ -1904,13 +1907,16 @@ class PetBrain:
     def _fall(self, now, dt):
         if self._ceiling_until and now >= self._ceiling_until:
             self._ceiling_until = 0.0
-            self._set_clip(self._pick("fall", "fall"), now, restart=True)
+            self._set_clip("fall" if self._drop_scared else self._pick("fall", "fall"), now, restart=True)
         self.vy += GRAVITY * self.scale * dt
         self.x += self.vx * dt
         self.y += self.vy * dt
         self.vx *= 0.995
         if self._air_top is not None:
             self._air_top = min(self._air_top, self.y)
+            if not self._drop_scared and self._height_scare(self.floor - self._air_top):
+                self._drop_scared = True
+                self._set_clip("fall", now, restart=True)
         clamped = self._clamp_x(self.x)
         if clamped != self.x:
             self.x, self.vx = clamped, -self.vx * 0.45
@@ -1932,21 +1938,20 @@ class PetBrain:
             self.swing = self.swing_v = 0.0
             self.plan.clear()
             self.step = None
-            drop = self.floor - self._air_top if self._air_top is not None else 0.0
+            dropped = self._air_top is not None
+            scared = self._drop_scared
             self._air_top = None
+            self._drop_scared = False
             if self._landing:
                 self._land_trick(now)
                 return
             land = self._pick("land", "land")
             self._set_clip(land, now, restart=True)
             steps = [Step(land)]
-            if self._height_scare(now, drop):
-                # 怕高：自己飞很熟练，被拎上去再放手就心虚，腿软坐下，抱着翅膀壮胆再站起来。
-                steps += [Step("scene_height_nervous", line=BEAT_LINES["scene_height_nervous"]),
-                          Step("scene_height_wings", line=BEAT_LINES["scene_height_wings"])]
-            elif impact > 1900 * self.scale:
-                steps.append(Step("startle"))       # 摔狠了只哆嗦一下，不再跺脚瞪人
-                self.say(self.rng.choice(LINES["thrown"]), now=now, seconds=3.0)
+            if dropped and (scared or impact > 1900 * self.scale):
+                self._care(now, "drop")
+                # 惊吓每次都表现；心情变化自己的短冷却只管数值，不会吞掉落地恢复。
+                steps += self._drop_recovery_steps()
                 self._emit("sweat", now)
             self._queue(*steps, Step("idle", 1.5), now=now, interrupt=True)
 
@@ -3268,6 +3273,8 @@ class PetBrain:
             self._air_returning = False
             self.mode = "drag"
             self._landing = None
+            self._air_top = None
+            self._drop_scared = False
             self._edge_exit = None
             self.hidden_asleep = False
             self._hidden_slip_started = None
@@ -3327,23 +3334,25 @@ class PetBrain:
                 return "drop"
             self.mode = "air"
             self._air_top = self.y
-            self._set_clip(self._pick("fall", "fall"), now, restart=True)
+            self._drop_scared = self._height_scare(self.floor - self.y)
+            self._set_clip("fall" if self._drop_scared else self._pick("fall", "fall"), now, restart=True)
             return "drop"
         return "click" if pressed is not None else None
 
     @property
     def effective_mood(self):
-        """只读的群聊心情 + 被照顾出来的加成；presence 本身永远不改。"""
+        """只读的群聊心情叠加本机照顾与惊吓；presence 本身永远不改。"""
         base = self.presence.mood if self.presence.known else 0.0
-        return max(-1.0, min(1.0, base + self.warmth))
+        return max(-1.0, min(1.0, base + self.warmth - self.distress))
 
     def _decay_warmth(self, now):
         """按真实经过的时间回落，而不是按帧数——时间跳跃也不会留下假心情。"""
         self.warmth = decay(self.warmth, self._warmth_at, now)
+        self.distress = decay_distress(self.distress, self._warmth_at, now)
         self._warmth_at = now
 
     def _care(self, now, kind):
-        """一次有意的照顾真的抬高心情，但有上限和各自独立的冷却。
+        """本机照顾与摔落用共享纯规则改变心情，有上限和各自独立的冷却。
 
         「到顶」看的是这次还能加多少，而不是 warmth 是否正好等于上限——
         它会一直衰减，照等号判断的话这句提醒永远不会出现。
@@ -3352,7 +3361,15 @@ class PetBrain:
             self.care_requests.append(kind)
             return "pending"
         self._decay_warmth(now)
-        self.warmth, self._care_at[kind], result = change(self.warmth, self._care_at[kind], kind, now)
+        previous = self._care_at[kind]
+        self.distress, distressed_at, distress_result = change_distress(self.distress, previous, kind, now)
+        if kind == "drop":
+            self._care_at[kind] = distressed_at
+            return distress_result
+        self.warmth, warmed_at, result = change(self.warmth, previous, kind, now)
+        self._care_at[kind] = max(warmed_at, distressed_at)
+        if distress_result == "relief":
+            return "gain"
         return result
 
     def sync_care(self, care, now):
@@ -3366,6 +3383,10 @@ class PetBrain:
         warmth = care.get("warmth")
         if type(warmth) in (int, float) and math.isfinite(warmth):
             self.warmth = max(0.0, min(CARE_MAX, warmth))
+            self._warmth_at = now
+        distress = care.get("distress")
+        if type(distress) in (int, float) and math.isfinite(distress):
+            self.distress = max(0.0, min(DISTRESS_MAX, distress))
             self._warmth_at = now
 
     def receive_care(self, now, event):
@@ -3620,6 +3641,7 @@ class PetBrain:
     def enter(self, now, height):
         """Drop in from above the floor (startup entrance)."""
         if self.motion:
+            self._air_top, self._drop_scared = None, False
             self.y, self.mode = self.floor - height, "air"
             self._set_clip("fall", now, restart=True)
 

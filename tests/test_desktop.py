@@ -317,6 +317,14 @@ class PanelClientTest(unittest.TestCase):
         self.assertEqual(str(request.url), 'http://127.0.0.1:8877/companion/care')
         self.assertEqual(parse_qs(request.content.decode()), {'action': ['feed'], 'csrf': [self.CSRF]})
 
+    def test_drop_reports_its_effect_to_the_shared_panel(self):
+        result = {'care': {'warmth': 0, 'distress': .2, 'updated_at': 100},
+                  'care_event': {'id': 'drop-1', 'kind': 'care', 'action': 'drop', 'result': 'loss'}}
+        self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: '1'}, json=result))
+        self.assertEqual(self.client.care('drop', self.CSRF), result)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(parse_qs(self.calls[0].content.decode()), {'action': ['drop'], 'csrf': [self.CSRF]})
+
     def test_voice_ticket_is_explicit_and_credentials_stay_in_headers(self):
         ticket = "synthetic-single-use-voice-ticket-0123456"
         self.transport(httpx.Response(200, headers={desktop.PANEL_ID_HEADER: "1"},

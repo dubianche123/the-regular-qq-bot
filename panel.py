@@ -1730,7 +1730,7 @@ def create_app(cfg, *, token):
         except RuntimeError:             # no running loop (direct calls in tests): the next poll refreshes
             pass
         payload["effective_mood"] = round(max(-1.0, min(1.0,
-            payload.get("mood", 0.0) + payload["care"]["warmth"])), 4)
+            payload.get("mood", 0.0) + payload["care"]["warmth"] - payload["care"]["distress"])), 4)
         return payload
 
     async def companion_presence(request):
@@ -1744,8 +1744,8 @@ def create_app(cfg, *, token):
     async def companion_care(request):
         form = await checked_form(request)
         action = str(form.get("action") or "")
-        if action not in ("pat", "feed"):
-            return web.json_response({"error": "请选摸摸头或投喂饼干。"}, status=400)
+        if action not in ("pat", "feed", "drop"):
+            return web.json_response({"error": "本机互动类型无效。"}, status=400)
         now = time.time()
         result, text = care.apply(action, now)
         event = {"kind": "care", "id": secrets.token_hex(6), "ts": round(now, 3),

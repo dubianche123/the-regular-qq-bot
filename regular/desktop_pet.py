@@ -1681,9 +1681,8 @@ class PetWidget(QWidget):
         brain.tick(now)
         self.props.sync()
         self.portal_layer.sync()
-        if brain.care_requests:
-            kind = brain.care_requests.pop()
-            brain.care_requests.clear()
+        if brain.care_requests and "care" not in self._jobs and self.csrf:
+            kind = brain.care_requests.popleft()
             self._request_care(kind)
         # Smooth 60 fps while moving; stationary animation frames use 30 fps.
         moving = (brain.mode != "ground" or brain.clip in ("walk", "hop", "land") or brain.fading(now)
@@ -2390,7 +2389,8 @@ class PetWidget(QWidget):
         p = self.brain.presence
         if not p.known:
             return self.connection_text()
-        mood = "心情不错" if p.mood >= 0.3 else "有点烦" if p.mood <= -0.3 else "心情平稳"
+        value = self.brain.effective_mood
+        mood = "心情不错" if value >= 0.3 else "有点烦" if value <= -0.3 else "心情平稳"
         parts = ["在线" if p.bot == "ready" else "还没启动", mood]
         if p.circadian:
             parts.append(p.circadian)

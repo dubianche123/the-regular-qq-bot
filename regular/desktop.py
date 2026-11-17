@@ -142,13 +142,14 @@ class PanelClient:
         return self._request("GET", path)
 
     def care(self, action, csrf):
-        if action not in ("pat", "feed"):
+        if action not in ("pat", "feed", "drop"):
             raise ValueError("unsupported local care action")
         body = self._request("POST", "/companion/care", {"action": action, "csrf": csrf})
         event = body.get("care_event")
         if (not isinstance(body.get("care"), dict) or not isinstance(event, dict)
                 or event.get("action") != action
-                or event.get("result") not in ("gain", "cooldown", "full", "fed_full")):
+                or event.get("result") not in (("loss", "cooldown", "full") if action == "drop"
+                                               else ("gain", "cooldown", "full", "fed_full"))):
             raise CompanionError("这次照顾还没有确认，请等连接恢复后再看看。")
         return body
 

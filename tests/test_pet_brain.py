@@ -1484,7 +1484,7 @@ class InteractionTest(unittest.TestCase):
         self.assertTrue(any(p.kind == "sparkle" for p in b.particles) or "land" in clips)
         self.assertEqual(b.mode, "ground")
 
-    def test_a_hard_throw_lands_grumpy(self):
+    def test_a_hard_throw_settles_down_and_loses_local_mood_once(self):
         b = brain()
         b.press(1.0, 700, 300)
         for i in range(6):
@@ -1492,10 +1492,13 @@ class InteractionTest(unittest.TestCase):
         b.release(1.06, 700, 450)
         b.vy = 2200
         b.y = 200
-        _, clips = run(b, 1.06, 2.0, fps=60)
-        self.assertIn("startle", clips)                       # 摔狠了只哆嗦一下
+        b.external_care = True
+        _, clips = run(b, 1.06, 4.0, fps=60)
+        self.assertIn("sit_rest", clips)                     # 无扩展素材也要坐稳、缓过来
+        self.assertIn("stand_up", clips)
+        self.assertNotIn("startle", clips)
         self.assertNotIn("pout", clips)
-        self.assertIn(b.bubble.text if b.bubble else "", LINES["thrown"] + ("",))
+        self.assertEqual(list(b.care_requests), ["drop"])
 
     def test_lifted_high_then_dropped_her_legs_go_weak_before_she_stands_back_up(self):
         def lift_and_drop(b, t, height):
@@ -1505,7 +1508,9 @@ class InteractionTest(unittest.TestCase):
                 b.drag(t, 700, 760 - (760 - height) * min(1.0, (i + 1) / 15))
                 b.tick(t)
             b.release(t, 700, height)
-            return run(b, t, 12.0)
+            if b.floor - b.y >= b.figure * 1.6:
+                self.assertEqual(b.clip, "fall")                  # 空中立刻惊恐，不抽平静挥手
+            return run(b, t, 5.0)
 
         def drop(seed, height, *, quiet=False):
             b = PetBrain(rng=random.Random(seed), now=0.0, quiet=quiet)
@@ -1513,27 +1518,71 @@ class InteractionTest(unittest.TestCase):
             b.place(700)
             return b, *lift_and_drop(b, 1.0, height)
 
-        high = [drop(seed, 200)[2] for seed in range(12)]
-        scared = [clips for clips in high if "scene_height_nervous" in clips]
-        self.assertTrue(scared)                                   # a real chance, not every time
-        self.assertLess(len(scared), len(high))
-        for clips in scared:
-            self.assertEqual([c for c in clips if c.startswith("scene_height_")],
-                             ["scene_height_nervous", "scene_height_wings"])
-            self.assertNotIn("startle", clips)
+        for quiet in (False, True):
+            for seed in range(12):
+                b, t, clips = drop(seed, 200, quiet=quiet)
+                self.assertEqual([c for c in clips if c.startswith("scene_height_")],
+                                 ["scene_height_nervous", "scene_height_wings"])
+                self.assertNotIn("startle", clips)
+                self.assertGreater(b.distress, 0)
+                # 反复被高处松手也会害怕，心情数值的短冷却不吞掉动作。
+                _, again = lift_and_drop(b, t, 200)
+                self.assertEqual([c for c in again if c.startswith("scene_height_")],
+                                 ["scene_height_nervous", "scene_height_wings"])
         # A hop off your hand or staying put stays calm.
         for seed in range(12):
-            self.assertNotIn("scene_height_nervous", drop(seed, 640)[2])
-            self.assertNotIn("scene_height_nervous", drop(seed, 200, quiet=True)[2])
-        # One scare, then a cooldown: a second high drop right after only lands.
-        for seed in range(12):
-            b, t, clips = drop(seed, 200)
-            if "scene_height_nervous" in clips:
-                _, again = lift_and_drop(b, t, 200)
-                self.assertNotIn("scene_height_nervous", again)
+            b, _, clips = drop(seed, 640)
+            self.assertNotIn("scene_height_nervous", clips)
+            self.assertEqual(b.distress, 0)
+
+    def test_low_release_thrown_upward_becomes_scared_at_height(self):
+        b = PetBrain(rng=random.Random(7), now=0)
+        b.set_ground(0, 1440, 860, 30)
+        b.place(700)
+        b.press(1, 700, 760)
+        b.drag(1.1, 700, 690)
+        b.tick(1.1)
+        b.release(1.3, 700, 690)
+        self.assertFalse(b._drop_scared)
+        b.vy = -1600
+        t = 1.3
+        for _ in range(30):
+            t += 1 / 60
+            b.tick(t)
+            if b._drop_scared:
                 break
-        else:
-            self.fail("no seed was scared")
+        self.assertTrue(b._drop_scared)
+        self.assertEqual(b.clip, "fall")
+        _, clips = run(b, t, 5)
+        self.assertIn("scene_height_nervous", clips)
+        self.assertGreater(b.distress, 0)
+
+    def test_entrance_and_own_flight_do_not_count_as_user_drops(self):
+        for entrance in (True, False):
+            b = brain()
+            b.external_care = True
+            if entrance:
+                b.enter(0, 600)
+            else:
+                b._queue(Step("fall", target_y=200), Step("fall", target_y=b.floor),
+                         Step("land"), now=0, interrupt=True)
+            _, clips = run(b, 0, 18)
+            self.assertEqual(list(b.care_requests), [])
+            self.assertEqual(b.distress, 0)
+            self.assertNotIn("scene_height_nervous", clips)
+
+    def test_powered_flight_taking_over_a_drop_clears_its_landing_penalty(self):
+        b = brain()
+        b.external_care = True
+        b.press(1, 700, 760)
+        b.drag(1.1, 700, 200)
+        b.tick(1.1)
+        b.release(1.3, 700, 200)
+        self.assertTrue(b._drop_scared)
+        b._queue(Step("fall", target_y=b.floor), Step("land"), now=1.3, interrupt=True)
+        self.assertIsNone(b._air_top)
+        run(b, 1.3, 10)
+        self.assertEqual(list(b.care_requests), [])
 
     def test_clicks_rotate_small_reactions_and_never_escalate_to_a_sulk(self):
         b = brain()
@@ -2010,6 +2059,44 @@ class CareMoodTest(unittest.TestCase):
         run(b, 2.0, 3.4)
         self.assertIn(b.bubble.text, CARE_LINES["feed"])
         self.assertEqual(b.presence.mood, -0.4)      # 群聊统计始终是只读的
+
+    def test_drop_distress_lowers_mood_recovers_and_accepts_comfort(self):
+        b = brain()
+        b.observe(0, ready(mood=-0.1))
+        self.assertEqual(b._care(1, "drop"), "loss")
+        self.assertAlmostEqual(b.effective_mood, -0.3)
+        self.assertEqual(b.warmth, 0)
+        self.assertEqual(b.presence.mood, -0.1)
+        self.assertEqual(b._care(2, "drop"), "cooldown")
+        self.assertEqual(b._care(5, "drop"), "loss")
+        frightened = b.distress
+        b.warmth = CARE_MAX
+        self.assertEqual(b._care(6, "pat"), "gain")     # 好心情已满，摸头仍能安抚惊吓
+        self.assertLess(b.distress, frightened)
+        b.tick(306)
+        self.assertEqual(b.distress, 0)
+        self.assertEqual(b.presence.mood, -0.1)
+
+    def test_offline_brain_and_shared_care_use_the_same_drop_and_comfort_rules(self):
+        from regular.pet_care import CareState
+        b = brain()
+        shared = CareState(0)
+        for now, kind in ((1, "drop"), (2, "drop"), (5, "drop"), (6, "pat"),
+                          (10, "feed"), (15, "drop"), (52, "pat")):
+            self.assertEqual(b._care(now, kind), shared.apply(kind, now)[0])
+            expected = shared.snapshot(now)
+            self.assertAlmostEqual(b.warmth, expected["warmth"], places=4)
+            self.assertAlmostEqual(b.distress, expected["distress"], places=4)
+
+    def test_shared_care_snapshot_syncs_distress_and_rejects_stale_snapshots(self):
+        b = brain()
+        b.sync_care({"warmth": 0.1, "distress": 0.4, "updated_at": 10}, 100)
+        self.assertAlmostEqual(b.effective_mood, -0.3)
+        b.tick(110)
+        self.assertLess(b.distress, 0.4)
+        current = (b.warmth, b.distress)
+        b.sync_care({"warmth": 0.6, "distress": 0, "updated_at": 9}, 110)
+        self.assertEqual((b.warmth, b.distress), current)
 
     def test_repeating_the_same_care_within_cooldown_does_not_stack(self):
         b = brain()

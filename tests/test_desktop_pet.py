@@ -580,6 +580,36 @@ class DesktopPetTest(unittest.TestCase):
         self.pet.brain.sync_care({'warmth': 0, 'updated_at': 99}, self.t[0])
         self.assertEqual(self.pet.brain.warmth, .26)
 
+    def test_drop_waits_for_inflight_care_and_connection_without_losing_the_event(self):
+        self.settle()
+        self.pet.brain.care_requests.append('drop')
+        self.pet.csrf = ''
+        with patch.object(self.pet, '_submit') as submit:
+            self.pet.step()
+            self.assertEqual(list(self.pet.brain.care_requests), ['drop'])
+            self.pet.csrf = CSRF
+            self.pet._jobs['care'] = Mock()
+            self.pet.step()
+            self.assertEqual(list(self.pet.brain.care_requests), ['drop'])
+            self.pet._jobs.pop('care')
+            self.pet.step()
+            self.assertFalse(self.pet.brain.care_requests)
+            submit.assert_called_once()
+            submit.call_args.args[1]()
+            self.client.care.assert_called_once_with('drop', CSRF)
+
+    def test_status_summary_includes_the_local_mood_change(self):
+        brain = self.pet.brain
+        brain.presence.known = True
+        brain.presence.mood = .1
+        brain.warmth = .4
+        brain.distress = 0
+        self.assertIn('心情不错', self.pet.status_summary())
+        brain.warmth = 0
+        brain.distress = .5
+        self.assertIn('有点烦', self.pet.status_summary())
+        self.assertEqual(brain.presence.mood, .1)
+
     def advance(self, seconds, fps=30, pet=None):
         pet = pet or self.pet
         for _ in range(int(seconds * fps)):

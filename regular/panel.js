@@ -476,7 +476,7 @@ if (chatForm) {
         if (event.kind === "care") {
           if (!seenCare.has(event.id)) {
             markCare(event.id);
-            if (stage) stage.play(event.result === "fed_full" ? "peek" : event.action === "feed" ? "eat" : "pat");
+            if (stage) stage.play(event.action === "drop" ? "scene_height_nervous" : event.result === "fed_full" ? "peek" : event.action === "feed" ? "eat" : "pat");
             say(event.text, 3.2);
           }
           continue;

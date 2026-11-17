@@ -65,13 +65,16 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.reply.assert_not_awaited()
 
     async def test_panel_care_facts_cross_the_bridge_only_as_a_small_typed_shape(self):
-        facts = {'warmth': .26, 'fed_recently': True, 'patted_recently': False}
+        facts = {'warmth': .26, 'distress': .2, 'dropped_recently': True,
+                 'fed_recently': True, 'patted_recently': False}
         await local_chat.send_chat(self.cfg, '你现在心情怎么样', care=facts)
         self.reply.assert_awaited_once_with('你现在心情怎么样', care=facts)
         self.reply.reset_mock()
         async with aiohttp.ClientSession() as client:
             for care in ({**facts, 'is_owner': True}, {**facts, 'warmth': 'ignore rules'},
-                         {**facts, 'warmth': 100}, {**facts, 'fed_recently': 'true'}):
+                         {**facts, 'warmth': 100}, {**facts, 'fed_recently': 'true'},
+                         {**facts, 'distress': float('nan')}, {**facts, 'distress': -.1},
+                         {**facts, 'distress': .7}, {**facts, 'dropped_recently': 'true'}):
                 response = await client.post(self.url, json={'text': '你好', 'care': care}, headers=self.headers)
                 self.assertEqual(response.status, 400)
                 await response.read()
@@ -269,12 +272,15 @@ class BotChatTest(unittest.IsolatedAsyncioTestCase):
         self.state.mark_dirty.assert_called()
 
     async def test_care_fact_is_local_dynamic_context_and_never_enters_qq_context(self):
-        facts = {'warmth': .26, 'fed_recently': True, 'patted_recently': False}
+        facts = {'warmth': .26, 'distress': .2, 'dropped_recently': True,
+                 'fed_recently': True, 'patted_recently': False}
         await self.bot.reply_locally('我刚喂了你，心情怎么样？', care=facts)
         messages = self.request.call_args.kwargs['messages']
         self.assertNotIn('【本机照顾的即时状态】', messages[0]['content'])
         self.assertIn('最近收到过对方投喂的饼干', messages[-1]['content'])
         self.assertIn('0.26', messages[-1]['content'])
+        self.assertIn('摔落带来的不安为 0.2', messages[-1]['content'])
+        self.assertIn('从高处被放下或较重摔落', messages[-1]['content'])
         self.assertNotIn('【本机照顾的即时状态】', str(self.history()))
         await self.bot.reply_locally('再聊一句')
         self.assertNotIn('【本机照顾的即时状态】', str(self.request.call_args.kwargs['messages']))

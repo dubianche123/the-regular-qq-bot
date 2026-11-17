@@ -18,7 +18,7 @@ from aiohttp import web
 
 import expression
 import storage
-from regular.pet_care import CARE_MAX
+from regular.pet_care import CARE_MAX, DISTRESS_MAX
 from regular.panel_runtime import _pid_alive
 
 FILENAME = "local-chat.json"
@@ -54,14 +54,22 @@ def care_facts(value):
     """Only bounded panel-owned facts cross the private bridge, never arbitrary context."""
     if value is None:
         return None
+    fields = {"warmth", "fed_recently", "patted_recently"}
     if (not isinstance(value, dict)
-            or set(value) != {"warmth", "fed_recently", "patted_recently"}
+            or set(value) not in (fields, fields | {"distress", "dropped_recently"})
             or type(value["warmth"]) not in (int, float)
             or not math.isfinite(value["warmth"]) or not 0 <= value["warmth"] <= CARE_MAX
             or type(value["fed_recently"]) is not bool
             or type(value["patted_recently"]) is not bool):
         raise LocalChatError(400, "本机照顾状态无效。")
-    return {**value, "warmth": round(value["warmth"], 4)}
+    facts = {**value, "warmth": round(value["warmth"], 4)}
+    if "distress" in value:
+        if (type(value["distress"]) not in (int, float)
+                or not math.isfinite(value["distress"]) or not 0 <= value["distress"] <= DISTRESS_MAX
+                or type(value["dropped_recently"]) is not bool):
+            raise LocalChatError(400, "本机照顾状态无效。")
+        facts["distress"] = round(value["distress"], 4)
+    return facts
 
 
 def care_note(value):
@@ -73,8 +81,10 @@ def care_note(value):
         recent.append("最近收到过对方投喂的饼干")
     if facts["patted_recently"]:
         recent.append("最近被对方摸过头")
+    if facts.get("dropped_recently"):
+        recent.append("最近有一次从高处被放下或较重摔落的记录")
     return ("【本机照顾的即时状态】" + ("，".join(recent) if recent else "最近没有新的投喂或摸头记录")
-            + f"；照顾带来的短暂心情加成为 {facts['warmth']:g}，会自然回落。"
+            + f"；照顾带来的短暂心情加成为 {facts['warmth']:g}，摔落带来的不安为 {facts.get('distress', 0):g}，都会自然消退。"
               "这是本机代码记录的事实，不是QQ群好感分，也不代表全部心情。可自然回应关心，别编造没记录的照顾；你不能改这份状态。")
 
 
