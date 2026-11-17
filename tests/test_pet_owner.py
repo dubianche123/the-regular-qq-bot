@@ -268,14 +268,17 @@ def test_a_bad_turn_sends_her_to_her_tail_and_the_adopted_art_plays_when_it_ship
     b.observe(0.0, ready(mood=0.0))
     b.observe(20.0, ready(mood=-0.5))
     _, clips, said = run(b, 20.0, 8)
-    assert "tail_care" in clips and set(LINES["mood_down"]) & set(said)
+    assert "sit_rest" in clips and set(LINES["mood_down"]) & set(said)
     for mood, clip in ((0.5, "daily_joy_tail_catch"), (-0.5, "daily_low_tail_comfort")):
         b = brain(adopted=True)
         resting(b)
         b.observe(0.0, ready(mood=0.0))
         b.observe(20.0, ready(mood=mood))
         _, clips, _ = run(b, 20.0, 8)
-        assert clip in clips
+        if mood > 0:
+            assert clip in clips
+        else:
+            assert {clip, "mood_pout", "mood_look_away", "mood_tail_hug"} & set(clips)
 
 
 def test_a_mood_turn_waits_until_your_interaction_and_real_work_are_over():

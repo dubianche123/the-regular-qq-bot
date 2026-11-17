@@ -2012,10 +2012,10 @@ class AgentPresenceTest(unittest.TestCase):
                 pastime(b, 1)
             return choose.call_args.args[0]
         happy = weights(mood=0.9)
-        grumpy_night = weights(mood=-0.9, circadian="熬到半夜")
-        self.assertGreater(grumpy_night["nap"], happy["nap"])
+        quiet_night = weights(mood=0, circadian="熬到半夜")
+        self.assertGreater(quiet_night["nap"], happy["nap"])
         self.assertGreater(happy["hop"] + happy["sing"] + happy["cheer"],
-                           grumpy_night["hop"] + grumpy_night["sing"] + grumpy_night["cheer"])
+                           quiet_night["hop"] + quiet_night["sing"] + quiet_night["cheer"])
 
     def test_cues_accept_only_known_actions_and_short_text(self):
         b = brain()
@@ -2044,6 +2044,69 @@ class CareMoodTest(unittest.TestCase):
     def head(b):
         left, top, right, bottom = b.body_rect()
         return (left + right) / 2, top + (bottom - top) * 0.2
+
+    def test_drop_recovers_then_pouts_and_stays_upset_instead_of_starting_music(self):
+        b = brain()
+        names = ("mood_pout", "mood_look_away", "mood_tail_hug")
+        b.repertoire.actions.update({name: {"role": "mood", "family": "low", "starts_from": "stand"}
+                                     for name in names})
+        clips = {name: ("idle", [0, 1, 2, 3], 4, name == "mood_look_away",
+                        "sit" if name == "mood_tail_hug" else "stand") for name in names}
+        with patch.dict(CLIPS, clips):
+            b.press(1, 700, 760)
+            b.drag(1.1, 700, 200)
+            b.tick(1.1)
+            b.release(1.3, 700, 200)
+            t, played = run(b, 1.3, 60)
+            self.assertLess(played.index("sit_rest"), played.index("stand_up"))
+            self.assertLess(played.index("stand_up"), played.index("mood_pout"))
+            self.assertLess(played.index("mood_pout"), played.index("mood_look_away"))
+            self.assertTrue(b._feeling_low())            # 一次扣0.2也不会被-.3门槛吞掉
+            self.assertTrue(b._mood_stay_active())
+            self.assertFalse({"headphones", "gamepad", "sing", "cheer"} & set(played))
+            self.assertFalse(any(c.startswith(("dragon_music_", "dragon_magic_")) for c in played))
+            b.feed(t + 0.1)
+            self.assertFalse(b._mood_stay_active())       # 有意安抚立即打断，不罚站等满时长
+            self.assertFalse(b._feeling_low())
+
+    def test_low_mood_keeps_calm_fallback_and_real_chat_can_interrupt(self):
+        b = brain()
+        b.observe(0, ready(mood=-0.6))
+        b.attention = True                          # 打开工具圈也不会把委屈表情换成中性待机
+        with patch.object(b, "_weighted") as weighted:
+            for i in range(20):
+                steps = b._choose(i)
+                self.assertEqual([s.clip for s in steps], ["sit_rest"])
+                self.assertTrue(20 <= steps[0].duration <= 40)
+            weighted.assert_not_called()
+        b._queue(*b._choose(20), now=20, interrupt=True)
+        run(b, 20, 1)
+        self.assertTrue(b._mood_stay_active())
+        b.chat_sent(21.1)
+        self.assertFalse(b._mood_stay_active())
+        self.assertTrue(b.chat_pending)
+        self.assertEqual(b.step.hold, "chat")
+
+    def test_low_mood_does_not_keep_her_awake_when_the_owner_is_away_at_night(self):
+        b = brain()
+        b.observe(0, ready(mood=-0.6, circadian="熬到半夜"))
+        b.owner_away = True
+        steps = b._choose(1000)
+        self.assertTrue(any(s.clip == "sleep" for s in steps))
+        self.assertFalse(any(s.hold in ("mood", "upset") for s in steps))
+
+    def test_upset_stay_blocks_autonomous_toy_and_cursor_play_but_not_petting(self):
+        b = brain()
+        b._queue(*b._upset_steps(), now=1, interrupt=True)
+        run(b, 1, 0.5)
+        self.assertTrue(b._mood_stay_active())
+        self.assertFalse(b._at_ease(1.5))
+        self.assertFalse(b._air_play_allowed(1.5))
+        b.props.emit("ball", b.x + 100, b.floor, 1.5, b.scale)
+        self.assertIsNone(b._prop_routine(1.5))
+        b._pat(1.6)
+        self.assertIn("pat", [b.clip, *[s.clip for s in b.plan]])
+        self.assertFalse(b._mood_stay_active())
 
     def test_petting_and_feeding_really_lift_mood_without_touching_read_only_presence(self):
         b = brain()

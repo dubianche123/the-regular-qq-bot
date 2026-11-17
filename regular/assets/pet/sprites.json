@@ -1129,6 +1129,18 @@
   "weather_wing_umbrella": {
    "file": "weather_wing_umbrella.webp",
    "frames": 4
+  },
+  "mood_pout": {
+   "file": "mood_pout.webp",
+   "frames": 4
+  },
+  "mood_look_away": {
+   "file": "mood_look_away.webp",
+   "frames": 4
+  },
+  "mood_tail_hug": {
+   "file": "mood_tail_hug.webp",
+   "frames": 4
   }
  },
  "geometry": {
@@ -3382,6 +3394,30 @@
     -108,
     -311,
     124,
+    0
+   ]
+  },
+  "mood_pout": {
+   "bounds": [
+    -92,
+    -323,
+    85,
+    0
+   ]
+  },
+  "mood_look_away": {
+   "bounds": [
+    -87,
+    -327,
+    80,
+    -1
+   ]
+  },
+  "mood_tail_hug": {
+   "bounds": [
+    -93,
+    -336,
+    93,
     0
    ]
   }

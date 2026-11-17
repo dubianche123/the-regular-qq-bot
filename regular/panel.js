@@ -293,12 +293,12 @@ class SpritePlayer {
       requestAnimationFrame(now => this.loop(now));
     });
     root.addEventListener("pointerenter", () => {
-      if (this.clip === this.base && performance.now() - this.lastWave > 8000) { this.lastWave = performance.now(); this.play("wave"); }
+      if (this.base === "idle" && this.clip === this.base && performance.now() - this.lastWave > 8000) { this.lastWave = performance.now(); this.play("wave"); }
     });
     root.addEventListener("click", () => this.play(this.base === "sleep" ? "wake" : "startle"));
   }
   setMotion(enabled) { this.motion = enabled; this.root.classList.toggle("still", !enabled); if (this.manifest) this.render(performance.now()); }
-  rest(clip) { this.base = clip; if (!this.until) this.play(clip, 0); }
+  rest(clip) { const changed = this.base !== clip; this.base = clip; if (!this.until && (changed || this.clip !== clip)) this.play(clip, 0); }
   play(clip, seconds) {
     if (!petClips[clip]) return;
     this.clip = clip;
@@ -476,7 +476,7 @@ if (chatForm) {
         if (event.kind === "care") {
           if (!seenCare.has(event.id)) {
             markCare(event.id);
-            if (stage) stage.play(event.action === "drop" ? "scene_height_nervous" : event.result === "fed_full" ? "peek" : event.action === "feed" ? "eat" : "pat");
+            if (stage) stage.play(event.action === "drop" ? (petClips.mood_pout ? "mood_pout" : "scene_height_nervous") : event.result === "fed_full" ? "peek" : event.action === "feed" ? "eat" : "pat");
             say(event.text, 3.2);
           }
           continue;
@@ -490,7 +490,10 @@ if (chatForm) {
         const line = event.kind === "cue" ? event.text : narration[event.kind];
         if (line) say(line);
       }
-      if (stage && !sending) stage.rest(state.bot === "ready" ? "idle" : "sleep");
+      if (stage && !sending) {
+        const low = state.effective_mood <= -0.3 || (state.care?.distress > 0 && state.effective_mood < 0);
+        stage.rest(state.bot !== "ready" ? "sleep" : low && petClips.mood_look_away ? "mood_look_away" : "idle");
+      }
     } catch { /* The next poll tries again; nothing is sent. */ }
   }
   if (stage) setInterval(pollPresence, 5000);

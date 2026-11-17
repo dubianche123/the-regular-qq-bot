@@ -136,16 +136,19 @@ def test_low_pep_offers_no_play_and_only_quiet_library_routines():
     assert routine.call_args.kwargs["quiet"] is True
 
 
-def test_a_good_mood_makes_play_more_likely_than_a_bad_one():
-    weights = {}
+def test_a_bad_mood_stays_quiet_while_a_good_mood_can_choose_play():
     for mood in (-0.8, 0.8):
         b = brain()
         b.observe(0.0, ready(mood=mood))
         b._spell, b._spell_until = "standing", 1e9
-        with patch.object(b, "_weighted", side_effect=lambda w, m=mood: weights.__setitem__(m, w) or "idle"):
-            b._choose(1.0)
-    play = {mood: sum(w[name] for name in PLAY_CHOICES if name in w) for mood, w in weights.items()}
-    assert play[0.8] > 2 * play[-0.8]
+        with patch.object(b, "_weighted", return_value="idle") as weighted:
+            steps = b._choose(1.0)
+        if mood < 0:
+            weighted.assert_not_called()
+            assert all(step.hold == "mood" for step in steps)
+        else:
+            weights = weighted.call_args.args[0]
+            assert sum(weights[name] for name in PLAY_CHOICES if name in weights) > 0
 
 
 # ── 一段一段地过 ──

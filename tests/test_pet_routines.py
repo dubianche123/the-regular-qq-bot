@@ -41,6 +41,32 @@ def test_quiet_filters_air_and_nonloops():
     assert choose_routine(random.Random(1), {}, quiet=True) is None
 
 
+def test_low_mood_selects_emotion_stays_instead_of_cheerful_pastimes():
+    emotions = {name: {"posture": "sit" if name == "mood_tail_hug" else "stand"}
+                for name in ("mood_pout", "mood_look_away", "mood_tail_hug")}
+    actions = {**ACTIONS, **emotions}
+    for mode in ("rest", "story"):
+        seen = set()
+        for seed in range(40):
+            family, beats = choose_routine(random.Random(seed), actions, mode=mode, mood=-0.6)
+            assert family == "mood:low"
+            assert len(beats) == 1
+            name, seconds = beats[0]
+            assert name in (*emotions, "daily_low_tail_comfort")
+            assert 20 <= seconds <= 40
+            seen.add(name)
+        assert set(emotions) <= seen
+    cheerful_only = {name: ACTIONS[name] for name in ("dragon_music_ukulele", "dragon_toy_handheld")}
+    assert choose_routine(random.Random(1), cheerful_only, mood=-0.6) is None
+
+
+def test_low_mood_uses_adopted_end_pose_loops_after_the_once_only_emotion():
+    actions = {name: {} for name in ("mood_tail_hug", "mood_tail_hold")}
+    _, beats = choose_routine(random.Random(1), actions, mood=-0.6)
+    assert beats[0] == ("mood_tail_hug", None)
+    assert beats[1][0] == "mood_tail_hold" and 20 <= beats[1][1] <= 40
+
+
 def test_standalone_one_shot_remains_reachable():
     # A future adopted one-shot can still work in a folder without full scenes.
     actions = {"new_flower": ACTIONS["dragon_magic_flower"]}

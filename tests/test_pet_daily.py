@@ -50,7 +50,7 @@ def test_cookie_and_sleep_hold_are_never_standalone_automatic_choices():
 def test_new_scenes_are_reachable_without_turning_them_into_long_loops():
     actions = {**DAILY, **PLAYBACK_ALIASES, "scene_fire_controlled": SCENES["scene_fire_controlled"]}
     seen = set()
-    for mood in (-0.4, 0.4):
+    for mood in (0.0, 0.4):
         rng = random.Random(73)
         for _ in range(300):
             family, beats = choose_routine(rng, actions, mode="story", sleepy=True,
@@ -61,7 +61,7 @@ def test_new_scenes_are_reachable_without_turning_them_into_long_loops():
                 if name != "daily_book_sleep_hold":
                     assert duration is None
                     assert not actions[name]["loop"]
-    assert set(DAILY) - {"daily_cookie_receive", "daily_quiet_tail_rest"} <= seen
+    assert set(DAILY) - {"daily_cookie_receive", "daily_quiet_tail_rest", "daily_low_tail_comfort"} <= seen
 
 
 def test_book_keeps_its_own_closed_book_and_sleeps_without_repeating_the_entry():
@@ -91,7 +91,9 @@ def test_emotional_scenes_follow_context_and_quiet_rest_stays_long():
                                              "daily_game_set_down", "daily_quiet_tail_rest")}
     assert choose_routine(random.Random(1), actions, mode="story", mood=0) is None
     assert choose_routine(random.Random(1), actions, mode="story", mood=0.5)[0] == "scene:joy"
-    assert choose_routine(random.Random(1), actions, mode="story", mood=-0.5)[0] == "scene:low"
+    family, low = choose_routine(random.Random(1), actions, mode="story", mood=-0.5)
+    assert family == "mood:low" and low[0][0] == "daily_low_tail_comfort"
+    assert 20 <= low[0][1] <= 40
     assert choose_routine(random.Random(1), actions, mode="story", energy=0.3)[0] == "scene:tired_game"
     assert choose_routine(random.Random(1), actions, mode="story", mood=0.5, quiet=True) is None
     family, beats = choose_routine(random.Random(1), actions, mode="rest", quiet=True)

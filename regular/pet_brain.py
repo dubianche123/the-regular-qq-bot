@@ -21,7 +21,7 @@ from regular.pet_care import (CARE_GAIN, CARE_COOLDOWN, CARE_MAX, CARE_DECAY,
                               DISTRESS_MAX, change, change_distress, decay, decay_distress)
 from regular.pet_repertoire import Repertoire, clips as repertoire_clips
 from regular.pet_props import PropPlay
-from regular.pet_routines import ACTIVITY_ENDINGS, DAILY_MAGIC, EPISODES, activity_sequence, choose_routine
+from regular.pet_routines import ACTIVITY_ENDINGS, DAILY_MAGIC, EPISODES, MOOD_HOLDS, activity_sequence, choose_routine
 
 FIGURE = 160.0          # 100% 时人物站立高度（点）
 WALK_SPEED = 46.0       # 点/秒，随 scale 缩放
@@ -408,7 +408,7 @@ class Step:
     duration: float | None = None      # None: one pass of a non-loop clip (loops default to 4s)
     target_x: float | None = None      # walking destination
     target_y: float | None = None      # controlled flight destination
-    hold: str | None = None            # "chat" / "agent" / "state" / "away": held until that condition clears
+    hold: str | None = None            # chat/agent/state/away wait for a condition; mood/upset are timed quiet stays
     edge_side: int = 0                 # -1 / +1: approach, peek and retreat at this screen edge
     line: str | None = None            # short, beat-specific speech
     ease: str | None = None            # flight legs: "launch" / "cruise" / "land" keep speed across waypoints
@@ -1164,14 +1164,16 @@ class PetBrain:
         if self._next_pending:
             self._next_pending = False
             return self._routine_steps(now, manual=True)
+        # 夜里没人在：睡整觉，一直睡到你回来或者天亮。半夜被群里叫醒，回完话也接着睡。
+        if vitals.sleepy and self.owner_away and not engaged:
+            return self._nap_steps(now)
+        if self._feeling_low():
+            return self._low_mood_steps()
         if self.attention:
             return [Step("idle", 1.5)]
         chase = self._prop_routine(now)
         if chase:
             return chase
-        # 夜里没人在：睡整觉，一直睡到你回来或者天亮。半夜被群里叫醒，回完话也接着睡。
-        if vitals.sleepy and self.owner_away and not engaged:
-            return self._nap_steps(now)
         spell = self._spell_kind(now, vitals)
         if self._owes_rest:
             self._owes_rest = False
@@ -1501,11 +1503,41 @@ class PetBrain:
     def _height_scare(self, drop):
         return drop >= self.figure * HEIGHT_FEAR_DROP
 
+    def _feeling_low(self):
+        mood = self.effective_mood
+        return mood <= -MOOD_BAND or self.distress > 0 and mood < 0
+
+    def _low_mood_steps(self):
+        routine = choose_routine(self.rng, self.repertoire.actions, mood=-MOOD_BAND,
+                                 recent_clips=self.repertoire.recent)
+        beats = routine[1] if routine else [("sit_rest", self.rng.uniform(20, 40))]
+        return [Step(clip, duration, hold="mood") for clip, duration in beats]
+
+    def _upset_steps(self):
+        seconds = self.rng.uniform(20, 40)
+        if self._has("mood_pout"):
+            stay = next((name for name in ("mood_look_away", "mood_pout_hold") if self._has(name)), "mood_pout")
+            return [Step("mood_pout", hold="upset"), Step(stay, seconds, hold="upset")]
+        for clip in ("mood_tail_hug", "mood_look_away"):
+            if self._has(clip):
+                stay = MOOD_HOLDS.get(clip)
+                if self._has(stay):
+                    return [Step(clip, hold="upset"), Step(stay, seconds, hold="upset")]
+                return [Step(clip, seconds, hold="upset")]
+        if self._has("daily_low_tail_comfort"):
+            return [Step("daily_low_tail_comfort", hold="upset"),
+                    Step("sit_rest", seconds, hold="upset")]
+        return [Step("sit_rest", seconds, hold="upset")]
+
+    def _mood_stay_active(self):
+        return self.step is not None and self.step.hold in ("upset", "mood")
+
     def _drop_recovery_steps(self):
         if self._has("scene_height_nervous") and self._has("scene_height_wings"):
-            return [Step("scene_height_nervous", line=BEAT_LINES["scene_height_nervous"]),
-                    Step("scene_height_wings", line=BEAT_LINES["scene_height_wings"])]
-        return [Step("sit_down"), Step("sit_rest", 1.2), Step("stand_up")]
+            return [Step("scene_height_nervous", hold="upset", line=BEAT_LINES["scene_height_nervous"]),
+                    Step("scene_height_wings", hold="upset", line=BEAT_LINES["scene_height_wings"])]
+        return [Step("sit_down", hold="upset"), Step("sit_rest", 1.2, hold="upset"),
+                Step("stand_up", hold="upset")]
 
     def _powered_landing(self):
         if self._has("motion_fly_approach") and self._has("motion_fly_settle"):
@@ -1520,6 +1552,8 @@ class PetBrain:
         return [Step(self._pick("walk", "walk", family="gait"), target_x=target)] if abs(target - self.x) >= self.figure * 0.4 else []
 
     def _routine_steps(self, now, *, manual=False):
+        if self._feeling_low():
+            return self._low_mood_steps()
         can_story = now - self._last_story_at >= 180 and self._rests_since_story >= 2
         # Asking for the next activity changes the choice, not its pacing.
         # Forcing story here replaced 45–90s accompaniment with a 3s one-shot.
@@ -1631,6 +1665,7 @@ class PetBrain:
         if (not self.motion or self.chat_pending or self.game_active or self.mode != "ground"
                 or self.media or now < self.agent_busy_until or (self.state_clip and now < self.state_until)
                 or self.clip in ASLEEP or (not manual and (self.quiet or self.pointer.near or self.attention
+                or self._mood_stay_active() or self._feeling_low()
                 or self._role(self.clip) == "scene_furniture" or self.clip.startswith("form_")
                 or now - self._prop_chase_at < 120))):
             return None
@@ -1951,7 +1986,8 @@ class PetBrain:
             if dropped and (scared or impact > 1900 * self.scale):
                 self._care(now, "drop")
                 # 惊吓每次都表现；心情变化自己的短冷却只管数值，不会吞掉落地恢复。
-                steps += self._drop_recovery_steps()
+                steps[0].hold = "upset"
+                steps += [*self._drop_recovery_steps(), *self._upset_steps()]
                 self._emit("sweat", now)
             self._queue(*steps, Step("idle", 1.5), now=now, interrupt=True)
 
@@ -2604,6 +2640,7 @@ class PetBrain:
     def _air_play_allowed(self, now, *, continuing=False):
         return (self.motion and not self.quiet and not self.attention and not self.chat_pending
                 and not self.game_active and not self.media and now >= self.agent_busy_until
+                and not self._mood_stay_active() and not self._feeling_low()
                 and not (self.state_clip and now < self.state_until)
                 and self.mode in ("ground", "fly") and self._form() == "human"
                 and self.warp is None and self.clip not in ASLEEP
@@ -2704,6 +2741,7 @@ class PetBrain:
     def _pounce_check(self, now, x, y):
         """Wiggle the cursor just in front of her and she crouches, wiggles back and pounces."""
         if (not self.motion or self.quiet or self.attention or self.chat_pending or self.game_active
+                or self._mood_stay_active() or self._feeling_low()
                 or not self._has("spell_pounce") or not self.pointer.seen
                 or self.mode != "ground" or self.posture() != "stand" or self.clip in ASLEEP
                 or now - self._pounce_at < POUNCE_COOLDOWN or self.media or now < self.agent_busy_until
@@ -2854,6 +2892,7 @@ class PetBrain:
         """On the ground in her own form with nothing real going on: free to start something herself.
         A sleep she was explicitly asked for is not hers to end."""
         return (self.mode == "ground" and not self._busy(now) and not self.game_active
+                and not self._mood_stay_active()
                 and self.warp is None and self._form() == "human" and now >= self._sleep_cue_until)
 
     def _hello_clip(self):
@@ -2977,9 +3016,8 @@ class PetBrain:
                 self._mood_said[band] = now
                 if band > 0:
                     steps = [Step("daily_joy_tail_catch" if self._has("daily_joy_tail_catch") else "hop")]
-                else:                        # 抱着尾巴缓一缓；没有那条素材时直接理尾巴
-                    comfort = [Step("daily_low_tail_comfort")] if self._has("daily_low_tail_comfort") else []
-                    steps = [*comfort, Step("tail_care", self.rng.uniform(10, 16))]
+                else:
+                    steps = self._low_mood_steps()
                 self._queue_manual([*steps, Step("idle", 1.5)], now)
                 self.say(self.rng.choice(LINES["mood_up" if band > 0 else "mood_down"]), now=now, seconds=3.2)
                 return

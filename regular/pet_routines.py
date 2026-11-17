@@ -20,6 +20,7 @@ QUIET_ROLES = frozenset({"study", "craft", "garden", "eat", "snack", "tea", "res
 QUIET_STORIES = frozenset({"tea", "comic", "sketch", "stretch"})
 DAILY_MAGIC = ("magic_daily_cola", "magic_daily_roast", "magic_daily_scarf",
                "magic_daily_brush", "magic_daily_mend")
+MOOD_HOLDS = {"mood_pout": "mood_pout_hold", "mood_tail_hug": "mood_tail_hold"}
 
 # Each branch includes its result and cleanup. Tuple durations are long stays.
 EPISODES = {
@@ -248,10 +249,23 @@ def choose_routine(rng, actions, recent_families=(), *, mode="rest", quiet=False
     Missing story beats disqualify that story. Non-loop clips use duration None
     for one pass; loops in stories run one cycle; long-stay loops run 45–90s.
     Recent families are avoided when possible. The caller owns history, posture
-    transitions, movement restrictions and interruption.
+    transitions, movement restrictions and interruption. Low mood uses its own
+    quiet 20–40s stay in either mode, with adopted breathing loops when available.
     """
     if mode not in ("rest", "story"):
         raise ValueError("mode must be 'rest' or 'story'")
+    if mood <= -0.3:
+        # Low mood is the backdrop for this whole stay, not one optional scene
+        # in the same bag as cheerful instruments, games and magic.
+        names = [name for name in ("mood_pout", "mood_look_away", "mood_tail_hug",
+                                   "daily_low_tail_comfort") if name in actions]
+        if not names:
+            return None
+        fresh = [name for name in names if name not in recent_clips]
+        name, seconds = rng.choice(fresh or names), rng.uniform(20, 40)
+        stay = MOOD_HOLDS.get(name)
+        beats = [(name, None), (stay, seconds)] if stay in actions else [(name, seconds)]
+        return "mood:low", beats
     if mode == "story":
         groups = {}
         for family, branches in EPISODES.items():
